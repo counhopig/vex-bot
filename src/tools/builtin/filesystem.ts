@@ -3,9 +3,9 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { readFile, writeFile, stat, readdir } from "fs/promises";
+import { readFile, writeFile, stat, readdir, realpath } from "fs/promises";
 import { existsSync } from "fs";
-import { join, resolve, relative, sep } from "path";
+import { join, resolve, relative, sep, dirname, basename } from "path";
 import { glob } from "glob";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { jsonResult, textResult, readStringParam, readNumberParam, readBooleanParam } from "../common.js";
@@ -29,6 +29,33 @@ function isPathAllowed(filePath: string, allowedPaths: string[]): boolean {
     const resolvedAllowed = resolve(allowed);
     return resolved === resolvedAllowed || resolved.startsWith(resolvedAllowed + sep);
   });
+}
+
+/**
+ * 解析路径的真实位置（跟随 symlink），用于防止越权。
+ * 对于尚不存在的文件（如 write_file 创建新文件），解析其父目录的真实路径再拼回 basename。
+ */
+async function resolveRealPath(filePath: string): Promise<string> {
+  const abs = resolve(filePath);
+  try {
+    return await realpath(abs);
+  } catch {
+    const parent = dirname(abs);
+    try {
+      const realParent = await realpath(parent);
+      return join(realParent, basename(abs));
+    } catch {
+      return abs;
+    }
+  }
+}
+
+/**
+ * 与 isPathAllowed 相同，但跟随 symlink 后再校验，避免通过工作区内的 symlink 越权访问外部。
+ */
+async function isRealPathAllowed(filePath: string, allowedPaths: string[]): Promise<boolean> {
+  const real = await resolveRealPath(filePath);
+  return isPathAllowed(real, allowedPaths);
 }
 
 function formatSize(bytes: number): string {
@@ -55,7 +82,7 @@ export function createReadFileTool(options?: FilesystemToolsOptions): AgentTool 
       const offset = readNumberParam(params, "offset", { min: 1 }) ?? 1;
       const limit = readNumberParam(params, "limit", { min: 1 }) ?? opts.maxLines;
       const resolved = resolve(filePath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `File not found: ${filePath}` }, true);
       try {
         const stats = await stat(resolved);
@@ -87,7 +114,7 @@ export function createWriteFileTool(options?: FilesystemToolsOptions): AgentTool
       const filePath = readStringParam(params, "path", { required: true })!;
       const content = readStringParam(params, "content", { required: true })!;
       const resolved = resolve(filePath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       try {
         await writeFile(resolved, content, "utf-8");
         const stats = await stat(resolved);
@@ -116,7 +143,7 @@ export function createEditFileTool(options?: FilesystemToolsOptions): AgentTool 
       const newString = readStringParam(params, "new_string", { required: true })!;
       const replaceAll = readBooleanParam(params, "replace_all") ?? false;
       const resolved = resolve(filePath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `File not found: ${filePath}` }, true);
       try {
         const content = await readFile(resolved, "utf-8");
@@ -148,7 +175,7 @@ export function createListDirectoryTool(options?: FilesystemToolsOptions): Agent
       const recursive = readBooleanParam(params, "recursive") ?? false;
       const maxDepth = readNumberParam(params, "max_depth", { min: 1, max: 10 }) ?? 3;
       const resolved = resolve(dirPath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${dirPath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${dirPath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `Directory not found: ${dirPath}` }, true);
       try {
         const stats = await stat(resolved);
@@ -193,7 +220,7 @@ export function createGlobTool(options?: FilesystemToolsOptions): AgentTool {
       const basePath = readStringParam(params, "path") ?? process.cwd();
       const maxResults = readNumberParam(params, "max_results", { min: 1, max: 1000 }) ?? 100;
       const resolved = resolve(basePath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${basePath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${basePath}` }, true);
       try {
         const matches = await glob(pattern, { cwd: resolved, nodir: false, ignore: ["**/node_modules/**", "**/.git/**"], maxDepth: 20 });
         const results = matches.slice(0, maxResults).map((m: string) => join(resolved, m));
@@ -226,7 +253,7 @@ export function createGrepTool(options?: FilesystemToolsOptions): AgentTool {
       const maxResults = readNumberParam(params, "max_results", { min: 1, max: 500 }) ?? 50;
       const caseInsensitive = readBooleanParam(params, "case_insensitive") ?? false;
       const resolved = resolve(searchPath);
-      if (!isPathAllowed(resolved, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${searchPath}` }, true);
+      if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${searchPath}` }, true);
       try {
         const regex = new RegExp(pattern, caseInsensitive ? "gi" : "g");
         let files: string[];

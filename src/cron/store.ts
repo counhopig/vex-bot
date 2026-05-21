@@ -154,5 +154,8 @@ export class CronStore {
   clear(): void {
     this.store.jobs = [];
     this.dirty = true;
+    // 与 addJob/updateJob/removeJob 不同，clear 表示破坏性意图，立即落盘以防丢失
+    saveCronStore(this.store, this.storePath);
+    this.dirty = false;
   }
 }

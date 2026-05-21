@@ -26,9 +26,14 @@ async function directoryExists(path: string): Promise<boolean> {
  * 检查可执行文件是否存在
  */
 async function binaryExists(name: string): Promise<boolean> {
-  const { execSync } = await import('child_process');
+  // 仅允许合法的可执行文件名，避免 SKILL.md 携带 shell 元字符注入
+  if (!/^[A-Za-z0-9._+-]+$/.test(name)) {
+    return false;
+  }
+  const { execFileSync } = await import('child_process');
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
   try {
-    execSync(`which ${name}`, { stdio: 'ignore' });
+    execFileSync(lookup, [name], { stdio: 'ignore' });
     return true;
   } catch {
     return false;

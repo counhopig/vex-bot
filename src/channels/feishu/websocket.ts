@@ -133,7 +133,10 @@ export class FeishuWebSocketClient {
     // 移除 @机器人 的内容
     if (message.mentions) {
       for (const mention of message.mentions) {
-        content = content.replace(mention.key, "").trim();
+        if (!mention.key) continue;
+        // 全局替换并转义正则元字符，避免 key 含元字符时漏替换或抛错
+        const escaped = mention.key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        content = content.replace(new RegExp(escaped, "g"), "").trim();
       }
     }
 

@@ -391,6 +391,11 @@ export class QQWebSocketClient {
   /** 开始心跳 */
   private startHeartbeat(): void {
     if (!this.heartbeatInterval) return;
+    // 防止 Hello 重复触发导致定时器叠加
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
 
     this.heartbeatTimer = setInterval(() => {
       this.sendHeartbeat();
@@ -444,7 +449,13 @@ export class QQWebSocketClient {
     try {
       this.stopHeartbeat();
       if (this.ws) {
-        this.ws.close();
+        // 断开旧 ws 的所有监听器，避免 close/error 再次触发 handleDisconnect 形成级联重连
+        this.ws.removeAllListeners();
+        try {
+          this.ws.close();
+        } catch {
+          // 忽略 close 失败
+        }
         this.ws = null;
       }
       await this.start();
@@ -458,7 +469,12 @@ export class QQWebSocketClient {
   async stop(): Promise<void> {
     this.stopHeartbeat();
     if (this.ws) {
-      this.ws.close();
+      this.ws.removeAllListeners();
+      try {
+        this.ws.close();
+      } catch {
+        // 忽略 close 失败
+      }
       this.ws = null;
     }
     this.isConnected = false;
