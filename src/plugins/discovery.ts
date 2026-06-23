@@ -14,13 +14,13 @@ import { getChildLogger } from "../utils/logger.js";
 const logger = getChildLogger("plugins:discovery");
 
 /** 插件清单文件名 */
-const MANIFEST_FILENAME = "mozi.plugin.json";
+const MANIFEST_FILENAME = "vex.plugin.json";
 
 /** 默认插件搜索目录 */
 const DEFAULT_SEARCH_DIRS = {
   bundled: join(process.cwd(), "plugins"),
-  global: join(homedir(), ".mozi", "plugins"),
-  workspace: join(process.cwd(), ".mozi", "plugins"),
+  global: join(homedir(), ".vex", "plugins"),
+  workspace: join(process.cwd(), ".vex", "plugins"),
 };
 
 /**
@@ -128,7 +128,7 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
   let entryPath: string | undefined;
   let id = basename(dir);
 
-  // 1. 尝试读取 mozi.plugin.json
+  // 1. 尝试读取 vex.plugin.json
   if (existsSync(manifestPath)) {
     try {
       const content = readFileSync(manifestPath, "utf-8");
@@ -148,9 +148,9 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
       const content = readFileSync(packageJsonPath, "utf-8");
       const pkg = JSON.parse(content);
 
-      // 检查是否有 mozi.plugin 字段
-      if (pkg["mozi.plugin"]) {
-        entryPath = join(dir, pkg["mozi.plugin"]);
+      // 检查是否有 vex.plugin 字段
+      if (pkg["vex.plugin"]) {
+        entryPath = join(dir, pkg["vex.plugin"]);
       } else if (pkg.main) {
         entryPath = join(dir, pkg.main);
       }

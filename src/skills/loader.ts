@@ -124,8 +124,8 @@ export function getDefaultSkillsDirs(): {
 } {
   return {
     bundled: join(import.meta.dirname || __dirname, '../../skills'),
-    user: join(homedir(), '.mozi', 'skills'),
-    workspace: join(process.cwd(), '.mozi', 'skills'),
+    user: join(homedir(), '.vex', 'skills'),
+    workspace: join(process.cwd(), '.vex', 'skills'),
   };
 }
 

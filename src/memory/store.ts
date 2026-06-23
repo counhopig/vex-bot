@@ -51,7 +51,7 @@ export class JsonMemoryStore implements MemoryStore {
     directory?: string;
     maxCacheEntries?: number;
   } = {}) {
-    this.directory = options.directory ?? path.join(os.homedir(), ".mozi", "memory");
+    this.directory = options.directory ?? path.join(os.homedir(), ".vex", "memory");
     this.indexFile = path.join(this.directory, "index.json");
     this.maxCacheEntries = options.maxCacheEntries ?? 1000;
     this.entries = new Map();

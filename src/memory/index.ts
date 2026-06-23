@@ -1,5 +1,5 @@
 /**
- * Memory System - Mozi Memory Module
+ * Memory System - Vex Memory Module
  * Simplified memory system with JSON storage and TF-IDF embedding
  */
 

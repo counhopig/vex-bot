@@ -96,7 +96,7 @@ export interface ChatMessage {
 // ============== 通道相关类型 ==============
 
 /** 通道 ID */
-export type ChannelId = "feishu" | "dingtalk" | "qq" | "wecom" | "webchat";
+export type ChannelId = "weixin" | "webchat";
 
 /** 聊天类型 */
 export type ChatType = "direct" | "group";
@@ -155,39 +155,25 @@ export interface SendResult {
 
 // ============== 配置相关类型 ==============
 
-/** 飞书配置 */
-export interface FeishuConfig {
-  appId: string;
-  appSecret: string;
-  verificationToken?: string;
-  encryptKey?: string;
-  enabled?: boolean;
-}
-
-/** 钉钉配置 */
-export interface DingtalkConfig {
-  appKey: string;
-  appSecret: string;
-  robotCode?: string;
-  enabled?: boolean;
-}
-
-/** QQ 机器人配置 */
-export interface QQConfig {
-  appId: string;
-  clientSecret: string;
-  enabled?: boolean;
-  /** 是否使用沙箱环境 */
-  sandbox?: boolean;
-}
-
-/** 企业微信配置 */
-export interface WeComConfig {
-  corpId: string;
-  corpSecret: string;
-  agentId: number;
+/** 个人微信 (iLink OC) 配置 */
+export interface WeixinConfig {
+  /** API 基础地址，默认 https://ilinkai.weixin.qq.com */
+  baseUrl?: string;
+  /** Bot Token（扫码登录后获取的 bot_token） */
   token?: string;
-  encodingAESKey?: string;
+  /** iLink Bot ID */
+  accountId?: string;
+  /** Bot 类型，默认 "3" */
+  botType?: string;
+  /** 二维码轮询间隔（秒），默认 1 */
+  qrPollInterval?: number;
+  /** 长轮询超时（毫秒），默认 35000 */
+  longPollTimeoutMs?: number;
+  /** API 请求超时（毫秒），默认 120000 */
+  apiTimeoutMs?: number;
+  /** CDN 基础地址，默认 https://novac2c.cdn.weixin.qq.com/c2c */
+  cdnBaseUrl?: string;
+  /** 是否启用该通道 */
   enabled?: boolean;
 }
 
@@ -226,13 +212,10 @@ export interface MemoryConfig {
 }
 
 /** 主配置 */
-export interface MoziConfig {
+export interface VexConfig {
   providers: Record<string, SimpleProviderConfig | Record<string, unknown>>;
   channels: {
-    feishu?: FeishuConfig;
-    dingtalk?: DingtalkConfig;
-    qq?: QQConfig;
-    wecom?: WeComConfig;
+    weixin?: WeixinConfig;
   };
   agent: AgentConfig;
   server: {
@@ -271,20 +254,20 @@ export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
 
 // ============== 错误类型 ==============
 
-/** Mozi 错误 */
-export class MoziError extends Error {
+/** Vex 错误 */
+export class VexError extends Error {
   constructor(
     message: string,
     public code: string,
     public details?: unknown
   ) {
     super(message);
-    this.name = "MoziError";
+    this.name = "VexError";
   }
 }
 
 /** 提供商错误 */
-export class ProviderError extends MoziError {
+export class ProviderError extends VexError {
   constructor(
     message: string,
     public provider: ProviderId,
@@ -296,7 +279,7 @@ export class ProviderError extends MoziError {
 }
 
 /** 通道错误 */
-export class ChannelError extends MoziError {
+export class ChannelError extends VexError {
   constructor(
     message: string,
     public channel: ChannelId,

@@ -87,7 +87,7 @@ export async function startSession(options: {
   const context = await playwright.chromium.launchPersistentContext(userDataDir, {
     ...launchOptions,
     viewport: { width: viewportWidth, height: viewportHeight },
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    userAgent: "Vexlla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
 
   const pages = context.pages();

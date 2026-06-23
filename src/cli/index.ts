@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Mozi CLI - 命令行界面
+ * Vex CLI - 命令行界面
  */
 
 import { Command } from "commander";
@@ -27,8 +27,8 @@ const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
 const program = new Command();
 
 program
-  .name("mozi")
-  .description("Mozi - 支持国产模型和国产通讯软件的智能助手机器人")
+  .name("vex")
+  .description("Vex - 支持国产模型和国产通讯软件的智能助手机器人")
   .version(packageJson.version);
 
 // 启动命令
@@ -147,9 +147,7 @@ program
       // 检查通道
       console.log("\n📱 通讯通道:");
       const channels = [
-        { id: "feishu", name: "飞书", config: config.channels.feishu },
-        { id: "dingtalk", name: "钉钉", config: config.channels.dingtalk },
-        { id: "qq", name: "QQ", config: config.channels.qq },
+        { id: "weixin", name: "个人微信", config: config.channels.weixin },
       ];
       for (const channel of channels) {
         const status = channel.config ? "✅ 已配置" : "⬜ 未配置";
@@ -203,7 +201,7 @@ program
       const model = options.model || config.agent.defaultModel;
       const provider = options.provider || config.agent.defaultProvider;
 
-      console.log(`\n🤖 Mozi 聊天测试`);
+      console.log(`\n🤖 Vex 聊天测试`);
       console.log(`   模型: ${model}`);
       console.log(`   提供商: ${provider}`);
       console.log(`   输入 'exit' 退出\n`);
@@ -307,7 +305,7 @@ program
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🐕 欢迎使用 Mozi (墨子) 配置向导                          ║
+║   🐕 欢迎使用 Vex (Vex) 配置向导                          ║
 ║                                                            ║
 ║   支持国产模型和国产通讯软件的智能助手                       ║
 ║                                                            ║
@@ -561,43 +559,11 @@ program
     console.log("支持的平台: 飞书, 钉钉, QQ");
     console.log("(可选配置，直接回车跳过)\n");
 
-    const configFeishu = await question("是否配置飞书? (y/n): ");
-    if (configFeishu.toLowerCase() === "y") {
-      const feishuAppId = await question("飞书 App ID: ");
-      const feishuAppSecret = await question("飞书 App Secret: ");
-      if (feishuAppId.trim() && feishuAppSecret.trim()) {
-        config.channels["feishu"] = {
-          appId: feishuAppId.trim(),
-          appSecret: feishuAppSecret.trim(),
-        };
-      }
-    }
-
-    const configDingtalk = await question("是否配置钉钉? (y/n): ");
-    if (configDingtalk.toLowerCase() === "y") {
-      const dingtalkKey = await question("钉钉 App Key: ");
-      const dingtalkSecret = await question("钉钉 App Secret: ");
-      if (dingtalkKey.trim() && dingtalkSecret.trim()) {
-        config.channels["dingtalk"] = {
-          appKey: dingtalkKey.trim(),
-          appSecret: dingtalkSecret.trim(),
-        };
-      }
-    }
-
-    const configQQ = await question("是否配置 QQ 机器人? (y/n): ");
-    if (configQQ.toLowerCase() === "y") {
-      console.log("\n提示: 需要在 QQ 开放平台添加服务器 IP 到白名单");
-      const qqAppId = await question("QQ App ID: ");
-      const qqClientSecret = await question("QQ Client Secret: ");
-      if (qqAppId.trim() && qqClientSecret.trim()) {
-        const qqSandbox = await question("是否使用沙箱环境? (y/n，默认 n): ");
-        config.channels["qq"] = {
-          appId: qqAppId.trim(),
-          clientSecret: qqClientSecret.trim(),
-          sandbox: qqSandbox.toLowerCase() === "y",
-        };
-      }
+    // 个人微信使用扫码登录，不需要手动填写凭证
+    const configWeixin = await question("是否启用个人微信? (y/n): ");
+    if (configWeixin.toLowerCase() === "y") {
+      config.channels["weixin"] = { enabled: true };
+      console.log("   个人微信已启用，首次启动时会显示二维码进行扫码登录\n");
     }
 
     // 步骤 3: 服务器配置
@@ -635,7 +601,7 @@ program
     // 步骤 5: 记忆系统配置
     console.log("\n🧠 步骤 5/5: 配置记忆系统\n");
     console.log("记忆系统可让 Agent 记住跨会话的信息（如用户偏好、重要事实等）");
-    console.log("记忆默认启用，存储在 ~/.mozi/memory/ 目录\n");
+    console.log("记忆默认启用，存储在 ~/.vex/memory/ 目录\n");
 
     const configMemory = await question("是否自定义记忆系统配置? (y/n，默认 n): ");
     if (configMemory.toLowerCase() === "y") {
@@ -643,7 +609,7 @@ program
       const isEnabled = memoryEnabled.toLowerCase() !== "n";
 
       if (isEnabled) {
-        const storageDir = await question("记忆存储目录 (默认 ~/.mozi/memory): ");
+        const storageDir = await question("记忆存储目录 (默认 ~/.vex/memory): ");
         config.memory = {
           enabled: true,
           storageDir: storageDir.trim() || undefined,
@@ -674,8 +640,8 @@ program
     const configContent = generateJson5(config);
 
     // 配置文件路径
-    const moziDir = path.join(os.homedir(), ".mozi");
-    const configPath = path.join(moziDir, "config.local.json5");
+    const vexDir = path.join(os.homedir(), ".vex");
+    const configPath = path.join(vexDir, "config.local.json5");
 
     console.log("📋 生成的配置文件:\n");
     console.log("---");
@@ -685,8 +651,8 @@ program
     const writeConfig = await question(`是否写入配置到 ${configPath}? (y/n): `);
     if (writeConfig.toLowerCase() === "y") {
       // 确保目录存在
-      if (!fs.existsSync(moziDir)) {
-        fs.mkdirSync(moziDir, { recursive: true });
+      if (!fs.existsSync(vexDir)) {
+        fs.mkdirSync(vexDir, { recursive: true });
       }
       fs.writeFileSync(configPath, configContent);
       console.log(`\n✅ 配置已保存到 ${configPath}`);
@@ -695,7 +661,7 @@ program
     }
 
     const hasChannels = Object.keys(config.channels || {}).length > 0;
-    const startCmd = hasChannels ? "mozi start" : "mozi start --web-only";
+    const startCmd = hasChannels ? "vex start" : "vex start --web-only";
     const startNote = hasChannels
       ? "   (已配置通讯平台，将同时启动)"
       : "   (仅 WebChat，如需通讯平台请配置 channels)";
@@ -707,17 +673,17 @@ program
 ║                                                            ║
 ║   下一步:                                                  ║
 ║                                                            ║
-║   1. 检查配置: mozi check                                  ║
+║   1. 检查配置: vex check                                  ║
 ║   2. 启动服务: ${startCmd.padEnd(26)}║
 ${startNote.padEnd(61)}║
-║   3. 测试聊天: mozi chat                                   ║
+║   3. 测试聊天: vex chat                                   ║
 ║                                                            ║
 ║   启动选项:                                                ║
-║   - mozi start           完整服务 (WebChat+飞书+钉钉+QQ)   ║
-║   - mozi start --web-only 仅 WebChat                       ║
+║   - vex start           完整服务 (WebChat+飞书+钉钉+QQ)   ║
+║   - vex start --web-only 仅 WebChat                       ║
 ║                                                            ║
-║   配置文件: ~/.mozi/config.local.json5                     ║
-║   文档: https://github.com/King-Chau/mozi                  ║
+║   配置文件: ~/.vex/config.local.json5                     ║
+║   文档: https://github.com/King-Chau/vex                  ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
 `);
@@ -768,21 +734,21 @@ function generateJson5(obj: unknown, indent = 0): string {
 program
   .command("kill")
   .alias("stop")
-  .description("停止运行中的 Mozi 服务")
+  .description("停止运行中的 Vex 服务")
   .action(async () => {
     const { execSync } = await import("child_process");
 
     try {
-      // 查找 mozi 相关进程
+      // 查找 vex 相关进程
       const result = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
       const pids = result.trim().split("\n").filter(Boolean);
 
       if (pids.length === 0) {
-        console.log("没有找到运行中的 Mozi 服务");
+        console.log("没有找到运行中的 Vex 服务");
         return;
       }
 
-      console.log(`找到 ${pids.length} 个 Mozi 进程: ${pids.join(", ")}`);
+      console.log(`找到 ${pids.length} 个 Vex 进程: ${pids.join(", ")}`);
 
       // 终止进程
       for (const pid of pids) {
@@ -804,7 +770,7 @@ program
         execSync(`pkill -9 -f "node.*dist/cli.*start" 2>/dev/null || true`);
       }
 
-      console.log("🛑 Mozi 服务已停止");
+      console.log("🛑 Vex 服务已停止");
     } catch (error) {
       console.error("停止服务时出错:", error instanceof Error ? error.message : error);
       process.exit(1);
@@ -814,14 +780,14 @@ program
 // 重启服务命令
 program
   .command("restart")
-  .description("重启 Mozi 服务")
+  .description("重启 Vex 服务")
   .option("-c, --config <path>", "配置文件路径")
   .option("-p, --port <port>", "服务器端口")
   .option("--web-only", "仅启用 WebChat")
   .action(async (options) => {
     const { execSync, spawn: spawnProcess } = await import("child_process");
 
-    console.log("🔄 正在重启 Mozi 服务...\n");
+    console.log("🔄 正在重启 Vex 服务...\n");
 
     // 1. 停止现有服务
     try {
@@ -870,20 +836,20 @@ program
 // 服务状态命令
 program
   .command("status")
-  .description("查看 Mozi 服务状态")
+  .description("查看 Vex 服务状态")
   .action(async () => {
     const { execSync } = await import("child_process");
 
-    console.log("\n📊 Mozi 服务状态\n");
+    console.log("\n📊 Vex 服务状态\n");
 
     try {
-      // 查找 mozi 进程
+      // 查找 vex 进程
       const result = execSync('ps aux | grep -E "node.*dist/cli.*start" | grep -v grep 2>/dev/null || echo ""', { encoding: "utf-8" });
       const lines = result.trim().split("\n").filter(Boolean);
 
       if (lines.length === 0) {
         console.log("状态: 🔴 未运行");
-        console.log("\n提示: 使用 'mozi start' 或 'mozi start --web-only' 启动服务");
+        console.log("\n提示: 使用 'vex start' 或 'vex start --web-only' 启动服务");
         return;
       }
 
@@ -969,14 +935,14 @@ program
     // 确定要查看的日志文件
     let logFile: string;
     if (options.date) {
-      logFile = join(logDir, `mozi-${options.date}.log`);
+      logFile = join(logDir, `vex-${options.date}.log`);
     } else {
       logFile = getLogFile();
     }
 
     if (!existsSync(logFile)) {
       console.error(`日志文件不存在: ${logFile}`);
-      console.log(`\n提示: 使用 'mozi logs --list' 查看所有日志文件`);
+      console.log(`\n提示: 使用 'vex logs --list' 查看所有日志文件`);
       return;
     }
 
@@ -1024,7 +990,7 @@ program
     }
 
     console.log(`\n显示最后 ${displayLines.length} 条日志`);
-    console.log(`提示: 使用 'mozi logs -f' 实时跟踪日志`);
+    console.log(`提示: 使用 'vex logs -f' 实时跟踪日志`);
   });
 
 /** 打印日志行 */

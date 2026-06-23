@@ -60,7 +60,7 @@ function createCronAddTool(service: CronService): AgentTool {
       // Validate agentTurn parameters
       if (payloadType === "agentTurn") {
         if (deliver && channel) {
-          const validChannels = ["dingtalk", "feishu", "qq", "wecom", "webchat"];
+          const validChannels = ["weixin", "webchat"];
           if (!validChannels.includes(channel)) {
             return { content: [{ type: "text", text: `错误: 无效的通道 "${channel}"，有效通道: ${validChannels.join(", ")}` }], details: { error: "invalid_channel" } };
           }

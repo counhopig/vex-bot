@@ -1,4 +1,4 @@
-# Multi-stage build for mozi-bot
+# Multi-stage build for vex-bot
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
@@ -20,27 +20,27 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Create non-root user
-RUN addgroup -g 1001 -S mozi && \
-    adduser -S -u 1001 -G mozi mozi
+RUN addgroup -g 1001 -S vex && \
+    adduser -S -u 1001 -G vex vex
 
 # Copy built artifacts from builder
-COPY --from=builder --chown=mozi:mozi /app/package*.json ./
-COPY --from=builder --chown=mozi:mozi /app/dist ./dist
-COPY --from=builder --chown=mozi:mozi /app/skills ./skills
+COPY --from=builder --chown=vex:vex /app/package*.json ./
+COPY --from=builder --chown=vex:vex /app/dist ./dist
+COPY --from=builder --chown=vex:vex /app/skills ./skills
 
 # Install production dependencies only
 RUN npm ci --omit=dev
 
 # Create data directories for persistent storage
-RUN mkdir -p /home/mozi/.mozi/logs \
-    /home/mozi/.mozi/memory \
-    /home/mozi/.mozi/cron \
-    /home/mozi/.mozi/skills \
-    /home/mozi/.mozi/sessions && \
-    chown -R mozi:mozi /home/mozi/.mozi
+RUN mkdir -p /home/vex/.vex/logs \
+    /home/vex/.vex/memory \
+    /home/vex/.vex/cron \
+    /home/vex/.vex/skills \
+    /home/vex/.vex/sessions && \
+    chown -R vex:vex /home/vex/.vex
 
 # Switch to non-root user
-USER mozi
+USER vex
 
 # Expose the web server port
 EXPOSE 3000

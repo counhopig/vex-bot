@@ -14,18 +14,18 @@ let globalLogger: PinoLogger | null = null;
 /** 获取日志目录 */
 export function getLogDir(): string {
   // 优先使用环境变量
-  if (process.env.MOZI_LOG_DIR) {
-    return process.env.MOZI_LOG_DIR;
+  if (process.env.VEX_LOG_DIR) {
+    return process.env.VEX_LOG_DIR;
   }
   // 默认在用户主目录下
-  return join(homedir(), ".mozi", "logs");
+  return join(homedir(), ".vex", "logs");
 }
 
 /** 获取当前日志文件路径 */
 export function getLogFile(): string {
   const logDir = getLogDir();
   const date = new Date().toISOString().split("T")[0];
-  return join(logDir, `mozi-${date}.log`);
+  return join(logDir, `vex-${date}.log`);
 }
 
 /** 确保日志目录存在 */
@@ -45,7 +45,7 @@ export function createLogger(options: {
 }): PinoLogger {
   const {
     level = "info",
-    name = "mozi",
+    name = "vex",
     pretty = process.env.NODE_ENV !== "production",
     logToFile = true
   } = options;

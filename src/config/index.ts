@@ -8,7 +8,7 @@ import { join } from "path";
 import { homedir } from "os";
 import json5 from "json5";
 import yaml from "yaml";
-import type { MoziConfig, ProviderId } from "../types/index.js";
+import type { VexConfig, ProviderId } from "../types/index.js";
 import { getEnvVar } from "../utils/index.js";
 
 // ============== Zod Schema ==============
@@ -19,34 +19,15 @@ const ProviderConfigSchema = z.object({
   headers: z.record(z.string()).optional(),
 }).passthrough();  // 允许额外字段 (如 custom-openai 和 custom-anthropic 的 id, name, models 等)
 
-const FeishuConfigSchema = z.object({
-  appId: z.string(),
-  appSecret: z.string(),
-  verificationToken: z.string().optional(),
-  encryptKey: z.string().optional(),
-  enabled: z.boolean().optional().default(true),
-});
-
-const DingtalkConfigSchema = z.object({
-  appKey: z.string(),
-  appSecret: z.string(),
-  robotCode: z.string().optional(),
-  enabled: z.boolean().optional().default(true),
-});
-
-const QQConfigSchema = z.object({
-  appId: z.string(),
-  clientSecret: z.string(),
-  enabled: z.boolean().optional().default(true),
-  sandbox: z.boolean().optional().default(false),
-});
-
-const WeComConfigSchema = z.object({
-  corpId: z.string(),
-  corpSecret: z.string(),
-  agentId: z.number(),
+const WeixinConfigSchema = z.object({
+  baseUrl: z.string().optional(),
   token: z.string().optional(),
-  encodingAESKey: z.string().optional(),
+  accountId: z.string().optional(),
+  botType: z.string().optional().default("3"),
+  qrPollInterval: z.number().optional().default(1),
+  longPollTimeoutMs: z.number().optional().default(35000),
+  apiTimeoutMs: z.number().optional().default(120000),
+  cdnBaseUrl: z.string().optional(),
   enabled: z.boolean().optional().default(true),
 });
 
@@ -94,13 +75,10 @@ const SkillsConfigSchema = z.object({
   only: z.array(z.string()).optional(),
 });
 
-const MoziConfigSchema = z.object({
+const VexConfigSchema = z.object({
   providers: z.record(ProviderConfigSchema).optional().default({}),
   channels: z.object({
-    feishu: FeishuConfigSchema.optional(),
-    dingtalk: DingtalkConfigSchema.optional(),
-    qq: QQConfigSchema.optional(),
-    wecom: WeComConfigSchema.optional(),
+    weixin: WeixinConfigSchema.optional(),
   }).optional().default({}),
   agent: AgentConfigSchema.optional().default({}),
   server: ServerConfigSchema.optional().default({}),
@@ -113,7 +91,7 @@ const MoziConfigSchema = z.object({
 // ============== 配置加载 ==============
 
 /** 从文件加载配置 */
-function loadConfigFromFile(configPath: string): Partial<MoziConfig> {
+function loadConfigFromFile(configPath: string): Partial<VexConfig> {
   if (!existsSync(configPath)) {
     return {};
   }
@@ -130,14 +108,14 @@ function loadConfigFromFile(configPath: string): Partial<MoziConfig> {
 }
 
 /** 从环境变量加载配置 */
-function loadConfigFromEnv(): Partial<MoziConfig> {
-  const config: Partial<MoziConfig> = {
+function loadConfigFromEnv(): Partial<VexConfig> {
+  const config: Partial<VexConfig> = {
     providers: {},
     channels: {},
   };
 
   // 模型提供商
-  const providers: MoziConfig["providers"] = {};
+  const providers: VexConfig["providers"] = {};
 
   const deepseekKey = getEnvVar("DEEPSEEK_API_KEY");
   if (deepseekKey) {
@@ -216,62 +194,17 @@ function loadConfigFromEnv(): Partial<MoziConfig> {
 
   config.providers = providers;
 
-  // 飞书配置
-  const feishuAppId = getEnvVar("FEISHU_APP_ID");
-  const feishuAppSecret = getEnvVar("FEISHU_APP_SECRET");
-  if (feishuAppId && feishuAppSecret) {
+  // 个人微信 (iLink OC) 配置
+  const weixinToken = getEnvVar("WEIXIN_OC_TOKEN");
+  const weixinAccountId = getEnvVar("WEIXIN_OC_ACCOUNT_ID");
+  const weixinBaseUrl = getEnvVar("WEIXIN_OC_BASE_URL");
+  if (weixinToken || weixinAccountId || weixinBaseUrl) {
     config.channels = {
       ...config.channels,
-      feishu: {
-        appId: feishuAppId,
-        appSecret: feishuAppSecret,
-        verificationToken: getEnvVar("FEISHU_VERIFICATION_TOKEN"),
-        encryptKey: getEnvVar("FEISHU_ENCRYPT_KEY"),
-      },
-    };
-  }
-
-  // 钉钉配置
-  const dingtalkAppKey = getEnvVar("DINGTALK_APP_KEY");
-  const dingtalkAppSecret = getEnvVar("DINGTALK_APP_SECRET");
-  if (dingtalkAppKey && dingtalkAppSecret) {
-    config.channels = {
-      ...config.channels,
-      dingtalk: {
-        appKey: dingtalkAppKey,
-        appSecret: dingtalkAppSecret,
-        robotCode: getEnvVar("DINGTALK_ROBOT_CODE"),
-      },
-    };
-  }
-
-  // QQ 机器人配置
-  const qqAppId = getEnvVar("QQ_APP_ID");
-  const qqClientSecret = getEnvVar("QQ_CLIENT_SECRET");
-  if (qqAppId && qqClientSecret) {
-    config.channels = {
-      ...config.channels,
-      qq: {
-        appId: qqAppId,
-        clientSecret: qqClientSecret,
-        sandbox: getEnvVar("QQ_SANDBOX") === "true",
-      },
-    };
-  }
-
-  // 企业微信配置
-  const wecomCorpId = getEnvVar("WECOM_CORP_ID");
-  const wecomCorpSecret = getEnvVar("WECOM_CORP_SECRET");
-  const wecomAgentId = getEnvVar("WECOM_AGENT_ID");
-  if (wecomCorpId && wecomCorpSecret && wecomAgentId) {
-    config.channels = {
-      ...config.channels,
-      wecom: {
-        corpId: wecomCorpId,
-        corpSecret: wecomCorpSecret,
-        agentId: parseInt(wecomAgentId, 10),
-        token: getEnvVar("WECOM_TOKEN"),
-        encodingAESKey: getEnvVar("WECOM_ENCODING_AES_KEY"),
+      weixin: {
+        token: weixinToken,
+        accountId: weixinAccountId,
+        baseUrl: weixinBaseUrl,
       },
     };
   }
@@ -294,8 +227,8 @@ function loadConfigFromEnv(): Partial<MoziConfig> {
 /**
  * 一层深度合并：对每个顶层 key 做 object 浅合并（后传入的 config 同名字段覆盖前面的），便于多环境配置叠加。
  */
-function mergeConfigs(...configs: Partial<MoziConfig>[]): Partial<MoziConfig> {
-  const result: Partial<MoziConfig> = {};
+function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
+  const result: Partial<VexConfig> = {};
 
   for (const config of configs) {
     if (config.providers) {
@@ -306,10 +239,7 @@ function mergeConfigs(...configs: Partial<MoziConfig>[]): Partial<MoziConfig> {
       const c = config.channels;
       const r = result.channels;
       result.channels = {
-        feishu: c.feishu != null ? { ...r?.feishu, ...c.feishu } : r?.feishu,
-        dingtalk: c.dingtalk != null ? { ...r?.dingtalk, ...c.dingtalk } : r?.dingtalk,
-        qq: c.qq != null ? { ...r?.qq, ...c.qq } : r?.qq,
-        wecom: c.wecom != null ? { ...r?.wecom, ...c.wecom } : r?.wecom,
+        weixin: c.weixin != null ? { ...r?.weixin, ...c.weixin } : r?.weixin,
       };
     }
 
@@ -337,18 +267,18 @@ function mergeConfigs(...configs: Partial<MoziConfig>[]): Partial<MoziConfig> {
 }
 
 /** 加载配置 */
-export function loadConfig(options?: { configPath?: string }): MoziConfig {
-  const moziDir = join(homedir(), ".mozi");
+export function loadConfig(options?: { configPath?: string }): VexConfig {
+  const vexDir = join(homedir(), ".vex");
   const configPaths = options?.configPath
     ? [options.configPath]
     : [
-        // 优先从 ~/.mozi/ 目录读取
-        join(moziDir, "config.local.json5"),
-        join(moziDir, "config.local.json"),
-        join(moziDir, "config.json5"),
-        join(moziDir, "config.json"),
-        join(moziDir, "config.yaml"),
-        join(moziDir, "config.yml"),
+        // 优先从 ~/.vex/ 目录读取
+        join(vexDir, "config.local.json5"),
+        join(vexDir, "config.local.json"),
+        join(vexDir, "config.json5"),
+        join(vexDir, "config.json"),
+        join(vexDir, "config.yaml"),
+        join(vexDir, "config.yml"),
         // 然后从当前目录读取
         join(process.cwd(), "config.local.json5"),
         join(process.cwd(), "config.local.json"),
@@ -359,7 +289,7 @@ export function loadConfig(options?: { configPath?: string }): MoziConfig {
       ];
 
   // 从文件加载
-  let fileConfig: Partial<MoziConfig> = {};
+  let fileConfig: Partial<VexConfig> = {};
   for (const configPath of configPaths) {
     const config = loadConfigFromFile(configPath);
     if (Object.keys(config).length > 0) {
@@ -375,16 +305,16 @@ export function loadConfig(options?: { configPath?: string }): MoziConfig {
   const merged = mergeConfigs(fileConfig, envConfig);
 
   // 验证配置
-  const result = MoziConfigSchema.safeParse(merged);
+  const result = VexConfigSchema.safeParse(merged);
   if (!result.success) {
     throw new Error(`Invalid configuration: ${result.error.message}`);
   }
 
-  return result.data as MoziConfig;
+  return result.data as VexConfig;
 }
 
 /** 验证必需配置 */
-export function validateRequiredConfig(config: MoziConfig, options?: { webOnly?: boolean }): string[] {
+export function validateRequiredConfig(config: VexConfig, options?: { webOnly?: boolean }): string[] {
   const errors: string[] = [];
 
   // 检查是否至少配置了一个提供商
@@ -395,13 +325,13 @@ export function validateRequiredConfig(config: MoziConfig, options?: { webOnly?:
 
   // 检查是否至少配置了一个通道 (webOnly 模式下可以只使用 WebChat)
   if (!options?.webOnly) {
-    const hasChannel = config.channels.feishu || config.channels.dingtalk || config.channels.qq || config.channels.wecom;
-    if (!hasChannel) {
-      errors.push("At least one channel (feishu, dingtalk, qq, or wecom) must be configured. Use --web-only to run with WebChat only.");
+const hasChannel = config.channels.weixin;
+if (!hasChannel) {
+  errors.push("Weixin (个人微信) channel must be configured. Use --web-only to run with WebChat only.");
     }
   }
 
   return errors;
 }
 
-export { MoziConfigSchema };
+export { VexConfigSchema };

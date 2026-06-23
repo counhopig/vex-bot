@@ -17,7 +17,7 @@ vi.mock("../src/utils/logger.js", () => ({
   }),
 }));
 
-import { loadConfig, validateRequiredConfig, MoziConfigSchema } from "../src/config/index.js";
+import { loadConfig, validateRequiredConfig, VexConfigSchema } from "../src/config/index.js";
 
 describe("config", () => {
   let testDir: string;
@@ -25,12 +25,12 @@ describe("config", () => {
 
   beforeEach(() => {
     // 创建临时测试目录
-    testDir = path.join(os.tmpdir(), `mozi-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = path.join(os.tmpdir(), `vex-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(testDir, { recursive: true });
 
     // 重置环境变量
     process.env = { ...originalEnv };
-    // 清除所有 mozi 相关的环境变量
+    // 清除所有 vex 相关的环境变量
     Object.keys(process.env).forEach((key) => {
       if (
         key.includes("DEEPSEEK") ||
@@ -67,14 +67,14 @@ describe("config", () => {
     }
   });
 
-  describe("MoziConfigSchema", () => {
+  describe("VexConfigSchema", () => {
     it("should validate minimal config", () => {
-      const result = MoziConfigSchema.safeParse({});
+      const result = VexConfigSchema.safeParse({});
       expect(result.success).toBe(true);
     });
 
     it("should provide default values", () => {
-      const result = MoziConfigSchema.parse({});
+      const result = VexConfigSchema.parse({});
 
       expect(result.providers).toEqual({});
       expect(result.channels).toEqual({});
@@ -89,7 +89,7 @@ describe("config", () => {
     });
 
     it("should validate provider config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         providers: {
           deepseek: {
             apiKey: "test-key",
@@ -102,7 +102,7 @@ describe("config", () => {
     });
 
     it("should validate feishu channel config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         channels: {
           feishu: {
             appId: "app-id",
@@ -117,7 +117,7 @@ describe("config", () => {
     });
 
     it("should validate dingtalk channel config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         channels: {
           dingtalk: {
             appKey: "app-key",
@@ -131,7 +131,7 @@ describe("config", () => {
     });
 
     it("should validate qq channel config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         channels: {
           qq: {
             appId: "app-id",
@@ -145,7 +145,7 @@ describe("config", () => {
     });
 
     it("should validate wecom channel config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         channels: {
           wecom: {
             corpId: "corp-id",
@@ -161,7 +161,7 @@ describe("config", () => {
     });
 
     it("should validate agent config with valid provider", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         agent: {
           defaultModel: "gpt-4",
           defaultProvider: "openai",
@@ -174,7 +174,7 @@ describe("config", () => {
     });
 
     it("should reject invalid temperature", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         agent: {
           temperature: 3.0, // Max is 2
         },
@@ -184,7 +184,7 @@ describe("config", () => {
     });
 
     it("should validate memory config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         memory: {
           enabled: true,
           directory: "/custom/memory",
@@ -197,7 +197,7 @@ describe("config", () => {
     });
 
     it("should validate skills config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         skills: {
           enabled: true,
           userDir: "/user/skills",
@@ -211,7 +211,7 @@ describe("config", () => {
     });
 
     it("should validate session store config", () => {
-      const result = MoziConfigSchema.safeParse({
+      const result = VexConfigSchema.safeParse({
         sessions: {
           type: "file",
           directory: "/sessions",
@@ -350,14 +350,14 @@ providers:
 
   describe("validateRequiredConfig", () => {
     it("should return error when no provider configured", () => {
-      const config = MoziConfigSchema.parse({});
+      const config = VexConfigSchema.parse({});
       const errors = validateRequiredConfig(config);
 
       expect(errors.some((e) => e.includes("provider"))).toBe(true);
     });
 
     it("should return error when no channel configured (not webOnly)", () => {
-      const config = MoziConfigSchema.parse({
+      const config = VexConfigSchema.parse({
         providers: {
           deepseek: { apiKey: "key" },
         },
@@ -368,7 +368,7 @@ providers:
     });
 
     it("should not require channel when webOnly", () => {
-      const config = MoziConfigSchema.parse({
+      const config = VexConfigSchema.parse({
         providers: {
           deepseek: { apiKey: "key" },
         },
@@ -379,7 +379,7 @@ providers:
     });
 
     it("should pass with valid config", () => {
-      const config = MoziConfigSchema.parse({
+      const config = VexConfigSchema.parse({
         providers: {
           deepseek: { apiKey: "key" },
         },

@@ -1,10 +1,10 @@
 /**
- * Model Resolver - 将 mozi 配置映射为 pi-ai 的 Model 对象
+ * Model Resolver - 将 vex 配置映射为 pi-ai 的 Model 对象
  */
 
 import type { Model, Api, Provider } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
-import type { ProviderId, SimpleProviderConfig, MoziConfig, ModelDefinition } from "../types/index.js";
+import type { ProviderId, SimpleProviderConfig, VexConfig, ModelDefinition } from "../types/index.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("model-resolver");
@@ -27,7 +27,7 @@ const CHINA_PROVIDER_BASE_URLS: Record<string, string> = {
   kimi: "https://api.moonshot.cn/v1",
   stepfun: "https://api.stepfun.com/v1",
   doubao: "https://ark.cn-beijing.volces.com/api/v3",
-  minimax: "https://api.minimax.chat/v1/text/chatcompletion_v2",
+  minimax: "https://api.minimax.chat/v1",
   modelscope: "https://api-inference.modelscope.cn/v1",
   dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
@@ -54,6 +54,7 @@ const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
     { id: "step-1-128k", name: "Step 1 128K", provider: "stepfun", api: "openai-compatible", contextWindow: 128000, maxTokens: 65536, supportsVision: false, supportsReasoning: false },
   ],
   minimax: [
+    { id: "MiniMax-M3", name: "MiniMax M3", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
     { id: "MiniMax-M2.1", name: "MiniMax M2.1", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
     { id: "MiniMax-M1", name: "MiniMax M1", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
     { id: "abab6.5s-chat", name: "ABAB 6.5s Chat", provider: "minimax", api: "openai-compatible", contextWindow: 245760, maxTokens: 8192, supportsVision: false, supportsReasoning: false },
@@ -85,7 +86,7 @@ const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
 const PRESET_PROVIDER_CONFIGS: Record<string, { baseUrl: string; headers?: Record<string, string> }> = {
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
-    headers: { "HTTP-Referer": "https://github.com/King-Chau/mozi", "X-Title": "Mozi" },
+    headers: { "HTTP-Referer": "https://github.com/King-Chau/vex", "X-Title": "Vex" },
   },
   together: { baseUrl: "https://api.together.xyz/v1" },
   groq: { baseUrl: "https://api.groq.com/openai/v1" },
@@ -262,7 +263,7 @@ function registerCustomAnthropic(config: Record<string, unknown>): void {
 }
 
 /** 初始化模型解析器 */
-export function initModelResolver(config: MoziConfig): void {
+export function initModelResolver(config: VexConfig): void {
   modelRegistry.clear();
   providerConfigs = config.providers as Record<string, SimpleProviderConfig>;
 

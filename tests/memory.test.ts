@@ -34,7 +34,7 @@ import {
 const getTestDir = () =>
   path.join(
     os.tmpdir(),
-    `mozi-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    `vex-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
 
 describe("memory/index", () => {

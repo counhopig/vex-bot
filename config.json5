@@ -1,5 +1,5 @@
 {
-  // Mozi 配置文件
+  // Vex 配置文件
   providers: {
     // 使用 claude-code-router 作为 Anthropic 兼容提供商
     "custom-anthropic": {

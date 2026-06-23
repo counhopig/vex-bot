@@ -6,7 +6,7 @@
  */
 
 import type { Tool } from "../tools/types.js";
-import type { MoziConfig, ProviderId } from "../types/index.js";
+import type { VexConfig, ProviderId } from "../types/index.js";
 import { registerTool, registerTools } from "../tools/registry.js";
 import { registerHook, type HookEventType, type HookHandler } from "../hooks/index.js";
 import { getChildLogger } from "../utils/logger.js";
@@ -41,7 +41,7 @@ export interface PluginConfigSchema {
   additionalProperties?: boolean;
 }
 
-/** 插件清单 (mozi.plugin.json) */
+/** 插件清单 (vex.plugin.json) */
 export interface PluginManifest {
   id: string;
   name?: string;
@@ -65,7 +65,7 @@ export interface PluginApi {
   /** 插件元数据 */
   meta: PluginMeta;
   /** 全局配置 */
-  config: MoziConfig;
+  config: VexConfig;
   /** 插件自身配置 */
   pluginConfig?: Record<string, unknown>;
   /** 注册工具 */
@@ -191,7 +191,7 @@ const pluginRegistry = new Map<string, LoadedPlugin>();
 /** 注册插件 */
 export async function registerPlugin(
   definition: PluginDefinition,
-  config: MoziConfig,
+  config: VexConfig,
   options?: {
     origin?: PluginOrigin;
     pluginConfig?: Record<string, unknown>;
@@ -239,7 +239,7 @@ export async function registerPlugin(
     getStateDir: () => {
       const { homedir } = require("os");
       const { join } = require("path");
-      return join(homedir(), ".mozi", "plugins", meta.id);
+      return join(homedir(), ".vex", "plugins", meta.id);
     },
   };
 
@@ -286,7 +286,7 @@ export async function activatePlugin(pluginId: string): Promise<void> {
   const api: PluginApi = {
     id: plugin.id,
     meta: plugin.definition.meta,
-    config: {} as MoziConfig,  // 需要从外部传入
+    config: {} as VexConfig,  // 需要从外部传入
     pluginConfig: plugin.pluginConfig,
     registerTool: (tool) => registerTool(tool),
     registerTools: (tools) => registerTools(tools),
@@ -299,7 +299,7 @@ export async function activatePlugin(pluginId: string): Promise<void> {
     getStateDir: () => {
       const { homedir } = require("os");
       const { join } = require("path");
-      return join(homedir(), ".mozi", "plugins", plugin.id);
+      return join(homedir(), ".vex", "plugins", plugin.id);
     },
   };
 

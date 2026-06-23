@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AgentRuntime, createAgentRuntime, type RuntimeConfig } from "../src/agents/runtime.js";
-import type { MoziConfig } from "../src/types/index.js";
+import type { VexConfig } from "../src/types/index.js";
 
 // Mock pi-coding-agent
 vi.mock("@mariozechner/pi-coding-agent", () => ({
@@ -267,8 +267,8 @@ describe("agents/runtime", () => {
   });
 
   describe("createAgentRuntime", () => {
-    it("should create runtime from MoziConfig", () => {
-      const config: MoziConfig = {
+    it("should create runtime from VexConfig", () => {
+      const config: VexConfig = {
         providers: {
           "test-provider": {
             apiKey: "test-key",

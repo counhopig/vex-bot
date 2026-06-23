@@ -14,7 +14,7 @@ import type {
 } from "./index.js";
 import { registerPlugin, activatePlugin, getLoadedPlugins } from "./index.js";
 import { discoverPlugins } from "./discovery.js";
-import type { MoziConfig } from "../types/index.js";
+import type { VexConfig } from "../types/index.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("plugins:loader");
@@ -132,7 +132,7 @@ function moduleToDefinition(
  * 加载所有插件
  */
 export async function loadPlugins(
-  config: MoziConfig,
+  config: VexConfig,
   enableConfig?: PluginEnableConfig
 ): Promise<{
   loaded: string[];

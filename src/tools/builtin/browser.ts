@@ -192,7 +192,7 @@ async function startBrowser(params: Record<string, unknown>): Promise<AgentToolR
   const browser = await playwright.chromium.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
   const context = await (browser as any).newContext({
     viewport: { width: 1280, height: 720 },
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    userAgent: "Vexlla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
   const page = await context.newPage();
   browserSession = { browser, context, page, refs: new Map(), refsMode: "role" };

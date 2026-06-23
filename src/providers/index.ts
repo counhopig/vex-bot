@@ -2,7 +2,7 @@
  * 模型提供商管理 - 薄封装层，使用 model-resolver
  */
 
-import type { ProviderId, MoziConfig } from "../types/index.js";
+import type { ProviderId, VexConfig } from "../types/index.js";
 import {
   initModelResolver,
   resolveModel,
@@ -17,7 +17,7 @@ export { resolveModel, getApiKeyForProvider, isProviderAvailable } from "./model
 const logger = getChildLogger("providers");
 
 /** 从配置初始化提供商 */
-export function initializeProviders(config: MoziConfig): void {
+export function initializeProviders(config: VexConfig): void {
   initModelResolver(config);
   logger.info("Providers initialized via model-resolver");
 }

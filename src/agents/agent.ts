@@ -6,7 +6,7 @@
 import type {
   InboundMessageContext,
   ProviderId,
-  MoziConfig,
+  VexConfig,
 } from "../types/index.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { AgentRuntime, createAgentRuntime, type ChatResponse, type StreamEvent } from "./runtime.js";
@@ -182,7 +182,7 @@ export class Agent {
 }
 
 /** 创建 Agent */
-export async function createAgent(config: MoziConfig): Promise<Agent> {
+export async function createAgent(config: VexConfig): Promise<Agent> {
   let memoryManager: MemoryManager | undefined;
   if (config.memory?.enabled !== false && config.memory) {
     const { createMemoryManager } = await import("../memory/index.js");

@@ -23,9 +23,9 @@ import {
   isProviderAvailable,
   hasProvider,
 } from "../src/providers/index.js";
-import type { MoziConfig } from "../src/types/index.js";
+import type { VexConfig } from "../src/types/index.js";
 
-function makeConfig(providers: Record<string, any>): MoziConfig {
+function makeConfig(providers: Record<string, any>): VexConfig {
   return {
     providers,
     channels: {},

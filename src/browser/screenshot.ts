@@ -183,11 +183,11 @@ async function takeScreenshotWithLabels(
   await page.evaluate(`
     (function(boxes) {
       // 移除旧标签
-      var oldRoot = document.querySelector("[data-mozi-labels]");
+      var oldRoot = document.querySelector("[data-vex-labels]");
       if (oldRoot) oldRoot.remove();
 
       var root = document.createElement("div");
-      root.setAttribute("data-mozi-labels", "1");
+      root.setAttribute("data-vex-labels", "1");
       root.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;z-index:2147483647;pointer-events:none";
 
       for (var i = 0; i < boxes.length; i++) {
@@ -214,7 +214,7 @@ async function takeScreenshotWithLabels(
   // 移除标签
   await page.evaluate(`
     (function() {
-      var root = document.querySelector("[data-mozi-labels]");
+      var root = document.querySelector("[data-vex-labels]");
       if (root) root.remove();
     })()
   `);

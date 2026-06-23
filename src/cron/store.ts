@@ -12,7 +12,7 @@ import json5 from "json5";
 import type { CronStoreFile, CronJob } from "./types.js";
 
 /** 默认 Cron 数据目录 */
-const CRON_DATA_DIR = join(homedir(), ".mozi", "cron");
+const CRON_DATA_DIR = join(homedir(), ".vex", "cron");
 
 /** 默认存储文件路径 */
 export const DEFAULT_CRON_STORE_PATH = join(CRON_DATA_DIR, "jobs.json");

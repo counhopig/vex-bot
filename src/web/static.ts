@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from "fs";
 import { join, extname } from "path";
 import type { IncomingMessage, ServerResponse } from "http";
 import { getChildLogger } from "../utils/logger.js";
-import type { MoziConfig } from "../types/index.js";
+import type { VexConfig } from "../types/index.js";
 
 const logger = getChildLogger("static");
 
@@ -37,8 +37,8 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /** 获取内嵌的 HTML 页面 */
-function getEmbeddedHtml(config: MoziConfig): string {
-  const assistantName = "墨子";
+function getEmbeddedHtml(config: VexConfig): string {
+  const assistantName = "Vex";
   const defaultModel = config.agent.defaultModel;
   const defaultProvider = config.agent.defaultProvider;
 
@@ -325,7 +325,7 @@ function getEmbeddedHtml(config: MoziConfig): string {
     let sessionRestored = false;
     let allSessions = [];
 
-    const STORAGE_KEY = 'mozi_session_key';
+    const STORAGE_KEY = 'vex_session_key';
 
     const sidebar = document.getElementById('sidebar');
     const sidebarOverlay = document.getElementById('sidebarOverlay');
@@ -703,8 +703,8 @@ function getEmbeddedHtml(config: MoziConfig): string {
 }
 
 /** 获取 Control UI 页面 */
-function getControlHtml(config: MoziConfig): string {
-  const assistantName = "墨子";
+function getControlHtml(config: VexConfig): string {
+  const assistantName = "Vex";
   const defaultModel = config.agent.defaultModel;
   const defaultProvider = config.agent.defaultProvider;
 
@@ -1457,62 +1457,22 @@ function getControlHtml(config: MoziConfig): string {
             <div class="channels-form-grid">
               <div class="channel-config-card">
                 <div class="card-header">
-                  <span class="card-title">飞书</span>
+                  <span class="card-title">个人微信</span>
                   <label class="toggle-switch">
-                    <input type="checkbox" id="feishu-enabled" />
+                    <input type="checkbox" id="weixin-enabled" />
                     <span class="toggle-slider"></span>
                   </label>
                 </div>
                 <div class="channel-form-fields">
-                  <input type="text" id="feishu-app-id" class="form-input" placeholder="App ID" />
-                  <input type="password" id="feishu-app-secret" class="form-input" placeholder="App Secret" />
-                </div>
-              </div>
-              <div class="channel-config-card">
-                <div class="card-header">
-                  <span class="card-title">钉钉</span>
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="dingtalk-enabled" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
-                <div class="channel-form-fields">
-                  <input type="text" id="dingtalk-app-key" class="form-input" placeholder="App Key" />
-                  <input type="password" id="dingtalk-app-secret" class="form-input" placeholder="App Secret" />
-                  <input type="text" id="dingtalk-robot-code" class="form-input" placeholder="Robot Code (可选)" />
-                </div>
-              </div>
-              <div class="channel-config-card">
-                <div class="card-header">
-                  <span class="card-title">QQ</span>
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="qq-enabled" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
-                <div class="channel-form-fields">
-                  <input type="text" id="qq-app-id" class="form-input" placeholder="App ID" />
-                  <input type="password" id="qq-client-secret" class="form-input" placeholder="Client Secret" />
-                  <label class="checkbox-label">
-                    <input type="checkbox" id="qq-sandbox" />
-                    <span>沙箱环境</span>
-                  </label>
-                </div>
-              </div>
-              <div class="channel-config-card">
-                <div class="card-header">
-                  <span class="card-title">企业微信</span>
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="wecom-enabled" />
-                    <span class="toggle-slider"></span>
-                  </label>
-                </div>
-                <div class="channel-form-fields">
-                  <input type="text" id="wecom-corp-id" class="form-input" placeholder="Corp ID" />
-                  <input type="password" id="wecom-corp-secret" class="form-input" placeholder="Corp Secret" />
-                  <input type="number" id="wecom-agent-id" class="form-input" placeholder="Agent ID" />
-                  <input type="text" id="wecom-token" class="form-input" placeholder="Token (可选)" />
-                  <input type="text" id="wecom-encoding-aes-key" class="form-input" placeholder="Encoding AES Key (可选)" />
+                  <p class="form-hint">个人微信使用扫码登录，无需手动填写凭证</p>
+                  <input type="text" id="weixin-bot-type" class="form-input" placeholder="Bot Type (默认: 3)" />
+                  <input type="text" id="weixin-base-url" class="form-input" placeholder="API Base URL (默认: https://ilinkai.weixin.qq.com)" />
+                  <p id="weixin-status" class="form-hint" style="color: #f59e0b;">状态: 未登录（点下方按钮扫码登录）</p>
+                  <button id="weixin-qr-btn" class="btn btn-primary" style="margin-top: 8px;" onclick="startWeixinQRLogin()">扫码登录</button>
+                  <div id="weixin-qr-area" style="display:none; margin-top: 12px; text-align: center;">
+                    <img id="weixin-qr-img" src="" alt="微信扫码" style="max-width: 280px; border: 1px solid #e5e7eb; border-radius: 8px;" />
+                    <p id="weixin-qr-status" style="color: #f59e0b; margin-top: 8px; font-weight: 500;">等待扫码...</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1559,7 +1519,7 @@ function getControlHtml(config: MoziConfig): string {
             </div>
             <div class="form-group">
               <label>存储目录</label>
-              <input type="text" id="memory-directory" class="form-input" placeholder="~/.mozi/memory" />
+              <input type="text" id="memory-directory" class="form-input" placeholder="~/.vex/memory" />
             </div>
           </div>
         </div>
@@ -1937,6 +1897,10 @@ function getControlHtml(config: MoziConfig): string {
       document.getElementById('wecom-agent-id').value = '';
       document.getElementById('wecom-token').value = '';
       document.getElementById('wecom-encoding-aes-key').value = '';
+document.getElementById('weixin-enabled').checked = false;
+document.getElementById('weixin-bot-type').value = '';
+document.getElementById('weixin-base-url').value = '';
+document.getElementById('weixin-status').textContent = '状态: 未登录';
 
       // 飞书 - 只要有配置就启用
       const feishu = channels.feishu;
@@ -1978,7 +1942,21 @@ function getControlHtml(config: MoziConfig): string {
         document.getElementById('wecom-token').value = wecom.token || '';
         document.getElementById('wecom-encoding-aes-key').value = wecom.encodingAESKey || '';
       }
-    }
+      const weixin = channels.weixin;
+      if (weixin) {
+        const hasConfig = weixin.hasToken;
+        document.getElementById('weixin-enabled').checked = hasConfig && weixin.enabled !== false;
+        document.getElementById('weixin-bot-type').value = weixin.botType || '';
+        document.getElementById('weixin-base-url').value = weixin.baseUrl || '';
+        document.getElementById('weixin-status').textContent = weixin.hasToken
+          ? '状态: 已登录 (Token 有效)'
+          : '状态: 未登录（需在终端扫码或重启后自动登录）';
+        if (weixin.hasToken) {
+          document.getElementById('weixin-status').style.color = '#10b981';
+        } else {
+          document.getElementById('weixin-status').style.color = '#f59e0b';
+        }
+      }
 
     // 显示添加提供商 Modal
     function showAddProviderModal() {
@@ -2195,6 +2173,21 @@ function getControlHtml(config: MoziConfig): string {
           channels.wecom = { hasConfig: false };
         }
 
+        const weixinEnabled = document.getElementById('weixin-enabled').checked;
+        const weixinBotType = document.getElementById('weixin-bot-type').value.trim();
+        const weixinBaseUrl = document.getElementById('weixin-base-url').value.trim();
+        const weixinHasConfig = weixinEnabled || weixinBotType || weixinBaseUrl;
+        if (weixinHasConfig) {
+          channels.weixin = {
+            hasConfig: true,
+            enabled: weixinEnabled,
+            ...(weixinBotType && { botType: weixinBotType }),
+            ...(weixinBaseUrl && { baseUrl: weixinBaseUrl })
+          };
+        } else {
+          channels.weixin = { hasConfig: false };
+        }
+
         if (Object.keys(channels).length > 0) {
           configToSave.channels = channels;
         }
@@ -2279,6 +2272,85 @@ function getControlHtml(config: MoziConfig): string {
     }
 
     // 启动
+    let qrPollTimer = null;
+    let currentQRCode = null;
+
+    async function startWeixinQRLogin() {
+      const btn = document.getElementById('weixin-qr-btn');
+      const area = document.getElementById('weixin-qr-area');
+      const img = document.getElementById('weixin-qr-img');
+      const statusEl = document.getElementById('weixin-qr-status');
+
+      btn.textContent = '获取二维码中...';
+      btn.disabled = true;
+
+      try {
+        const result = await request('weixin.qr', {});
+        if (result.error) {
+          btn.textContent = '扫码登录';
+          btn.disabled = false;
+          alert(result.error);
+          return;
+        }
+
+        currentQRCode = result.qrcode;
+        img.src = result.qrcode_url;
+        area.style.display = 'block';
+        statusEl.textContent = '等待扫码...';
+        statusEl.style.color = '#f59e0b';
+        btn.textContent = '刷新二维码';
+        btn.disabled = false;
+
+        startQRPolling();
+      } catch (e) {
+        btn.textContent = '扫码登录';
+        btn.disabled = false;
+        alert('获取二维码失败: ' + e.message);
+      }
+    }
+
+    function startQRPolling() {
+      if (qrPollTimer) clearInterval(qrPollTimer);
+      qrPollTimer = setInterval(async () => {
+        if (!currentQRCode) return;
+        try {
+          const result = await request('weixin.qr.status', { qrcode: currentQRCode });
+          const statusEl = document.getElementById('weixin-qr-status');
+          statusEl.textContent = result.message;
+
+          if (result.status === 'confirmed') {
+            statusEl.style.color = '#10b981';
+            clearInterval(qrPollTimer);
+            qrPollTimer = null;
+            currentQRCode = null;
+            const btn = document.getElementById('weixin-qr-btn');
+            btn.textContent = '已登录 ✓';
+            btn.disabled = true;
+            document.getElementById('weixin-status').textContent = '状态: 已登录 (Token 有效)';
+            document.getElementById('weixin-status').style.color = '#10b981';
+            alert('个人微信登录成功！请点击「保存配置」并重启服务。');
+          } else if (result.status === 'expired') {
+            statusEl.textContent = '二维码已过期，请点击刷新';
+            statusEl.style.color = '#ef4444';
+            clearInterval(qrPollTimer);
+            qrPollTimer = null;
+            currentQRCode = null;
+            const btn = document.getElementById('weixin-qr-btn');
+            btn.textContent = '刷新二维码';
+            btn.disabled = false;
+          } else if (result.status === 'canceled' || result.status === 'denied') {
+            statusEl.textContent = result.message;
+            statusEl.style.color = '#ef4444';
+            clearInterval(qrPollTimer);
+            qrPollTimer = null;
+            currentQRCode = null;
+          }
+        } catch (e) {
+          console.error('QR poll error:', e);
+        }
+      }, 2000);
+    }
+
     connect();
   </script>
 </body>
@@ -2287,7 +2359,7 @@ function getControlHtml(config: MoziConfig): string {
 
 /** 静态文件服务选项 */
 export interface StaticServerOptions {
-  config: MoziConfig;
+  config: VexConfig;
 }
 
 /** 处理静态文件请求 */

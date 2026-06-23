@@ -49,7 +49,7 @@ class WriteLock {
 
 /** 默认存储目录 */
 function getDefaultStorePath(): string {
-  return path.join(os.homedir(), ".mozi", "sessions");
+  return path.join(os.homedir(), ".vex", "sessions");
 }
 
 /** 会话存储类 */

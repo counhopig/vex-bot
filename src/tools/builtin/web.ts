@@ -231,7 +231,7 @@ export function createWebFetchTool(): AgentTool {
 
         const response = await fetch(url, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; MoziBot/1.0)",
+            "User-Agent": "Vexlla/5.0 (compatible; VexBot/1.0)",
             Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           },
         });

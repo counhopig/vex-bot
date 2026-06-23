@@ -24,7 +24,8 @@ import type {
   ConfigValidateResult,
 } from "./types.js";
 import type { Agent } from "../agents/agent.js";
-import type { MoziConfig, ProviderId } from "../types/index.js";
+import type { VexConfig, ProviderId } from "../types/index.js";
+import type { WeixinChannel } from "../channels/weixin/index.js";
 import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type TranscriptMessage } from "../sessions/index.js";
@@ -49,10 +50,9 @@ interface WsClient {
 export interface WsServerOptions {
   server: HttpServer;
   agent: Agent;
-  config: MoziConfig;
-  /** 心跳检测间隔 (毫秒), 默认 30000 */
+  config: VexConfig;
+  weixinChannel?: WeixinChannel;
   heartbeatInterval?: number;
-  /** 客户端超时时间 (毫秒), 默认 60000 */
   clientTimeout?: number;
 }
 
@@ -61,7 +61,8 @@ export class WsServer {
   private wss: WebSocketServer;
   private clients = new Map<string, WsClient>();
   private agent: Agent;
-  private config: MoziConfig;
+  private config: VexConfig;
+  private weixinChannel?: WeixinChannel;
   private startTime = Date.now();
   private heartbeatInterval: number;
   private clientTimeout: number;
@@ -69,6 +70,7 @@ export class WsServer {
   constructor(options: WsServerOptions) {
     this.agent = options.agent;
     this.config = options.config;
+    this.weixinChannel = options.weixinChannel;
     this.heartbeatInterval = options.heartbeatInterval ?? 30000;
     this.clientTimeout = options.clientTimeout ?? 60000;
 
@@ -194,6 +196,12 @@ export class WsServer {
         case "ping":
           result = { pong: Date.now() };
           break;
+        case "weixin.qr":
+          result = await this.handleWeixinQR();
+          break;
+        case "weixin.qr.status":
+          result = await this.handleWeixinQRStatus(params as { qrcode: string });
+          break;
         default:
           throw new Error(`Unknown method: ${method}`);
       }
@@ -206,6 +214,41 @@ export class WsServer {
         message,
       });
     }
+  }
+
+  private async handleWeixinQR(): Promise<{ qrcode_url: string; qrcode: string } | { error: string }> {
+    if (!this.weixinChannel) {
+      return { error: "个人微信通道未启用" };
+    }
+    const result = await this.weixinChannel.getLoginQRCode();
+    if (!result) {
+      return { error: "获取二维码失败" };
+    }
+    const qrcode_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.qrcodeImgContent)}`;
+    return { qrcode_url, qrcode: result.qrcode };
+  }
+
+  private async handleWeixinQRStatus(params: { qrcode: string }): Promise<{
+    status: string;
+    message: string;
+    accountId?: string;
+  }> {
+    if (!this.weixinChannel) {
+      return { status: "error", message: "个人微信通道未启用" };
+    }
+    const result = await this.weixinChannel.checkQRStatus(params.qrcode);
+    const statusMessages: Record<string, string> = {
+      wait: "等待扫码...",
+      confirmed: "登录成功！",
+      expired: "二维码已过期",
+      canceled: "用户取消登录",
+      denied: "用户拒绝登录",
+    };
+    return {
+      status: result.status,
+      message: statusMessages[result.status] ?? result.status,
+      accountId: result.accountId,
+    };
   }
 
   /** 确保客户端有 session，如果没有则创建 */
@@ -497,22 +540,12 @@ export class WsServer {
     // 通道信息（脱敏敏感字段）
     const channels: Record<string, ConfigInfo["channels"][string]> = {};
     const channelNames: Record<string, string> = {
-      feishu: "飞书",
-      dingtalk: "钉钉",
-      qq: "QQ",
-      wecom: "企业微信",
+      weixin: "个人微信",
     };
     for (const [id, config] of Object.entries(this.config.channels)) {
       if (config) {
         const hasConfig = (
-          // 飞书
-          (id === "feishu" && ((config as any).appId || (config as any).appSecret)) ||
-          // 钉钉
-          (id === "dingtalk" && ((config as any).appKey || (config as any).appSecret || (config as any).robotCode)) ||
-          // QQ
-          (id === "qq" && ((config as any).appId || (config as any).clientSecret)) ||
-          // 企业微信
-          (id === "wecom" && ((config as any).corpId || (config as any).corpSecret || (config as any).agentId || (config as any).token || (config as any).encodingAESKey))
+          (id === "weixin" && Boolean((config as any).token || (config as any).accountId))
         );
         const channelConfig: ConfigInfo["channels"][string] = {
           id,
@@ -520,23 +553,11 @@ export class WsServer {
           hasConfig,
           enabled: hasConfig && ((config as any).enabled ?? true),
         };
-        // 添加非敏感字段用于编辑
-        if (id === "feishu") {
-          (channelConfig as any).appId = (config as any).appId;
-          // appSecret 不返回
-        } else if (id === "dingtalk") {
-          (channelConfig as any).appKey = (config as any).appKey;
-          (channelConfig as any).robotCode = (config as any).robotCode;
-        } else if (id === "qq") {
-          (channelConfig as any).appId = (config as any).appId;
-          (channelConfig as any).sandbox = (config as any).sandbox;
-          // clientSecret 不返回
-        } else if (id === "wecom") {
-          (channelConfig as any).corpId = (config as any).corpId;
-          (channelConfig as any).agentId = (config as any).agentId;
-          (channelConfig as any).token = (config as any).token;
-          (channelConfig as any).encodingAESKey = (config as any).encodingAESKey;
-          // corpSecret 不返回
+        if (id === "weixin") {
+          (channelConfig as any).accountId = (config as any).accountId;
+          (channelConfig as any).botType = (config as any).botType;
+          (channelConfig as any).baseUrl = (config as any).baseUrl;
+          (channelConfig as any).hasToken = Boolean((config as any).token);
         }
         channels[id] = channelConfig;
       }
@@ -618,17 +639,8 @@ export class WsServer {
     if (params.channels) {
       for (const [id, c] of Object.entries(params.channels)) {
         if (c.hasConfig) {
-          if (id === "feishu" && !c.appId) {
-            errors.push("飞书需要 App ID");
-          }
-          if (id === "dingtalk" && !c.appKey) {
-            errors.push("钉钉需要 App Key");
-          }
-          if (id === "qq" && !c.appId) {
-            errors.push("QQ 需要 App ID");
-          }
-          if (id === "wecom" && !c.corpId) {
-            errors.push("企业微信需要 Corp ID");
+          if (id === "weixin" && !c.hasConfig) {
+            errors.push("个人微信需要完成扫码登录");
           }
         }
       }
@@ -676,8 +688,8 @@ export class WsServer {
 
   /** 保存配置到文件 */
   private async saveConfig(params: ConfigSaveParams): Promise<{ success: boolean; message: string; requiresRestart?: boolean }> {
-    const moziDir = join(homedir(), ".mozi");
-    const configPath = join(moziDir, "config.local.json5");
+    const vexDir = join(homedir(), ".vex");
+    const configPath = join(vexDir, "config.local.json5");
 
     // 验证配置
     const validation = this.validateConfig(params);
@@ -689,7 +701,7 @@ export class WsServer {
     }
 
     // 先读取现有配置，然后合并
-    let existingConfig: Partial<MoziConfig> = {};
+    let existingConfig: Partial<VexConfig> = {};
     if (existsSync(configPath)) {
       try {
         existingConfig = json5.parse(readFileSync(configPath, "utf-8"));
@@ -699,11 +711,11 @@ export class WsServer {
     }
 
     // 构建要保存的配置
-    const configToSave: Partial<MoziConfig> = { ...existingConfig };
+    const configToSave: Partial<VexConfig> = { ...existingConfig };
 
     // 更新提供商
     if (params.providers) {
-      const providers: MoziConfig["providers"] = {};
+      const providers: VexConfig["providers"] = {};
       // 保留原有的未修改的提供商
       if (existingConfig.providers) {
         for (const [id, p] of Object.entries(existingConfig.providers)) {
@@ -737,16 +749,12 @@ export class WsServer {
 
     // 更新通道
     if (params.channels) {
-      const channels: MoziConfig["channels"] = {
-        feishu: existingConfig.channels?.feishu,
-        dingtalk: existingConfig.channels?.dingtalk,
-        qq: existingConfig.channels?.qq,
-        wecom: existingConfig.channels?.wecom,
+      const channels: VexConfig["channels"] = {
+        weixin: existingConfig.channels?.weixin,
       };
 
       for (const [id, c] of Object.entries(params.channels)) {
         if (!c.hasConfig) {
-          // 删除通道配置
           delete (channels as any)[id];
           continue;
         }
@@ -754,19 +762,9 @@ export class WsServer {
         (channels as any)[id] = {
           ...existing,
           enabled: c.enabled,
-          ...(c.appId && { appId: c.appId }),
-          ...(c.appSecret && { appSecret: c.appSecret }),
-          ...(c.appKey && { appKey: c.appKey }),
-          ...(c.corpId && { corpId: c.corpId }),
-          ...(c.corpSecret && { corpSecret: c.corpSecret }),
-          ...(c.agentId && { agentId: c.agentId }),
-          ...(c.token && { token: c.token }),
-          ...(c.encodingAESKey && { encodingAESKey: c.encodingAESKey }),
-          ...(c.clientSecret && { clientSecret: c.clientSecret }),
-          ...(c.verificationToken && { verificationToken: c.verificationToken }),
-          ...(c.encryptKey && { encryptKey: c.encryptKey }),
-          ...(c.sandbox !== undefined && { sandbox: c.sandbox }),
-          ...(c.robotCode && { robotCode: c.robotCode }),
+          ...((c as any).botType && { botType: (c as any).botType }),
+          ...((c as any).baseUrl && { baseUrl: (c as any).baseUrl }),
+          ...((c as any).accountId && { accountId: (c as any).accountId }),
         };
       }
       configToSave.channels = channels;
@@ -815,8 +813,8 @@ export class WsServer {
     }
 
     // 确保目录存在
-    if (!existsSync(moziDir)) {
-      mkdirSync(moziDir, { recursive: true });
+    if (!existsSync(vexDir)) {
+      mkdirSync(vexDir, { recursive: true });
     }
 
     // 生成 JSON5 格式

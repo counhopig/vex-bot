@@ -39,7 +39,7 @@ describe("sessions/store", () => {
 
   beforeEach(() => {
     // 创建临时测试目录
-    testDir = path.join(os.tmpdir(), `mozi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = path.join(os.tmpdir(), `vex-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(testDir, { recursive: true });
     store = new FileSessionStore(testDir);
   });

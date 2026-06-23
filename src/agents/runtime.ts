@@ -15,7 +15,7 @@ import {
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentTool, ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { MoziConfig, ProviderId, InboundMessageContext } from "../types/index.js";
+import type { VexConfig, ProviderId, InboundMessageContext } from "../types/index.js";
 import { resolveModel, initModelResolver, getApiKeyForProvider } from "../providers/model-resolver.js";
 import { getChildLogger } from "../utils/logger.js";
 import { buildSystemPrompt } from "./system-prompt.js";
@@ -68,7 +68,7 @@ export class AgentRuntime {
 
   constructor(config: RuntimeConfig) {
     this.config = config;
-    this.sessionDir = config.sessionDir ?? join(os.homedir(), ".mozi", "sessions");
+    this.sessionDir = config.sessionDir ?? join(os.homedir(), ".vex", "sessions");
 
     logger.info({ sessionDir: this.sessionDir }, "AgentRuntime initialized");
   }
@@ -98,7 +98,7 @@ export class AgentRuntime {
     const sessionFile = join(this.sessionDir, `${this.sanitizeSessionKey(sessionKey)}.jsonl`);
     const sessionManager = SessionManager.create(this.config.workingDirectory ?? process.cwd(), sessionFile);
 
-    // 创建 AuthStorage 并从 mozi 配置预填充 API key
+    // 创建 AuthStorage 并从 vex 配置预填充 API key
     const authStorage = AuthStorage.inMemory();
 
     // 重要：使用 model.provider (由 resolveModel 设置) 而不是 this.config.provider
@@ -111,7 +111,7 @@ export class AgentRuntime {
       if (modelProvider !== this.config.provider) {
         authStorage.set(modelProvider, { type: "api_key", key: apiKey });
       }
-      logger.debug({ provider: this.config.provider, modelProvider }, "API key set from mozi config");
+      logger.debug({ provider: this.config.provider, modelProvider }, "API key set from vex config");
     }
 
     // 设置 fallback resolver 以支持其他 provider
@@ -123,7 +123,7 @@ export class AgentRuntime {
         key = getApiKeyForProvider(this.config.provider);
       }
       if (key) {
-        logger.debug({ provider }, "Got API key from mozi config via fallback");
+        logger.debug({ provider }, "Got API key from vex config via fallback");
       }
       return key;
     });
@@ -146,7 +146,7 @@ export class AgentRuntime {
       authStorage,
       modelRegistry,
       model,
-      thinkingLevel: "medium" as ThinkingLevel,
+      thinkingLevel: "low" as ThinkingLevel,
       sessionManager,
       customTools: customToolDefinitions,
       tools: [], // 不使用默认的 coding tools，只用自定义工具
@@ -374,7 +374,7 @@ export class AgentRuntime {
 }
 
 /** 创建 AgentRuntime */
-export function createAgentRuntime(config: MoziConfig): AgentRuntime {
+export function createAgentRuntime(config: VexConfig): AgentRuntime {
   const runtimeConfig: RuntimeConfig = {
     model: config.agent.defaultModel,
     provider: config.agent.defaultProvider,

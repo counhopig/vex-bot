@@ -206,7 +206,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
     }
 
     // 验证通道 ID
-    const validChannels: ChannelId[] = ["dingtalk", "feishu", "qq", "wecom", "webchat"];
+    const validChannels: ChannelId[] = ["weixin", "webchat"];
     if (validChannels.includes(channel as ChannelId)) {
       return channel as ChannelId;
     }

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./docs/images/mascot.svg" width="80" alt="Mozi Mascot" />
+  <img src="./docs/images/mascot.svg" width="80" alt="Vex Mascot" />
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@
 
 **An Intelligent Assistant Framework Supporting Chinese AI Models and Communication Platforms**
 
-OpenMozi is a lightweight AI assistant framework focused on the Chinese ecosystem. Built on [pi-coding-agent](https://github.com/nicemicro/pi-coding-agent) for the Agent runtime (with built-in session management, context compression, and tool execution), and [pi-ai](https://github.com/nicemicro/pi-ai) as the unified multi-model calling layer (supporting 25+ providers), it natively supports Function Calling and integrates with QQ, Feishu, DingTalk, and WeCom platforms.
+Vex is a lightweight AI assistant framework focused on the Chinese ecosystem. Built on [pi-coding-agent](https://github.com/nicemicro/pi-coding-agent) for the Agent runtime (with built-in session management, context compression, and tool execution), and [pi-ai](https://github.com/nicemicro/pi-ai) as the unified multi-model calling layer (supporting 25+ providers), it natively supports Function Calling and integrates with QQ, Feishu, DingTalk, and WeCom platforms.
 
 ## Core Features
 
@@ -37,11 +37,11 @@ OpenMozi is a lightweight AI assistant framework focused on the Chinese ecosyste
 - **Session Management** — Context compression, session persistence, multi-turn conversations
 - **Extensible** — Plugin system, Hook events, custom tools, Sub-Agents
 
-## Why OpenMozi?
+## Why Vex?
 
-OpenMozi's architecture is inspired by [Moltbot](https://github.com/moltbot/moltbot), but focuses on different use cases:
+Vex's architecture is inspired by [Moltbot](https://github.com/moltbot/moltbot), but focuses on different use cases:
 
-| Feature | OpenMozi | Moltbot |
+| Feature | Vex | Moltbot |
 |---------|------|---------|
 | **Focus** | Chinese ecosystem-first lightweight framework | Full-featured personal AI assistant |
 | **Code Size** | ~16,000 lines (64 files) | ~516,000 lines (3,137 files) |
@@ -49,7 +49,7 @@ OpenMozi's architecture is inspired by [Moltbot](https://github.com/moltbot/molt
 | **Node.js Version** | >= 18 | >= 22 |
 | **Use Cases** | Enterprise internal bots, domestic team collaboration | Personal multi-device assistant, overseas platform integration |
 
-> **OpenMozi achieves core functionality with 3% of the code**, focusing on simplicity and efficiency, easy to understand and extend.
+> **Vex achieves core functionality with 3% of the code**, focusing on simplicity and efficiency, easy to understand and extend.
 
 ## Quick Start
 
@@ -63,11 +63,11 @@ OpenMozi's architecture is inspired by [Moltbot](https://github.com/moltbot/molt
 
 ```bash
 # Global installation (recommended)
-npm install -g mozi-bot
+npm install -g vex-bot
 
 # Or clone for development
-git clone https://github.com/King-Chau/mozi.git
-cd mozi && npm install && npm run build
+git clone https://github.com/King-Chau/vex.git
+cd vex && npm install && npm run build
 ```
 
 ### 2. Configuration
@@ -75,7 +75,7 @@ cd mozi && npm install && npm run build
 Run the configuration wizard (recommended):
 
 ```bash
-mozi onboard
+vex onboard
 ```
 
 The wizard will guide you through:
@@ -85,7 +85,7 @@ The wizard will guide you through:
 - **Communication Platforms** — QQ, Feishu, DingTalk, WeCom
 - **Memory System** — Enable/disable long-term memory, custom storage directory
 
-Configuration will be saved to `~/.mozi/config.local.json5`.
+Configuration will be saved to `~/.vex/config.local.json5`.
 
 You can also use environment variables (for quick testing):
 
@@ -97,10 +97,10 @@ export DEEPSEEK_API_KEY=sk-your-key
 
 ```bash
 # WebChat only (no QQ/Feishu/DingTalk configuration needed)
-mozi start --web-only
+vex start --web-only
 
 # Full service (WebChat + QQ + Feishu + DingTalk)
-mozi start
+vex start
 
 # If cloned from repository
 npm start -- start --web-only
@@ -145,7 +145,7 @@ Open your browser and visit `http://localhost:3000` to start chatting.
 
 ### Custom Interfaces
 
-Supports configuring any OpenAI or Anthropic compatible API interface. Configure via `mozi onboard` wizard, or manually add to config file:
+Supports configuring any OpenAI or Anthropic compatible API interface. Configure via `vex onboard` wizard, or manually add to config file:
 
 ```json5
 {
@@ -203,7 +203,7 @@ QQ, Feishu, and DingTalk all support long connection mode, WeCom uses Webhook ca
 
 ## Configuration Reference
 
-Configuration files support `config.local.json5`, `config.json5`, `config.yaml` formats, with priority from high to low. Stored in the `~/.mozi/` directory.
+Configuration files support `config.local.json5`, `config.json5`, `config.yaml` formats, with priority from high to low. Stored in the `~/.vex/` directory.
 
 <details>
 <summary>Complete Configuration Example</summary>
@@ -265,7 +265,7 @@ Configuration files support `config.local.json5`, `config.json5`, `config.yaml` 
     defaultModel: "deepseek-chat",
     temperature: 0.7,
     maxTokens: 4096,
-    systemPrompt: "You are Mozi, an intelligent assistant."
+    systemPrompt: "You are Vex, an intelligent assistant."
   },
 
   // Server configuration
@@ -282,8 +282,8 @@ Configuration files support `config.local.json5`, `config.json5`, `config.yaml` 
   // Skills configuration (optional)
   skills: {
     enabled: true,           // Enable skills system (default true)
-    userDir: "~/.mozi/skills",     // User-level skills directory
-    workspaceDir: "./.mozi/skills", // Workspace-level skills directory
+    userDir: "~/.vex/skills",     // User-level skills directory
+    workspaceDir: "./.vex/skills", // Workspace-level skills directory
     disabled: ["skill-name"],      // Disable specific skills
     only: ["skill-name"]           // Enable only specific skills
   },
@@ -291,7 +291,7 @@ Configuration files support `config.local.json5`, `config.json5`, `config.yaml` 
   // Memory system configuration (optional)
   memory: {
     enabled: true,                  // Enable (default true)
-    storageDir: "~/.mozi/memory"   // Storage directory (default ~/.mozi/memory)
+    storageDir: "~/.vex/memory"   // Storage directory (default ~/.vex/memory)
   }
 }
 ```
@@ -300,7 +300,7 @@ Configuration files support `config.local.json5`, `config.json5`, `config.yaml` 
 
 ## Skills System
 
-Skills is OpenMozi's extensible knowledge injection system. By writing `SKILL.md` files, you can add professional knowledge, custom behavior rules, or domain capabilities to the Agent without modifying code.
+Skills is Vex's extensible knowledge injection system. By writing `SKILL.md` files, you can add professional knowledge, custom behavior rules, or domain capabilities to the Agent without modifying code.
 
 ### How It Works
 
@@ -311,8 +311,8 @@ Skills are defined using YAML frontmatter + Markdown content, automatically load
 | Priority | Source | Directory | Description |
 |----------|--------|-----------|-------------|
 | 1 | Built-in | `skills/` | Project built-in skills |
-| 2 | User-level | `~/.mozi/skills/` | User custom skills, shared across projects |
-| 3 | Workspace-level | `./.mozi/skills/` | Project-level skills, only for current project |
+| 2 | User-level | `~/.vex/skills/` | User custom skills, shared across projects |
+| 3 | Workspace-level | `./.vex/skills/` | Project-level skills, only for current project |
 
 > Skills with same name override by priority: Workspace > User > Built-in.
 
@@ -373,8 +373,8 @@ When users greet you, follow these rules:
 {
   skills: {
     enabled: true,             // Enable (default true)
-    userDir: "~/.mozi/skills", // User-level skills directory
-    workspaceDir: "./.mozi/skills", // Workspace-level skills directory
+    userDir: "~/.vex/skills", // User-level skills directory
+    workspaceDir: "./.vex/skills", // Workspace-level skills directory
     disabled: ["greeting"],    // Disable specific skills
     only: ["coding"]           // Enable only specific skills (whitelist mode)
   }
@@ -383,7 +383,7 @@ When users greet you, follow these rules:
 
 ### ClawdHub Skill Marketplace
 
-OpenMozi supports searching and installing community-shared skills from [ClawdHub](https://clawhub.ai). After installing the `clawhub` CLI, the Agent automatically gains the ability to search and install skills.
+Vex supports searching and installing community-shared skills from [ClawdHub](https://clawhub.ai). After installing the `clawhub` CLI, the Agent automatically gains the ability to search and install skills.
 
 ```bash
 # Install clawhub CLI
@@ -392,15 +392,15 @@ npm i -g clawhub
 # Search for skills
 clawhub search <query>
 
-# Install skill to mozi workspace directory
-clawhub install <slug> --workdir ./.mozi/skills
+# Install skill to vex workspace directory
+clawhub install <slug> --workdir ./.vex/skills
 ```
 
-> Skills installed from ClawdHub use moltbot's frontmatter format (`metadata.openclaw.requires`), which OpenMozi automatically parses and converts.
+> Skills installed from ClawdHub use moltbot's frontmatter format (`metadata.openclaw.requires`), which Vex automatically parses and converts.
 
 ## Memory System
 
-The memory system allows the Agent to remember important information across sessions, such as user preferences, key facts, task context, etc. Memory is enabled by default, stored in `~/.mozi/memory/` directory.
+The memory system allows the Agent to remember important information across sessions, such as user preferences, key facts, task context, etc. Memory is enabled by default, stored in `~/.vex/memory/` directory.
 
 ### How It Works
 
@@ -423,12 +423,12 @@ The Agent automatically determines when to store or query memories during conver
 {
   memory: {
     enabled: true,                  // Enable (default true)
-    storageDir: "~/.mozi/memory"   // Storage directory (default ~/.mozi/memory)
+    storageDir: "~/.vex/memory"   // Storage directory (default ~/.vex/memory)
   }
 }
 ```
 
-You can also configure memory system via `mozi onboard` wizard (step 5/5).
+You can also configure memory system via `vex onboard` wizard (step 5/5).
 
 ### Storage Structure
 
@@ -510,24 +510,24 @@ Scheduled tasks support proactively delivering Agent execution results to specif
 
 ### Storage
 
-Task data is stored in `~/.mozi/cron/jobs.json`, supporting persistence.
+Task data is stored in `~/.vex/cron/jobs.json`, supporting persistence.
 
 ## Plugin System
 
-The plugin system allows extending Mozi's functionality with auto-discovery and loading support.
+The plugin system allows extending Vex's functionality with auto-discovery and loading support.
 
 ### Plugin Directories
 
 | Priority | Source | Directory | Description |
 |----------|--------|-----------|-------------|
 | 1 | Built-in | `plugins/` | Project built-in plugins |
-| 2 | Global | `~/.mozi/plugins/` | User installed global plugins |
-| 3 | Workspace | `./.mozi/plugins/` | Project-level plugins |
+| 2 | Global | `~/.vex/plugins/` | User installed global plugins |
+| 3 | Workspace | `./.vex/plugins/` | Project-level plugins |
 
 ### Writing Plugins
 
 ```typescript
-import { definePlugin } from "mozi-bot";
+import { definePlugin } from "vex-bot";
 
 export default definePlugin(
   {
@@ -595,31 +595,31 @@ export default definePlugin(
 
 ```bash
 # Configuration
-mozi onboard            # Configuration wizard (models/platforms/server/Agent/memory)
-mozi check              # Check configuration
-mozi models             # List available models
+vex onboard            # Configuration wizard (models/platforms/server/Agent/memory)
+vex check              # Check configuration
+vex models             # List available models
 
 # Start service
-mozi start              # Full service (with QQ/Feishu/DingTalk)
-mozi start --web-only   # WebChat only
-mozi start --port 8080  # Specify port
+vex start              # Full service (with QQ/Feishu/DingTalk)
+vex start --web-only   # WebChat only
+vex start --port 8080  # Specify port
 
 # Service management
-mozi status             # View service status (processes, CPU/memory, health check)
-mozi restart            # Restart service (supports --web-only and other options)
-mozi kill               # Stop service (alias: mozi stop)
+vex status             # View service status (processes, CPU/memory, health check)
+vex restart            # Restart service (supports --web-only and other options)
+vex kill               # Stop service (alias: vex stop)
 
 # Chat
-mozi chat               # Command line chat
+vex chat               # Command line chat
 
 # Logs
-mozi logs               # View latest logs (default 50 lines)
-mozi logs -n 100        # View latest 100 lines
-mozi logs -f            # Follow logs in real-time (like tail -f)
-mozi logs --level error # Show only error logs
+vex logs               # View latest logs (default 50 lines)
+vex logs -n 100        # View latest 100 lines
+vex logs -f            # Follow logs in real-time (like tail -f)
+vex logs --level error # Show only error logs
 ```
 
-> Log files are stored in `~/.mozi/logs/` directory, auto-rotated by date.
+> Log files are stored in `~/.vex/logs/` directory, auto-rotated by date.
 
 ## Project Structure
 
@@ -654,7 +654,7 @@ skills/            # Built-in skills
 ## API Usage
 
 ```typescript
-import { loadConfig, initializeProviders, resolveModel, getApiKeyForProvider } from "mozi-bot";
+import { loadConfig, initializeProviders, resolveModel, getApiKeyForProvider } from "vex-bot";
 import { completeSimple } from "@mariozechner/pi-ai";
 
 const config = loadConfig();
@@ -677,7 +677,7 @@ console.log(text);
 
 ## Learning Agent Principles
 
-If you want to understand how AI Agents work, OpenMozi is an excellent learning project. Compared to large frameworks with hundreds of thousands of lines of code, Mozi has only about 16,000 lines but implements complete Agent core functionality.
+If you want to understand how AI Agents work, Vex is an excellent learning project. Compared to large frameworks with hundreds of thousands of lines of code, Vex has only about 16,000 lines but implements complete Agent core functionality.
 
 ### Architecture Design
 
@@ -787,7 +787,7 @@ flowchart TD
 
 ### Context Compression Strategy
 
-When conversation history exceeds token limit, OpenMozi uses intelligent compression:
+When conversation history exceeds token limit, Vex uses intelligent compression:
 
 1. **Retention Strategy** — Always retain system prompt and last N rounds of conversation
 2. **Summary Compression** — Compress early conversations into summaries, preserving key information
@@ -820,7 +820,7 @@ npm test
 
 ## Docker Deployment
 
-OpenMozi provides complete Docker deployment support with Dockerfile and Docker Compose configuration.
+Vex provides complete Docker deployment support with Dockerfile and Docker Compose configuration.
 
 ### Method 1: Docker Compose (Recommended)
 
@@ -839,18 +839,18 @@ docker compose down
 
 ```bash
 # Build image
-docker build -t mozi-bot:latest .
+docker build -t vex-bot:latest .
 
 # Run container (WebChat only)
-docker run -d -p 3000:3000 mozi-bot:latest start --web-only
+docker run -d -p 3000:3000 vex-bot:latest start --web-only
 
 # Run container (full mode, requires environment variables)
 docker run -d -p 3000:3000 \
   -e DEEPSEEK_API_KEY=sk-xxx \
   -e FEISHU_APP_ID=xxx \
   -e FEISHU_APP_SECRET=xxx \
-  -v mozi-data:/home/mozi/.mozi \
-  mozi-bot:latest
+  -v vex-data:/home/vex/.vex \
+  vex-bot:latest
 ```
 
 ### Configuration Options
@@ -863,13 +863,13 @@ Docker supports two configuration methods:
 ```yaml
 # docker-compose.yml example
 services:
-  mozi:
-    image: mozi-bot:latest
+  vex:
+    image: vex-bot:latest
     command: ["start", "--web-only"]  # Remove --web-only for full mode
     ports:
       - "3000:3000"
     volumes:
-      - mozi-data:/home/mozi/.mozi
+      - vex-data:/home/vex/.vex
       # Mount custom config
       - ./config.local.json5:/app/config.local.json5:ro
     environment:
@@ -884,7 +884,7 @@ services:
 
 ### Data Persistence
 
-Data is persisted through Docker volume `mozi-data`, including:
+Data is persisted through Docker volume `vex-data`, including:
 
 - Logs (`logs/`)
 - Sessions (`sessions/`)

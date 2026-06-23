@@ -64,9 +64,9 @@ export type SkillSource = 'bundled' | 'user' | 'workspace';
 export interface SkillsConfig {
   /** 是否启用 skills 功能 */
   enabled?: boolean;
-  /** 用户 skills 目录路径 (默认 ~/.mozi/skills) */
+  /** 用户 skills 目录路径 (默认 ~/.vex/skills) */
   userDir?: string;
-  /** 工作区 skills 目录路径 (默认 ./.mozi/skills) */
+  /** 工作区 skills 目录路径 (默认 ./.vex/skills) */
   workspaceDir?: string;
   /** 禁用的 skill 名称列表 */
   disabled?: string[];

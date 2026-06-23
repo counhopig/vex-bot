@@ -16,7 +16,7 @@ import { CDP_PORT_RANGE_START, CDP_PORT_RANGE_END, PROFILE_COLORS, DEFAULT_BROWS
 const PROFILE_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 
 /** 默认浏览器数据目录 */
-const BROWSER_DATA_DIR = join(homedir(), ".mozi", "browser");
+const BROWSER_DATA_DIR = join(homedir(), ".vex", "browser");
 
 /** 配置文件存储路径 */
 const PROFILES_STORE_PATH = join(BROWSER_DATA_DIR, "profiles.json");

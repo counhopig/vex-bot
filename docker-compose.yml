@@ -1,9 +1,9 @@
 version: '3.8'
 
 services:
-  mozi:
-    image: mozi-bot:latest
-    container_name: mozi-bot
+  vex:
+    image: vex-bot:latest
+    container_name: vex-bot
     restart: unless-stopped
 
     # Build from local Dockerfile
@@ -60,7 +60,7 @@ services:
 
     # Volume mounts for persistent data and optional config
     volumes:
-      - mozi-data:/home/mozi/.mozi
+      - vex-data:/home/vex/.vex
       # Optional: mount custom config file (create config.local.json5 and uncomment)
       # - ./config.local.json5:/app/config.local.json5:ro
 
@@ -84,5 +84,5 @@ services:
 
 # Named volume for persistent data
 volumes:
-  mozi-data:
+  vex-data:
     driver: local

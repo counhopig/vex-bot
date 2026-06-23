@@ -1,5 +1,5 @@
 /**
- * Mozi - 国产AI模型 + 国产通讯软件的智能助手
+ * Vex - 国产AI模型 + 国产通讯软件的智能助手
  *
  * 主入口文件
  */
@@ -23,12 +23,7 @@ export {
 // 通道
 export {
   BaseChannelAdapter,
-  FeishuChannel,
-  DingtalkChannel,
-  createFeishuChannel,
-  createDingtalkChannel,
-  FeishuApiClient,
-  DingtalkApiClient,
+  createWeixinChannel,
   registerChannel,
   getChannel,
   getAllChannels,

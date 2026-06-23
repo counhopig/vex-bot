@@ -4,7 +4,7 @@
  * 提供统一的插件管理入口
  */
 
-import type { MoziConfig } from "../types/index.js";
+import type { VexConfig } from "../types/index.js";
 import type { PluginEnableConfig, LoadedPlugin, PluginMeta } from "./index.js";
 import {
   getLoadedPlugins,
@@ -24,11 +24,11 @@ const logger = getChildLogger("plugins:service");
  * 插件服务
  */
 export class PluginService {
-  private config: MoziConfig;
+  private config: VexConfig;
   private enableConfig: PluginEnableConfig;
   private initialized: boolean = false;
 
-  constructor(config: MoziConfig, enableConfig?: PluginEnableConfig) {
+  constructor(config: VexConfig, enableConfig?: PluginEnableConfig) {
     this.config = config;
     this.enableConfig = enableConfig ?? {};
   }
@@ -145,7 +145,7 @@ let defaultService: PluginService | null = null;
 /**
  * 获取默认插件服务
  */
-export function getPluginService(config?: MoziConfig, enableConfig?: PluginEnableConfig): PluginService {
+export function getPluginService(config?: VexConfig, enableConfig?: PluginEnableConfig): PluginService {
   if (!defaultService && config) {
     defaultService = new PluginService(config, enableConfig);
   }
