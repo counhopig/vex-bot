@@ -103,12 +103,12 @@ export function deepMerge<T extends Record<string, unknown>>(target: T, source: 
   return result;
 }
 
-/** 计算签名 (用于钉钉等) */
+/** 计算 HMAC-SHA256 签名 */
 export function computeHmacSha256(secret: string, data: string): string {
   return crypto.createHmac("sha256", secret).update(data).digest("base64");
 }
 
-/** AES 解密 (用于飞书加密消息) */
+/** AES-256-CBC 解密 */
 export function aesDecrypt(key: string, encryptedData: string): string {
   const keyBuffer = crypto.createHash("sha256").update(key).digest();
   const encryptedBuffer = Buffer.from(encryptedData, "base64");

@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+// Node.js v24+ undici strictly validates ByteString headers, but some API
+// providers (e.g. MiniMax) return non-ASCII characters in response headers.
+// Patch global fetch to sanitize response headers before they reach undici's
+// header parser.
+import "./fetch-patch.js";
+
 /**
  * Vex CLI - 命令行界面
  */
@@ -37,7 +43,7 @@ program
   .description("启动 Gateway 服务器")
   .option("-c, --config <path>", "配置文件路径")
   .option("-p, --port <port>", "服务器端口")
-  .option("--web-only", "仅启用 WebChat (不需要配置飞书/钉钉/QQ)")
+  .option("--web-only", "仅启用 WebChat (不需要配置通讯通道)")
   .action(async (options) => {
     try {
       const config = loadConfig({ configPath: options.config });
@@ -305,7 +311,7 @@ program
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🐕 欢迎使用 Vex (Vex) 配置向导                          ║
+║   🐕 欢迎使用 Vex 配置向导                                ║
 ║                                                            ║
 ║   支持国产模型和国产通讯软件的智能助手                       ║
 ║                                                            ║
@@ -556,7 +562,7 @@ program
 
     // 步骤 2: 通道配置
     console.log("\n📱 步骤 2/5: 配置通讯平台\n");
-    console.log("支持的平台: 飞书, 钉钉, QQ");
+    console.log("支持的平台: 个人微信");
     console.log("(可选配置，直接回车跳过)\n");
 
     // 个人微信使用扫码登录，不需要手动填写凭证
@@ -679,7 +685,7 @@ ${startNote.padEnd(61)}║
 ║   3. 测试聊天: vex chat                                   ║
 ║                                                            ║
 ║   启动选项:                                                ║
-║   - vex start           完整服务 (WebChat+飞书+钉钉+QQ)   ║
+║   - vex start           完整服务 (WebChat+个人微信)        ║
 ║   - vex start --web-only 仅 WebChat                       ║
 ║                                                            ║
 ║   配置文件: ~/.vex/config.local.json5                     ║

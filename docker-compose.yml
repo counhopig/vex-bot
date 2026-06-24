@@ -31,28 +31,9 @@ services:
       # - ZHIPU_API_KEY=your_zhipu_api_key
       # - DOUBAO_API_KEY=your_doubao_api_key
 
-      # Feishu configuration (remove --web-only from command to use)
-      # - FEISHU_APP_ID=your_feishu_app_id
-      # - FEISHU_APP_SECRET=your_feishu_app_secret
-      # - FEISHU_VERIFICATION_TOKEN=your_verification_token
-      # - FEISHU_ENCRYPT_KEY=your_encrypt_key
-
-      # DingTalk configuration (remove --web-only from command to use)
-      # - DINGTALK_APP_KEY=your_dingtalk_app_key
-      # - DINGTALK_APP_SECRET=your_dingtalk_app_secret
-      # - DINGTALK_ROBOT_CODE=your_robot_code
-
-      # QQ bot configuration (remove --web-only from command to use)
-      # - QQ_APP_ID=your_qq_app_id
-      # - QQ_CLIENT_SECRET=your_qq_client_secret
-      # - QQ_SANDBOX=false
-
-      # WeChat Work configuration (remove --web-only from command to use)
-      # - WECOM_CORP_ID=your_wecom_corp_id
-      # - WECOM_CORP_SECRET=your_wecom_corp_secret
-      # - WECOM_AGENT_ID=your_wecom_agent_id
-      # - WECOM_TOKEN=your_wecom_token
-      # - WECOM_ENCODING_AES_KEY=your_wecom_encoding_aes_key
+      # Personal WeChat (remove --web-only from command to enable)
+      # WeChat uses QR code login at startup, no env vars needed
+      # To enable: change command to ["start"]
 
     # Port mapping
     ports:

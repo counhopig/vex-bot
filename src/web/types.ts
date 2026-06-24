@@ -135,18 +135,9 @@ export interface ChannelConfigInfo {
   name: string;
   hasConfig: boolean;
   enabled?: boolean;
-  // 飞书
-  appId?: string;
-  // 钉钉
-  appKey?: string;
-  robotCode?: string;
-  // QQ
-  sandbox?: boolean;
-  // 企业微信
-  corpId?: string;
-  agentId?: number;
-  token?: string;
-  encodingAESKey?: string;
+  baseUrl?: string;
+  botType?: string;
+  hasToken?: boolean;
 }
 
 /** Agent 配置信息 */
@@ -190,19 +181,8 @@ export interface SkillsConfigInfo {
 export interface ConfigSaveParams {
   providers?: Record<string, ProviderConfigInfo>;
   channels?: Record<string, ChannelConfigInfo & {
-    appId?: string;
-    appSecret?: string;
-    appKey?: string;
-    corpId?: string;
-    corpSecret?: string;
-    agentId?: number;
-    token?: string;
-    encodingAESKey?: string;
-    clientSecret?: string;
-    verificationToken?: string;
-    encryptKey?: string;
-    sandbox?: boolean;
-    robotCode?: string;
+    baseUrl?: string;
+    botType?: string;
   }>;
   agent?: AgentConfigInfo;
   server?: ServerConfigInfo;

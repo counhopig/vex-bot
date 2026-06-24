@@ -8,8 +8,8 @@ import type { CronJob } from "../src/cron/types.js";
 
 // Mock outbound
 vi.mock("../src/outbound/index.js", () => ({
-  deliverOutboundPayloads: vi.fn().mockResolvedValue([{ success: true, channel: "dingtalk", messageId: "msg-1" }]),
-  isChannelAvailable: vi.fn((id: string) => id === "dingtalk" || id === "feishu"),
+  deliverOutboundPayloads: vi.fn().mockResolvedValue([{ success: true, channel: "weixin", messageId: "msg-1" }]),
+  isChannelAvailable: vi.fn((id: string) => id === "weixin" || id === "webchat"),
 }));
 
 import { deliverOutboundPayloads, isChannelAvailable } from "../src/outbound/index.js";
@@ -57,7 +57,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "What is the weather?",
           deliver: true,
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
         },
       });
@@ -85,7 +85,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "What is the weather?",
           deliver: true,
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
         },
       });
@@ -106,7 +106,7 @@ describe("cron/executor", () => {
       // 验证消息被投递
       expect(deliverOutboundPayloads).toHaveBeenCalledWith(
         expect.objectContaining({
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
           payloads: [{ text: "The weather is sunny today!" }],
           bestEffort: true,
@@ -129,7 +129,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "Do something",
           deliver: false,
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
         },
       });
@@ -155,7 +155,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "Do something",
           deliver: true,
-          channel: "dingtalk",
+          channel: "weixin",
           // no `to` field
         },
       });
@@ -182,7 +182,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "Do something",
           deliver: true,
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
         },
       });
@@ -207,7 +207,7 @@ describe("cron/executor", () => {
           kind: "agentTurn",
           message: "Do something",
           deliver: true,
-          channel: "dingtalk",
+          channel: "weixin",
           to: "user123",
         },
       });
@@ -248,9 +248,9 @@ describe("cron/executor", () => {
     });
 
     it("should use defaultChannel when channel is 'last'", async () => {
-      // 重置 mock，确保 feishu 是可用的
+      // 重置 mock，确保 webchat 是可用的
       const mockIsAvailable = isChannelAvailable as ReturnType<typeof vi.fn>;
-      mockIsAvailable.mockImplementation((id: string) => id === "dingtalk" || id === "feishu");
+      mockIsAvailable.mockImplementation((id: string) => id === "weixin" || id === "webchat");
 
       const mockAgent: AgentExecutor = vi.fn().mockResolvedValue({
         success: true,
@@ -259,7 +259,7 @@ describe("cron/executor", () => {
 
       const executor = createCronExecutor({
         agentExecutor: mockAgent,
-        defaultChannel: "feishu",
+        defaultChannel: "webchat",
       });
 
       const job = createMockJob({
@@ -277,7 +277,7 @@ describe("cron/executor", () => {
       expect(result.status).toBe("ok");
       expect(deliverOutboundPayloads).toHaveBeenCalledWith(
         expect.objectContaining({
-          channel: "feishu",
+          channel: "webchat",
           to: "user123",
         })
       );

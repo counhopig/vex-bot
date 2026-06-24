@@ -157,7 +157,7 @@ describe("agents/runtime", () => {
     describe("session management", () => {
       it("should generate correct session key for direct chat", async () => {
         const context = {
-          channelId: "feishu",
+          channelId: "weixin",
           chatId: "chat-123",
           chatType: "direct" as const,
           senderId: "user-456",
@@ -167,12 +167,12 @@ describe("agents/runtime", () => {
         };
 
         await runtime.chat(context);
-        // Session key should be "feishu:user-456" for direct chat
+        // Session key should be "weixin:user-456" for direct chat
       });
 
       it("should generate correct session key for group chat", async () => {
         const context = {
-          channelId: "dingtalk",
+          channelId: "weixin",
           chatId: "group-789",
           chatType: "group" as const,
           senderId: "user-456",
@@ -182,7 +182,7 @@ describe("agents/runtime", () => {
         };
 
         await runtime.chat(context);
-        // Session key should be "dingtalk:group-789" for group chat
+        // Session key should be "weixin:group-789" for group chat
       });
 
       it("should clear session", async () => {

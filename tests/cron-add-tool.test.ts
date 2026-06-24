@@ -61,7 +61,7 @@ describe("cron_add tool - agentTurn support", () => {
       message: "生成今日工作报告",
       payloadType: "agentTurn",
       deliver: true,
-      channel: "dingtalk",
+      channel: "weixin",
       to: "user123",
       model: "deepseek-chat",
       timeoutSeconds: 120,
@@ -70,7 +70,7 @@ describe("cron_add tool - agentTurn support", () => {
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toContain("定时任务已创建");
     expect(text).toContain("Agent 执行");
-    expect(text).toContain("dingtalk");
+    expect(text).toContain("weixin");
     expect(text).toContain("user123");
 
     const jobs = service.list();
@@ -81,7 +81,7 @@ describe("cron_add tool - agentTurn support", () => {
     if (job.payload.kind === "agentTurn") {
       expect(job.payload.message).toBe("生成今日工作报告");
       expect(job.payload.deliver).toBe(true);
-      expect(job.payload.channel).toBe("dingtalk");
+      expect(job.payload.channel).toBe("weixin");
       expect(job.payload.to).toBe("user123");
       expect(job.payload.model).toBe("deepseek-chat");
       expect(job.payload.timeoutSeconds).toBe(120);
@@ -120,14 +120,14 @@ describe("cron_add tool - agentTurn support", () => {
       message: "一次性发送消息",
       payloadType: "agentTurn",
       deliver: true,
-      channel: "feishu",
+      channel: "weixin",
       to: "group456",
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
     expect(text).toContain("定时任务已创建");
     expect(text).toContain("Agent 执行");
-    expect(text).toContain("feishu");
+    expect(text).toContain("weixin");
   });
 
   it("should still validate schedule params for agentTurn", async () => {
@@ -138,7 +138,7 @@ describe("cron_add tool - agentTurn support", () => {
       message: "test",
       payloadType: "agentTurn",
       deliver: true,
-      channel: "dingtalk",
+      channel: "weixin",
       to: "user123",
     });
 
@@ -184,7 +184,7 @@ describe("cron_add tool - agentTurn support", () => {
   });
 
   it("should accept valid channels", async () => {
-    for (const channel of ["dingtalk", "feishu", "qq", "wecom", "webchat"]) {
+    for (const channel of ["weixin", "webchat"]) {
       const result = await cronAddTool.execute(`tc-valid-${channel}`, {
         name: `Valid ${channel}`,
         scheduleType: "every",

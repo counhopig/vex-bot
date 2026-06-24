@@ -258,7 +258,7 @@ describe("hooks", () => {
         registerHook("message_received", handler);
 
         const context: InboundMessageContext = {
-          channelId: "feishu",
+          channelId: "weixin",
           chatId: "chat-123",
           chatType: "private",
           senderId: "user-456",
@@ -289,7 +289,7 @@ describe("hooks", () => {
         registerHook("message_sending", handler);
 
         emitMessageSending({
-          channelId: "dingtalk",
+          channelId: "weixin",
           chatId: "chat-123",
           content: "Response message",
           sessionKey: "session-key",
@@ -300,7 +300,7 @@ describe("hooks", () => {
         expect(handler).toHaveBeenCalledWith(
           expect.objectContaining({
             type: "message_sending",
-            channelId: "dingtalk",
+            channelId: "weixin",
             chatId: "chat-123",
             content: "Response message",
           })

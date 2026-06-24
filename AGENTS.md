@@ -1,12 +1,14 @@
 # PROJECT KNOWLEDGE BASE
 
 **Generated:** 2026-06-23
-**Commit:** f92eff6
+**Commit:** 64ee6fd
 **Branch:** main
 
 ## OVERVIEW
 
-Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to QQ, Feishu/Lark, DingTalk, WeChat Work. ~24k lines / 85 .ts source files. TypeScript ESM only. npm package + CLI binary.
+Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~24k lines / 85 .ts source files. TypeScript ESM only. npm package + CLI binary.
+
+Forked from [OpenMozi](https://github.com/King-Chau/mozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
 
 ## STRUCTURE
 
@@ -15,7 +17,7 @@ Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Buil
 ├── src/
 │   ├── agents/        # Agent orchestration + session management (pi-coding-agent wrapper)
 │   ├── gateway/       # Express HTTP/WS server, route dispatch
-│   ├── channels/      # Platform adapters: Feishu, DingTalk, QQ, WeChat Work
+│   ├── channels/      # Platform adapters: personal WeChat (iLink OC API)
 │   ├── tools/         # Tool registration, validation, execution engine + 25 built-in tools
 │   ├── skills/        # SKILL.md injection system (YAML frontmatter + Markdown)
 │   ├── plugins/       # Auto-discovery plugin system (3-tier: bundled/global/workspace)
@@ -34,7 +36,7 @@ Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Buil
 │   └── utils/         # Logger, crypto helpers
 ├── skills/            # Built-in skills (greeting, clawhub)
 ├── tests/             # Vitest tests (15 files)
-├── docs/              # Channel integration docs
+├── docs/              # Documentation
 └── .github/           # CI: npm publish on release
 ```
 
@@ -52,7 +54,7 @@ Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Buil
 | System prompt | `src/agents/system-prompt.ts` | Prompt assembly with skills/memory injection |
 | Plugin API | `src/plugins/index.ts` | definePlugin, PluginApi, 3-tier loading |
 | Type definitions | `src/types/index.ts` | All shared interfaces: VexConfig, channels, messages |
-| WebChat UI | `src/web/static.ts` | Inline HTML/CSS/JS template string (~2300 lines) |
+| WebChat UI | `src/web/static.ts` | Inline HTML/CSS/JS template string |
 | Session persistence | `src/sessions/store.ts` | MemoryStore and FileStore (JSONL) |
 | Memory system | `src/memory/manager.ts` | MemoryManager: store/query/list, TF-IDF |
 | Cron scheduling | `src/cron/service.ts` | CronService: scheduling loop, job execution |
@@ -91,7 +93,7 @@ Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Buil
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
 - **No formatter/linter configured**: `lint` script in package.json is broken (eslint not installed)
 
-## ANTI-PATTERNS (THIS PROJECT)
+## ANTI-PATTERNS
 
 - **NEVER import `.ts` extensions** — must use `.js` extensions (NodeNext resolution)
 - **NEVER add a frontend build system** — WebChat is intentionally server-rendered inline
@@ -106,6 +108,8 @@ Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Buil
 - Docker uses non-root user `vex:vex` (UID/GID 1001)
 - Health check: `GET /health` returns `{"status":"ok","timestamp":"..."}`
 - CLI `onboard` wizard is ~700 lines of inline readline prompts in `cli/index.ts`
+- Only supported channel is personal WeChat via iLink OC API (QR code login + long-polling)
+- ChannelId type is `"weixin" | "webchat"`
 
 ## COMMANDS
 
@@ -124,8 +128,7 @@ vex logs -f           # Tail follow logs
 
 - The agent engine is `@mariozechner/pi-coding-agent` — understand its API before modifying `src/agents/runtime.ts`
 - pi-coding-agent provides: `createAgentSession`, `AgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry`
-- Channel adapters use long-connection patterns (WebSocket/Stream), not polling
-- Only WeChat Work uses HTTP webhook callbacks (requires public IP)
+- WeChat channel uses iLink OC API long-polling, not WebSocket
 - Docker Compose health check depends on Express `/health` endpoint
 - Playwright (`playwright-core`) requires browser binaries: `npx playwright install chromium`
 - The `lint` script (`eslint src --ext .ts`) is currently broken — eslint is not installed

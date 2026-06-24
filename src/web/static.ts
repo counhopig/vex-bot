@@ -1876,72 +1876,11 @@ function getControlHtml(config: VexConfig): string {
 
     // 填充通道配置
     function populateChannelsForm(channels) {
-      // 先重置所有通道为未配置状态
-      document.getElementById('feishu-enabled').checked = false;
-      document.getElementById('feishu-app-id').value = '';
-      document.getElementById('feishu-app-secret').value = '';
+      document.getElementById('weixin-enabled').checked = false;
+      document.getElementById('weixin-bot-type').value = '';
+      document.getElementById('weixin-base-url').value = '';
+      document.getElementById('weixin-status').textContent = '状态: 未登录';
 
-      document.getElementById('dingtalk-enabled').checked = false;
-      document.getElementById('dingtalk-app-key').value = '';
-      document.getElementById('dingtalk-app-secret').value = '';
-      document.getElementById('dingtalk-robot-code').value = '';
-
-      document.getElementById('qq-enabled').checked = false;
-      document.getElementById('qq-app-id').value = '';
-      document.getElementById('qq-client-secret').value = '';
-      document.getElementById('qq-sandbox').checked = false;
-
-      document.getElementById('wecom-enabled').checked = false;
-      document.getElementById('wecom-corp-id').value = '';
-      document.getElementById('wecom-corp-secret').value = '';
-      document.getElementById('wecom-agent-id').value = '';
-      document.getElementById('wecom-token').value = '';
-      document.getElementById('wecom-encoding-aes-key').value = '';
-document.getElementById('weixin-enabled').checked = false;
-document.getElementById('weixin-bot-type').value = '';
-document.getElementById('weixin-base-url').value = '';
-document.getElementById('weixin-status').textContent = '状态: 未登录';
-
-      // 飞书 - 只要有配置就启用
-      const feishu = channels.feishu;
-      if (feishu) {
-        console.log('加载飞书配置:', feishu);
-        // 有 appId 就认为是已配置
-        const hasConfig = !!feishu.appId || !!feishu.appSecret;
-        document.getElementById('feishu-enabled').checked = hasConfig && feishu.enabled !== false;
-        document.getElementById('feishu-app-id').value = feishu.appId || '';
-        // App Secret 不显示，用占位符
-        document.getElementById('feishu-app-secret').value = '';
-      }
-      // 钉钉 - 只要有配置就启用
-      const dingtalk = channels.dingtalk;
-      if (dingtalk) {
-        console.log('加载钉钉配置:', dingtalk);
-        const hasConfig = !!dingtalk.appKey || !!dingtalk.appSecret || !!dingtalk.robotCode;
-        document.getElementById('dingtalk-enabled').checked = hasConfig && dingtalk.enabled !== false;
-        document.getElementById('dingtalk-app-key').value = dingtalk.appKey || '';
-        document.getElementById('dingtalk-robot-code').value = dingtalk.robotCode || '';
-      }
-      // QQ - 只要有配置就启用
-      const qq = channels.qq;
-      if (qq) {
-        console.log('加载 QQ 配置:', qq);
-        const hasConfig = !!qq.appId || !!qq.clientSecret;
-        document.getElementById('qq-enabled').checked = hasConfig && qq.enabled !== false;
-        document.getElementById('qq-app-id').value = qq.appId || '';
-        document.getElementById('qq-sandbox').checked = qq.sandbox || false;
-      }
-      // 企业微信 - 只要有配置就启用
-      const wecom = channels.wecom;
-      if (wecom) {
-        console.log('加载企业微信配置:', wecom);
-        const hasConfig = !!wecom.corpId || !!wecom.corpSecret || !!wecom.agentId || !!wecom.token || !!wecom.encodingAESKey;
-        document.getElementById('wecom-enabled').checked = hasConfig && wecom.enabled !== false;
-        document.getElementById('wecom-corp-id').value = wecom.corpId || '';
-        document.getElementById('wecom-agent-id').value = wecom.agentId || '';
-        document.getElementById('wecom-token').value = wecom.token || '';
-        document.getElementById('wecom-encoding-aes-key').value = wecom.encodingAESKey || '';
-      }
       const weixin = channels.weixin;
       if (weixin) {
         const hasConfig = weixin.hasToken;
@@ -2096,82 +2035,8 @@ document.getElementById('weixin-status').textContent = '状态: 未登录';
           configToSave.providers = pendingProviders;
         }
 
-        // 通道配置 - 始终包含每个通道的配置状态
+        // 通道配置
         const channels = {};
-
-        // 飞书 - 如果填写了 appId 或 appSecret，自动启用
-        const feishuEnabled = document.getElementById('feishu-enabled').checked;
-        const feishuAppId = document.getElementById('feishu-app-id').value.trim();
-        const feishuAppSecret = document.getElementById('feishu-app-secret').value.trim();
-        const feishuHasConfig = feishuEnabled || feishuAppId || feishuAppSecret;
-        if (feishuHasConfig) {
-          channels.feishu = {
-            hasConfig: true,
-            enabled: feishuEnabled || feishuAppId || feishuAppSecret,
-            ...(feishuAppId && { appId: feishuAppId }),
-            ...(feishuAppSecret && { appSecret: feishuAppSecret })
-          };
-        } else {
-          channels.feishu = { hasConfig: false };
-        }
-
-        // 钉钉 - 如果填写了任何配置，自动启用
-        const dingtalkEnabled = document.getElementById('dingtalk-enabled').checked;
-        const dingtalkAppKey = document.getElementById('dingtalk-app-key').value.trim();
-        const dingtalkAppSecret = document.getElementById('dingtalk-app-secret').value.trim();
-        const dingtalkRobotCode = document.getElementById('dingtalk-robot-code').value.trim();
-        const dingtalkHasConfig = dingtalkEnabled || dingtalkAppKey || dingtalkAppSecret || dingtalkRobotCode;
-        if (dingtalkHasConfig) {
-          channels.dingtalk = {
-            hasConfig: true,
-            enabled: dingtalkHasConfig,
-            ...(dingtalkAppKey && { appKey: dingtalkAppKey }),
-            ...(dingtalkAppSecret && { appSecret: dingtalkAppSecret }),
-            ...(dingtalkRobotCode && { robotCode: dingtalkRobotCode })
-          };
-        } else {
-          channels.dingtalk = { hasConfig: false };
-        }
-
-        // QQ - 如果填写了任何配置，自动启用
-        const qqEnabled = document.getElementById('qq-enabled').checked;
-        const qqAppId = document.getElementById('qq-app-id').value.trim();
-        const qqClientSecret = document.getElementById('qq-client-secret').value.trim();
-        const qqSandbox = document.getElementById('qq-sandbox').checked;
-        const qqHasConfig = qqEnabled || qqAppId || qqClientSecret;
-        if (qqHasConfig) {
-          channels.qq = {
-            hasConfig: true,
-            enabled: qqHasConfig,
-            ...(qqAppId && { appId: qqAppId }),
-            ...(qqClientSecret && { clientSecret: qqClientSecret }),
-            ...(qqSandbox && { sandbox: qqSandbox })
-          };
-        } else {
-          channels.qq = { hasConfig: false };
-        }
-
-        // 企业微信 - 如果填写了任何配置，自动启用
-        const wecomEnabled = document.getElementById('wecom-enabled').checked;
-        const wecomCorpId = document.getElementById('wecom-corp-id').value.trim();
-        const wecomCorpSecret = document.getElementById('wecom-corp-secret').value.trim();
-        const wecomAgentId = parseInt(document.getElementById('wecom-agent-id').value, 10);
-        const wecomToken = document.getElementById('wecom-token').value.trim();
-        const wecomEncodingAESKey = document.getElementById('wecom-encoding-aes-key').value.trim();
-        const wecomHasConfig = wecomEnabled || wecomCorpId || wecomCorpSecret || wecomAgentId || wecomToken || wecomEncodingAESKey;
-        if (wecomHasConfig) {
-          channels.wecom = {
-            hasConfig: true,
-            enabled: wecomHasConfig,
-            ...(wecomCorpId && { corpId: wecomCorpId }),
-            ...(wecomCorpSecret && { corpSecret: wecomCorpSecret }),
-            ...(wecomAgentId && { agentId: wecomAgentId }),
-            ...(wecomToken && { token: wecomToken }),
-            ...(wecomEncodingAESKey && { encodingAESKey: wecomEncodingAESKey })
-          };
-        } else {
-          channels.wecom = { hasConfig: false };
-        }
 
         const weixinEnabled = document.getElementById('weixin-enabled').checked;
         const weixinBotType = document.getElementById('weixin-bot-type').value.trim();
@@ -2377,7 +2242,7 @@ export function handleStaticRequest(
   }
 
   // API 路径跳过
-  if (pathname.startsWith("/api/") || pathname.startsWith("/webhook/") || pathname.startsWith("/feishu/") || pathname.startsWith("/dingtalk/")) {
+  if (pathname.startsWith("/api/") || pathname.startsWith("/webhook/")) {
     return false;
   }
 

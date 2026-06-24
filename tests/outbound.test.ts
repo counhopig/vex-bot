@@ -15,20 +15,20 @@ import {
 // Mock channels
 vi.mock("../src/channels/common/index.js", () => {
   const mockChannel = {
-    id: "dingtalk",
+    id: "weixin",
     sendMessage: vi.fn().mockResolvedValue({ success: true, messageId: "msg-123" }),
   };
 
   return {
     getChannel: vi.fn((id: string) => {
-      if (id === "dingtalk" || id === "feishu") {
+      if (id === "weixin" || id === "webchat") {
         return { ...mockChannel, id };
       }
       return undefined;
     }),
     getAllChannels: vi.fn(() => [
-      { id: "dingtalk" },
-      { id: "feishu" },
+      { id: "weixin" },
+      { id: "webchat" },
     ]),
   };
 });
@@ -42,17 +42,17 @@ describe("outbound/index", () => {
 
   describe("parseDeliveryTarget", () => {
     it("should parse channel:chatId format", () => {
-      const result = parseDeliveryTarget("dingtalk:user123");
+      const result = parseDeliveryTarget("weixin:user123");
       expect(result).toEqual({
-        channel: "dingtalk",
+        channel: "weixin",
         to: "user123",
       });
     });
 
     it("should parse with fallback channel", () => {
-      const result = parseDeliveryTarget("user123", "feishu");
+      const result = parseDeliveryTarget("user123", "webchat");
       expect(result).toEqual({
-        channel: "feishu",
+        channel: "webchat",
         to: "user123",
       });
     });
@@ -68,9 +68,9 @@ describe("outbound/index", () => {
     });
 
     it("should handle target with multiple colons", () => {
-      const result = parseDeliveryTarget("dingtalk:group:abc:123");
+      const result = parseDeliveryTarget("weixin:group:abc:123");
       expect(result).toEqual({
-        channel: "dingtalk",
+        channel: "weixin",
         to: "group:abc:123",
       });
     });
@@ -78,13 +78,13 @@ describe("outbound/index", () => {
 
   describe("deliverMessage", () => {
     it("should deliver message successfully", async () => {
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payload: DeliveryPayload = { text: "Hello" };
 
       const result = await deliverMessage(target, payload);
 
       expect(result.success).toBe(true);
-      expect(result.channel).toBe("dingtalk");
+      expect(result.channel).toBe("weixin");
       expect(result.messageId).toBe("msg-123");
     });
 
@@ -108,11 +108,11 @@ describe("outbound/index", () => {
     it("should handle send failure with bestEffort", async () => {
       const mockGetChannel = getChannel as ReturnType<typeof vi.fn>;
       mockGetChannel.mockReturnValueOnce({
-        id: "dingtalk",
+        id: "weixin",
         sendMessage: vi.fn().mockResolvedValue({ success: false, error: "Network error" }),
       });
 
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payload: DeliveryPayload = { text: "Hello" };
 
       const result = await deliverMessage(target, payload, { bestEffort: true });
@@ -124,7 +124,7 @@ describe("outbound/index", () => {
 
   describe("deliverMessages", () => {
     it("should deliver multiple messages", async () => {
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payloads: DeliveryPayload[] = [
         { text: "Message 1" },
         { text: "Message 2" },
@@ -141,7 +141,7 @@ describe("outbound/index", () => {
       const mockGetChannel = getChannel as ReturnType<typeof vi.fn>;
       let callCount = 0;
       mockGetChannel.mockImplementation(() => ({
-        id: "dingtalk",
+        id: "weixin",
         sendMessage: vi.fn().mockImplementation(() => {
           callCount++;
           if (callCount === 2) {
@@ -151,7 +151,7 @@ describe("outbound/index", () => {
         }),
       }));
 
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payloads: DeliveryPayload[] = [
         { text: "Message 1" },
         { text: "Message 2" },
@@ -169,7 +169,7 @@ describe("outbound/index", () => {
       const mockGetChannel = getChannel as ReturnType<typeof vi.fn>;
       let callCount = 0;
       mockGetChannel.mockImplementation(() => ({
-        id: "dingtalk",
+        id: "weixin",
         sendMessage: vi.fn().mockImplementation(() => {
           callCount++;
           if (callCount === 2) {
@@ -179,7 +179,7 @@ describe("outbound/index", () => {
         }),
       }));
 
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payloads: DeliveryPayload[] = [
         { text: "Message 1" },
         { text: "Message 2" },
@@ -198,7 +198,7 @@ describe("outbound/index", () => {
       const controller = new AbortController();
       controller.abort();
 
-      const target: DeliveryTarget = { channel: "dingtalk", to: "user123" };
+      const target: DeliveryTarget = { channel: "weixin", to: "user123" };
       const payloads: DeliveryPayload[] = [
         { text: "Message 1" },
         { text: "Message 2" },
@@ -217,7 +217,7 @@ describe("outbound/index", () => {
   describe("deliverOutboundPayloads", () => {
     it("should deliver payloads using unified interface", async () => {
       const results = await deliverOutboundPayloads({
-        channel: "dingtalk",
+        channel: "weixin",
         to: "user123",
         payloads: [{ text: "Hello" }],
       });
@@ -228,7 +228,7 @@ describe("outbound/index", () => {
 
     it("should return empty array for empty payloads", async () => {
       const results = await deliverOutboundPayloads({
-        channel: "dingtalk",
+        channel: "weixin",
         to: "user123",
         payloads: [],
       });

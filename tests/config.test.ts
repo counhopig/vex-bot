@@ -45,10 +45,7 @@ describe("config", () => {
         key.includes("OPENROUTER") ||
         key.includes("TOGETHER") ||
         key.includes("GROQ") ||
-        key.includes("FEISHU") ||
-        key.includes("DINGTALK") ||
-        key.includes("QQ_") ||
-        key.includes("WECOM") ||
+        key.includes("WEIXIN_OC") ||
         key === "PORT" ||
         key === "LOG_LEVEL"
       ) {
@@ -101,58 +98,13 @@ describe("config", () => {
       expect(result.success).toBe(true);
     });
 
-    it("should validate feishu channel config", () => {
+    it("should validate weixin channel config", () => {
       const result = VexConfigSchema.safeParse({
         channels: {
-          feishu: {
-            appId: "app-id",
-            appSecret: "app-secret",
-            verificationToken: "token",
-            encryptKey: "key",
-          },
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it("should validate dingtalk channel config", () => {
-      const result = VexConfigSchema.safeParse({
-        channels: {
-          dingtalk: {
-            appKey: "app-key",
-            appSecret: "app-secret",
-            robotCode: "robot-code",
-          },
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it("should validate qq channel config", () => {
-      const result = VexConfigSchema.safeParse({
-        channels: {
-          qq: {
-            appId: "app-id",
-            clientSecret: "client-secret",
-            sandbox: true,
-          },
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it("should validate wecom channel config", () => {
-      const result = VexConfigSchema.safeParse({
-        channels: {
-          wecom: {
-            corpId: "corp-id",
-            corpSecret: "corp-secret",
-            agentId: 1000001,
-            token: "token",
-            encodingAESKey: "key",
+          weixin: {
+            enabled: true,
+            baseUrl: "https://ilinkai.weixin.qq.com",
+            botType: "3",
           },
         },
       });
@@ -290,40 +242,14 @@ providers:
       expect(config.providers.zhipu?.apiKey).toBe("zhipu-key");
     });
 
-    it("should load feishu channel from env", () => {
-      process.env.FEISHU_APP_ID = "feishu-app-id";
-      process.env.FEISHU_APP_SECRET = "feishu-secret";
-      process.env.FEISHU_VERIFICATION_TOKEN = "feishu-token";
+    it("should load weixin channel from env", () => {
+      process.env.WEIXIN_OC_TOKEN = "wx-token";
+      process.env.WEIXIN_OC_ACCOUNT_ID = "wx-account";
 
       const config = loadConfig({ configPath: path.join(testDir, "none.json") });
 
-      expect(config.channels.feishu?.appId).toBe("feishu-app-id");
-      expect(config.channels.feishu?.appSecret).toBe("feishu-secret");
-      expect(config.channels.feishu?.verificationToken).toBe("feishu-token");
-    });
-
-    it("should load dingtalk channel from env", () => {
-      process.env.DINGTALK_APP_KEY = "dingtalk-key";
-      process.env.DINGTALK_APP_SECRET = "dingtalk-secret";
-      process.env.DINGTALK_ROBOT_CODE = "dingtalk-robot";
-
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-
-      expect(config.channels.dingtalk?.appKey).toBe("dingtalk-key");
-      expect(config.channels.dingtalk?.appSecret).toBe("dingtalk-secret");
-      expect(config.channels.dingtalk?.robotCode).toBe("dingtalk-robot");
-    });
-
-    it("should load qq channel from env", () => {
-      process.env.QQ_APP_ID = "qq-app-id";
-      process.env.QQ_CLIENT_SECRET = "qq-secret";
-      process.env.QQ_SANDBOX = "true";
-
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-
-      expect(config.channels.qq?.appId).toBe("qq-app-id");
-      expect(config.channels.qq?.clientSecret).toBe("qq-secret");
-      expect(config.channels.qq?.sandbox).toBe(true);
+      expect(config.channels.weixin?.token).toBe("wx-token");
+      expect(config.channels.weixin?.accountId).toBe("wx-account");
     });
 
     it("should load server port from env", () => {
@@ -384,9 +310,8 @@ providers:
           deepseek: { apiKey: "key" },
         },
         channels: {
-          feishu: {
-            appId: "id",
-            appSecret: "secret",
+          weixin: {
+            enabled: true,
           },
         },
       });
