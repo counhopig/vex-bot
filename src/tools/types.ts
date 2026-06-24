@@ -55,17 +55,23 @@ export const TOOL_GROUPS: Record<string, string[]> = {
 };
 
 /** 创建 AgentTool 结果 */
-export function createToolResult(text: string, details?: unknown, isError = false): AgentToolResult<unknown> {
+export function createToolResult(
+  text: string,
+  details?: unknown,
+  isError = false
+): AgentToolResult<unknown> & { isError?: boolean } {
   return {
     content: [{ type: "text", text }],
     details: details ?? {},
+    isError,
   };
 }
 
 /** 创建错误结果 */
-export function createErrorToolResult(error: string): AgentToolResult<unknown> {
+export function createErrorToolResult(error: string): AgentToolResult<unknown> & { isError: true } {
   return {
     content: [{ type: "text", text: JSON.stringify({ status: "error", error }, null, 2) }],
     details: { status: "error", error },
+    isError: true,
   };
 }

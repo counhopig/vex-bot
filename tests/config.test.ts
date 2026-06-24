@@ -21,9 +21,11 @@ import { loadConfig, validateRequiredConfig, VexConfigSchema } from "../src/conf
 
 describe("config", () => {
   let testDir: string;
+  let originalCwd: string;
   const originalEnv = process.env;
 
   beforeEach(() => {
+    originalCwd = process.cwd();
     // 创建临时测试目录
     testDir = path.join(os.tmpdir(), `vex-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     fs.mkdirSync(testDir, { recursive: true });
@@ -55,6 +57,7 @@ describe("config", () => {
   });
 
   afterEach(() => {
+    process.chdir(originalCwd);
     // 恢复环境变量
     process.env = originalEnv;
 
@@ -271,6 +274,36 @@ providers:
 
       expect(config.providers).toEqual({});
       expect(config.channels).toEqual({});
+    });
+
+    it("should merge config files by documented priority", () => {
+      const homeDir = path.join(testDir, "home");
+      const workDir = path.join(testDir, "work");
+      const vexDir = path.join(homeDir, ".vex");
+      fs.mkdirSync(vexDir, { recursive: true });
+      fs.mkdirSync(workDir, { recursive: true });
+      fs.writeFileSync(path.join(workDir, "config.json5"), `{
+        providers: { deepseek: { apiKey: "cwd-key" } },
+        agent: { defaultModel: "cwd-model" },
+        server: { port: 3001 }
+      }`);
+      fs.writeFileSync(path.join(vexDir, "config.json5"), `{
+        providers: { kimi: { apiKey: "home-key" } },
+        agent: { defaultModel: "home-model" }
+      }`);
+      fs.writeFileSync(path.join(vexDir, "config.local.json5"), `{
+        agent: { temperature: 0.2 },
+        logging: { level: "debug" }
+      }`);
+
+      const config = loadConfig({ configDir: vexDir, cwd: workDir });
+
+      expect(config.providers.deepseek?.apiKey).toBe("cwd-key");
+      expect(config.providers.kimi?.apiKey).toBe("home-key");
+      expect(config.agent.defaultModel).toBe("home-model");
+      expect(config.agent.temperature).toBe(0.2);
+      expect(config.server.port).toBe(3001);
+      expect(config.logging.level).toBe("debug");
     });
   });
 

@@ -4,8 +4,12 @@
 
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 
+export type VexToolResult<T = unknown> = AgentToolResult<T> & {
+  isError?: boolean;
+};
+
 /** 创建 JSON 结果 */
-export function jsonResult(payload: unknown, isError = false): AgentToolResult<unknown> {
+export function jsonResult(payload: unknown, isError = false): VexToolResult<unknown> {
   return {
     content: [
       {
@@ -14,19 +18,21 @@ export function jsonResult(payload: unknown, isError = false): AgentToolResult<u
       },
     ],
     details: payload,
+    isError,
   };
 }
 
 /** 创建文本结果 */
-export function textResult(text: string, details?: unknown, isError = false): AgentToolResult<unknown> {
+export function textResult(text: string, details?: unknown, isError = false): VexToolResult<unknown> {
   return {
     content: [{ type: "text", text }],
     details: details ?? {},
+    isError,
   };
 }
 
 /** 创建错误结果 */
-export function errorResult(error: string | Error): AgentToolResult<unknown> {
+export function errorResult(error: string | Error): VexToolResult<unknown> {
   const message = error instanceof Error ? error.message : error;
   return {
     content: [
@@ -36,6 +42,7 @@ export function errorResult(error: string | Error): AgentToolResult<unknown> {
       },
     ],
     details: { status: "error", error: message },
+    isError: true,
   };
 }
 

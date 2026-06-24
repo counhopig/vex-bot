@@ -13,6 +13,7 @@ import {
   filterToolsByPolicy,
   toolsToOpenAIFunctions,
 } from "../src/tools/registry.js";
+import { errorResult, jsonResult, textResult } from "../src/tools/common.js";
 import type { Tool, ToolResult } from "../src/tools/types.js";
 
 // Mock logger
@@ -42,6 +43,30 @@ function createTestTool(name: string, description = "Test tool"): Tool {
 describe("tools/registry", () => {
   beforeEach(() => {
     clearTools();
+  });
+
+  describe("tool result helpers", () => {
+    it("should preserve error state on JSON results", () => {
+      const result = jsonResult({ status: "error", error: "blocked" }, true);
+
+      expect(result.isError).toBe(true);
+      expect(result.details).toEqual({ status: "error", error: "blocked" });
+    });
+
+    it("should preserve error state on text results", () => {
+      const result = textResult("failed", {}, true);
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.type).toBe("text");
+      expect(result.content[0]?.text).toBe("failed");
+    });
+
+    it("should mark errorResult as an error", () => {
+      const result = errorResult("bad input");
+
+      expect(result.isError).toBe(true);
+      expect(result.details).toEqual({ status: "error", error: "bad input" });
+    });
   });
 
   describe("registerTool", () => {

@@ -267,34 +267,31 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
 }
 
 /** 加载配置 */
-export function loadConfig(options?: { configPath?: string }): VexConfig {
-  const vexDir = join(homedir(), ".vex");
+export function loadConfig(options?: { configPath?: string; configDir?: string; cwd?: string }): VexConfig {
+  const vexDir = options?.configDir ?? join(homedir(), ".vex");
+  const cwd = options?.cwd ?? process.cwd();
   const configPaths = options?.configPath
     ? [options.configPath]
     : [
-        // 优先从 ~/.vex/ 目录读取
-        join(vexDir, "config.local.json5"),
-        join(vexDir, "config.local.json"),
-        join(vexDir, "config.json5"),
-        join(vexDir, "config.json"),
-        join(vexDir, "config.yaml"),
+        join(cwd, "config.yml"),
+        join(cwd, "config.yaml"),
+        join(cwd, "config.json"),
+        join(cwd, "config.json5"),
+        join(cwd, "config.local.json"),
+        join(cwd, "config.local.json5"),
         join(vexDir, "config.yml"),
-        // 然后从当前目录读取
-        join(process.cwd(), "config.local.json5"),
-        join(process.cwd(), "config.local.json"),
-        join(process.cwd(), "config.json5"),
-        join(process.cwd(), "config.json"),
-        join(process.cwd(), "config.yaml"),
-        join(process.cwd(), "config.yml"),
+        join(vexDir, "config.yaml"),
+        join(vexDir, "config.json"),
+        join(vexDir, "config.json5"),
+        join(vexDir, "config.local.json"),
+        join(vexDir, "config.local.json5"),
       ];
 
-  // 从文件加载
   let fileConfig: Partial<VexConfig> = {};
   for (const configPath of configPaths) {
     const config = loadConfigFromFile(configPath);
     if (Object.keys(config).length > 0) {
-      fileConfig = config;
-      break;
+      fileConfig = mergeConfigs(fileConfig, config);
     }
   }
 

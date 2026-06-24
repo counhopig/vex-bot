@@ -14,7 +14,7 @@ import {
   type ToolDefinition,
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
-import type { AgentTool, ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { AgentTool, AgentToolResult, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { VexConfig, ProviderId, InboundMessageContext } from "../types/index.js";
 import { resolveModel, initModelResolver, getApiKeyForProvider } from "../providers/model-resolver.js";
 import { getChildLogger } from "../utils/logger.js";
@@ -24,6 +24,36 @@ import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/service.js";
 
 const logger = getChildLogger("runtime");
+
+type ErrorAwareToolResult = AgentToolResult<unknown> & {
+  isError?: boolean;
+};
+
+function hasToolErrorFlag(result: AgentToolResult<unknown>): result is ErrorAwareToolResult {
+  return "isError" in result && result.isError === true;
+}
+
+function getToolErrorMessage(result: AgentToolResult<unknown>): string {
+  const text = result.content
+    .filter((item) => item.type === "text")
+    .map((item) => item.text)
+    .join("\n")
+    .trim();
+  return text || "Tool execution failed";
+}
+
+function wrapErrorAwareTool(tool: AgentTool): AgentTool {
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate) => {
+      const result = await tool.execute(toolCallId, params, signal, onUpdate);
+      if (hasToolErrorFlag(result)) {
+        throw new Error(getToolErrorMessage(result));
+      }
+      return result;
+    },
+  };
+}
 
 /** Runtime 配置 */
 export interface RuntimeConfig {
@@ -80,7 +110,7 @@ export class AgentRuntime {
 
   /** 注册自定义工具 */
   registerCustomTool(tool: AgentTool): void {
-    this.customTools.push(tool);
+    this.customTools.push(wrapErrorAwareTool(tool));
   }
 
   /** 获取或创建会话 */

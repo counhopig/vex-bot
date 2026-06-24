@@ -4,6 +4,7 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server as HttpServer } from "http";
+import { z } from "zod";
 import { getChildLogger } from "../utils/logger.js";
 import { generateId } from "../utils/index.js";
 import type {
@@ -34,6 +35,109 @@ import { homedir } from "os";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import json5 from "json5";
 const logger = getChildLogger("websocket");
+
+const EmptyParamsSchema = z.object({}).passthrough().default({});
+const ChatSendParamsSchema = z.object({
+  message: z.string().min(1),
+  sessionKey: z.string().optional(),
+});
+const SessionsListParamsSchema = z.object({
+  limit: z.number().int().positive().optional(),
+  activeMinutes: z.number().positive().optional(),
+  search: z.string().optional(),
+}).default({});
+const SessionKeyParamsSchema = z.object({
+  sessionKey: z.string().min(1),
+});
+const ProviderConfigInfoSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().optional(),
+  baseUrl: z.string().optional(),
+  hasApiKey: z.boolean(),
+  groupId: z.string().optional(),
+}).passthrough();
+const ChannelConfigInfoSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  hasConfig: z.boolean(),
+  enabled: z.boolean().optional(),
+  baseUrl: z.string().optional(),
+  botType: z.string().optional(),
+  hasToken: z.boolean().optional(),
+}).passthrough();
+const ConfigSaveParamsSchema = z.object({
+  providers: z.record(ProviderConfigInfoSchema).optional(),
+  channels: z.record(ChannelConfigInfoSchema).optional(),
+  agent: z.object({
+    defaultProvider: z.string(),
+    defaultModel: z.string(),
+    temperature: z.number().optional(),
+    maxTokens: z.number().optional(),
+    systemPrompt: z.string().optional(),
+  }).optional(),
+  server: z.object({
+    port: z.number().int().positive(),
+    host: z.string(),
+  }).optional(),
+  logging: z.object({
+    level: z.enum(["debug", "info", "warn", "error"]),
+  }).optional(),
+  memory: z.object({
+    enabled: z.boolean().optional(),
+    directory: z.string().optional(),
+    embeddingModel: z.string().optional(),
+    embeddingProvider: z.string().optional(),
+  }).optional(),
+  skills: z.object({
+    enabled: z.boolean().optional(),
+    userDir: z.string().optional(),
+    workspaceDir: z.string().optional(),
+    disabled: z.array(z.string()).optional(),
+    only: z.array(z.string()).optional(),
+  }).optional(),
+}).default({});
+const WeixinQrStatusParamsSchema = z.object({
+  qrcode: z.string().min(1),
+});
+const RequestFrameSchema = z.object({
+  type: z.literal("req"),
+  id: z.string().min(1),
+  method: z.string().min(1),
+  params: z.unknown().optional(),
+});
+
+function formatZodError(error: z.ZodError): string {
+  return error.issues.map((issue) => `${issue.path.join(".") || "frame"}: ${issue.message}`).join("; ");
+}
+
+function parseRequestFrame(data: string): WsRequestFrame {
+  const raw = JSON.parse(data);
+  const result = RequestFrameSchema.safeParse(raw);
+  if (!result.success) {
+    throw new Error(`Invalid request frame: ${formatZodError(result.error)}`);
+  }
+  return result.data;
+}
+
+function parseParams<T>(schema: z.ZodType<T>, params: unknown): T {
+  const result = schema.safeParse(params);
+  if (!result.success) {
+    throw new Error(`Invalid params: ${formatZodError(result.error)}`);
+  }
+  return result.data;
+}
+
+function getRequestId(data: string): string | undefined {
+  try {
+    const raw = JSON.parse(data);
+    if (raw !== null && typeof raw === "object" && "id" in raw && typeof raw.id === "string") {
+      return raw.id;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 
 /** WebSocket 客户端 */
 interface WsClient {
@@ -133,13 +237,18 @@ export class WsServer {
   /** 处理消息 */
   private async handleMessage(client: WsClient, data: string): Promise<void> {
     try {
-      const frame = JSON.parse(data) as WsFrame;
-
-      if (frame.type === "req") {
-        await this.handleRequest(client, frame);
-      }
+      const frame = parseRequestFrame(data);
+      await this.handleRequest(client, frame);
     } catch (error) {
       logger.error({ error, data }, "Failed to handle message");
+      const id = getRequestId(data);
+      if (id) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.sendResponse(client.ws, id, false, undefined, {
+          code: "BAD_REQUEST",
+          message,
+        });
+      }
     }
   }
 
@@ -155,52 +264,59 @@ export class WsServer {
 
       switch (method) {
         case "chat.send":
-          result = await this.handleChatSend(client, params as ChatSendParams);
+          result = await this.handleChatSend(client, parseParams(ChatSendParamsSchema, params));
           break;
         case "chat.cancel":
+          parseParams(EmptyParamsSchema, params);
           result = this.handleChatCancel(client);
           break;
         case "chat.clear":
+          parseParams(EmptyParamsSchema, params);
           result = await this.handleChatClear(client);
           break;
         case "sessions.list":
-          result = await this.handleSessionsList(params as SessionsListParams);
+          result = await this.handleSessionsList(parseParams(SessionsListParamsSchema, params));
           break;
         case "sessions.history":
-          result = await this.handleSessionsHistory(params as SessionsHistoryParams);
+          result = await this.handleSessionsHistory(parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.delete":
-          result = await this.handleSessionsDelete(params as SessionsDeleteParams);
+          result = await this.handleSessionsDelete(parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.reset":
-          result = await this.handleSessionsReset(params as SessionsResetParams);
+          result = await this.handleSessionsReset(parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.restore":
-          result = await this.handleSessionsRestore(client, params as SessionsRestoreParams);
+          result = await this.handleSessionsRestore(client, parseParams(SessionKeyParamsSchema, params));
           break;
         case "status.get":
+          parseParams(EmptyParamsSchema, params);
           result = this.getSystemStatus();
           break;
         case "session.info":
+          parseParams(EmptyParamsSchema, params);
           result = this.getSessionInfo(client);
           break;
         case "config.get":
+          parseParams(EmptyParamsSchema, params);
           result = this.getConfigInfo();
           break;
         case "config.validate":
-          result = this.validateConfig(params as ConfigSaveParams);
+          result = this.validateConfig(parseParams(ConfigSaveParamsSchema, params) ?? {});
           break;
         case "config.save":
-          result = await this.saveConfig(params as ConfigSaveParams);
+          result = await this.saveConfig(parseParams(ConfigSaveParamsSchema, params) ?? {});
           break;
         case "ping":
+          parseParams(EmptyParamsSchema, params);
           result = { pong: Date.now() };
           break;
         case "weixin.qr":
+          parseParams(EmptyParamsSchema, params);
           result = await this.handleWeixinQR();
           break;
         case "weixin.qr.status":
-          result = await this.handleWeixinQRStatus(params as { qrcode: string });
+          result = await this.handleWeixinQRStatus(parseParams(WeixinQrStatusParamsSchema, params));
           break;
         default:
           throw new Error(`Unknown method: ${method}`);

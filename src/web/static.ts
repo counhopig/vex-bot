@@ -601,9 +601,32 @@ function getEmbeddedHtml(config: VexConfig): string {
     function renderContent(content, isAssistant = false) {
       if (isAssistant && typeof marked !== 'undefined') {
         marked.setOptions({ breaks: true, gfm: true });
-        return marked.parse(content);
+        return sanitizeHtml(marked.parse(content));
       }
       return escapeHtml(content);
+    }
+
+    function sanitizeHtml(html) {
+      const template = document.createElement('template');
+      template.innerHTML = String(html);
+      const blockedTags = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'META']);
+      const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_ELEMENT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach((node) => {
+        if (blockedTags.has(node.tagName)) {
+          node.remove();
+          return;
+        }
+        [...node.attributes].forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          const value = attr.value.trim().toLowerCase();
+          if (name.startsWith('on') || ((name === 'href' || name === 'src') && value.startsWith('javascript:'))) {
+            node.removeAttribute(attr.name);
+          }
+        });
+      });
+      return template.innerHTML;
     }
 
     function addMessage(role, content, streaming = false) {
