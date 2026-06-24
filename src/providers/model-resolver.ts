@@ -27,7 +27,7 @@ const CHINA_PROVIDER_BASE_URLS: Record<string, string> = {
   kimi: "https://api.moonshot.cn/v1",
   stepfun: "https://api.stepfun.com/v1",
   doubao: "https://ark.cn-beijing.volces.com/api/v3",
-  minimax: "https://api.minimax.chat/v1",
+  minimax: "https://api.minimaxi.com/anthropic",
   modelscope: "https://api-inference.modelscope.cn/v1",
   dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
@@ -54,10 +54,9 @@ const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
     { id: "step-1-128k", name: "Step 1 128K", provider: "stepfun", api: "openai-compatible", contextWindow: 128000, maxTokens: 65536, supportsVision: false, supportsReasoning: false },
   ],
   minimax: [
-    { id: "MiniMax-M3", name: "MiniMax M3", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
-    { id: "MiniMax-M2.1", name: "MiniMax M2.1", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
-    { id: "MiniMax-M1", name: "MiniMax M1", provider: "minimax", api: "openai-compatible", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
-    { id: "abab6.5s-chat", name: "ABAB 6.5s Chat", provider: "minimax", api: "openai-compatible", contextWindow: 245760, maxTokens: 8192, supportsVision: false, supportsReasoning: false },
+    { id: "MiniMax-M3", name: "MiniMax M3", provider: "minimax", api: "anthropic", contextWindow: 1000000, maxTokens: 65536, supportsVision: true, supportsReasoning: true },
+    { id: "MiniMax-M2.5", name: "MiniMax M2.5", provider: "minimax", api: "anthropic", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
+    { id: "MiniMax-M2.1", name: "MiniMax M2.1", provider: "minimax", api: "anthropic", contextWindow: 1000000, maxTokens: 65536, supportsVision: false, supportsReasoning: true },
   ],
   modelscope: [
     { id: "Qwen/Qwen2.5-72B-Instruct", name: "Qwen 2.5 72B", provider: "modelscope", api: "openai-compatible", contextWindow: 131072, maxTokens: 8192, supportsVision: false, supportsReasoning: false },
@@ -171,13 +170,9 @@ function registerChinaProvider(
   if (!models) return;
 
   for (const modelDef of models) {
-    const model = buildOpenAIModel(
-      modelDef.id,
-      modelDef,
-      baseUrl,
-      providerId,
-      config.headers,
-    );
+    const model = modelDef.api === "anthropic"
+      ? buildAnthropicModel(modelDef.id, modelDef, baseUrl, providerId, undefined, config.headers)
+      : buildOpenAIModel(modelDef.id, modelDef, baseUrl, providerId, config.headers);
     modelRegistry.set(`${providerId}:${modelDef.id}`, { model, providerId: providerId as ProviderId });
   }
 
