@@ -152,11 +152,11 @@ export class AgentRuntime {
       tools: [], // 不使用默认的 coding tools，只用自定义工具
     });
 
-    // 设置系统提示
+    // 覆盖系统提示（必须同时设置 _baseSystemPrompt，否则每次 prompt() 会重置）
     const systemPrompt = this.buildSystemPromptText();
     newSession.agent.setSystemPrompt(systemPrompt);
+    (newSession as any)._baseSystemPrompt = systemPrompt;
 
-    // 如果有自定义工具，设置到 agent
     if (this.customTools.length > 0) {
       newSession.agent.setTools(this.customTools);
     }
@@ -200,11 +200,9 @@ export class AgentRuntime {
 
     const session = await this.getOrCreateSession(sessionKey);
 
-    // 发送消息
     await session.prompt(context.content);
     await session.agent.waitForIdle();
 
-    // 提取最后一条助手消息
     const lastText = session.getLastAssistantText() ?? "";
 
     // 获取使用统计
