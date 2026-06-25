@@ -8,7 +8,7 @@
 
 Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~24k lines / 85 .ts source files. TypeScript ESM only. npm package + CLI binary.
 
-Forked from [OpenMozi](https://github.com/King-Chau/mozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
+Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
 
 ## STRUCTURE
 

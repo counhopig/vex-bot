@@ -1,6 +1,6 @@
 # Vex — 从 OpenMozi 分叉的改动记录
 
-Vex 是从 [OpenMozi](https://github.com/King-Chau/mozi) (Apache 2.0) 分叉的个人微信特化版。
+Vex was forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0) as a personal WeChat-specific version.
 
 ## 1. 全项目改名
 
