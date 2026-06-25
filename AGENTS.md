@@ -1,7 +1,7 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-23
-**Commit:** 64ee6fd
+**Generated:** 2026-06-25
+**Commit:** b7bf46a
 **Branch:** main
 
 ## OVERVIEW
@@ -111,6 +111,45 @@ Forked from [OpenMozi](https://github.com/King-Chau/mozi) (Apache 2.0), stripped
 - Only supported channel is personal WeChat via iLink OC API (QR code login + long-polling)
 - ChannelId type is `"weixin" | "webchat"`
 
+## BUILD & CI
+
+| Stage | Detail |
+|-------|--------|
+| **Build** | `tsc` (NodeNext module, ES2022 target) → `dist/` |
+| **CI trigger** | GitHub Release `created` event → `npm ci` → `npm run build` → `npm publish` |
+| **CI runner** | ubuntu-latest, Node 20 |
+| **Tests in CI** | ❌ NOT run — `release.yml` has no test step |
+| **Lint in CI** | ❌ NOT run — eslint not installed, `lint` script broken |
+| **Docker** | Multi-stage `node:20-alpine`: builder → production. Non-root `vex:vex` (1001:1001). CLI as ENTRYPOINT |
+| **docker-compose** | Two variants: default (`--web-only`, 512M mem limit) + `.env.yml` (env-driven, mounts config) |
+| **Artifacts** | `dist/`, `skills/`, `package*.json` only. No Docker image push to registry |
+| **Missing** | No `.dockerignore` (referenced in `.gitignore` but file absent), no `.nvmrc`, no Makefile |
+
+## TEST INFRASTRUCTURE
+
+- **Framework**: Vitest 2.x, `globals: true`, `environment: "node"`
+- **Location**: `tests/` directory (flat, 15 files). NOT colocated with source. Zero `__tests__/` dirs in `src/`
+- **Naming**: `<module>.test.ts` (e.g., `config.test.ts`, `hooks.test.ts`)
+- **Mock pattern**: `vi.mock()` hoisted at top, `.js` extension in paths, NO shared mock helpers — every file self-contained
+- **Logger mock** (appears in 11/15 files): always the same shape, copy-pasted per file
+- **Fixtures**: temp dirs under `os.tmpdir()` created in `beforeEach`, cleaned in `afterEach`. No fixture files
+- **Coverage excludes**: `src/cli/**`, `src/web/**`
+- **Untested**: CLI, WebChat UI, gateway Express server, WeChat channel adapter, chat commands
+- **No** snapshots, `.only`, `.skip`, custom matchers
+
+## CROSS-CUTTING CONCERNS
+
+| Issue | Files Affected | Risk |
+|-------|---------------|------|
+| **`generateJson5()` duplication** | `src/cli/index.ts` + `src/web/websocket.ts` | Identical ~40-line JSON5 serializer — diverging modifications will break one |
+| **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Incompatible shapes — shared has `tool_calls`, web has `id`/`timestamp` |
+| **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places — adding a provider requires 3-file edit |
+| **No centralized config writer** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` | Both write `~/.vex/config.local.json5` independently — race condition risk |
+| **`require()` in ESM module** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js |
+| **Plugin auto-discovery not wired** | `src/plugins/service.ts` exists but never called from `Gateway` | Bundled/global/workspace plugins not auto-loaded on `vex start` |
+| **Unused utils** | `src/utils/index.ts` — 10/13 functions never imported internally | Dead code: `retry`, `delay`, `truncate`, `safeJsonParse`, `deepMerge`, etc. exist only in public barrel |
+| **Stale `.env.example`** | Root `.env.example` | Lists Feishu/DingTalk/QQ/WeCom — channels stripped in fork from OpenMozi |
+
 ## COMMANDS
 
 ```bash
@@ -124,6 +163,21 @@ vex start --web-only  # WebChat only, no channel platforms
 vex logs -f           # Tail follow logs
 ```
 
+## AGENTS.md HIERARCHY
+
+```
+./AGENTS.md                       (root — you are here)
+├── src/channels/AGENTS.md        Channel adapter layer
+├── src/tools/AGENTS.md           Tool system + 25 built-in tools
+├── src/agents/AGENTS.md          Agent orchestration core
+├── src/web/AGENTS.md             WebSocket protocol + WebChat SPAs
+├── src/plugins/AGENTS.md         3-tier plugin discovery system
+├── src/cron/AGENTS.md            Scheduling engine
+├── src/memory/AGENTS.md          Long-term memory system
+├── src/skills/AGENTS.md          SKILL.md injection system
+└── src/browser/AGENTS.md         Playwright browser automation
+```
+
 ## NOTES
 
 - The agent engine is `@mariozechner/pi-coding-agent` — understand its API before modifying `src/agents/runtime.ts`
@@ -132,3 +186,7 @@ vex logs -f           # Tail follow logs
 - Docker Compose health check depends on Express `/health` endpoint
 - Playwright (`playwright-core`) requires browser binaries: `npx playwright install chromium`
 - The `lint` script (`eslint src --ext .ts`) is currently broken — eslint is not installed
+- `src/cli/fetch-patch.ts` monkey-patches `globalThis.fetch` at CLI startup for non-ASCII headers (MiniMax/Zhipu)
+- `src/cli/index.ts:chat` bypasses Agent entirely — constructs `@mariozechner/pi-ai` messages directly
+- Config writes from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.json5`
+- `src/web/static.ts` is 2303 lines — two inline SPAs with no separation of concerns

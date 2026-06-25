@@ -1,16 +1,52 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+*.tsbuildinfo
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Logs
 *.log
-.DS_Store
+npm-debug.log*
+
+# Test coverage
 coverage/
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+*.bak
+
+# IDE / Editor
 .idea/
 .vscode/
-*.tgz
+*.sublime-*
+
+# Project config (local overrides only)
 config.local.json5
 config.local.json5.*
-*.bak
-.claude/
 
-# Docker
-.dockerignore
+# Package artifacts
+*.tgz
+
+# Code intelligence
+.codegraph/
+
+# Work tracking
+.omo/
+
+# AI tools
+.claude/
+.codex/
+.opencode/
+
