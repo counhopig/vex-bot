@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/counhopig/vex-box)
+[![version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
@@ -217,4 +217,4 @@ npm run start:gateway
 
 ---
 
-**Repository**: [https://github.com/counhopig/vex-box](https://github.com/counhopig/vex-box)
+**Repository**: [https://github.com/counhopig/vex-bot](https://github.com/counhopig/vex-bot)

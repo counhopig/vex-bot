@@ -48,7 +48,7 @@ vex version
 ### 2.3 Install from source
 
 ```bash
-git clone https://github.com/counhopig/vex-box.git
+git clone https://github.com/counhopig/vex-bot.git
 cd vex
 npm install
 npm run build
@@ -934,6 +934,6 @@ The Doubao (ByteDance) provider is configured through the config file only. Unli
 
 ## Appendix
 
-- **Repository**: [https://github.com/counhopig/vex-box](https://github.com/counhopig/vex-box)
+- **Repository**: [https://github.com/counhopig/vex-bot](https://github.com/counhopig/vex-bot)
 - **License**: Apache 2.0
 - **Forked from**: [OpenMozi](https://github.com/oujingzhou/openmozi)
