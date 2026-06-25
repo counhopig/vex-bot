@@ -44,8 +44,8 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("定时任务已创建");
-    expect(text).toContain("系统事件");
+    expect(text).toContain("Cron job created:");
+    expect(text).toContain("System event");
 
     const jobs = service.list();
     expect(jobs).toHaveLength(1);
@@ -68,8 +68,8 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("定时任务已创建");
-    expect(text).toContain("Agent 执行");
+    expect(text).toContain("Cron job created:");
+    expect(text).toContain("Agent execution");
     expect(text).toContain("weixin");
     expect(text).toContain("user123");
 
@@ -99,9 +99,9 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("定时任务已创建");
-    expect(text).toContain("Agent 执行");
-    expect(text).not.toContain("投递目标");
+    expect(text).toContain("Cron job created:");
+    expect(text).toContain("Agent execution");
+    expect(text).not.toContain("deliver to");
 
     const jobs = service.list();
     const job = jobs[0]!;
@@ -125,8 +125,8 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("定时任务已创建");
-    expect(text).toContain("Agent 执行");
+    expect(text).toContain("Cron job created:");
+    expect(text).toContain("Agent execution");
     expect(text).toContain("weixin");
   });
 
@@ -143,7 +143,7 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("错误");
+    expect(text).toContain("Error");
     expect(text).toContain("cronExpr");
   });
 
@@ -161,8 +161,8 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("错误");
-    expect(text).toContain("无效的通道");
+    expect(text).toContain("Error");
+    expect(text).toContain("invalid channel");
     expect(text).toContain("invalid_channel");
   });
 
@@ -178,9 +178,9 @@ describe("cron_add tool - agentTurn support", () => {
     });
 
     const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-    expect(text).toContain("错误");
+    expect(text).toContain("Error");
     expect(text).toContain("timeoutSeconds");
-    expect(text).toContain("1-600");
+    expect(text).toContain("1 and 600");
   });
 
   it("should accept valid channels", async () => {
@@ -198,7 +198,7 @@ describe("cron_add tool - agentTurn support", () => {
       });
 
       const text = result.content[0]?.type === "text" ? result.content[0].text : "";
-      expect(text).toContain("定时任务已创建");
+      expect(text).toContain("Cron job created:");
     }
   });
 });
