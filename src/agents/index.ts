@@ -1,5 +1,5 @@
 /**
- * Agent 模块导出
+ * Agent module exports
  */
 
 export * from "./agent.js";

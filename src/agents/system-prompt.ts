@@ -1,37 +1,37 @@
 /**
- * 系统提示构建器
- * 参考 moltbot 的 system-prompt.ts
+ * System Prompt Builder
+ * Based on moltbot system-prompt.ts
  */
 
 import * as os from "os";
 import * as path from "path";
 import type { Tool } from "../tools/types.js";
 
-/** 系统提示选项 */
+/** System prompt options */
 export interface SystemPromptOptions {
-  /** 基础系统提示 */
+  /** Base system prompt */
   basePrompt?: string;
-  /** 工作目录 */
+  /** Working directory */
   workingDirectory?: string;
-  /** 是否包含环境信息 */
+  /** Whether to include environment info */
   includeEnvironment?: boolean;
-  /** 是否包含日期时间 */
+  /** Whether to include date/time */
   includeDateTime?: boolean;
-  /** 是否包含工具使用规则 */
+  /** Whether to include tool usage rules */
   includeToolRules?: boolean;
-  /** 可用工具列表 (用于生成工具使用指南) */
+  /** Available tools list (for tool usage guide generation) */
   tools?: Tool[];
-  /** 额外的上下文 (如之前的摘要) */
+  /** Additional context (e.g. previous summary) */
   additionalContext?: string;
-  /** 用户名 */
+  /** Username */
   userName?: string;
-  /** Skills prompt (由 skills registry 构建) */
+  /** Skills prompt (built by skills registry) */
   skillsPrompt?: string;
-  /** 是否启用记忆系统（用于注入记忆使用指南） */
+  /** Whether memory system is enabled (for injecting memory usage guide) */
   enableMemory?: boolean;
 }
 
-/** 获取平台信息 */
+/** Get platform info */
 function getPlatformInfo(): string {
   const platform = os.platform();
   const arch = os.arch();
@@ -48,7 +48,7 @@ function getPlatformInfo(): string {
   return `${platformName} ${release} (${arch})`;
 }
 
-/** 获取当前日期时间 */
+/** Get current date and time */
 function getCurrentDateTime(): string {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", {
@@ -65,12 +65,12 @@ function getCurrentDateTime(): string {
   return `${dateStr} ${timeStr}`;
 }
 
-/** 获取 Shell 信息 */
+/** Get shell info */
 function getShellInfo(): string {
   return process.env.SHELL ?? "/bin/bash";
 }
 
-/** 构建环境信息部分 */
+/** Build environment info section */
 function buildEnvironmentSection(options: SystemPromptOptions): string {
   const cwd = options.workingDirectory ?? process.cwd();
   const sections: string[] = [];
@@ -85,7 +85,7 @@ function buildEnvironmentSection(options: SystemPromptOptions): string {
     sections.push(`Current time: ${getCurrentDateTime()}`);
   }
 
-  // 检测是否是 git 仓库
+  // Check if git repository
   try {
     const gitDir = path.join(cwd, ".git");
     const fs = require("fs");
@@ -105,7 +105,7 @@ function buildEnvironmentSection(options: SystemPromptOptions): string {
   return sections.join("\n");
 }
 
-/** 构建工具使用规则 */
+/** Build tool usage rules section */
 function buildToolRulesSection(tools?: Tool[]): string {
   if (!tools || tools.length === 0) {
     return "";
@@ -113,42 +113,42 @@ function buildToolRulesSection(tools?: Tool[]): string {
 
   const rules: string[] = [
     "",
-    "## 工具使用规则",
+    "## Tool Usage Rules",
     "",
-    "你可以使用以下工具来完成任务。使用工具时，模型会返回 tool_calls，系统会自动执行并返回结果。",
+    "You can use the following tools to complete tasks. When using tools, the model returns tool_calls which the system executes and returns results.",
     "",
-    "### 重要原则",
+    "### Important Principles",
     "",
-    "1. **读取优先**: 在修改任何文件之前，必须先使用 read_file 读取文件内容，了解现有代码结构。",
-    "2. **最小改动**: 只做必要的修改，不要过度工程化或添加不需要的功能。",
-    "3. **安全意识**: 避免执行危险命令，不要泄露敏感信息。",
-    "4. **错误处理**: 如果工具执行失败，分析错误原因并尝试修复。",
-    "5. **确认结果**: 执行重要操作后，验证结果是否符合预期。",
+    "1. **Read First**: Before modifying any file, you must first read the file content with read_file to understand the existing code structure.",
+    "2. **Minimal Changes**: Only make necessary modifications. Do not over-engineer or add unnecessary features.",
+    "3. **Security Awareness**: Avoid executing dangerous commands. Do not leak sensitive information.",
+    "4. **Error Handling**: If a tool execution fails, analyze the cause and attempt to fix it.",
+    "5. **Verify Results**: After executing important operations, verify that the results meet expectations.",
     "",
-    "### 可用工具",
+    "### Available Tools",
     "",
   ];
 
-  // 按类别分组工具
+  // Group tools by category
   const categories: Record<string, Tool[]> = {
-    "文件操作": [],
-    "命令执行": [],
-    "搜索": [],
-    "网络": [],
-    "其他": [],
+    "File Operations": [],
+    "Command Execution": [],
+    "Search": [],
+    "Network": [],
+    "Other": [],
   };
 
   for (const tool of tools) {
     if (["read_file", "write_file", "edit_file", "list_directory"].includes(tool.name)) {
-      categories["文件操作"]!.push(tool);
+      categories["File Operations"]!.push(tool);
     } else if (["bash", "process"].includes(tool.name)) {
-      categories["命令执行"]!.push(tool);
+      categories["Command Execution"]!.push(tool);
     } else if (["glob", "grep"].includes(tool.name)) {
-      categories["搜索"]!.push(tool);
+      categories["Search"]!.push(tool);
     } else if (["web_search", "web_fetch", "browser"].includes(tool.name)) {
-      categories["网络"]!.push(tool);
+      categories["Network"]!.push(tool);
     } else {
-      categories["其他"]!.push(tool);
+      categories["Other"]!.push(tool);
     }
   }
 
@@ -158,7 +158,7 @@ function buildToolRulesSection(tools?: Tool[]): string {
     rules.push(`**${category}**:`);
     for (const tool of categoryTools) {
       const label = tool.label ?? tool.name;
-      // 简化描述，只取第一句
+      // Simplified description, first sentence only
       const desc = tool.description.split("\n")[0]?.slice(0, 80) ?? "";
       rules.push(`- \`${tool.name}\`: ${desc}`);
     }
@@ -168,197 +168,197 @@ function buildToolRulesSection(tools?: Tool[]): string {
   return rules.join("\n");
 }
 
-/** 构建文件操作指南 */
+/** Build file operations guide */
 function buildFileOperationsGuide(): string {
   return `
-### 文件操作最佳实践
+### File Operations Best Practices
 
-**读取文件**:
-- 使用 read_file 读取文件，支持 offset 和 limit 参数读取部分内容
-- 大文件应分段读取
+**Reading Files**:
+- Use read_file to read files, supports offset and limit parameters for partial reads
+- Large files should be read in chunks
 
-**编辑文件**:
-- 使用 edit_file 进行精确的字符串替换
-- old_string 必须是文件中唯一的，否则需要提供更多上下文
-- 如果需要替换所有出现，使用 replace_all: true
+**Editing Files**:
+- Use edit_file for precise string replacement
+- old_string must be unique in the file, or provide more context
+- Use replace_all: true to replace all occurrences
 
-**创建文件**:
-- 使用 write_file 创建新文件或完全重写文件
-- 优先编辑现有文件而非重写
+**Creating Files**:
+- Use write_file to create new files or completely rewrite files
+- Prefer editing existing files over rewriting
 
-**搜索文件**:
-- 使用 glob 按文件名模式搜索
-- 使用 grep 按内容搜索
+**Searching Files**:
+- Use glob to search by filename pattern
+- Use grep to search by content
 `;
 }
 
-/** 构建 Bash 使用指南 */
+/** Build Bash usage guide */
 function buildBashGuide(): string {
   return `
-### Bash 命令使用指南
+### Bash Command Usage Guide
 
-**基本规则**:
-- 优先使用专用工具（read_file、edit_file 等）而非 bash 的 cat、sed 等
-- 对于长时间运行的命令，使用 run_in_background: true
-- 命令超时时间最长 10 分钟
+**Basic Rules**:
+- Prefer specialized tools (read_file, edit_file, etc.) over bash commands like cat, sed, etc.
+- For long-running commands, use run_in_background: true
+- Command timeout: maximum 10 minutes
 
-**后台进程**:
-- 使用 bash 工具的 run_in_background 参数启动后台任务
-- 使用 process 工具的 poll 操作获取输出
-- 使用 process 工具的 kill 操作终止进程
+**Background Processes**:
+- Use the bash tool's run_in_background parameter to start background tasks
+- Use the process tool's poll operation to get output
+- Use the process tool's kill operation to terminate processes
 
-**安全限制**:
-- 禁止执行破坏性命令 (rm -rf /、mkfs 等)
-- 禁止修改系统关键配置
+**Security Constraints**:
+- Prohibited: destructive commands (rm -rf /, mkfs, etc.)
+- Prohibited: modifying critical system configuration
 `;
 }
 
-/** 构建浏览器工具使用指南 */
+/** Build browser tool usage guide */
 function buildBrowserGuide(): string {
   return `
-### 浏览器自动化指南
+### Browser Automation Guide
 
-你可以使用 \`browser\` 工具进行完整的网页自动化操作，包括打开网页、点击按钮、输入文本等。
+You can use the \`browser\` tool for complete web automation, including opening pages, clicking buttons, and typing text.
 
-**基本工作流程**:
-1. **启动浏览器**: \`browser({ action: "start", headless: false })\` - 设置 headless: false 可以看到浏览器窗口
-2. **导航到网页**: \`browser({ action: "navigate", url: "https://example.com" })\`
-3. **获取页面快照**: \`browser({ action: "snapshot" })\` - 获取页面元素引用 (e1, e2, e3...)
-4. **执行交互操作**: 使用 ref 进行点击、输入等操作
-5. **关闭浏览器**: \`browser({ action: "stop" })\`
+**Basic Workflow**:
+1. **Start Browser**: \`browser({ action: "start", headless: false })\` - set headless: false to see the browser window
+2. **Navigate to Page**: \`browser({ action: "navigate", url: "https://example.com" })\`
+3. **Get Page Snapshot**: \`browser({ action: "snapshot" })\` - get page element references (e1, e2, e3...)
+4. **Execute Interactions**: use ref for clicks, typing, etc.
+5. **Close Browser**: \`browser({ action: "stop" })\`
 
-**元素引用 (ref) 系统**:
-- 调用 snapshot 后会返回页面交互元素的引用，如 e1, e2, e3
-- 在 click、type、hover 等操作中使用这些 ref
-- ref 比 CSS 选择器更可靠，适合 AI 驱动的自动化
+**Element Reference (ref) System**:
+- After calling snapshot, page interactive element references are returned, e.g. e1, e2, e3
+- Use these refs in click, type, hover, etc. operations
+- ref is more reliable than CSS selectors, suitable for AI-driven automation
 
-**支持的操作**:
-| 操作 | 说明 | 示例 |
+**Supported Operations**:
+| Operation | Description | Example |
 |------|------|------|
-| start | 启动浏览器 | \`{ action: "start", headless: false }\` |
-| stop | 关闭浏览器 | \`{ action: "stop" }\` |
-| navigate | 导航到 URL | \`{ action: "navigate", url: "..." }\` |
-| snapshot | 获取页面元素 | \`{ action: "snapshot" }\` |
-| screenshot | 截图 | \`{ action: "screenshot", fullPage: true }\` |
-| click | 点击元素 | \`{ action: "click", ref: "e1" }\` |
-| type | 输入文本 | \`{ action: "type", ref: "e2", text: "hello", submit: true }\` |
-| hover | 悬停 | \`{ action: "hover", ref: "e3" }\` |
-| scroll | 滚动 | \`{ action: "scroll", direction: "down" }\` 或 \`{ action: "scroll", ref: "e5" }\` |
-| press | 按键 | \`{ action: "press", key: "Enter" }\` |
-| select | 选择下拉项 | \`{ action: "select", ref: "e4", values: ["option1"] }\` |
-| wait | 等待 | \`{ action: "wait", waitFor: "text", value: "Success" }\` |
+| start | Start Browser | \`{ action: "start", headless: false }\` |
+| stop | Close Browser | \`{ action: "stop" }\` |
+| navigate | Navigate to URL | \`{ action: "navigate", url: "..." }\` |
+| snapshot | Get page elements | \`{ action: "snapshot" }\` |
+| screenshot | Screenshot | \`{ action: "screenshot", fullPage: true }\` |
+| click | Click element | \`{ action: "click", ref: "e1" }\` |
+| type | Type text | \`{ action: "type", ref: "e2", text: "hello", submit: true }\` |
+| hover | Hover | \`{ action: "hover", ref: "e3" }\` |
+| scroll | Scroll | \`{ action: "scroll", direction: "down" }\` or \`{ action: "scroll", ref: "e5" }\` |
+| press | Press key | \`{ action: "press", key: "Enter" }\` |
+| select | Select dropdown | \`{ action: "select", ref: "e4", values: ["option1"] }\` |
+| wait | Wait | \`{ action: "wait", waitFor: "text", value: "Success" }\` |
 
-**点击操作增强**:
-- 双击: \`{ action: "click", ref: "e1", doubleClick: true }\`
-- 右键: \`{ action: "click", ref: "e1", button: "right" }\`
-- 组合键: \`{ action: "click", ref: "e1", modifiers: ["Control"] }\`
+**Click Operation Enhancements**:
+- Double-click: \`{ action: "click", ref: "e1", doubleClick: true }\`
+- Right-click: \`{ action: "click", ref: "e1", button: "right" }\`
+- Modifier Key: \`{ action: "click", ref: "e1", modifiers: ["Control"] }\`
 
-**输入操作增强**:
-- 逐字输入: \`{ action: "type", ref: "e2", text: "hello", slowly: true }\`
-- 输入后提交: \`{ action: "type", ref: "e2", text: "search query", submit: true }\`
+**Input Operation Enhancements**:
+- Type Slowly: \`{ action: "type", ref: "e2", text: "hello", slowly: true }\`
+- Submit After Typing: \`{ action: "type", ref: "e2", text: "search query", submit: true }\`
 
-**重要**: 当用户要求操作网页（如点击按钮、填写表单、浏览网页）时，应该使用 browser 工具而不是简单地用 open 命令打开浏览器。
+**Important**: When users ask to interact with web pages (click buttons, fill forms, browse), use the browser tool instead of simply opening a browser with the open command.
 `;
 }
 
-/** 构建记忆工具使用指南 */
+/** Build memory tool usage guide */
 function buildMemoryGuide(): string {
   return `
-### 记忆系统使用指南
+### Memory System Usage Guide
 
-你可以使用记忆工具来存储和检索重要信息。
+You can use memory tools to store and retrieve important information.
 
-**主动搜索记忆的时机**:
-当用户的问题涉及以下情况时，你应该**首先**使用 \`memory_search\` 搜索相关记忆：
-- 询问个人信息（如"我是谁"、"我的名字"、"我叫什么"、"我的喜好"等）
-- 提到之前的对话或约定（如"上次说的..."、"之前我们讨论的..."、"你还记得..."）
-- 询问之前记录的事实、笔记或代码片段
-- 任何可能在记忆中有相关信息的问题
+**When to Actively Search Memory**:
+When the user's question involves the following, you should **first** use \`memory_search\` to search relevant memories:
+- Asking about personal info (e.g. "who am I", "my name", "my preferences", etc.)
+- Mentioning previous conversations or agreements (e.g. "what we discussed last time", "do you remember")
+- Asking about previously recorded facts, notes, or code snippets
+- Any question that may have relevant info in memory
 
-**搜索示例**:
-- 用户问"我是谁" → 搜索: \`memory_search({ query: "用户 名字 身份 个人信息" })\`
-- 用户问"之前的配置" → 搜索: \`memory_search({ query: "配置", type: "note" })\`
+**SearchExample**:
+- User asks "who am I" → search: \`memory_search({ query: "user name identity personal info" })\`
+- User asks "previous config" → search: \`memory_search({ query: "configuration", type: "note" })\`
 
-**存储记忆的时机**:
-当用户明确告诉你需要记住的信息时，使用 \`memory_store\` 存储：
-- "记住我叫..."、"我的名字是..."
-- "把这个保存下来"、"记录一下"
-- 重要的事实、偏好、配置等
+**When to Store Memories**:
+When the user explicitly tells you information to remember, use \`memory_store\` to save it:
+- "Remember my name is...", "My name is..."
+- "Save this", "Record this"
+- Important facts, preferences, configurations, etc.
 `;
 }
 
-/** 构建输出格式指南 */
+/** Build output format guide */
 function buildOutputFormatGuide(): string {
   return `
-## 输出格式
+## Output Format
 
-使用清晰结构化的 Markdown 格式输出，使内容易于阅读：
+Use clear, structured Markdown format output for readability:
 
-**格式要点**:
-- 使用 **粗体** 强调关键信息
-- 使用 \`代码\` 标记命令、函数名、文件路径
-- 使用代码块展示代码，并标注语言
-- 复杂信息用表格或列表组织
-- 用分级标题 (## / ###) 组织长内容
+**Formatting Tips**:
+- Use **bold** to emphasize key information
+- Use \`code\` for commands, function names, and file paths
+- Use code blocks for code with language annotation
+- Organize complex information with tables or lists
+- Use hierarchical headings (## / ###) to organize long content
 
-**代码块示例**:
+**Code Block Example**:
 \`\`\`typescript
 function example() {
   return "hello";
 }
 \`\`\`
 
-**表格示例**:
-| 项目 | 说明 |
+**Table Example**:
+| Item | Description |
 |------|------|
-| 名称 | 值 |
+| Name | Value |
 
-**列表示例**:
-- 第一点
-- 第二点
-  - 子项
+**List Example**:
+- First item
+- Second item
+  - Sub-item
 
-**简洁原则**:
-- 直接回答问题，不要过度解释
-- 代码优于描述
-- 避免重复信息
+**Brevity Principle**:
+- Answer directly, do not over-explain
+- Code over description
+- Avoid repetitive information
 `;
 }
 
-/** 构建完整系统提示 */
+/** Build complete system prompt */
 export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
-  // 基础提示
+  // Base prompt
   const basePrompt = options.basePrompt ??
-    "你是一个智能编程助手，可以帮助用户完成各种软件开发任务。请用中文回答问题，代码和命令使用英文。";
+    "You are an intelligent programming assistant that helps users with various software development tasks. Please respond in English. Code and commands should use English.";
 
   sections.push(basePrompt);
 
-  // 环境信息
+  // Environment info
   if (options.includeEnvironment !== false) {
     sections.push("");
     sections.push(buildEnvironmentSection(options));
   }
 
-  // 工具使用规则
+  // Tool usage rules
   if (options.includeToolRules !== false && options.tools && options.tools.length > 0) {
     sections.push(buildToolRulesSection(options.tools));
     sections.push(buildFileOperationsGuide());
     sections.push(buildBashGuide());
 
-    // 如果有浏览器工具，添加浏览器使用指南
+    // If browser tool is available, add browser usage guide
     if (options.tools.some((t) => t.name === "browser")) {
       sections.push(buildBrowserGuide());
     }
 
-    // 如果有记忆工具，添加记忆使用指南
+    // If memory tool is available, add memory usage guide
     if (options.tools.some((t) => t.name === "memory_search")) {
       sections.push(buildMemoryGuide());
     }
   }
 
-  // 原生 function calling 模式下，单独注入记忆指南
+  // Under native function calling mode, inject memory guide separately
   if (options.enableMemory && !(options.tools?.some((t) => t.name === "memory_search"))) {
     sections.push(buildMemoryGuide());
   }
@@ -369,13 +369,13 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     sections.push(options.skillsPrompt);
   }
 
-  // 输出格式指南
+  // Output format guide
   sections.push(buildOutputFormatGuide());
 
-  // 额外上下文
+  // Additional context
   if (options.additionalContext) {
     sections.push("");
-    sections.push("## 之前的对话摘要");
+    sections.push("## Previous Conversation Summary");
     sections.push("");
     sections.push(options.additionalContext);
   }
@@ -383,7 +383,7 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   return sections.join("\n").trim();
 }
 
-/** 创建默认系统提示 */
+/** Create default system prompt */
 export function createDefaultSystemPrompt(tools?: Tool[]): string {
   return buildSystemPrompt({
     includeEnvironment: true,

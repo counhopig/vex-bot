@@ -1,5 +1,5 @@
 /**
- * 模型提供商管理 - 薄封装层，使用 model-resolver
+ * Model provider management - thin wrapper, delegates to model-resolver
  */
 
 import type { ProviderId, VexConfig } from "../types/index.js";
@@ -16,13 +16,13 @@ export { resolveModel, getApiKeyForProvider, isProviderAvailable } from "./model
 
 const logger = getChildLogger("providers");
 
-/** 从配置初始化提供商 */
+/** Initialize providers from config */
 export function initializeProviders(config: VexConfig): void {
   initModelResolver(config);
   logger.info("Providers initialized via model-resolver");
 }
 
-/** 获取所有可用模型 */
+/** Get all available models */
 export function getAllModels() {
   return getAllRegisteredModels().map((item) => ({
     provider: item.provider,
@@ -37,7 +37,7 @@ export function getAllModels() {
   }));
 }
 
-/** 获取所有提供商 (兼容接口) */
+/** Get all providers (compatibility interface) */
 export function getAllProviders(): Array<{ id: ProviderId; name: string }> {
   const providers = new Map<string, { id: ProviderId; name: string }>();
 
@@ -50,7 +50,7 @@ export function getAllProviders(): Array<{ id: ProviderId; name: string }> {
   return Array.from(providers.values());
 }
 
-/** 检查提供商是否可用 */
+/** Check whether a provider is available */
 export function hasProvider(id: ProviderId): boolean {
   return isProviderAvailable(id);
 }

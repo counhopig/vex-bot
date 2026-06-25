@@ -1,6 +1,6 @@
 /**
- * Agent - 消息处理核心
- * 使用 AgentRuntime (基于 pi-coding-agent) 作为底层引擎
+ * Agent - Message processing core
+ * Uses AgentRuntime (built on pi-coding-agent) as the underlying engine
  */
 
 import type {
@@ -19,9 +19,9 @@ import { createDefaultCronExecuteJob } from "../cron/executor.js";
 
 const logger = getChildLogger("agent");
 
-// ============== Agent 配置 ==============
+// ============== Agent configuration ==============
 
-/** Agent 配置 */
+/** Agent configuration */
 export interface AgentOptions {
   model: string;
   provider?: ProviderId;
@@ -41,7 +41,7 @@ export interface AgentOptions {
   memoryManager?: MemoryManager;
 }
 
-/** Agent 响应 */
+/** Agent response */
 export interface AgentResponse {
   content: string;
   toolCalls?: ToolCallResult[];
@@ -54,7 +54,7 @@ export interface AgentResponse {
   model: string;
 }
 
-/** 工具调用结果 */
+/** Tool call result */
 export interface ToolCallResult {
   toolCallId: string;
   name: string;
@@ -66,9 +66,9 @@ export interface ToolCallResult {
   durationMs: number;
 }
 
-// ============== Agent 类 ==============
+// ============== Agent Class ==============
 
-/** Agent 类 - 包装 AgentRuntime */
+/** Agent class - wraps AgentRuntime */
 export class Agent {
   private runtime: AgentRuntime;
   private options: AgentOptions;
@@ -95,7 +95,7 @@ export class Agent {
 
     this.tools = createBuiltinTools(builtinOptions);
 
-    // 注册工具到 runtime
+    // Register tools to runtime
     for (const tool of this.tools) {
       this.runtime.registerCustomTool(tool);
     }
@@ -112,7 +112,7 @@ export class Agent {
     this.runtime.registerCustomTool(tool);
   }
 
-  /** 处理消息 (非流式) */
+  /** Process message (non-streaming) */
   async processMessage(context: InboundMessageContext): Promise<AgentResponse> {
     const response = await this.runtime.chat(context);
 
@@ -124,7 +124,7 @@ export class Agent {
     };
   }
 
-  /** 流式处理消息 */
+  /** Stream processing message */
   async *processMessageStream(
     context: InboundMessageContext,
     options?: { signal?: AbortSignal }
@@ -143,7 +143,7 @@ export class Agent {
       }
     }
 
-    // 返回最终响应
+    // Return final response
     return {
       content: fullContent,
       toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
@@ -167,7 +167,7 @@ export class Agent {
 
     return {
       messageCount: info.messageCount,
-      estimatedTokens: 0, // 由 runtime 内部管理
+      estimatedTokens: 0, // Managed internally by runtime
       hasSummary: false,
       lastUpdate: info.lastUpdate,
     };
@@ -181,7 +181,7 @@ export class Agent {
   }
 }
 
-/** 创建 Agent */
+/** Create Agent */
 export async function createAgent(config: VexConfig): Promise<Agent> {
   let memoryManager: MemoryManager | undefined;
   if (config.memory?.enabled !== false && config.memory) {
@@ -193,10 +193,10 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
     logger.info({ directory: config.memory.directory }, "Memory system initialized");
   }
 
-  // 创建 runtime
+  // Create runtime
   const runtime = createAgentRuntime(config);
 
-  // 设置 cron 执行器
+  // Set cron executor
   const agentExecutor = async (params: {
     message: string;
     sessionKey?: string;
@@ -228,7 +228,7 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
   cronService.start();
   logger.info("Cron service initialized");
 
-  // 创建 Agent
+  // Create Agent
   const agent = new Agent(runtime, {
     model: config.agent.defaultModel,
     provider: config.agent.defaultProvider,
@@ -241,7 +241,7 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
     enableTools: true,
   });
 
-  // 加载 skills
+  // Load skills
   if (config.skills?.enabled !== false) {
     try {
       const registry = await initSkills(config.skills);

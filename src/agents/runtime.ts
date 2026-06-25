@@ -1,6 +1,6 @@
 /**
- * Agent Runtime - 使用 pi-coding-agent 的 createAgentSession 高层 API
- * 管理多会话，提供 chat 和 chatStream 接口
+ * Agent Runtime - uses pi-coding-agent createAgentSession high-level API
+ * Manages multiple sessions, provides chat and chatStream interfaces
  */
 
 import { join } from "path";
@@ -55,7 +55,7 @@ function wrapErrorAwareTool(tool: AgentTool): AgentTool {
   };
 }
 
-/** Runtime 配置 */
+/** Runtime configuration */
 export interface RuntimeConfig {
   model: string;
   provider: ProviderId;
@@ -68,7 +68,7 @@ export interface RuntimeConfig {
   cronService?: CronService;
 }
 
-/** Chat 响应 */
+/** Chat response */
 export interface ChatResponse {
   content: string;
   provider: ProviderId;
@@ -80,14 +80,14 @@ export interface ChatResponse {
   };
 }
 
-/** Stream 事件 */
+/** Stream event */
 export type StreamEvent =
   | { type: "text_delta"; delta: string }
   | { type: "tool_start"; name: string; argsPreview: string }
   | { type: "tool_end"; isError: boolean };
 
 /**
- * AgentRuntime - 管理 AgentSession 实例
+ * AgentRuntime - manages AgentSession instances
  */
 export class AgentRuntime {
   private sessions = new Map<string, AgentSession>();
@@ -103,40 +103,40 @@ export class AgentRuntime {
     logger.info({ sessionDir: this.sessionDir }, "AgentRuntime initialized");
   }
 
-  /** 设置 SkillsRegistry */
+  /** Set SkillsRegistry */
   setSkillsRegistry(registry: SkillsRegistry): void {
     this.skillsRegistry = registry;
   }
 
-  /** 注册自定义工具 */
+  /** Register custom tool */
   registerCustomTool(tool: AgentTool): void {
     this.customTools.push(wrapErrorAwareTool(tool));
   }
 
-  /** 获取或创建会话 */
+  /** Get or create session */
   private async getOrCreateSession(sessionKey: string): Promise<AgentSession> {
     let session = this.sessions.get(sessionKey);
     if (session) return session;
 
-    // 解析模型
+    // Resolve model
     const model = resolveModel(this.config.provider, this.config.model);
     if (!model) {
       throw new Error(`Cannot resolve model: ${this.config.provider}/${this.config.model}`);
     }
 
-    // 为每个会话创建独立的 SessionManager
+    // Create independent SessionManager per session
     const sessionFile = join(this.sessionDir, `${this.sanitizeSessionKey(sessionKey)}.jsonl`);
     const sessionManager = SessionManager.create(this.config.workingDirectory ?? process.cwd(), sessionFile);
 
-    // 创建 AuthStorage 并从 vex 配置预填充 API key
+    // Create AuthStorage and pre-fill API key from vex config
     const authStorage = AuthStorage.inMemory();
 
-    // 重要：使用 model.provider (由 resolveModel 设置) 而不是 this.config.provider
-    // 因为 createAgentSession 内部通过 model.provider 查找 API key
+    // Important: use model.provider (set by resolveModel) not this.config.provider
+    // because createAgentSession looks up API key via model.provider internally
     const modelProvider = model.provider;
     const apiKey = getApiKeyForProvider(this.config.provider);
     if (apiKey) {
-      // 同时设置 config.provider 和 model.provider (如果不同)
+      // Set both config.provider and model.provider (if different)
       authStorage.set(this.config.provider, { type: "api_key", key: apiKey });
       if (modelProvider !== this.config.provider) {
         authStorage.set(modelProvider, { type: "api_key", key: apiKey });
@@ -144,11 +144,11 @@ export class AgentRuntime {
       logger.debug({ provider: this.config.provider, modelProvider }, "API key set from vex config");
     }
 
-    // 设置 fallback resolver 以支持其他 provider
+    // Set fallback resolver to support other providers
     authStorage.setFallbackResolver((provider: string) => {
-      // 尝试直接获取
+      // Try direct lookup
       let key = getApiKeyForProvider(provider);
-      // 如果找不到，尝试用 config.provider 的 key (因为可能是同一个服务的不同别名)
+      // If not found, try config.provider key (may be different alias for same service)
       if (!key && provider === modelProvider) {
         key = getApiKeyForProvider(this.config.provider);
       }
@@ -158,10 +158,10 @@ export class AgentRuntime {
       return key;
     });
 
-    // 创建 ModelRegistry 使用同一个 authStorage
+    // Create ModelRegistry using the same authStorage
     const modelRegistry = new ModelRegistry(authStorage);
 
-    // 构建自定义工具定义
+    // Build custom tool definitions
     const customToolDefinitions: ToolDefinition[] = this.customTools.map((tool) => ({
       name: tool.name,
       label: tool.label ?? tool.name,
@@ -170,7 +170,7 @@ export class AgentRuntime {
       execute: tool.execute,
     }));
 
-    // 创建 AgentSession
+    // Create AgentSession
     const { session: newSession } = await createAgentSession({
       cwd: this.config.workingDirectory ?? process.cwd(),
       authStorage,
@@ -179,10 +179,10 @@ export class AgentRuntime {
       thinkingLevel: "low" as ThinkingLevel,
       sessionManager,
       customTools: customToolDefinitions,
-      tools: [], // 不使用默认的 coding tools，只用自定义工具
+      tools: [], // Do not use default coding tools, only custom tools
     });
 
-    // 覆盖系统提示（必须同时设置 _baseSystemPrompt，否则每次 prompt() 会重置）
+    // Override system prompt (must also set _baseSystemPrompt, otherwise prompt() resets it each time)
     const systemPrompt = this.buildSystemPromptText();
     newSession.agent.setSystemPrompt(systemPrompt);
     (newSession as any)._baseSystemPrompt = systemPrompt;
@@ -197,7 +197,7 @@ export class AgentRuntime {
     return newSession;
   }
 
-  /** 构建系统提示 */
+  /** Build system prompt */
   private buildSystemPromptText(): string {
     return buildSystemPrompt({
       basePrompt: this.config.systemPrompt,
@@ -210,12 +210,12 @@ export class AgentRuntime {
     });
   }
 
-  /** 清理 session key 使其可作为文件名 */
+  /** Sanitize session key to be usable as filename */
   private sanitizeSessionKey(key: string): string {
     return key.replace(/[^a-zA-Z0-9_-]/g, "_");
   }
 
-  /** 从 context 获取 session key */
+  /** Get session key from context */
   private getSessionKey(context: InboundMessageContext): string {
     if (context.chatType === "group") {
       return `${context.channelId}:${context.chatId}`;
@@ -223,7 +223,7 @@ export class AgentRuntime {
     return `${context.channelId}:${context.senderId}`;
   }
 
-  /** 非流式聊天 */
+  /** Non-streaming chat */
   async chat(context: InboundMessageContext): Promise<ChatResponse> {
     const sessionKey = this.getSessionKey(context);
     logger.debug({ sessionKey, content: context.content.slice(0, 100) }, "Processing message");
@@ -235,7 +235,7 @@ export class AgentRuntime {
 
     const lastText = session.getLastAssistantText() ?? "";
 
-    // 获取使用统计
+    // Get usage statistics
     const stats = session.getSessionStats();
 
     return {
@@ -250,7 +250,7 @@ export class AgentRuntime {
     };
   }
 
-  /** 流式聊天 */
+  /** Streaming chat */
   async *chatStream(
     context: InboundMessageContext,
     options?: { signal?: AbortSignal }
@@ -260,12 +260,12 @@ export class AgentRuntime {
 
     const session = await this.getOrCreateSession(sessionKey);
 
-    // 事件队列
+    // Event queue
     const eventQueue: StreamEvent[] = [];
     let done = false;
     let promptError: Error | null = null;
 
-    // 订阅事件
+    // Subscribe to events
     const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
       if (event.type === "message_update") {
         const updateEvent = event as { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } };
@@ -284,7 +284,7 @@ export class AgentRuntime {
       }
     });
 
-    // 启动 prompt
+    // Start prompt
     const promptPromise = session.prompt(context.content)
       .then(() => session.agent.waitForIdle())
       .catch((err: unknown) => {
@@ -292,7 +292,7 @@ export class AgentRuntime {
         promptError = err instanceof Error ? err : new Error(String(err));
       });
 
-    // 流式输出事件
+    // Stream output events
     try {
       while (!done) {
         if (options?.signal?.aborted) {
@@ -309,7 +309,7 @@ export class AgentRuntime {
         }
       }
 
-      // 排空剩余事件
+      // Drain remaining events
       while (eventQueue.length > 0) {
         yield eventQueue.shift()!;
       }
@@ -323,7 +323,7 @@ export class AgentRuntime {
       throw promptError;
     }
 
-    // 获取结果
+    // Get result
     const lastText = session.getLastAssistantText() ?? "";
     const stats = session.getSessionStats();
 
@@ -339,7 +339,7 @@ export class AgentRuntime {
     };
   }
 
-  /** 获取参数预览 */
+  /** Get argument preview */
   private getArgsPreview(args: Record<string, unknown>): string {
     if (!args) return "";
     const mainArg = args.path ?? args.directory ?? args.command ?? args.query ?? args.pattern;
@@ -350,7 +350,7 @@ export class AgentRuntime {
     return "";
   }
 
-  /** 清除会话 */
+  /** Clear session */
   async clearSession(context: InboundMessageContext): Promise<void> {
     const sessionKey = this.getSessionKey(context);
     const session = this.sessions.get(sessionKey);
@@ -361,7 +361,7 @@ export class AgentRuntime {
     logger.debug({ sessionKey }, "Session cleared");
   }
 
-  /** 获取会话信息 */
+  /** Get session info */
   getSessionInfo(context: InboundMessageContext): {
     messageCount: number;
     lastUpdate: Date;
@@ -377,21 +377,21 @@ export class AgentRuntime {
     };
   }
 
-  /** 从历史恢复会话 */
+  /** Restore session from transcript */
   async restoreSessionFromTranscript(
     sessionKey: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>
   ): Promise<void> {
     const session = await this.getOrCreateSession(sessionKey);
 
-    // AgentSession 会自动持久化，这里我们可以通过发送初始消息来恢复上下文
-    // 注意：这是一个简化的实现，真正的恢复可能需要更复杂的处理
+    // AgentSession auto-persists; we can restore context by sending initial messages
+    // Note: this is a simplified implementation; real restoration may require more complex handling
     if (messages.length > 0) {
       logger.debug({ sessionKey, messageCount: messages.length }, "Session restored from transcript");
     }
   }
 
-  /** 关闭所有会话 */
+  /** Close all sessions */
   async shutdown(): Promise<void> {
     for (const session of this.sessions.values()) {
       session.dispose();
@@ -401,7 +401,7 @@ export class AgentRuntime {
   }
 }
 
-/** 创建 AgentRuntime */
+/** Create AgentRuntime */
 export function createAgentRuntime(config: VexConfig): AgentRuntime {
   const runtimeConfig: RuntimeConfig = {
     model: config.agent.defaultModel,
@@ -413,7 +413,7 @@ export function createAgentRuntime(config: VexConfig): AgentRuntime {
     sessionDir: config.sessions?.directory,
   };
 
-  // 初始化模型解析器
+  // Initialize model resolver
   initModelResolver(config);
 
   return new AgentRuntime(runtimeConfig);

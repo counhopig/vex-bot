@@ -1,5 +1,5 @@
 /**
- * Model Resolver - 将 vex 配置映射为 pi-ai 的 Model 对象
+ * Model Resolver - maps vex config to pi-ai Model objects
  */
 
 import type { Model, Api, Provider } from "@mariozechner/pi-ai";
@@ -9,19 +9,19 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("model-resolver");
 
-/** 已解析的模型信息 */
+/** Resolved model info */
 export interface ResolvedModel {
   model: Model<Api>;
   providerId: ProviderId;
 }
 
-/** 模型注册表 */
+/** Model registry */
 const modelRegistry = new Map<string, ResolvedModel>();
 
-/** 提供商配置缓存 */
+/** Provider config cache */
 let providerConfigs: Record<string, SimpleProviderConfig> = {};
 
-/** 中国 provider 到默认 baseUrl 的映射 */
+/** Chinese provider default baseUrl mapping */
 const CHINA_PROVIDER_BASE_URLS: Record<string, string> = {
   deepseek: "https://api.deepseek.com/v1",
   kimi: "https://api.moonshot.cn/v1",
@@ -33,16 +33,16 @@ const CHINA_PROVIDER_BASE_URLS: Record<string, string> = {
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
 };
 
-/** 中国 provider 的默认模型定义 */
+/** Chinese provider default model definitions */
 const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
   deepseek: [
     { id: "deepseek-chat", name: "DeepSeek Chat", provider: "deepseek", api: "openai-compatible", contextWindow: 64000, maxTokens: 8192, supportsVision: false, supportsReasoning: false },
     { id: "deepseek-reasoner", name: "DeepSeek Reasoner (R1)", provider: "deepseek", api: "openai-compatible", contextWindow: 64000, maxTokens: 8192, supportsVision: false, supportsReasoning: true },
   ],
   doubao: [
-    { id: "doubao-seed-1-8-251228", name: "豆包 Seed 1.8", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
-    { id: "doubao-seed-1-6-lite-251015", name: "豆包 Seed 1.6 Lite", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
-    { id: "doubao-seed-1-6-flash-250828", name: "豆包 Seed 1.6 Flash", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
+    { id: "doubao-seed-1-8-251228", name: "Doubao Seed 1.8", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
+    { id: "doubao-seed-1-6-lite-251015", name: "Doubao Seed 1.6 Lite", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
+    { id: "doubao-seed-1-6-flash-250828", name: "Doubao Seed 1.6 Flash", provider: "doubao", api: "openai-compatible", contextWindow: 262144, maxTokens: 32768, supportsVision: true, supportsReasoning: true },
   ],
   kimi: [
     { id: "kimi-k2.5", name: "Kimi K2.5", provider: "kimi", api: "openai-compatible", contextWindow: 128000, maxTokens: 65536, supportsVision: true, supportsReasoning: true },
@@ -81,7 +81,7 @@ const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
   ],
 };
 
-/** 预设 provider 配置 (pi-ai 不内置但常用的) */
+/** Preset provider configs (not built into pi-ai but commonly used) */
 const PRESET_PROVIDER_CONFIGS: Record<string, { baseUrl: string; headers?: Record<string, string> }> = {
   openrouter: {
     baseUrl: "https://openrouter.ai/api/v1",
@@ -93,7 +93,7 @@ const PRESET_PROVIDER_CONFIGS: Record<string, { baseUrl: string; headers?: Recor
   vllm: { baseUrl: "http://localhost:8000/v1" },
 };
 
-/** pi-ai 已知的 provider 映射 */
+/** pi-ai known provider mapping */
 const PI_AI_KNOWN_PROVIDERS: Record<string, string> = {
   openai: "openai",
   anthropic: "anthropic",
@@ -101,13 +101,13 @@ const PI_AI_KNOWN_PROVIDERS: Record<string, string> = {
   openrouter: "openrouter",
 };
 
-/** 获取 provider 的 API key */
+/** Get API key for a provider */
 export function getApiKeyForProvider(providerId: string): string | undefined {
   const config = providerConfigs[providerId];
   return config?.apiKey;
 }
 
-/** 构建 OpenAI 兼容的 Model 对象 */
+/** Build an OpenAI-compatible Model object */
 function buildOpenAIModel(
   modelId: string,
   modelDef: ModelDefinition,
@@ -130,7 +130,7 @@ function buildOpenAIModel(
   };
 }
 
-/** 构建 Anthropic 兼容的 Model 对象 */
+/** Build an Anthropic-compatible Model object */
 function buildAnthropicModel(
   modelId: string,
   modelDef: ModelDefinition,
@@ -157,7 +157,7 @@ function buildAnthropicModel(
   };
 }
 
-/** 注册中国 provider 的所有模型 */
+/** Register all models for a Chinese provider */
 function registerChinaProvider(
   providerId: string,
   config: SimpleProviderConfig,
@@ -179,7 +179,7 @@ function registerChinaProvider(
   logger.debug({ providerId, modelCount: models.length }, "China provider registered");
 }
 
-/** 注册预设 provider (openrouter, together, groq, ollama, vllm) */
+/** Register preset providers (openrouter, together, groq, ollama, vllm) */
 function registerPresetProvider(
   providerId: string,
   config: SimpleProviderConfig,
@@ -190,12 +190,12 @@ function registerPresetProvider(
   const baseUrl = config.baseUrl ?? preset.baseUrl;
   const headers = { ...preset.headers, ...config.headers };
 
-  // 这些 provider 的模型是动态的，注册一个 placeholder 以便 resolveModel 可以按需创建
-  // 不预注册具体模型，由 resolveModel 动态处理
+  // These providers have dynamic models; register a placeholder so resolveModel can create on demand.
+  // Do not pre-register specific models; they are handled dynamically by resolveModel.
   logger.debug({ providerId, baseUrl }, "Preset provider registered");
 }
 
-/** 注册自定义 OpenAI 提供商 */
+/** Register custom OpenAI provider */
 function registerCustomOpenAI(config: Record<string, unknown>): void {
   const baseUrl = config.baseUrl as string;
   const models = config.models as Array<{
@@ -226,7 +226,7 @@ function registerCustomOpenAI(config: Record<string, unknown>): void {
   }
 }
 
-/** 注册自定义 Anthropic 提供商 */
+/** Register custom Anthropic provider */
 function registerCustomAnthropic(config: Record<string, unknown>): void {
   const baseUrl = config.baseUrl as string;
   const models = config.models as Array<{
@@ -257,7 +257,7 @@ function registerCustomAnthropic(config: Record<string, unknown>): void {
   }
 }
 
-/** 初始化模型解析器 */
+/** Initialize the model resolver */
 export function initModelResolver(config: VexConfig): void {
   modelRegistry.clear();
   providerConfigs = config.providers as Record<string, SimpleProviderConfig>;
@@ -274,48 +274,48 @@ export function initModelResolver(config: VexConfig): void {
     }
   }
 
-  // 自定义 OpenAI
+  // Custom OpenAI
   const customOpenai = config.providers["custom-openai"];
   if (customOpenai && (customOpenai as Record<string, unknown>).apiKey && (customOpenai as Record<string, unknown>).baseUrl) {
     registerCustomOpenAI(customOpenai as Record<string, unknown>);
   }
 
-  // 自定义 Anthropic
+  // Custom Anthropic
   const customAnthropic = config.providers["custom-anthropic"];
   if (customAnthropic && (customAnthropic as Record<string, unknown>).apiKey && (customAnthropic as Record<string, unknown>).baseUrl) {
     registerCustomAnthropic(customAnthropic as Record<string, unknown>);
   }
 
-  // OpenAI (pi-ai 已知)
+  // OpenAI (pi-ai built-in)
   if (providerConfigs.openai?.apiKey) {
-    // pi-ai 内置了 OpenAI 模型，不需要手动注册
+    // pi-ai has built-in OpenAI models, no need to register manually
     logger.debug("OpenAI provider available via pi-ai built-in");
   }
 
   logger.info({ registeredModels: modelRegistry.size }, "Model resolver initialized");
 }
 
-/** 解析模型 */
+/** Resolve a model */
 export function resolveModel(providerId: ProviderId, modelId: string): Model<Api> | undefined {
-  // 1. 先查本地注册表
+  // 1. Check local registry first
   const key = `${providerId}:${modelId}`;
   const registered = modelRegistry.get(key);
   if (registered) {
     return registered.model;
   }
 
-  // 2. 对于 pi-ai 已知的 provider，尝试用 getModel
+  // 2. For pi-ai known providers, try getModel
   const piProvider = PI_AI_KNOWN_PROVIDERS[providerId];
   if (piProvider) {
     try {
       const model = getModel(piProvider as any, modelId as any);
       return model;
     } catch {
-      // getModel 不认识这个模型，继续
+      // getModel doesn't recognize this model, continue
     }
   }
 
-  // 3. 对于预设 provider 或有 baseUrl 的动态模型，创建 OpenAI 兼容模型
+  // 3. For preset providers or those with baseUrl, create an OpenAI-compatible model dynamically
   const config = providerConfigs[providerId];
   if (config) {
     const preset = PRESET_PROVIDER_CONFIGS[providerId];
@@ -336,7 +336,7 @@ export function resolveModel(providerId: ProviderId, modelId: string): Model<Api
       const headers = { ...preset?.headers, ...config.headers };
       const model = buildOpenAIModel(modelId, dynamicDef, baseUrl, providerId, Object.keys(headers).length > 0 ? headers : undefined);
 
-      // 缓存动态解析的模型
+      // Cache dynamically resolved model
       modelRegistry.set(key, { model, providerId });
       logger.debug({ providerId, modelId, baseUrl }, "Dynamic model resolved");
       return model;
@@ -347,7 +347,7 @@ export function resolveModel(providerId: ProviderId, modelId: string): Model<Api
   return undefined;
 }
 
-/** 获取所有已注册模型 */
+/** Get all registered models */
 export function getAllRegisteredModels(): Array<{ provider: ProviderId; modelId: string; model: Model<Api> }> {
   const result: Array<{ provider: ProviderId; modelId: string; model: Model<Api> }> = [];
 
@@ -365,12 +365,12 @@ export function getAllRegisteredModels(): Array<{ provider: ProviderId; modelId:
   return result;
 }
 
-/** 检查 provider 是否可用 */
+/** Check whether a provider is available */
 export function isProviderAvailable(providerId: ProviderId): boolean {
   const config = providerConfigs[providerId];
   if (!config) return false;
 
-  // 对需要 API key 的 provider，检查 key 是否存在
+  // Providers that don't need API keys
   if (providerId === "ollama" || providerId === "vllm") return true;
   return !!config.apiKey;
 }
