@@ -27,41 +27,29 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 
 ## Architecture
 
-```
-┌──────────────┐  ┌──────────┐
-│   WeChat      │  │  WebChat │    ← Channels
-│  (iLink OC)  │  │  (WS+SPA)│
-└──────┬───────┘  └─────┬────┘
-       │                 │
-       └────────┬────────┘
-                ▼
-   ┌────────────────────────┐
-   │       Gateway           │    ← Express + WebSocket server
-   │   Route dispatch /      │
-   │   channel init          │
-   └───────────┬────────────┘
-               │
-               ▼
-   ┌────────────────────────┐
-   │        Agent            │    ← Message processing core
-   │  processMessage() loop  │       wraps pi-coding-agent AgentRuntime
-   └───┬───┬───┬───┬───┬────┘
-       │   │   │   │   │
-  ┌────┘   │   │   │   └──────┐
-  ▼        ▼   ▼   ▼          ▼
-┌─────┐ ┌────┐┌──────┐┌────┐┌───────┐
-│Tools │ │Skil││Memory││Cron││Outbnd│    ← Subsystems
-│25+  │ │Inj ││TF-IDF││    ││Deliv │
-└─────┘ └────┘└──────┘└────┘└───────┘
-               │
-               ▼
-   ┌────────────────────────┐
-   │    LLM Providers        │    ← Model Resolver
-   │  DeepSeek / Kimi / ...  │       pi-ai abstraction layer
-   └────────────────────────┘
-```
+```mermaid
+flowchart TD
+    WX[WeChat<br/>iLink OC API] --> GW
+    WC[WebChat<br/>WebSocket + SPA] --> GW
 
-Key subsystems:
+    GW[Gateway<br/>Express + WebSocket] --> AG
+
+    AG[Agent<br/>processMessage / processMessageStream<br/>wraps pi-coding-agent AgentRuntime] --> TO
+    AG --> SK
+    AG --> ME
+    AG --> CR
+    AG --> OB
+
+    subgraph Subsystems
+        TO[Tools<br/>25+ built-in]
+        SK[Skills<br/>SKILL.md injection]
+        ME[Memory<br/>TF-IDF]
+        CR[Cron<br/>at / every / cron]
+        OB[Outbound<br/>message delivery]
+    end
+
+    AG --> PR[LLM Providers<br/>DeepSeek · Kimi · MiniMax<br/>Doubao · Zhipu · StepFun · etc.<br/>pi-ai abstraction]
+```
 
 | Subsystem | Location | Role |
 |-----------|----------|------|
