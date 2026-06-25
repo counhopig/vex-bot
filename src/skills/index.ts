@@ -1,5 +1,5 @@
 /**
- * Skills 模块入口
+ * Skills module entry point
  */
 
 export * from './types.js';

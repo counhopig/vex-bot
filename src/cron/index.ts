@@ -1,8 +1,8 @@
 /**
- * 定时任务模块 (Cron)
+ * Scheduling module (Cron)
  *
- * 参考 moltbot 的 cron 模块实现
- * 支持一次性、周期性、Cron 表达式三种调度方式
+ * Based on moltbot cron module implementation
+ * Supports one-time, periodic, and Cron expression scheduling
  */
 
 export * from "./types.js";

@@ -1,6 +1,6 @@
 /**
- * 会话存储实现
- * 使用文件系统存储会话索引和转录记录
+ * Session store implementation
+ * Uses file system to store session index and transcript records
  */
 
 import * as fs from "fs";
@@ -19,10 +19,10 @@ import type {
 
 const logger = getChildLogger("sessions");
 
-/** 当前转录版本 */
+/** Current transcript version */
 const TRANSCRIPT_VERSION = 1;
 
-/** 简单的写入锁实现 */
+/** Simple write lock implementation */
 class WriteLock {
   private locked = false;
   private waitQueue: Array<() => void> = [];
@@ -47,18 +47,18 @@ class WriteLock {
   }
 }
 
-/** 默认存储目录 */
+/** Default store directory */
 function getDefaultStorePath(): string {
   return path.join(os.homedir(), ".vex", "sessions");
 }
 
-/** 会话存储类 */
+/** Session store class */
 export class FileSessionStore {
   private storePath: string;
   private indexFile: string;
   private cache: Map<string, SessionEntry> = new Map();
   private cacheTime = 0;
-  private cacheTTL = 30_000; // 30秒缓存
+  private cacheTTL = 30_000; // 30-second cache
   private writeLock = new WriteLock();
 
   constructor(storePath?: string) {
@@ -67,7 +67,7 @@ export class FileSessionStore {
     this.ensureDirectory();
   }
 
-  /** 确保目录存在 */
+  /** Ensure directory exists */
   private ensureDirectory(): void {
     if (!fs.existsSync(this.storePath)) {
       fs.mkdirSync(this.storePath, { recursive: true });
@@ -75,9 +75,9 @@ export class FileSessionStore {
     }
   }
 
-  /** 加载索引 */
+  /** Load the index */
   private async loadIndex(): Promise<Map<string, SessionEntry>> {
-    // 检查缓存
+    // Check cache
     if (this.cache.size > 0 && Date.now() - this.cacheTime < this.cacheTTL) {
       return this.cache;
     }
@@ -98,7 +98,7 @@ export class FileSessionStore {
     }
   }
 
-  /** 保存索引 */
+  /** Save the index */
   private async saveIndex(index: Map<string, SessionEntry>): Promise<void> {
     await this.writeLock.acquire();
     try {
@@ -116,18 +116,18 @@ export class FileSessionStore {
     }
   }
 
-  /** 列出所有会话 */
+  /** List all sessions */
   async list(options?: SessionListOptions): Promise<SessionListItem[]> {
     const index = await this.loadIndex();
     let entries = Array.from(index.values());
 
-    // 按活跃时间过滤
+    // Filter by active time
     if (options?.activeMinutes) {
       const cutoff = Date.now() - options.activeMinutes * 60 * 1000;
       entries = entries.filter((e) => e.updatedAt >= cutoff);
     }
 
-    // 搜索过滤
+    // Search filter
     if (options?.search) {
       const search = options.search.toLowerCase();
       entries = entries.filter(
@@ -137,10 +137,10 @@ export class FileSessionStore {
       );
     }
 
-    // 按更新时间排序（最新的在前）
+    // Sort by update time (newest first)
     entries.sort((a, b) => b.updatedAt - a.updatedAt);
 
-    // 限制返回数量
+    // Limit results
     if (options?.limit) {
       entries = entries.slice(0, options.limit);
     }
@@ -156,13 +156,13 @@ export class FileSessionStore {
     }));
   }
 
-  /** 获取会话 */
+  /** Get a session */
   async get(sessionKey: string): Promise<SessionEntry | null> {
     const index = await this.loadIndex();
     return index.get(sessionKey) ?? null;
   }
 
-  /** 创建或更新会话 */
+  /** Create or update a session */
   async upsert(entry: SessionEntry): Promise<void> {
     const index = await this.loadIndex();
     index.set(entry.sessionKey, entry);
@@ -170,16 +170,16 @@ export class FileSessionStore {
     logger.debug({ sessionKey: entry.sessionKey }, "Session upserted");
   }
 
-  /** 删除会话 */
+  /** Delete a session */
   async delete(sessionKey: string): Promise<void> {
     const index = await this.loadIndex();
     const entry = index.get(sessionKey);
 
     if (entry) {
-      // 删除转录文件
+      // Delete transcript file
       const transcriptPath = this.getTranscriptPath(entry.sessionId);
       if (fs.existsSync(transcriptPath)) {
-        // 归档而不是删除
+        // Archive instead of deleting
         const archivePath = `${transcriptPath}.deleted.${Date.now()}`;
         await fs.promises.rename(transcriptPath, archivePath);
       }
@@ -190,23 +190,23 @@ export class FileSessionStore {
     }
   }
 
-  /** 重置会话（创建新会话） */
+  /** Reset a session (create new session) */
   async reset(sessionKey: string): Promise<SessionEntry> {
     const index = await this.loadIndex();
     const existing = index.get(sessionKey);
     const now = Date.now();
 
-    // 从旧 sessionKey 提取 channel 前缀（如 "webchat:"）
+    // Extract channel prefix from old sessionKey (e.g. "webchat:")
     const channelPrefix = sessionKey.includes(":") ? sessionKey.split(":")[0] + ":" : "";
 
-    // 生成新的 sessionKey
+    // Generate new sessionKey
     const newSessionKey = `${channelPrefix}${generateId("session")}`;
 
-    // 创建新会话
+    // Create new session
     const newEntry: SessionEntry = {
       sessionId: randomUUID(),
       sessionKey: newSessionKey,
-      label: undefined,  // 新会话不继承 label
+      label: undefined,  // New session does not inherit label
       createdAt: now,
       updatedAt: now,
       channel: existing?.channel,
@@ -218,8 +218,8 @@ export class FileSessionStore {
       totalTokens: 0,
     };
 
-    // 保留旧会话（不删除）
-    // 添加新会话到索引
+    // Keep old session (don't delete)
+    // Add new session to index
     index.set(newSessionKey, newEntry);
     await this.saveIndex(index);
 
@@ -227,7 +227,7 @@ export class FileSessionStore {
     return newEntry;
   }
 
-  /** 获取或创建会话 */
+  /** Get or create a session */
   async getOrCreate(sessionKey: string): Promise<SessionEntry> {
     const existing = await this.get(sessionKey);
     if (existing) {
@@ -247,12 +247,12 @@ export class FileSessionStore {
     return entry;
   }
 
-  /** 获取转录文件路径 */
+  /** Get transcript file path */
   getTranscriptPath(sessionId: string): string {
     return path.join(this.storePath, `${sessionId}.jsonl`);
   }
 
-  /** 加载转录记录 */
+  /** Load transcript records */
   async loadTranscript(sessionId: string): Promise<TranscriptMessage[]> {
     const transcriptPath = this.getTranscriptPath(sessionId);
     if (!fs.existsSync(transcriptPath)) {
@@ -268,11 +268,11 @@ export class FileSessionStore {
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line);
-          // 跳过文件头
+          // Skip header lines
           if (entry.type === "session") continue;
           messages.push(entry as TranscriptMessage);
         } catch {
-          // 忽略解析错误的行
+          // Ignore parse errors
         }
       }
 
@@ -283,7 +283,7 @@ export class FileSessionStore {
     }
   }
 
-  /** 追加转录消息 */
+  /** Append a transcript message */
   async appendTranscript(
     sessionId: string,
     sessionKey: string,
@@ -292,7 +292,7 @@ export class FileSessionStore {
     const transcriptPath = this.getTranscriptPath(sessionId);
     const isNew = !fs.existsSync(transcriptPath);
 
-    // 如果是新文件，先写入头部
+    // If it's a new file, write header first
     if (isNew) {
       const header: TranscriptHeader = {
         type: "session",
@@ -305,10 +305,10 @@ export class FileSessionStore {
       await fs.promises.appendFile(transcriptPath, JSON.stringify(header) + "\n");
     }
 
-    // 追加消息
+    // Append the message
     await fs.promises.appendFile(transcriptPath, JSON.stringify(message) + "\n");
 
-    // 更新会话索引
+    // Update session index
     const entry = await this.get(sessionKey);
     if (entry) {
       entry.updatedAt = Date.now();
@@ -324,7 +324,7 @@ export class FileSessionStore {
     }
   }
 
-  /** 清空转录 */
+  /** Clear transcript */
   async clearTranscript(sessionId: string): Promise<void> {
     const transcriptPath = this.getTranscriptPath(sessionId);
     if (fs.existsSync(transcriptPath)) {
@@ -333,10 +333,10 @@ export class FileSessionStore {
   }
 }
 
-/** 全局会话存储实例 */
+/** Global session store instance */
 let globalStore: FileSessionStore | null = null;
 
-/** 获取全局会话存储 */
+/** Get the global session store */
 export function getSessionStore(): FileSessionStore {
   if (!globalStore) {
     globalStore = new FileSessionStore();
@@ -344,7 +344,7 @@ export function getSessionStore(): FileSessionStore {
   return globalStore;
 }
 
-/** 初始化会话存储 */
+/** Initialize the session store */
 export function initSessionStore(storePath?: string): FileSessionStore {
   globalStore = new FileSessionStore(storePath);
   return globalStore;

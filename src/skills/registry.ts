@@ -1,13 +1,13 @@
 /**
- * Skills 注册表
- * 管理已加载的 skills，构建 prompt
+ * Skills registry
+ * Manages loaded skills, builds prompt
  */
 
 import type { SkillEntry, SkillsConfig, SkillsRegistry } from './types.js';
 import { loadAllSkills } from './loader.js';
 
 /**
- * 创建 Skills 注册表实例
+ * Create a skills registry instance
  */
 export function createSkillsRegistry(config?: SkillsConfig): SkillsRegistry {
   let skills: SkillEntry[] = [];
@@ -23,7 +23,7 @@ export function createSkillsRegistry(config?: SkillsConfig): SkillsRegistry {
     },
 
     getEligible(): SkillEntry[] {
-      // loadAllSkills 已经过滤了不符合条件的 skills
+      // loadAllSkills has already filtered ineligible skills
       return [...skills];
     },
 
@@ -47,7 +47,7 @@ export function createSkillsRegistry(config?: SkillsConfig): SkillsRegistry {
           sections.push(content);
         }
 
-        sections.push(''); // 空行分隔
+        sections.push(''); // Blank line separator
       }
 
       sections.push('---\n');
@@ -64,7 +64,7 @@ export function createSkillsRegistry(config?: SkillsConfig): SkillsRegistry {
 }
 
 /**
- * 初始化并加载 skills
+ * Initialize and load skills
  */
 export async function initSkills(
   config?: SkillsConfig

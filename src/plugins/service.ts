@@ -1,7 +1,7 @@
 /**
- * 插件服务管理
+ * Plugin Service Management
  *
- * 提供统一的插件管理入口
+ * Provides a unified plugin management entry point
  */
 
 import type { VexConfig } from "../types/index.js";
@@ -21,7 +21,7 @@ import { getChildLogger } from "../utils/logger.js";
 const logger = getChildLogger("plugins:service");
 
 /**
- * 插件服务
+ * Plugin service
  */
 export class PluginService {
   private config: VexConfig;
@@ -34,7 +34,7 @@ export class PluginService {
   }
 
   /**
-   * 初始化插件服务
+   * Initialize plugin service
    */
   async initialize(): Promise<{
     loaded: string[];
@@ -49,10 +49,10 @@ export class PluginService {
 
     logger.info("Initializing plugin service");
 
-    // 加载插件
+    // Load plugins
     const loadResult = await loadPlugins(this.config, this.enableConfig);
 
-    // 激活插件
+    // Activate plugins
     const activateResult = await activateAllPlugins();
 
     this.initialized = true;
@@ -66,7 +66,7 @@ export class PluginService {
   }
 
   /**
-   * 关闭插件服务
+   * Shut down plugin service
    */
   async shutdown(): Promise<void> {
     if (!this.initialized) return;
@@ -77,7 +77,7 @@ export class PluginService {
   }
 
   /**
-   * 发现可用插件 (不加载)
+   * Discover available plugins (without loading)
    */
   async discover(): Promise<Array<{
     id: string;
@@ -100,21 +100,21 @@ export class PluginService {
   }
 
   /**
-   * 获取已加载的插件列表
+   * Get list of loaded plugins
    */
   list(): PluginMeta[] {
     return getLoadedPlugins();
   }
 
   /**
-   * 获取插件详情
+   * Get plugin details
    */
   get(pluginId: string): LoadedPlugin | undefined {
     return getPluginDetails(pluginId);
   }
 
   /**
-   * 卸载插件
+   * Unload a plugin
    */
   async unload(pluginId: string): Promise<boolean> {
     if (!isPluginLoaded(pluginId)) {
@@ -125,25 +125,25 @@ export class PluginService {
   }
 
   /**
-   * 检查插件是否已加载
+   * Check if a plugin is loaded
    */
   isLoaded(pluginId: string): boolean {
     return isPluginLoaded(pluginId);
   }
 
   /**
-   * 检查插件是否已激活
+   * Check if a plugin is activated
    */
   isActivated(pluginId: string): boolean {
     return isPluginActivated(pluginId);
   }
 }
 
-/** 默认服务实例 */
+/** Default service instance */
 let defaultService: PluginService | null = null;
 
 /**
- * 获取默认插件服务
+ * Get the default plugin service
  */
 export function getPluginService(config?: VexConfig, enableConfig?: PluginEnableConfig): PluginService {
   if (!defaultService && config) {

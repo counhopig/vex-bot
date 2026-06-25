@@ -1,8 +1,8 @@
 /**
- * 插件系统 - 增强版
+ * Plugin System - Enhanced Edition
  *
- * 参考 moltbot 的 plugins 模块实现
- * 支持插件发现、加载、注册、生命周期管理、配置校验
+ * Modeled after moltbot's plugins module implementation
+ * Supports plugin discovery, loading, registration, lifecycle management, and config validation
  */
 
 import type { Tool } from "../tools/types.js";
@@ -13,27 +13,27 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("plugins");
 
-// ============== 插件类型 ==============
+// ============== Plugin Types ==============
 
-/** 插件元数据 */
+/** Plugin metadata */
 export interface PluginMeta {
-  /** 插件 ID */
+  /** Plugin ID */
   id: string;
-  /** 插件名称 */
+  /** Plugin name */
   name: string;
-  /** 插件版本 */
+  /** Plugin version */
   version: string;
-  /** 插件描述 */
+  /** Plugin description */
   description?: string;
-  /** 作者 */
+  /** Author */
   author?: string;
-  /** 插件类型 (用于排他性槽位) */
+  /** Plugin kind (for exclusive slot use) */
   kind?: string;
-  /** 依赖的其他插件 */
+  /** Dependent plugins */
   dependencies?: string[];
 }
 
-/** 插件配置 Schema (JSON Schema 格式) */
+/** Plugin config schema (JSON Schema format) */
 export interface PluginConfigSchema {
   type: "object";
   properties?: Record<string, unknown>;
@@ -41,7 +41,7 @@ export interface PluginConfigSchema {
   additionalProperties?: boolean;
 }
 
-/** 插件清单 (vex.plugin.json) */
+/** Plugin manifest (vex.plugin.json) */
 export interface PluginManifest {
   id: string;
   name?: string;
@@ -52,130 +52,130 @@ export interface PluginManifest {
   main?: string;
   configSchema?: PluginConfigSchema;
   dependencies?: string[];
-  /** 提供的工具名称列表 */
+  /** List of provided tool names */
   tools?: string[];
-  /** 提供的通道 ID 列表 */
+  /** List of provided channel IDs */
   channels?: string[];
 }
 
-/** 插件 API */
+/** Plugin API */
 export interface PluginApi {
-  /** 插件 ID */
+  /** Plugin ID */
   id: string;
-  /** 插件元数据 */
+  /** Plugin metadata */
   meta: PluginMeta;
-  /** 全局配置 */
+  /** Global config */
   config: VexConfig;
-  /** 插件自身配置 */
+  /** Plugin-specific config */
   pluginConfig?: Record<string, unknown>;
-  /** 注册工具 */
+  /** Register a tool */
   registerTool: (tool: Tool) => void;
-  /** 批量注册工具 */
+  /** Register tools in bulk */
   registerTools: (tools: Tool[]) => void;
-  /** 注册 Hook */
+  /** Register a Hook */
   registerHook: <T extends HookEventType>(eventType: T, handler: HookHandler) => () => void;
-  /** 注册 HTTP 路由 (扩展用) */
+  /** Register an HTTP route (for extension) */
   registerHttpRoute?: (route: HttpRoute) => void;
-  /** 注册服务 (后台任务) */
+  /** Register a service (background task) */
   registerService?: (service: PluginService) => void;
-  /** 获取日志器 */
+  /** Get a logger */
   getLogger: (name?: string) => ReturnType<typeof getChildLogger>;
-  /** 获取状态目录 */
+  /** Get state directory */
   getStateDir: () => string;
 }
 
-/** HTTP 路由 */
+/** HTTP route */
 export interface HttpRoute {
   method: "GET" | "POST" | "PUT" | "DELETE";
   path: string;
   handler: (req: unknown, res: unknown) => void | Promise<void>;
 }
 
-/** 插件服务 (后台任务) */
+/** Plugin service (background task) */
 export interface PluginService {
   id: string;
   start: () => void | Promise<void>;
   stop: () => void | Promise<void>;
 }
 
-/** 插件定义 */
+/** Plugin definition */
 export interface PluginDefinition {
-  /** 插件元数据 */
+  /** Plugin metadata */
   meta: PluginMeta;
-  /** 配置 Schema */
+  /** Config schema */
   configSchema?: PluginConfigSchema;
-  /** 注册阶段 (同步) */
+  /** Registration phase (sync) */
   register?: (api: PluginApi) => void | Promise<void>;
-  /** 激活阶段 (异步) */
+  /** Activation phase (async) */
   activate?: (api: PluginApi) => void | Promise<void>;
-  /** 清理函数 */
+  /** Cleanup function */
   cleanup?: () => void | Promise<void>;
 }
 
-/** 插件模块 (可以是对象或函数) */
+/** Plugin module (can be an object or function) */
 export type PluginModule =
   | PluginDefinition
   | ((api: PluginApi) => void | Promise<void>);
 
-/** 插件来源 */
+/** Plugin origin */
 export type PluginOrigin = "bundled" | "global" | "workspace" | "config";
 
-/** 发现的插件候选 */
+/** Discovered plugin candidate */
 export interface PluginCandidate {
-  /** 插件 ID (来自清单或目录名) */
+  /** Plugin ID (from manifest or directory name) */
   id: string;
-  /** 来源 */
+  /** Origin */
   origin: PluginOrigin;
-  /** 清单文件路径 */
+  /** Manifest file path */
   manifestPath?: string;
-  /** 入口文件路径 */
+  /** Entry file path */
   entryPath: string;
-  /** 目录路径 */
+  /** Directory path */
   directory: string;
-  /** 清单内容 */
+  /** Manifest content */
   manifest?: PluginManifest;
 }
 
-/** 已加载的插件 */
+/** Loaded plugin */
 export interface LoadedPlugin {
-  /** 插件 ID */
+  /** Plugin ID */
   id: string;
-  /** 来源 */
+  /** Origin */
   origin: PluginOrigin;
-  /** 定义 */
+  /** Definition */
   definition: PluginDefinition;
-  /** 配置 */
+  /** Configuration */
   pluginConfig?: Record<string, unknown>;
-  /** 注册的 Hook 取消函数 */
+  /** Registered Hook unsubscribe functions */
   hookUnsubscribers: Array<() => void>;
-  /** 注册的服务 */
+  /** Registered services */
   services: PluginService[];
-  /** 是否已激活 */
+  /** Whether activated */
   activated: boolean;
-  /** 加载时间 */
+  /** Load timestamp */
   loadedAt: number;
 }
 
-/** 插件启用状态配置 */
+/** Plugin enable state configuration */
 export interface PluginEnableConfig {
-  /** 是否全局启用插件 */
+  /** Whether to globally enable plugins */
   enabled?: boolean;
-  /** 允许列表 (如果设置，只加载这些) */
+  /** Allow list (if set, only load these) */
   allow?: string[];
-  /** 拒绝列表 (这些永远不加载) */
+  /** Deny list (these are never loaded) */
   deny?: string[];
-  /** 额外加载路径 */
+  /** Additional load paths */
   paths?: string[];
-  /** 排他性槽位配置 */
+  /** Exclusive slot configuration */
   slots?: Record<string, string>;
-  /** 各插件配置 */
+  /** Per-plugin configuration */
   entries?: Record<string, {
     enabled?: boolean;
     config?: Record<string, unknown>;
   }>;
 }
 
-/** 插件生命周期事件 */
+/** Plugin lifecycle event */
 export type PluginLifecycleEvent =
   | { type: "discovered"; candidate: PluginCandidate }
   | { type: "loaded"; plugin: LoadedPlugin }
@@ -183,12 +183,12 @@ export type PluginLifecycleEvent =
   | { type: "unloaded"; pluginId: string }
   | { type: "error"; pluginId: string; error: Error };
 
-// ============== 插件管理 ==============
+// ============== Plugin Management ==============
 
-/** 插件注册表 */
+/** Plugin registry */
 const pluginRegistry = new Map<string, LoadedPlugin>();
 
-/** 注册插件 */
+/** Register a plugin */
 export async function registerPlugin(
   definition: PluginDefinition,
   config: VexConfig,
@@ -200,7 +200,7 @@ export async function registerPlugin(
   const { meta } = definition;
   const origin = options?.origin ?? "config";
 
-  // 检查是否已注册
+  // Check if already registered
   if (pluginRegistry.has(meta.id)) {
     logger.warn({ pluginId: meta.id }, "Plugin already registered, skipping");
     return;
@@ -211,7 +211,7 @@ export async function registerPlugin(
   const hookUnsubscribers: Array<() => void> = [];
   const services: PluginService[] = [];
 
-  // 创建插件 API
+  // Create plugin API
   const api: PluginApi = {
     id: meta.id,
     meta,
@@ -243,7 +243,7 @@ export async function registerPlugin(
     },
   };
 
-  // 执行 register 阶段
+  // Execute register phase
   try {
     if (definition.register) {
       await definition.register(api);
@@ -268,7 +268,7 @@ export async function registerPlugin(
   }
 }
 
-/** 激活插件 */
+/** Activate a plugin */
 export async function activatePlugin(pluginId: string): Promise<void> {
   const plugin = pluginRegistry.get(pluginId);
   if (!plugin) {
@@ -282,11 +282,11 @@ export async function activatePlugin(pluginId: string): Promise<void> {
 
   logger.info({ pluginId }, "Activating plugin");
 
-  // 创建 API (简化版)
+  // Create API (simplified version)
   const api: PluginApi = {
     id: plugin.id,
     meta: plugin.definition.meta,
-    config: {} as VexConfig,  // 需要从外部传入
+    config: {} as VexConfig,  // Needs to be passed in externally
     pluginConfig: plugin.pluginConfig,
     registerTool: (tool) => registerTool(tool),
     registerTools: (tools) => registerTools(tools),
@@ -303,13 +303,13 @@ export async function activatePlugin(pluginId: string): Promise<void> {
     },
   };
 
-  // 执行 activate 阶段
+  // Execute activate phase
   try {
     if (plugin.definition.activate) {
       await plugin.definition.activate(api);
     }
 
-    // 启动服务
+    // Start services
     for (const service of plugin.services) {
       await service.start();
     }
@@ -322,7 +322,7 @@ export async function activatePlugin(pluginId: string): Promise<void> {
   }
 }
 
-/** 注销插件 */
+/** Unregister a plugin */
 export async function unregisterPlugin(pluginId: string): Promise<void> {
   const plugin = pluginRegistry.get(pluginId);
   if (!plugin) {
@@ -332,7 +332,7 @@ export async function unregisterPlugin(pluginId: string): Promise<void> {
 
   logger.info({ pluginId }, "Unregistering plugin");
 
-  // 停止服务 (逆序)
+  // Stop services (reverse order)
   for (const service of plugin.services.reverse()) {
     try {
       await service.stop();
@@ -341,7 +341,7 @@ export async function unregisterPlugin(pluginId: string): Promise<void> {
     }
   }
 
-  // 调用清理函数
+  // Invoke cleanup function
   if (plugin.definition.cleanup) {
     try {
       await plugin.definition.cleanup();
@@ -350,7 +350,7 @@ export async function unregisterPlugin(pluginId: string): Promise<void> {
     }
   }
 
-  // 取消所有 Hook 订阅
+  // Unsubscribe all Hooks
   for (const unsubscribe of plugin.hookUnsubscribers) {
     unsubscribe();
   }
@@ -359,27 +359,27 @@ export async function unregisterPlugin(pluginId: string): Promise<void> {
   logger.info({ pluginId }, "Plugin unregistered");
 }
 
-/** 获取已加载的插件 */
+/** Get loaded plugins */
 export function getLoadedPlugins(): PluginMeta[] {
   return Array.from(pluginRegistry.values()).map((p) => p.definition.meta);
 }
 
-/** 获取插件详情 */
+/** Get plugin details */
 export function getPluginDetails(pluginId: string): LoadedPlugin | undefined {
   return pluginRegistry.get(pluginId);
 }
 
-/** 检查插件是否已加载 */
+/** Check if a plugin is loaded */
 export function isPluginLoaded(pluginId: string): boolean {
   return pluginRegistry.has(pluginId);
 }
 
-/** 检查插件是否已激活 */
+/** Check if a plugin is activated */
 export function isPluginActivated(pluginId: string): boolean {
   return pluginRegistry.get(pluginId)?.activated ?? false;
 }
 
-/** 注销所有插件 */
+/** Unregister all plugins */
 export async function unregisterAllPlugins(): Promise<void> {
   const pluginIds = Array.from(pluginRegistry.keys());
   for (const pluginId of pluginIds) {
@@ -387,9 +387,9 @@ export async function unregisterAllPlugins(): Promise<void> {
   }
 }
 
-// ============== 便捷创建函数 ==============
+// ============== Convenience Create Functions ==============
 
-/** 创建插件 */
+/** Create a plugin */
 export function definePlugin(
   meta: PluginMeta,
   initialize: (api: PluginApi) => void | Promise<void>,
@@ -402,7 +402,7 @@ export function definePlugin(
   };
 }
 
-/** 创建简单插件 (只包含工具) */
+/** Create a simple plugin (tools only) */
 export function defineToolPlugin(
   meta: PluginMeta,
   tools: Tool[]

@@ -1,8 +1,8 @@
 /**
- * 定时任务服务
+ * Cron job service
  *
- * 参考 moltbot 的 cron service 实现
- * 提供任务管理、调度执行、事件通知等功能
+ * Based on moltbot cron service implementation
+ * Provides job management, scheduling, event notification, etc.
  */
 
 import { randomUUID } from "crypto";
@@ -18,11 +18,11 @@ import { STUCK_RUN_MS } from "./types.js";
 import { CronStore, DEFAULT_CRON_STORE_PATH } from "./store.js";
 import { computeJobNextRunAtMs, formatSchedule } from "./schedule.js";
 
-/** setTimeout 的最大安全值 (~24.8 天) */
+/** Maximum safe setTimeout value (~24.8 days) */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 /**
- * 定时任务服务
+ * Cron job service
  */
 export class CronService {
   private deps: Required<CronServiceDeps>;
@@ -42,21 +42,21 @@ export class CronService {
     this.store = new CronStore(this.deps.storePath);
   }
 
-  /** 启动服务 */
+  /** Start service */
   start(): void {
     if (this.started) return;
     this.started = true;
 
-    // 重新计算所有任务的下次运行时间
+    // Recompute all job next run times
     this.recomputeAllNextRuns();
 
-    // 设置定时器
+    // Arm timer
     if (this.deps.enabled) {
       this.armTimer();
     }
   }
 
-  /** 停止服务 */
+  /** Stop service */
   stop(): void {
     if (!this.started) return;
     this.started = false;
@@ -67,7 +67,7 @@ export class CronService {
     }
   }
 
-  /** 列出所有任务 */
+  /** List all jobs */
   list(options?: { includeDisabled?: boolean }): CronJob[] {
     const { includeDisabled = false } = options || {};
     const jobs = this.store.getJobs();
@@ -76,17 +76,17 @@ export class CronService {
       .sort((a, b) => (a.state.nextRunAtMs ?? Infinity) - (b.state.nextRunAtMs ?? Infinity));
   }
 
-  /** 获取单个任务 */
+  /** Get single job */
   get(id: string): CronJob | undefined {
     return this.store.getJob(id);
   }
 
-  /** 按名称获取任务 */
+  /** Get job by name */
   getByName(name: string): CronJob | undefined {
     return this.store.getJobByName(name);
   }
 
-  /** 添加任务 */
+  /** Add job */
   add(input: CronJobCreate): CronJob {
     const now = this.deps.nowMs();
     const id = randomUUID();
@@ -104,7 +104,7 @@ export class CronService {
       state: {},
     };
 
-    // 计算下次运行时间
+    // Compute next run time
     job.state.nextRunAtMs = computeJobNextRunAtMs(job, now);
 
     this.store.addJob(job);
@@ -116,21 +116,21 @@ export class CronService {
     return job;
   }
 
-  /** 更新任务 */
+  /** Update job */
   update(id: string, patch: CronJobUpdate): CronJob | undefined {
     const job = this.store.getJob(id);
     if (!job) return undefined;
 
     const now = this.deps.nowMs();
 
-    // 应用更新
+    // Apply update
     if (patch.name !== undefined) job.name = patch.name;
     if (patch.description !== undefined) job.description = patch.description;
     if (patch.enabled !== undefined) job.enabled = patch.enabled;
     if (patch.schedule !== undefined) job.schedule = patch.schedule;
     if (patch.deleteAfterRun !== undefined) job.deleteAfterRun = patch.deleteAfterRun;
 
-    // 合并 payload
+    // Merge payload
     if (patch.payload) {
       if (patch.payload.kind && patch.payload.kind !== job.payload.kind) {
         job.payload = patch.payload as typeof job.payload;
@@ -141,7 +141,7 @@ export class CronService {
 
     job.updatedAtMs = now;
 
-    // 重新计算下次运行时间
+    // Recompute next run time
     job.state.nextRunAtMs = computeJobNextRunAtMs(job, now);
 
     this.store.updateJob(id, job);
@@ -153,7 +153,7 @@ export class CronService {
     return job;
   }
 
-  /** 删除任务 */
+  /** Remove job */
   remove(id: string): boolean {
     const removed = this.store.removeJob(id);
     if (removed) {
@@ -164,7 +164,7 @@ export class CronService {
     return removed;
   }
 
-  /** 立即运行任务 */
+  /** Run job immediately */
   async run(id: string, options?: { forced?: boolean }): Promise<{
     status: "ok" | "error" | "skipped" | "not_found";
     error?: string;
@@ -178,16 +178,16 @@ export class CronService {
     return this.executeJob(job, { forced: options?.forced ?? true });
   }
 
-  /** 重新加载存储 */
+  /** Reload store */
   reload(): void {
     this.store.reload();
     this.recomputeAllNextRuns();
     this.armTimer();
   }
 
-  // ============== 私有方法 ==============
+  // ============== Private methods ==============
 
-  /** 发送事件 */
+  /** Emit event */
   private emit(jobId: string, action: CronEventAction, extra?: Partial<CronEvent>): void {
     const event: CronEvent = {
       jobId,
@@ -198,13 +198,13 @@ export class CronService {
     this.deps.onEvent(event);
   }
 
-  /** 重新计算所有任务的下次运行时间 */
+  /** Recompute all job next run times */
   private recomputeAllNextRuns(): void {
     const now = this.deps.nowMs();
     let changed = false;
 
     for (const job of this.store.getJobs()) {
-      // 清除卡死的运行状态
+      // Clear stuck run state
       if (
         typeof job.state.runningAtMs === "number" &&
         now - job.state.runningAtMs > STUCK_RUN_MS
@@ -213,7 +213,7 @@ export class CronService {
         changed = true;
       }
 
-      // 重新计算下次运行时间
+      // Recompute next run time
       const next = computeJobNextRunAtMs(job, now);
       if (next !== job.state.nextRunAtMs) {
         job.state.nextRunAtMs = next;
@@ -226,7 +226,7 @@ export class CronService {
     }
   }
 
-  /** 设置定时器 */
+  /** Arm timer */
   private armTimer(): void {
     if (this.timer) {
       clearTimeout(this.timer);
@@ -235,7 +235,7 @@ export class CronService {
 
     if (!this.started || !this.deps.enabled) return;
 
-    // 找到最近需要运行的任务
+    // Find the nearest due job
     const now = this.deps.nowMs();
     let nearestMs: number | undefined;
 
@@ -254,11 +254,11 @@ export class CronService {
       this.onTimer();
     }, delay);
 
-    // 不阻止进程退出
+    // Do not prevent process exit
     this.timer.unref?.();
   }
 
-  /** 定时器触发 */
+  /** Timer triggered */
   private async onTimer(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -271,7 +271,7 @@ export class CronService {
     }
   }
 
-  /** 运行到期的任务 */
+  /** Run due jobs */
   private async runDueJobs(): Promise<void> {
     const now = this.deps.nowMs();
     const dueJobs = this.store.getEnabledJobs().filter(job =>
@@ -285,7 +285,7 @@ export class CronService {
     }
   }
 
-  /** 执行单个任务 */
+  /** Execute single job */
   private async executeJob(
     job: CronJob,
     options: { forced: boolean }
@@ -296,7 +296,7 @@ export class CronService {
   }> {
     const startMs = this.deps.nowMs();
 
-    // 标记为运行中
+    // Mark as running
     job.state.runningAtMs = startMs;
     this.store.updateJob(job.id, job);
     this.store.persist();
@@ -321,7 +321,7 @@ export class CronService {
     const endMs = this.deps.nowMs();
     const durationMs = endMs - startMs;
 
-    // 更新状态
+    // Update state
     job.state.runningAtMs = undefined;
     job.state.lastRunAtMs = startMs;
     job.state.lastStatus = status;
@@ -329,7 +329,7 @@ export class CronService {
     job.state.lastError = error;
     job.state.runCount = (job.state.runCount ?? 0) + 1;
 
-    // 一次性任务完成后的处理
+    // Post-processing for one-time jobs
     if (job.schedule.kind === "at" && status === "ok") {
       if (job.deleteAfterRun) {
         this.store.removeJob(job.id);
@@ -339,12 +339,12 @@ export class CronService {
       }
     }
 
-    // 重新计算下次运行时间
+    // Recompute next run time
     if (!options.forced && job.enabled && !deleted) {
       job.state.nextRunAtMs = computeJobNextRunAtMs(job, endMs);
     }
 
-    // 将更新后的 job 保存到 store（确保 dirty 标志被设置）
+    // Save updated job to store (ensure dirty flag is set)
     if (!deleted) {
       this.store.updateJob(job.id, job);
     }
@@ -363,10 +363,10 @@ export class CronService {
   }
 }
 
-/** 默认服务实例 */
+/** Default service instance */
 let defaultService: CronService | null = null;
 
-/** 获取默认 Cron 服务 */
+/** Get default Cron service */
 export function getCronService(deps?: CronServiceDeps): CronService {
   if (!defaultService) {
     defaultService = new CronService(deps);

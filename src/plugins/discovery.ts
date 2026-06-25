@@ -1,7 +1,7 @@
 /**
- * 插件发现
+ * Plugin Discovery
  *
- * 扫描文件系统查找插件候选
+ * Scans the filesystem for plugin candidates
  */
 
 import { existsSync, readdirSync, statSync, readFileSync } from "fs";
@@ -13,10 +13,10 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("plugins:discovery");
 
-/** 插件清单文件名 */
+/** Plugin manifest filename */
 const MANIFEST_FILENAME = "vex.plugin.json";
 
-/** 默认插件搜索目录 */
+/** Default plugin search directories */
 const DEFAULT_SEARCH_DIRS = {
   bundled: join(process.cwd(), "plugins"),
   global: join(homedir(), ".vex", "plugins"),
@@ -24,7 +24,7 @@ const DEFAULT_SEARCH_DIRS = {
 };
 
 /**
- * 发现插件候选
+ * Discover plugin candidates
  */
 export async function discoverPlugins(options?: {
   paths?: string[];
@@ -42,7 +42,7 @@ export async function discoverPlugins(options?: {
   const candidates: PluginCandidate[] = [];
   const seenIds = new Set<string>();
 
-  // 按优先级顺序搜索 (后面的会覆盖前面的)
+  // Search in priority order (later entries override earlier ones)
   const searchDirs: Array<{ dir: string; origin: PluginOrigin }> = [];
 
   if (includeBuiltin && existsSync(DEFAULT_SEARCH_DIRS.bundled)) {
@@ -55,7 +55,7 @@ export async function discoverPlugins(options?: {
     searchDirs.push({ dir: DEFAULT_SEARCH_DIRS.workspace, origin: "workspace" });
   }
 
-  // 额外路径
+  // Additional paths
   for (const p of paths) {
     if (existsSync(p)) {
       searchDirs.push({ dir: p, origin: "config" });
@@ -65,7 +65,7 @@ export async function discoverPlugins(options?: {
   for (const { dir, origin } of searchDirs) {
     const found = await scanDirectory(dir, origin);
     for (const candidate of found) {
-      // 相同 ID 的插件，后面的覆盖前面的
+      // For plugins with the same ID, later entries override earlier ones
       if (seenIds.has(candidate.id)) {
         const existing = candidates.find(c => c.id === candidate.id);
         if (existing) {
@@ -82,7 +82,7 @@ export async function discoverPlugins(options?: {
 }
 
 /**
- * 扫描目录查找插件
+ * Scan a directory for plugins
  */
 async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginCandidate[]> {
   const candidates: PluginCandidate[] = [];
@@ -100,7 +100,7 @@ async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginC
           candidates.push(candidate);
         }
       } else if (entry.endsWith(".js") || entry.endsWith(".ts")) {
-        // 单文件插件
+        // Single-file plugin
         const id = basename(entry, entry.endsWith(".ts") ? ".ts" : ".js");
         candidates.push({
           id,
@@ -118,7 +118,7 @@ async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginC
 }
 
 /**
- * 扫描单个插件目录
+ * Scan a single plugin directory
  */
 async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<PluginCandidate | null> {
   const manifestPath = join(dir, MANIFEST_FILENAME);
@@ -128,7 +128,7 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
   let entryPath: string | undefined;
   let id = basename(dir);
 
-  // 1. 尝试读取 vex.plugin.json
+  // 1. Try to read vex.plugin.json
   if (existsSync(manifestPath)) {
     try {
       const content = readFileSync(manifestPath, "utf-8");
@@ -142,20 +142,20 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
     }
   }
 
-  // 2. 尝试读取 package.json
+  // 2. Try to read package.json
   if (!entryPath && existsSync(packageJsonPath)) {
     try {
       const content = readFileSync(packageJsonPath, "utf-8");
       const pkg = JSON.parse(content);
 
-      // 检查是否有 vex.plugin 字段
+      // Check for vex.plugin field
       if (pkg["vex.plugin"]) {
         entryPath = join(dir, pkg["vex.plugin"]);
       } else if (pkg.main) {
         entryPath = join(dir, pkg.main);
       }
 
-      // 从 package.json 补充清单信息
+      // Fill in manifest info from package.json
       if (!manifest) {
         manifest = {
           id: pkg.name || id,
@@ -171,7 +171,7 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
     }
   }
 
-  // 3. 查找默认入口文件
+  // 3. Look for default entry file
   if (!entryPath) {
     const defaultEntries = ["index.ts", "index.js", "plugin.ts", "plugin.js"];
     for (const entry of defaultEntries) {
@@ -199,7 +199,7 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
 }
 
 /**
- * 获取默认搜索目录
+ * Get default search directories
  */
 export function getDefaultSearchDirs(): Record<string, string> {
   return { ...DEFAULT_SEARCH_DIRS };

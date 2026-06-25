@@ -1,8 +1,8 @@
 /**
- * 定时任务存储
+ * Cron job storage
  *
- * 参考 moltbot 的 store.ts 实现
- * JSON 文件存储，支持原子写入和备份
+ * Based on moltbot store.ts implementation
+ * JSON file storage with atomic writes and backups
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, copyFileSync } from "fs";
@@ -11,14 +11,14 @@ import { homedir } from "os";
 import json5 from "json5";
 import type { CronStoreFile, CronJob } from "./types.js";
 
-/** 默认 Cron 数据目录 */
+/** Default Cron data directory */
 const CRON_DATA_DIR = join(homedir(), ".vex", "cron");
 
-/** 默认存储文件路径 */
+/** Default store file path */
 export const DEFAULT_CRON_STORE_PATH = join(CRON_DATA_DIR, "jobs.json");
 
 /**
- * 加载存储文件
+ * Load store file
  */
 export function loadCronStore(storePath: string = DEFAULT_CRON_STORE_PATH): CronStoreFile {
   if (!existsSync(storePath)) {
@@ -29,7 +29,7 @@ export function loadCronStore(storePath: string = DEFAULT_CRON_STORE_PATH): Cron
     const content = readFileSync(storePath, "utf-8");
     const data = json5.parse(content) as CronStoreFile;
 
-    // 验证格式
+    // Validate format
     if (!data.version || !Array.isArray(data.jobs)) {
       return { version: 1, jobs: [] };
     }
@@ -41,7 +41,7 @@ export function loadCronStore(storePath: string = DEFAULT_CRON_STORE_PATH): Cron
 }
 
 /**
- * 保存存储文件 (原子写入)
+ * Save store file (atomic write)
  */
 export function saveCronStore(store: CronStoreFile, storePath: string = DEFAULT_CRON_STORE_PATH): void {
   const dir = dirname(storePath);
@@ -50,22 +50,22 @@ export function saveCronStore(store: CronStoreFile, storePath: string = DEFAULT_
   const content = JSON.stringify(store, null, 2);
   const tmpPath = `${storePath}.${process.pid}.${Date.now()}.tmp`;
 
-  // 写入临时文件
+  // Write to temp file
   writeFileSync(tmpPath, content, "utf-8");
 
-  // 原子重命名
+  // Atomic rename
   renameSync(tmpPath, storePath);
 
-  // 创建备份 (best-effort)
+  // Create backup (best-effort)
   try {
     copyFileSync(storePath, `${storePath}.bak`);
   } catch {
-    // 忽略备份失败
+    // Ignore backup failures
   }
 }
 
 /**
- * Cron 存储管理器
+ * Cron store manager
  */
 export class CronStore {
   private storePath: string;
@@ -77,29 +77,29 @@ export class CronStore {
     this.store = loadCronStore(storePath);
   }
 
-  /** 获取所有任务 */
+  /** Get all jobs */
   getJobs(): CronJob[] {
     return this.store.jobs;
   }
 
-  /** 获取单个任务 */
+  /** Get single job */
   getJob(id: string): CronJob | undefined {
     return this.store.jobs.find(j => j.id === id);
   }
 
-  /** 按名称获取任务 */
+  /** Get job by name */
   getJobByName(name: string): CronJob | undefined {
     return this.store.jobs.find(j => j.name === name);
   }
 
-  /** 获取已启用的任务 */
+  /** Get enabled jobs */
   getEnabledJobs(): CronJob[] {
     return this.store.jobs.filter(j => j.enabled);
   }
 
-  /** 添加任务 */
+  /** Add job */
   addJob(job: CronJob): void {
-    // 检查 ID 是否重复
+    // Check for duplicate ID
     const existing = this.store.jobs.findIndex(j => j.id === job.id);
     if (existing >= 0) {
       this.store.jobs[existing] = job;
@@ -109,7 +109,7 @@ export class CronStore {
     this.dirty = true;
   }
 
-  /** 更新任务 */
+  /** Update job */
   updateJob(id: string, updates: Partial<CronJob>): CronJob | undefined {
     const index = this.store.jobs.findIndex(j => j.id === id);
     if (index < 0) return undefined;
@@ -120,7 +120,7 @@ export class CronStore {
     return job;
   }
 
-  /** 删除任务 */
+  /** Delete job */
   removeJob(id: string): boolean {
     const index = this.store.jobs.findIndex(j => j.id === id);
     if (index < 0) return false;
@@ -130,7 +130,7 @@ export class CronStore {
     return true;
   }
 
-  /** 持久化 (如果有变更) */
+  /** Persist (if dirty) */
   persist(): void {
     if (this.dirty) {
       saveCronStore(this.store, this.storePath);
@@ -138,23 +138,23 @@ export class CronStore {
     }
   }
 
-  /** 强制持久化 */
+  /** Force persist */
   forcePersist(): void {
     saveCronStore(this.store, this.storePath);
     this.dirty = false;
   }
 
-  /** 重新加载 */
+  /** Reload */
   reload(): void {
     this.store = loadCronStore(this.storePath);
     this.dirty = false;
   }
 
-  /** 清除所有任务 */
+  /** Clear all jobs */
   clear(): void {
     this.store.jobs = [];
     this.dirty = true;
-    // 与 addJob/updateJob/removeJob 不同，clear 表示破坏性意图，立即落盘以防丢失
+    // Unlike addJob/updateJob/removeJob, clear indicates destructive intent, flush immediately to prevent data loss
     saveCronStore(this.store, this.storePath);
     this.dirty = false;
   }

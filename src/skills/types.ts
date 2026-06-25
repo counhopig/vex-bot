@@ -1,91 +1,91 @@
 /**
- * Skills 模块类型定义
- * 基于 moltbot 的 Skills 架构简化实现
+ * Skills module type definitions
+ * Simplified implementation based on moltbot's Skills architecture
  */
 
 /**
- * Skill 前置条件 - 用于过滤 skill 是否可用
+ * Skill eligibility - used to filter whether a skill is available
  */
 export interface SkillEligibility {
-  /** 支持的操作系统列表 */
+  /** Supported operating systems */
   os?: string[];
-  /** 需要存在的可执行文件列表 */
+  /** Required binary executable names */
   binaries?: string[];
-  /** 需要存在的环境变量列表 */
+  /** Required environment variable names */
   envVars?: string[];
 }
 
 /**
- * SKILL.md 文件的 YAML frontmatter 定义
+ * YAML frontmatter definition for SKILL.md files
  */
 export interface SkillFrontmatter {
-  /** Skill 唯一标识符 */
+  /** Unique skill identifier */
   name: string;
-  /** Skill 显示名称 */
+  /** Skill display name */
   title?: string;
-  /** Skill 简短描述 */
+  /** Short skill description */
   description?: string;
-  /** Skill 版本 */
+  /** Skill version */
   version?: string;
-  /** Skill 作者 */
+  /** Skill author */
   author?: string;
-  /** 是否启用此 skill */
+  /** Whether this skill is enabled */
   enabled?: boolean;
-  /** 前置条件 */
+  /** Eligibility conditions */
   eligibility?: SkillEligibility;
-  /** 关键词标签，用于匹配 */
+  /** Keyword tags for matching */
   tags?: string[];
-  /** 优先级，数字越小优先级越高 */
+  /** Priority - lower numbers are higher priority */
   priority?: number;
 }
 
 /**
- * 解析后的 Skill 条目
+ * Parsed skill entry
  */
 export interface SkillEntry {
-  /** Skill 元数据 */
+  /** Skill metadata */
   frontmatter: SkillFrontmatter;
-  /** Skill 内容（markdown 格式的 prompt） */
+  /** Skill content (markdown format prompt) */
   content: string;
-  /** Skill 文件路径 */
+  /** Skill file path */
   filePath: string;
-  /** Skill 来源目录 */
+  /** Skill source directory */
   source: SkillSource;
 }
 
 /**
- * Skill 来源类型
+ * Skill source type
  */
 export type SkillSource = 'bundled' | 'user' | 'workspace';
 
 /**
- * Skills 配置
+ * Skills configuration
  */
 export interface SkillsConfig {
-  /** 是否启用 skills 功能 */
+  /** Whether skills feature is enabled */
   enabled?: boolean;
-  /** 用户 skills 目录路径 (默认 ~/.vex/skills) */
+  /** User skills directory path (default ~/.vex/skills) */
   userDir?: string;
-  /** 工作区 skills 目录路径 (默认 ./.vex/skills) */
+  /** Workspace skills directory path (default ./.vex/skills) */
   workspaceDir?: string;
-  /** 禁用的 skill 名称列表 */
+  /** List of disabled skill names */
   disabled?: string[];
-  /** 只启用的 skill 名称列表（如果设置，其他都禁用） */
+  /** List of only-allowed skill names (if set, all others are disabled) */
   only?: string[];
 }
 
 /**
- * Skills 注册表接口
+ * Skills registry interface
  */
 export interface SkillsRegistry {
-  /** 获取所有已加载的 skills */
+  /** Get all loaded skills */
   getAll(): SkillEntry[];
-  /** 根据名称获取 skill */
+  /** Get a skill by name */
   get(name: string): SkillEntry | undefined;
-  /** 获取符合条件的 skills */
+  /** Get eligible skills */
   getEligible(): SkillEntry[];
-  /** 构建 skills prompt */
+  /** Build skills prompt */
   buildPrompt(): string;
-  /** 重新加载 skills */
+  /** Reload skills */
   reload(): Promise<void>;
 }

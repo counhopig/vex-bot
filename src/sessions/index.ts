@@ -1,5 +1,5 @@
 /**
- * 会话管理模块
+ * Session management module
  */
 
 export * from "./types.js";

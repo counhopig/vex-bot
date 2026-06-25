@@ -1,7 +1,7 @@
 /**
- * Cron 任务执行器
+ * Cron job executor
  *
- * 处理定时任务的执行，包括 Agent 调用和消息投递
+ * Handles cron job execution including Agent calls and message delivery
  */
 
 import type { CronJob, PayloadAgentTurn } from "./types.js";
@@ -11,16 +11,16 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("cron-executor");
 
-/** 任务执行结果 */
+/** Job execution result */
 export interface CronExecutionResult {
   status: "ok" | "error" | "skipped";
   error?: string;
   summary?: string;
-  /** Agent 输出的文本 */
+  /** Agent output text */
   outputText?: string;
 }
 
-/** Agent 执行函数类型 */
+/** Agent executor function type */
 export type AgentExecutor = (params: {
   message: string;
   sessionKey?: string;
@@ -32,22 +32,22 @@ export type AgentExecutor = (params: {
   error?: string;
 }>;
 
-/** Cron 执行器选项 */
+/** Cron executor options */
 export interface CronExecutorOptions {
-  /** Agent 执行函数 (可选，用于 agentTurn 任务) */
+  /** Agent executor function (optional, for agentTurn jobs) */
   agentExecutor?: AgentExecutor;
-  /** 默认通道 (用于投递) */
+  /** Default channel (for delivery) */
   defaultChannel?: ChannelId;
 }
 
 /**
- * 创建 Cron 任务执行器
+ * Create Cron job executor
  */
 export function createCronExecutor(options?: CronExecutorOptions) {
   const { agentExecutor, defaultChannel } = options ?? {};
 
   /**
-   * 执行单个任务
+   * Execute single job
    */
   async function executeJob(job: CronJob): Promise<CronExecutionResult> {
     const { payload } = job;
@@ -76,10 +76,10 @@ export function createCronExecutor(options?: CronExecutorOptions) {
   }
 
   /**
-   * 执行系统事件任务
+   * Execute system event job
    */
   async function executeSystemEvent(job: CronJob): Promise<CronExecutionResult> {
-    // systemEvent 只是记录日志，不需要执行任何操作
+    // systemEvent just logs, no action needed
     logger.info(
       { jobId: job.id, message: job.payload.kind === "systemEvent" ? job.payload.message : "" },
       "System event triggered"
@@ -88,7 +88,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
   }
 
   /**
-   * 执行 Agent 轮次任务
+   * Execute Agent turn job
    */
   async function executeAgentTurn(
     job: CronJob,
@@ -96,7 +96,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
   ): Promise<CronExecutionResult> {
     const { message, model, timeoutSeconds, deliver, channel, to } = payload;
 
-    // 如果没有 agentExecutor，只记录日志
+    // If no agentExecutor, just log
     if (!agentExecutor) {
       logger.warn({ jobId: job.id }, "No agent executor configured, skipping agentTurn execution");
       return {
@@ -105,7 +105,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
       };
     }
 
-    // 执行 Agent
+    // Execute Agent
     logger.info({ jobId: job.id, message: message.slice(0, 100) }, "Executing agent turn");
 
     let agentResult: Awaited<ReturnType<AgentExecutor>>;
@@ -135,7 +135,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
 
     const outputText = agentResult.output;
 
-    // 如果需要投递
+    // If delivery needed
     if (deliver && to) {
       await deliverAgentOutput(job, payload, outputText);
     }
@@ -148,7 +148,7 @@ export function createCronExecutor(options?: CronExecutorOptions) {
   }
 
   /**
-   * 投递 Agent 输出
+   * Deliver Agent output
    */
   async function deliverAgentOutput(
     job: CronJob,
@@ -162,20 +162,20 @@ export function createCronExecutor(options?: CronExecutorOptions) {
       return;
     }
 
-    // 解析通道
+    // Parse channel
     const channelId = resolveChannel(targetChannel);
     if (!channelId) {
       logger.warn({ jobId: job.id, targetChannel }, "Invalid or unavailable channel");
       return;
     }
 
-    // 检查通道是否可用
+    // Check if channel is available
     if (!isChannelAvailable(channelId)) {
       logger.warn({ jobId: job.id, channelId }, "Channel not available");
       return;
     }
 
-    // 投递消息
+    // Deliver message
     logger.info({ jobId: job.id, channelId, to }, "Delivering agent output");
 
     try {
@@ -197,15 +197,15 @@ export function createCronExecutor(options?: CronExecutorOptions) {
   }
 
   /**
-   * 解析通道 ID
+   * Parse channel ID
    */
   function resolveChannel(channel?: string): ChannelId | null {
     if (!channel || channel === "last") {
-      // "last" 表示使用默认通道或上次使用的通道
+      // "last" means use default or previously used channel
       return defaultChannel ?? null;
     }
 
-    // 验证通道 ID
+    // Validate channel ID
     const validChannels: ChannelId[] = ["weixin", "webchat"];
     if (validChannels.includes(channel as ChannelId)) {
       return channel as ChannelId;
@@ -222,8 +222,8 @@ export function createCronExecutor(options?: CronExecutorOptions) {
 }
 
 /**
- * 创建默认的 Cron 任务执行函数
- * 用于 getCronService 的 executeJob 参数
+ * Create default Cron job execution function
+ * Used as executeJob parameter for getCronService
  */
 export function createDefaultCronExecuteJob(options?: CronExecutorOptions) {
   const executor = createCronExecutor(options);

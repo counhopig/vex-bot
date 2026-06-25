@@ -1,41 +1,41 @@
 /**
- * 会话管理类型定义
- * 参考 moltbot 的会话管理系统
+ * Session management type definitions
+ * Reference: moltbot's session management system
  */
 
 import type { ChatMessage } from "../types/index.js";
 
-/** 会话条目 */
+/** Session entry */
 export interface SessionEntry {
-  /** 会话 ID */
+  /** Session ID */
   sessionId: string;
-  /** 会话 Key（用于索引） */
+  /** Session key (used for indexing) */
   sessionKey: string;
-  /** 标签名称 */
+  /** Label / display name */
   label?: string;
-  /** 创建时间 */
+  /** Creation time */
   createdAt: number;
-  /** 最后更新时间 */
+  /** Last update time */
   updatedAt: number;
-  /** 转录文件路径 */
+  /** Transcript file path */
   transcriptFile?: string;
-  /** 来源渠道 */
+  /** Source channel */
   channel?: string;
-  /** 消息数量 */
+  /** Message count */
   messageCount?: number;
-  /** 输入 token 统计 */
+  /** Input token stats */
   inputTokens?: number;
-  /** 输出 token 统计 */
+  /** Output token stats */
   outputTokens?: number;
-  /** 总 token 统计 */
+  /** Total token stats */
   totalTokens?: number;
-  /** 使用的模型 */
+  /** Model used */
   model?: string;
-  /** 使用的提供商 */
+  /** Provider used */
   provider?: string;
 }
 
-/** 会话列表项（用于前端展示） */
+/** Session list item (for frontend display) */
 export interface SessionListItem {
   sessionKey: string;
   sessionId: string;
@@ -46,33 +46,33 @@ export interface SessionListItem {
   model?: string;
 }
 
-/** 转录消息条目 */
+/** Transcript message entry */
 export interface TranscriptMessage {
-  /** 消息 ID */
+  /** Message ID */
   id?: string;
-  /** 角色 */
+  /** Role */
   role: "user" | "assistant" | "system" | "tool";
-  /** 内容 */
+  /** Content */
   content: string | ChatMessage["content"];
-  /** 时间戳 */
+  /** Timestamp */
   timestamp: number;
-  /** 工具调用 */
+  /** Tool calls */
   tool_calls?: ChatMessage["tool_calls"];
-  /** 工具调用 ID */
+  /** Tool call ID */
   tool_call_id?: string;
-  /** Token 使用量 */
+  /** Token usage */
   usage?: {
     promptTokens?: number;
     completionTokens?: number;
     totalTokens?: number;
   };
-  /** 模型 */
+  /** Model */
   model?: string;
-  /** 提供商 */
+  /** Provider */
   provider?: string;
 }
 
-/** 转录文件头 */
+/** Transcript file header */
 export interface TranscriptHeader {
   type: "session";
   version: number;
@@ -82,36 +82,36 @@ export interface TranscriptHeader {
   cwd?: string;
 }
 
-/** 会话存储接口 */
+/** Session store interface */
 export interface SessionStore {
-  /** 列出所有会话 */
+  /** List all sessions */
   list(options?: SessionListOptions): Promise<SessionListItem[]>;
-  /** 获取会话 */
+  /** Get a session */
   get(sessionKey: string): Promise<SessionEntry | null>;
-  /** 创建或更新会话 */
+  /** Create or update a session */
   upsert(entry: SessionEntry): Promise<void>;
-  /** 删除会话 */
+  /** Delete a session */
   delete(sessionKey: string): Promise<void>;
-  /** 重置会话 */
+  /** Reset a session */
   reset(sessionKey: string): Promise<SessionEntry>;
 }
 
-/** 会话列表选项 */
+/** Session list options */
 export interface SessionListOptions {
-  /** 限制返回数量 */
+  /** Limit number of results */
   limit?: number;
-  /** 按活跃时间过滤（分钟） */
+  /** Filter by active time (minutes) */
   activeMinutes?: number;
-  /** 搜索关键词 */
+  /** Search keyword */
   search?: string;
 }
 
-/** 转录管理器接口 */
+/** Transcript manager interface */
 export interface TranscriptManager {
-  /** 加载转录记录 */
+  /** Load transcript records */
   load(sessionId: string): Promise<TranscriptMessage[]>;
-  /** 追加消息 */
+  /** Append a message */
   append(sessionId: string, message: TranscriptMessage): Promise<void>;
-  /** 清空转录 */
+  /** Clear transcript */
   clear(sessionId: string): Promise<void>;
 }

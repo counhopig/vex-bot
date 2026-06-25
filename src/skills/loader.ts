@@ -1,6 +1,6 @@
 /**
- * Skills 加载器
- * 从不同目录加载 SKILL.md 文件
+ * Skills loader
+ * Loads SKILL.md files from different directories
  */
 
 import { readdir, stat, access } from 'fs/promises';
@@ -11,7 +11,7 @@ import type { SkillEntry, SkillSource, SkillsConfig } from './types.js';
 import { parseSkillFile } from './parser.js';
 
 /**
- * 检查目录是否存在
+ * Check if a directory exists
  */
 async function directoryExists(path: string): Promise<boolean> {
   try {
@@ -23,10 +23,10 @@ async function directoryExists(path: string): Promise<boolean> {
 }
 
 /**
- * 检查可执行文件是否存在
+ * Check if a binary executable exists
  */
 async function binaryExists(name: string): Promise<boolean> {
-  // 仅允许合法的可执行文件名，避免 SKILL.md 携带 shell 元字符注入
+  // Only allow valid executable names, prevent shell metacharacter injection from SKILL.md
   if (!/^[A-Za-z0-9._+-]+$/.test(name)) {
     return false;
   }
@@ -41,13 +41,13 @@ async function binaryExists(name: string): Promise<boolean> {
 }
 
 /**
- * 检查 skill 是否符合运行条件
+ * Check whether a skill meets eligibility conditions
  */
 async function checkEligibility(skill: SkillEntry): Promise<boolean> {
   const { eligibility } = skill.frontmatter;
   if (!eligibility) return true;
 
-  // 检查操作系统
+  // Check operating system
   if (eligibility.os && eligibility.os.length > 0) {
     const currentOS = process.platform;
     const osMap: Record<string, string[]> = {
@@ -62,7 +62,7 @@ async function checkEligibility(skill: SkillEntry): Promise<boolean> {
     if (!matched) return false;
   }
 
-  // 检查可执行文件
+  // Check binary executables
   if (eligibility.binaries && eligibility.binaries.length > 0) {
     for (const binary of eligibility.binaries) {
       if (!(await binaryExists(binary))) {
@@ -71,7 +71,7 @@ async function checkEligibility(skill: SkillEntry): Promise<boolean> {
     }
   }
 
-  // 检查环境变量
+  // Check environment variables
   if (eligibility.envVars && eligibility.envVars.length > 0) {
     for (const envVar of eligibility.envVars) {
       if (!process.env[envVar]) {
@@ -84,7 +84,7 @@ async function checkEligibility(skill: SkillEntry): Promise<boolean> {
 }
 
 /**
- * 从目录加载所有 skills
+ * Load all skills from a directory
  */
 async function loadSkillsFromDirectory(
   directory: string,
@@ -97,7 +97,7 @@ async function loadSkillsFromDirectory(
   const skills: SkillEntry[] = [];
 
   try {
-    // 查找所有 SKILL.md 文件
+    // Find all SKILL.md files
     const pattern = join(directory, '**/SKILL.md');
     const files = await glob(pattern, { nodir: true });
 
@@ -115,7 +115,7 @@ async function loadSkillsFromDirectory(
 }
 
 /**
- * 获取默认的 skills 目录
+ * Get default skills directories
  */
 export function getDefaultSkillsDirs(): {
   bundled: string;
@@ -130,7 +130,7 @@ export function getDefaultSkillsDirs(): {
 }
 
 /**
- * 加载所有 skills
+ * Load all skills
  */
 export async function loadAllSkills(
   config?: SkillsConfig
@@ -138,32 +138,32 @@ export async function loadAllSkills(
   const dirs = getDefaultSkillsDirs();
   const allSkills: SkillEntry[] = [];
 
-  // 按优先级加载：bundled -> user -> workspace
-  // workspace 优先级最高，可以覆盖同名 skill
+  // Load in priority order: bundled -> user -> workspace
+  // workspace has highest priority, can override skills with the same name
 
-  // 1. 加载内置 skills
+  // 1. Load bundled skills
   const bundledSkills = await loadSkillsFromDirectory(dirs.bundled, 'bundled');
   allSkills.push(...bundledSkills);
 
-  // 2. 加载用户 skills
+  // 2. Load user skills
   const userDir = config?.userDir || dirs.user;
   const userSkills = await loadSkillsFromDirectory(userDir, 'user');
   allSkills.push(...userSkills);
 
-  // 3. 加载工作区 skills
+  // 3. Load workspace skills
   const workspaceDir = config?.workspaceDir || dirs.workspace;
   const workspaceSkills = await loadSkillsFromDirectory(workspaceDir, 'workspace');
   allSkills.push(...workspaceSkills);
 
-  // 过滤禁用的 skills
+  // Filter disabled skills
   let filteredSkills = allSkills.filter(skill => {
-    // 检查 frontmatter 中的 enabled 字段
+    // Check enabled field in frontmatter
     if (skill.frontmatter.enabled === false) return false;
 
-    // 检查配置中的禁用列表
+    // Check disabled list in config
     if (config?.disabled?.includes(skill.frontmatter.name)) return false;
 
-    // 如果设置了 only，则只启用列表中的 skills
+    // If only is set, only enable skills in that list
     if (config?.only && config.only.length > 0) {
       return config.only.includes(skill.frontmatter.name);
     }
@@ -171,7 +171,7 @@ export async function loadAllSkills(
     return true;
   });
 
-  // 检查运行条件并过滤
+  // Check eligibility and filter
   const eligibleSkills: SkillEntry[] = [];
   for (const skill of filteredSkills) {
     if (await checkEligibility(skill)) {
@@ -179,14 +179,14 @@ export async function loadAllSkills(
     }
   }
 
-  // 按优先级排序
+  // Sort by priority
   eligibleSkills.sort((a, b) => {
     const priorityA = a.frontmatter.priority ?? 100;
     const priorityB = b.frontmatter.priority ?? 100;
     return priorityA - priorityB;
   });
 
-  // 去重（同名 skill 保留优先级最高的）
+  // Deduplicate (keep highest-priority for same-named skills)
   const seen = new Map<string, SkillEntry>();
   for (const skill of eligibleSkills) {
     const name = skill.frontmatter.name;

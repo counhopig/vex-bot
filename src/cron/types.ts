@@ -1,105 +1,105 @@
 /**
- * 定时任务类型定义
+ * Cron job type definitions
  */
 
-/** 调度类型：一次性 */
+/** Schedule type: one-time */
 export interface ScheduleAt {
   kind: "at";
-  /** 执行时间 (毫秒时间戳) */
+  /** Execution time (millisecond timestamp) */
   atMs: number;
 }
 
-/** 调度类型：周期性 */
+/** Schedule type: periodic */
 export interface ScheduleEvery {
   kind: "every";
-  /** 间隔时间 (毫秒) */
+  /** Interval (milliseconds) */
   everyMs: number;
-  /** 锚点时间 (用于对齐，毫秒时间戳) */
+  /** Anchor time (for alignment, millisecond timestamp) */
   anchorMs?: number;
 }
 
-/** 调度类型：Cron 表达式 */
+/** Schedule type: Cron expression */
 export interface ScheduleCron {
   kind: "cron";
-  /** Cron 表达式 (支持秒级: "秒 分 时 日 月 周") */
+  /** Cron expression (supports seconds: "sec min hour day month weekday") */
   expr: string;
-  /** 时区 (默认系统时区) */
+  /** Timezone (defaults to system timezone) */
   tz?: string;
 }
 
-/** 调度配置 */
+/** Schedule configuration */
 export type CronSchedule = ScheduleAt | ScheduleEvery | ScheduleCron;
 
-/** 任务 Payload：系统事件 */
+/** Job payload: system event */
 export interface PayloadSystemEvent {
   kind: "systemEvent";
-  /** 事件内容 */
+  /** Event content */
   message: string;
 }
 
-/** 任务 Payload：Agent 执行 */
+/** Job payload: Agent execution */
 export interface PayloadAgentTurn {
   kind: "agentTurn";
-  /** 用户消息 */
+  /** User message */
   message: string;
-  /** 指定模型 (可选) */
+  /** Specify model (optional) */
   model?: string;
-  /** 超时时间 (秒) */
+  /** Timeout (seconds) */
   timeoutSeconds?: number;
-  /** 是否投递结果 */
+  /** Whether to deliver results */
   deliver?: boolean;
-  /** 投递通道 */
+  /** Delivery channel */
   channel?: string;
-  /** 投递目标 */
+  /** Delivery target */
   to?: string;
 }
 
-/** 任务 Payload */
+/** Job payload */
 export type CronPayload = PayloadSystemEvent | PayloadAgentTurn;
 
-/** 任务运行状态 */
+/** Job run state */
 export interface CronJobState {
-  /** 下次运行时间 */
+  /** Next run time */
   nextRunAtMs?: number;
-  /** 上次运行时间 */
+  /** Last run time */
   lastRunAtMs?: number;
-  /** 上次运行状态 */
+  /** Last run status */
   lastStatus?: "ok" | "error" | "skipped";
-  /** 上次运行持续时间 (毫秒) */
+  /** Last run duration (milliseconds) */
   lastDurationMs?: number;
-  /** 上次运行错误 */
+  /** Last run error */
   lastError?: string;
-  /** 当前运行开始时间 (用于防重入) */
+  /** Current run start time (for re-entry prevention) */
   runningAtMs?: number;
-  /** 运行次数 */
+  /** Run count */
   runCount?: number;
 }
 
-/** 定时任务 */
+/** Cron job */
 export interface CronJob {
-  /** 任务 ID */
+  /** Job ID */
   id: string;
-  /** 任务名称 */
+  /** Job name */
   name: string;
-  /** 任务描述 */
+  /** Job description */
   description?: string;
-  /** 是否启用 */
+  /** Whether enabled */
   enabled: boolean;
-  /** 调度配置 */
+  /** Schedule configuration */
   schedule: CronSchedule;
-  /** 任务 Payload */
+  /** Job payload */
   payload: CronPayload;
-  /** 创建时间 */
+  /** Creation time */
   createdAtMs: number;
-  /** 更新时间 */
+  /** Update time */
   updatedAtMs: number;
-  /** 运行后是否删除 (仅一次性任务) */
+  /** Delete after run (one-time jobs only) */
   deleteAfterRun?: boolean;
-  /** 运行状态 */
+  /** Run state */
   state: CronJobState;
 }
 
-/** 创建任务的输入 */
+/** Job creation input */
 export interface CronJobCreate {
   name: string;
   description?: string;
@@ -109,7 +109,7 @@ export interface CronJobCreate {
   deleteAfterRun?: boolean;
 }
 
-/** 更新任务的输入 */
+/** Job update input */
 export interface CronJobUpdate {
   name?: string;
   description?: string;
@@ -119,10 +119,10 @@ export interface CronJobUpdate {
   deleteAfterRun?: boolean;
 }
 
-/** Cron 事件类型 */
+/** Cron event type */
 export type CronEventAction = "added" | "updated" | "removed" | "started" | "finished";
 
-/** Cron 事件 */
+/** Cron event */
 export interface CronEvent {
   jobId: string;
   action: CronEventAction;
@@ -135,27 +135,27 @@ export interface CronEvent {
   nextRunAtMs?: number;
 }
 
-/** Cron 服务依赖 */
+/** Cron service dependencies */
 export interface CronServiceDeps {
-  /** 自定义时钟 (用于测试) */
+  /** Custom clock (for testing) */
   nowMs?: () => number;
-  /** 存储文件路径 */
+  /** Store file path */
   storePath?: string;
-  /** 是否启用调度 */
+  /** Whether scheduling is enabled */
   enabled?: boolean;
-  /** 执行任务的回调 */
+  /** Job execution callback */
   executeJob?: (job: CronJob) => Promise<{ status: "ok" | "error" | "skipped"; error?: string; summary?: string }>;
-  /** 事件回调 */
+  /** Event callback */
   onEvent?: (event: CronEvent) => void;
 }
 
-/** 存储文件格式 */
+/** Store file format */
 export interface CronStoreFile {
   version: 1;
   jobs: CronJob[];
 }
 
-/** 常用时间常量 */
+/** Common time constants */
 export const TIME_CONSTANTS = {
   SECOND: 1000,
   MINUTE: 60 * 1000,
@@ -164,5 +164,5 @@ export const TIME_CONSTANTS = {
   WEEK: 7 * 24 * 60 * 60 * 1000,
 } as const;
 
-/** 卡死任务检测阈值 (2 小时) */
+/** Stuck job detection threshold (2 hours) */
 export const STUCK_RUN_MS = 2 * TIME_CONSTANTS.HOUR;

@@ -1,7 +1,7 @@
 /**
- * 插件加载器
+ * Plugin Loader
  *
- * 动态加载插件模块并初始化
+ * Dynamically loads plugin modules and initializes them
  */
 
 import { pathToFileURL } from "url";
@@ -20,7 +20,7 @@ import { getChildLogger } from "../utils/logger.js";
 const logger = getChildLogger("plugins:loader");
 
 /**
- * 解析插件启用状态
+ * Resolve plugin enable state
  */
 function resolveEnableState(
   candidate: PluginCandidate,
@@ -30,24 +30,24 @@ function resolveEnableState(
     return { enabled: true, reason: "default" };
   }
 
-  // 全局禁用
+  // Globally disabled
   if (enableConfig.enabled === false) {
     return { enabled: false, reason: "globally disabled" };
   }
 
-  // 拒绝列表
+  // Deny list
   if (enableConfig.deny?.includes(candidate.id)) {
     return { enabled: false, reason: "in deny list" };
   }
 
-  // 允许列表
+  // Allow list
   if (enableConfig.allow && enableConfig.allow.length > 0) {
     if (!enableConfig.allow.includes(candidate.id)) {
       return { enabled: false, reason: "not in allow list" };
     }
   }
 
-  // 单独配置
+  // Individual configuration
   const entry = enableConfig.entries?.[candidate.id];
   if (entry?.enabled === false) {
     return { enabled: false, reason: "explicitly disabled" };
@@ -56,7 +56,7 @@ function resolveEnableState(
     return { enabled: true, reason: "explicitly enabled" };
   }
 
-  // 排他性槽位检查
+  // Exclusive slot check
   if (candidate.manifest?.kind && enableConfig.slots) {
     const slotValue = enableConfig.slots[candidate.manifest.kind];
     if (slotValue && slotValue !== candidate.id) {
@@ -64,9 +64,9 @@ function resolveEnableState(
     }
   }
 
-  // 默认启用非内置插件，内置插件按默认规则
+  // By default, enable non-bundled plugins; bundled plugins follow default rules
   if (candidate.origin === "bundled") {
-    // 可以添加内置插件的默认启用列表
+    // Can add default enable list for bundled plugins
     return { enabled: true, reason: "bundled default" };
   }
 
@@ -74,20 +74,20 @@ function resolveEnableState(
 }
 
 /**
- * 加载单个插件模块
+ * Load a single plugin module
  */
 async function loadPluginModule(candidate: PluginCandidate): Promise<PluginModule | null> {
   try {
-    // 转换为 file:// URL
+    // Convert to file:// URL
     const fileUrl = pathToFileURL(candidate.entryPath).href;
 
-    // 动态导入
+    // Dynamic import
     const mod = await import(fileUrl);
 
-    // 获取默认导出
+    // Get default export
     const defaultExport = mod.default ?? mod;
 
-    // 验证是否是有效的插件模块
+    // Validate it is a valid plugin module
     if (typeof defaultExport === "function") {
       return defaultExport as PluginModule;
     }
@@ -105,7 +105,7 @@ async function loadPluginModule(candidate: PluginCandidate): Promise<PluginModul
 }
 
 /**
- * 将模块转换为定义
+ * Convert module to definition
  */
 function moduleToDefinition(
   mod: PluginModule,
@@ -129,7 +129,7 @@ function moduleToDefinition(
 }
 
 /**
- * 加载所有插件
+ * Load all plugins
  */
 export async function loadPlugins(
   config: VexConfig,
@@ -145,7 +145,7 @@ export async function loadPlugins(
     failed: [] as Array<{ id: string; error: string }>,
   };
 
-  // 发现插件
+  // Discover plugins
   const candidates = await discoverPlugins({
     paths: enableConfig?.paths,
     includeBuiltin: true,
@@ -155,11 +155,11 @@ export async function loadPlugins(
 
   logger.info({ count: candidates.length }, "Discovered plugins");
 
-  // 按依赖顺序排序 (简单实现，只支持一级依赖)
+  // Sort by dependency order (simple implementation, supports only one level of dependencies)
   const sorted = sortByDependencies(candidates);
 
   for (const candidate of sorted) {
-    // 检查启用状态
+    // Check enable state
     const { enabled, reason } = resolveEnableState(candidate, enableConfig);
     if (!enabled) {
       result.skipped.push({ id: candidate.id, reason });
@@ -167,20 +167,20 @@ export async function loadPlugins(
       continue;
     }
 
-    // 加载模块
+    // Load module
     const mod = await loadPluginModule(candidate);
     if (!mod) {
       result.failed.push({ id: candidate.id, error: "Failed to load module" });
       continue;
     }
 
-    // 转换为定义
+    // Convert to definition
     const definition = moduleToDefinition(mod, candidate);
 
-    // 获取插件配置
+    // Get plugin config
     const pluginConfig = enableConfig?.entries?.[candidate.id]?.config;
 
-    // 注册插件
+    // Register plugin
     try {
       await registerPlugin(definition, config, {
         origin: candidate.origin,
@@ -205,7 +205,7 @@ export async function loadPlugins(
 }
 
 /**
- * 激活所有已加载的插件
+ * Activate all loaded plugins
  */
 export async function activateAllPlugins(): Promise<{
   activated: string[];
@@ -232,7 +232,7 @@ export async function activateAllPlugins(): Promise<{
 }
 
 /**
- * 按依赖顺序排序
+ * Sort by dependency order
  */
 function sortByDependencies(candidates: PluginCandidate[]): PluginCandidate[] {
   const sorted: PluginCandidate[] = [];
@@ -243,7 +243,7 @@ function sortByDependencies(candidates: PluginCandidate[]): PluginCandidate[] {
     if (visited.has(candidate.id)) return;
     visited.add(candidate.id);
 
-    // 先处理依赖
+    // Process dependencies first
     const deps = candidate.manifest?.dependencies || [];
     for (const depId of deps) {
       const dep = idMap.get(depId);

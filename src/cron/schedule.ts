@@ -1,18 +1,18 @@
 /**
- * 定时任务调度计算
+ * Cron job schedule calculation
  *
- * 参考 moltbot 的 schedule.ts 实现
- * 支持三种调度模式的下次运行时间计算
+ * Based on moltbot schedule.ts implementation
+ * Supports next run time calculation for three scheduling modes
  */
 
 import type { CronSchedule, CronJob } from "./types.js";
 
 /**
- * 简单的 Cron 表达式解析器
+ * Simple Cron expression parser
  *
- * 支持标准 5 字段格式: 分 时 日 月 周
- * 支持 6 字段格式: 秒 分 时 日 月 周
- * 支持: 数字, *, 逗号, 连字符, 斜杠
+ * Supports standard 5-field format: min hour day month weekday
+ * Supports 6-field format: sec min hour day month weekday
+ * Supports: numbers, *, commas, hyphens, slashes
  */
 function parseCronField(field: string, min: number, max: number): number[] {
   const values: Set<number> = new Set();
@@ -20,7 +20,7 @@ function parseCronField(field: string, min: number, max: number): number[] {
   for (const part of field.split(",")) {
     const trimmed = part.trim();
 
-    // 斜杠: */2, 1-10/3
+    // Slash: */2, 1-10/3
     if (trimmed.includes("/")) {
       const [rangePart, stepStr] = trimmed.split("/");
       const step = parseInt(stepStr!, 10);
@@ -43,7 +43,7 @@ function parseCronField(field: string, min: number, max: number): number[] {
         values.add(i);
       }
     }
-    // 范围: 1-5
+    // Range: 1-5
     else if (trimmed.includes("-")) {
       const [a, b] = trimmed.split("-");
       const start = parseInt(a!, 10);
@@ -52,13 +52,13 @@ function parseCronField(field: string, min: number, max: number): number[] {
         values.add(i);
       }
     }
-    // 通配符
+    // Wildcard
     else if (trimmed === "*") {
       for (let i = min; i <= max; i++) {
         values.add(i);
       }
     }
-    // 单个值
+    // Single value
     else {
       const val = parseInt(trimmed, 10);
       if (!isNaN(val) && val >= min && val <= max) {
@@ -71,7 +71,7 @@ function parseCronField(field: string, min: number, max: number): number[] {
 }
 
 /**
- * 计算 Cron 表达式的下次运行时间
+ * Calculate next run time for Cron expression
  */
 function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | undefined {
   const parts = expr.trim().split(/\s+/);
@@ -79,7 +79,7 @@ function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | 
     days: number[], months: number[], weekdays: number[];
 
   if (parts.length === 6) {
-    // 秒 分 时 日 月 周
+    // sec min hour day month weekday
     seconds = parseCronField(parts[0]!, 0, 59);
     minutes = parseCronField(parts[1]!, 0, 59);
     hours = parseCronField(parts[2]!, 0, 23);
@@ -87,7 +87,7 @@ function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | 
     months = parseCronField(parts[4]!, 1, 12);
     weekdays = parseCronField(parts[5]!, 0, 6);
   } else if (parts.length === 5) {
-    // 分 时 日 月 周
+    // min hour day month weekday
     seconds = [0];
     minutes = parseCronField(parts[0]!, 0, 59);
     hours = parseCronField(parts[1]!, 0, 23);
@@ -98,11 +98,11 @@ function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | 
     return undefined;
   }
 
-  // 从 now+1秒 开始搜索，最多搜索 2 年
+  // Search from now+1s, up to 2 years
   const maxSearch = nowMs + 2 * 365 * 24 * 60 * 60 * 1000;
   const now = new Date(nowMs);
 
-  // 从当前分钟开始，逐分钟搜索
+  // Start from current minute, search minute by minute
   let candidate = new Date(now.getFullYear(), now.getMonth(), now.getDate(),
     now.getHours(), now.getMinutes(), now.getSeconds() + 1);
 
@@ -125,23 +125,23 @@ function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | 
       return candidate.getTime();
     }
 
-    // 优化搜索步进
+    // Optimize search step
     if (!months.includes(month)) {
-      // 跳到下个月
+      // Skip to next month
       candidate = new Date(candidate.getFullYear(), candidate.getMonth() + 1, 1);
     } else if (!days.includes(day) || !weekdays.includes(weekday)) {
-      // 跳到明天
+      // Skip to next day
       candidate = new Date(candidate.getFullYear(), candidate.getMonth(), candidate.getDate() + 1);
     } else if (!hours.includes(hour)) {
-      // 跳到下一个小时
+      // Skip to next hour
       candidate = new Date(candidate.getFullYear(), candidate.getMonth(), candidate.getDate(),
         candidate.getHours() + 1, 0, 0);
     } else if (!minutes.includes(minute)) {
-      // 跳到下一分钟
+      // Skip to next minute
       candidate = new Date(candidate.getFullYear(), candidate.getMonth(), candidate.getDate(),
         candidate.getHours(), candidate.getMinutes() + 1, 0);
     } else {
-      // 跳到下一秒
+      // Skip to next second
       candidate = new Date(candidate.getTime() + 1000);
     }
   }
@@ -150,16 +150,16 @@ function computeNextCronRun(expr: string, nowMs: number, tz?: string): number | 
 }
 
 /**
- * 计算下次运行时间
+ * Calculate next run time
  */
 export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): number | undefined {
   switch (schedule.kind) {
     case "at":
-      // 一次性任务：如果时间已过则返回 undefined
+      // One-time job: return undefined if time has passed
       return schedule.atMs > nowMs ? schedule.atMs : undefined;
 
     case "every": {
-      // 周期性任务：基于锚点的步进对齐
+      // Periodic job: anchor-based step alignment
       const anchor = schedule.anchorMs ?? nowMs;
       const everyMs = schedule.everyMs;
 
@@ -183,7 +183,7 @@ export function computeNextRunAtMs(schedule: CronSchedule, nowMs: number): numbe
 }
 
 /**
- * 计算任务的下次运行时间
+ * Calculate next run time for job
  */
 export function computeJobNextRunAtMs(job: CronJob, nowMs: number): number | undefined {
   if (!job.enabled) return undefined;
@@ -191,7 +191,7 @@ export function computeJobNextRunAtMs(job: CronJob, nowMs: number): number | und
 }
 
 /**
- * 验证 Cron 表达式
+ * Validate Cron expression
  */
 export function validateCronExpr(expr: string): { valid: boolean; error?: string } {
   const parts = expr.trim().split(/\s+/);
@@ -199,7 +199,7 @@ export function validateCronExpr(expr: string): { valid: boolean; error?: string
     return { valid: false, error: `Expected 5 or 6 fields, got ${parts.length}` };
   }
 
-  // 尝试计算下次时间
+  // Try calculating next time
   const next = computeNextCronRun(expr, Date.now());
   if (!next) {
     return { valid: false, error: "Expression never matches (within 2 years)" };
@@ -209,7 +209,7 @@ export function validateCronExpr(expr: string): { valid: boolean; error?: string
 }
 
 /**
- * 格式化调度信息
+ * Format schedule information
  */
 export function formatSchedule(schedule: CronSchedule): string {
   switch (schedule.kind) {
