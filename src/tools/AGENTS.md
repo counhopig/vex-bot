@@ -8,7 +8,7 @@ Tool registration, validation, and execution engine. 25 built-in tools across ca
 tools/
 ├── types.ts           # Tool interface, ToolRegistry types
 ├── registry.ts        # Registration/de-registration, tool lookup
-├── common.ts          # Shared helpers (cwd resolution, path validation)
+├── common.ts          # Shared helpers: result builders (jsonResult, textResult, errorResult, imageResult), param readers (readStringParam, readNumberParam, readBooleanParam, readStringArrayParam), truncation
 ├── index.ts           # Barrel
 └── builtin/           # 25 built-in tool implementations
     ├── filesystem.ts  # read_file, write_file, edit_file, list_directory, glob, grep, apply_patch
@@ -34,8 +34,15 @@ tools/
 | Add a built-in tool | `builtin/` | Create implementation, add to barrel in `builtin/index.ts` |
 | Parameter validation | Handled per-tool | Each `execute()` validates its own args |
 | Filesystem paths | `common.ts` | `resolveWorkingDirectory()` + path validation |
+| Result builders | `common.ts` | `jsonResult()`, `textResult()`, `errorResult()`, `imageResult()` — standard response wrappers used by all built-in tools |
+| Param readers | `common.ts` | `readStringParam()`, `readNumberParam()`, `readBooleanParam()`, `readStringArrayParam()` — typed argument extraction with validation |
 | Process management | `builtin/process-tool.ts` + `builtin/process-registry.ts` | Spawn/kill/list background processes |
 | Browser automation | `builtin/browser.ts` | Wraps Playwright, manages browser sessions, screenshots |
+
+## NOTES
+
+- **Type-only imports in `builtin/index.ts`**: `BuiltinToolsOptions` imports `MemoryManager` from `../../memory/index.js` and `CronService` from `../../cron/service.js`. These are `import type` only — they appear exclusively in the options interface (`memoryManager?`, `cronService?` fields), never used at runtime. The actual service instances are passed in from the Agent layer via `createBuiltinTools(options)`.
+- **Cron tools delegate to CronService**: All five cron tools (`cron_list`, `cron_add`, `cron_remove`, `cron_run`, `cron_update`) accept `CronService` via `CronToolsOptions` and delegate all scheduling logic to it. `createCronTools({ service })` injects the service; each tool calls `service.list()`, `service.add()`, `service.remove()`, etc. Do NOT duplicate scheduling logic inside individual tool `execute()` functions.
 
 ## CONVENTIONS
 

@@ -33,7 +33,13 @@ channels/
 - All channels register via `registerChannel()` from `common/base.ts` on construction
 - Channel start/stop returns void; errors logged internally, not thrown
 
+## NOTES
+
+- `common/index.ts` is a **hybrid barrel+logic file**. It re-exports everything from `common/base.ts` (`ChannelAdapter`, `BaseChannelAdapter`, `MessageHandler`) AND defines its own inline logic: `registerChannel()`, `getChannel()`, `getAllChannels()`, `hasChannel()`, `setGlobalMessageHandler()`, `initializeAllChannels()`, `shutdownAllChannels()`. The channel registry (`Map<ChannelId, ChannelAdapter>`) and global message handler live here, not in `base.ts`.
+- The **only external consumer** of the channel registry is the outbound module (`src/outbound/index.ts`), which imports `getChannel()` and `getAllChannels()` from `../channels/common/index.js` to resolve channels for message delivery. Every call path for outbound delivery flows through these two functions.
+
 ## ANTI-PATTERNS
 
 - **NEVER import channel internals outside this module** — use `getChannel(id)` from `common/base.ts`
 - **NEVER hardcode channel IDs in gateway** — channels are initialized from config presence
+- **NEVER duplicate channel registry logic in outbound or web modules** — use `getChannel()` / `getAllChannels()` from `common/index.ts`. The outbound module already does this; do not build a parallel channel lookup in `web/` or anywhere else.
