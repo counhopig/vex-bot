@@ -2,8 +2,8 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![npm version](https://img.shields.io/npm/v/vex-bot)](https://www.npmjs.com/package/vex-bot)
-[![license](https://img.shields.io/npm/l/vex-bot)](https://github.com/counhopig/vex-box/blob/main/LICENSE)
+[![version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/counhopig/vex-box)
+[![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
 Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agent` and `@mariozechner/pi-ai`. It connects to personal WeChat, runs in the browser via a server-rendered WebChat UI, and supports Chinese LLM providers alongside OpenAI/Anthropic-compatible APIs. Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only, and rebranded as Vex.
