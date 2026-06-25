@@ -1717,4 +1717,4 @@ export {
 
 ---
 
-**Repository:** [https://github.com/King-Chau/vex](https://github.com/King-Chau/vex)
+**Repository:** [https://github.com/counhopig/vex-box](https://github.com/counhopig/vex-box)
