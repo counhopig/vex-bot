@@ -1,5 +1,5 @@
 /**
- * Hooks 系统 - 事件钩子
+ * Hooks system - event hooks
  */
 
 import { getChildLogger } from "../utils/logger.js";
@@ -7,37 +7,37 @@ import type { InboundMessageContext, ChatMessage, ProviderId } from "../types/in
 
 const logger = getChildLogger("hooks");
 
-// ============== 事件类型 ==============
+// ============== Event Types ==============
 
-/** Hook 事件类型 */
+/** Hook event type */
 export type HookEventType =
-  | "message_received"      // 收到消息
-  | "message_sending"       // 即将发送消息
-  | "message_sent"          // 消息已发送
-  | "agent_start"           // Agent 开始处理
-  | "agent_end"             // Agent 处理完成
-  | "tool_start"            // 工具开始执行
-  | "tool_end"              // 工具执行完成
-  | "session_start"         // 会话开始
-  | "session_end"           // 会话结束
-  | "compaction_start"      // 压缩开始
-  | "compaction_end"        // 压缩完成
-  | "error";                // 发生错误
+  | "message_received"      // Message received
+  | "message_sending"       // Message about to be sent
+  | "message_sent"          // Message sent
+  | "agent_start"           // Agent started processing
+  | "agent_end"             // Agent finished processing
+  | "tool_start"            // Tool started executing
+  | "tool_end"              // Tool finished executing
+  | "session_start"         // Session started
+  | "session_end"           // Session ended
+  | "compaction_start"      // Compaction started
+  | "compaction_end"        // Compaction finished
+  | "error";                // Error occurred
 
-/** Hook 事件数据基础 */
+/** Hook event base data */
 interface HookEventBase {
   type: HookEventType;
   timestamp: number;
   sessionKey?: string;
 }
 
-/** 消息接收事件 */
+/** Message received event */
 export interface MessageReceivedEvent extends HookEventBase {
   type: "message_received";
   context: InboundMessageContext;
 }
 
-/** 消息发送事件 */
+/** Message sending event */
 export interface MessageSendingEvent extends HookEventBase {
   type: "message_sending";
   channelId: string;
@@ -46,7 +46,7 @@ export interface MessageSendingEvent extends HookEventBase {
   replyToId?: string;
 }
 
-/** 消息已发送事件 */
+/** Message sent event */
 export interface MessageSentEvent extends HookEventBase {
   type: "message_sent";
   channelId: string;
@@ -55,7 +55,7 @@ export interface MessageSentEvent extends HookEventBase {
   success: boolean;
 }
 
-/** Agent 开始事件 */
+/** Agent start event */
 export interface AgentStartEvent extends HookEventBase {
   type: "agent_start";
   provider: ProviderId;
@@ -63,7 +63,7 @@ export interface AgentStartEvent extends HookEventBase {
   messages: ChatMessage[];
 }
 
-/** Agent 结束事件 */
+/** Agent end event */
 export interface AgentEndEvent extends HookEventBase {
   type: "agent_end";
   provider: ProviderId;
@@ -77,7 +77,7 @@ export interface AgentEndEvent extends HookEventBase {
   durationMs: number;
 }
 
-/** 工具开始事件 */
+/** Tool start event */
 export interface ToolStartEvent extends HookEventBase {
   type: "tool_start";
   toolName: string;
@@ -85,7 +85,7 @@ export interface ToolStartEvent extends HookEventBase {
   arguments: unknown;
 }
 
-/** 工具结束事件 */
+/** Tool end event */
 export interface ToolEndEvent extends HookEventBase {
   type: "tool_end";
   toolName: string;
@@ -95,7 +95,7 @@ export interface ToolEndEvent extends HookEventBase {
   durationMs: number;
 }
 
-/** 会话开始事件 */
+/** Session start event */
 export interface SessionStartEvent extends HookEventBase {
   type: "session_start";
   channelId: string;
@@ -103,21 +103,21 @@ export interface SessionStartEvent extends HookEventBase {
   senderId: string;
 }
 
-/** 会话结束事件 */
+/** Session end event */
 export interface SessionEndEvent extends HookEventBase {
   type: "session_end";
   messageCount: number;
   totalTokens: number;
 }
 
-/** 压缩开始事件 */
+/** Compaction start event */
 export interface CompactionStartEvent extends HookEventBase {
   type: "compaction_start";
   messageCount: number;
   estimatedTokens: number;
 }
 
-/** 压缩结束事件 */
+/** Compaction end event */
 export interface CompactionEndEvent extends HookEventBase {
   type: "compaction_end";
   compactedMessages: number;
@@ -125,14 +125,14 @@ export interface CompactionEndEvent extends HookEventBase {
   durationMs: number;
 }
 
-/** 错误事件 */
+/** Error event */
 export interface ErrorEvent extends HookEventBase {
   type: "error";
   error: Error;
   context?: string;
 }
 
-/** 所有事件类型 */
+/** All event types */
 export type HookEvent =
   | MessageReceivedEvent
   | MessageSendingEvent
@@ -147,24 +147,24 @@ export type HookEvent =
   | CompactionEndEvent
   | ErrorEvent;
 
-// ============== Hook 处理器 ==============
+// ============== Hook Handlers ==============
 
-/** Hook 处理器 */
+/** Hook handler */
 export type HookHandler<T extends HookEvent = HookEvent> = (
   event: T
 ) => void | Promise<void>;
 
-/** Hook 处理器带返回值 (用于修改事件) */
+/** Hook handler with return value (for modifying events) */
 export type HookTransformer<T extends HookEvent = HookEvent> = (
   event: T
 ) => T | Promise<T>;
 
-/** Hook 注册表 */
+/** Hook registry */
 const hookRegistry = new Map<HookEventType, Array<HookHandler>>();
 
-// ============== Hook 管理 ==============
+// ============== Hook Management ==============
 
-/** 注册 Hook */
+/** Register a hook */
 export function registerHook<T extends HookEventType>(
   eventType: T,
   handler: HookHandler
@@ -175,7 +175,7 @@ export function registerHook<T extends HookEventType>(
 
   logger.debug({ eventType }, "Hook registered");
 
-  // 返回取消注册函数
+  // Return unregister function
   return () => {
     const currentHandlers = hookRegistry.get(eventType);
     if (currentHandlers) {
@@ -187,7 +187,7 @@ export function registerHook<T extends HookEventType>(
   };
 }
 
-/** 批量注册 Hooks */
+/** Register multiple hooks at once */
 export function registerHooks(
   hooks: Partial<Record<HookEventType, HookHandler>>
 ): () => void {
@@ -206,7 +206,7 @@ export function registerHooks(
   };
 }
 
-/** 触发 Hook */
+/** Trigger a hook */
 export async function triggerHook(event: HookEvent): Promise<void> {
   const handlers = hookRegistry.get(event.type);
   if (!handlers || handlers.length === 0) return;
@@ -220,19 +220,19 @@ export async function triggerHook(event: HookEvent): Promise<void> {
   }
 }
 
-/** 同步触发 Hook (不等待) */
+/** Trigger a hook synchronously (fire-and-forget) */
 export function triggerHookSync(event: HookEvent): void {
   triggerHook(event).catch((error) => {
     logger.error({ error, eventType: event.type }, "Hook trigger error");
   });
 }
 
-/** 清除所有 Hooks */
+/** Clear all hooks */
 export function clearHooks(): void {
   hookRegistry.clear();
 }
 
-/** 获取已注册的 Hook 数量 */
+/** Get the number of registered hooks */
 export function getHookCount(eventType?: HookEventType): number {
   if (eventType) {
     return hookRegistry.get(eventType)?.length ?? 0;
@@ -244,9 +244,9 @@ export function getHookCount(eventType?: HookEventType): number {
   return count;
 }
 
-// ============== 便捷函数 ==============
+// ============== Convenience Functions ==============
 
-/** 创建事件基础数据 */
+/** Create event base data */
 function createEventBase<T extends HookEventType>(
   type: T,
   sessionKey?: string
@@ -258,7 +258,7 @@ function createEventBase<T extends HookEventType>(
   };
 }
 
-/** 触发消息接收事件 */
+/** Emit message received event */
 export function emitMessageReceived(context: InboundMessageContext): void {
   triggerHookSync({
     ...createEventBase("message_received"),
@@ -266,7 +266,7 @@ export function emitMessageReceived(context: InboundMessageContext): void {
   });
 }
 
-/** 触发消息发送事件 */
+/** Emit message sending event */
 export function emitMessageSending(params: {
   channelId: string;
   chatId: string;
@@ -283,7 +283,7 @@ export function emitMessageSending(params: {
   });
 }
 
-/** 触发 Agent 开始事件 */
+/** Emit agent start event */
 export function emitAgentStart(params: {
   provider: ProviderId;
   model: string;
@@ -298,7 +298,7 @@ export function emitAgentStart(params: {
   });
 }
 
-/** 触发 Agent 结束事件 */
+/** Emit agent end event */
 export function emitAgentEnd(params: {
   provider: ProviderId;
   model: string;
@@ -317,7 +317,7 @@ export function emitAgentEnd(params: {
   });
 }
 
-/** 触发工具事件 */
+/** Emit tool start event */
 export function emitToolStart(params: {
   toolName: string;
   toolCallId: string;
@@ -332,6 +332,7 @@ export function emitToolStart(params: {
   });
 }
 
+/** Emit tool end event */
 export function emitToolEnd(params: {
   toolName: string;
   toolCallId: string;
@@ -350,7 +351,7 @@ export function emitToolEnd(params: {
   });
 }
 
-/** 触发错误事件 */
+/** Emit error event */
 export function emitError(error: Error, context?: string): void {
   triggerHookSync({
     ...createEventBase("error"),

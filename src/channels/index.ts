@@ -1,5 +1,5 @@
 /**
- * 通道导出
+ * Channel exports
  */
 
 export * from "./common/index.js";

@@ -1,7 +1,7 @@
 /**
- * 个人微信 (iLink OC) API 客户端
- * 基于微信 iLink OC API，用于个人微信机器人的 HTTP 通信。
- * 参考 AstrBot weixin_oc 模块实现。
+ * Personal WeChat (iLink OC) API Client
+ * Based on WeChat iLink OC API, for personal WeChat bot HTTP communication.
+ * Reference: AstrBot weixin_oc module implementation.
  */
 
 import axios, { type AxiosInstance } from "axios";
@@ -10,17 +10,17 @@ import { getChildLogger } from "../../utils/logger.js";
 
 const logger = getChildLogger("weixin-client");
 
-/** 默认 API 基础地址 */
+/** Default API base URL */
 export const DEFAULT_WEIXIN_OC_BASE_URL = "https://ilinkai.weixin.qq.com";
-/** 默认 CDN 基础地址 */
+/** Default CDN base URL */
 export const DEFAULT_WEIXIN_OC_CDN_BASE_URL =
   "https://novac2c.cdn.weixin.qq.com/c2c";
-/** 默认 Bot 类型 */
+/** Default bot type */
 export const DEFAULT_WEIXIN_OC_BOT_TYPE = "3";
-/** 默认 API 超时（毫秒） */
+/** Default API timeout (milliseconds) */
 export const DEFAULT_WEIXIN_OC_API_TIMEOUT_MS = 120_000;
 
-/** 二维码状态轮询响应 */
+/** QR code status polling response */
 export interface QRStatusResponse {
   status: string;
   botToken?: string;
@@ -29,10 +29,10 @@ export interface QRStatusResponse {
   userId?: string;
 }
 
-/** 消息轮询泛型响应 */
+/** Message polling generic response */
 export type PollMessagesResponse = Record<string, unknown>;
 
-/** 发送消息请求体中的消息结构 */
+/** Message structure in send message request body */
 interface SendMessageBody {
   from_user_id: string;
   to_user_id: string;
@@ -43,7 +43,7 @@ interface SendMessageBody {
   item_list: unknown[];
 }
 
-/** 发送消息完整请求体 */
+/** Full send message request body */
 interface SendMessageRequest {
   base_info: {
     channel_version: string;
@@ -51,7 +51,7 @@ interface SendMessageRequest {
   msg: SendMessageBody;
 }
 
-/** 个人微信 iLink OC API HTTP 客户端 */
+/** Personal WeChat iLink OC API HTTP client */
 export class WeixinClient {
   private adapterId: string;
   private baseUrl: string;
@@ -77,8 +77,8 @@ export class WeixinClient {
     });
   }
 
-  /** 生成 X-WECHAT-UIN 请求头值。
-   *  生成一个随机的 32 位无符号整数，转为十进制字符串后 Base64 编码。
+  /** Generate X-WECHAT-UIN header value.
+   *  Generate a random 32-bit unsigned integer, convert to decimal string, then Base64 encode.
    */
   static generateXWechatUin(): string {
     const randomBytes = crypto.randomBytes(4);
@@ -87,7 +87,7 @@ export class WeixinClient {
     return Buffer.from(decimalStr, "utf-8").toString("base64");
   }
 
-  /** 构建基础请求头 */
+  /** Build base request headers */
   private buildBaseHeaders(tokenRequired: boolean = false): Record<string, string> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -100,18 +100,18 @@ export class WeixinClient {
     return headers;
   }
 
-  /** 拼接完整 API URL */
+  /** Build full API URL */
   private resolveUrl(endpoint: string): string {
     return `${this.baseUrl}/${endpoint.replace(/^\//, "")}`;
   }
 
-  /** 获取登录二维码，返回二维码字符串和图片内容。
-   * @param botType Bot 类型，默认 "3"
+  /** Get login QR code, returns QR code string and image content.
+   * @param botType Bot type, default "3"
    */
   async getQRCode(
     botType: string,
   ): Promise<{ qrcode: string; qrcodeImgContent: string }> {
-    logger.debug({ botType }, "获取登录二维码");
+    logger.debug({ botType }, "Getting login QR code");
 
     const response = await this.client.get(
       this.resolveUrl("ilink/bot/get_bot_qrcode"),
@@ -126,16 +126,16 @@ export class WeixinClient {
     const qrcodeImgContent = String(data.qrcode_img_content ?? "").trim();
 
     if (!qrcode || !qrcodeImgContent) {
-      throw new Error("个人微信二维码响应格式异常");
+      throw new Error("Personal WeChat QR code response has unexpected format");
     }
 
-    logger.debug({ qrcodePrefix: qrcode.substring(0, 20) }, "二维码获取成功");
+    logger.debug({ qrcodePrefix: qrcode.substring(0, 20) }, "QR code obtained successfully");
     return { qrcode, qrcodeImgContent };
   }
 
-  /** 轮询二维码扫码状态
-   * @param qrcode 二维码字符串
-   * @param longPollTimeoutMs 长轮询超时（毫秒）
+  /** Poll QR code scan status
+   * @param qrcode QR code string
+   * @param longPollTimeoutMs Long poll timeout (milliseconds)
    */
   async pollQRStatus(
     qrcode: string,
@@ -143,7 +143,7 @@ export class WeixinClient {
   ): Promise<QRStatusResponse> {
     logger.debug(
       { qrcodePrefix: qrcode.substring(0, 20) },
-      "轮询二维码状态",
+      "Polling QR code status",
     );
 
     const response = await this.client.get(
@@ -168,11 +168,11 @@ export class WeixinClient {
     };
   }
 
-  /** 拉取消息（长轮询）
-   * 调用 ilink/bot/getupdates 接口获取待处理消息。
+  /** Fetch messages (long polling)
+   *  Calls the ilink/bot/getupdates endpoint to get pending messages.
    */
   async pollMessages(): Promise<PollMessagesResponse> {
-    logger.debug("拉取消息");
+    logger.debug("Fetching messages");
 
     const response = await this.client.post(
       this.resolveUrl("ilink/bot/getupdates"),
@@ -189,17 +189,17 @@ export class WeixinClient {
     return response.data as PollMessagesResponse;
   }
 
-  /** 发送消息
-   * @param userId 目标用户 ID
-   * @param contextToken 上下文 Token
-   * @param itemList 消息内容列表
+  /** Send a message
+   * @param userId Target user ID
+   * @param contextToken Context token
+   * @param itemList Message content list
    */
   async sendMessage(
     userId: string,
     contextToken: string,
     itemList: unknown[],
   ): Promise<unknown> {
-    logger.debug({ userId, itemCount: itemList.length }, "发送消息");
+    logger.debug({ userId, itemCount: itemList.length }, "Sending message");
 
     const body: SendMessageRequest = {
       base_info: {
@@ -227,18 +227,18 @@ export class WeixinClient {
     return response.data;
   }
 
-  /** 检查客户端是否已认证（是否有有效 token） */
+  /** Check whether the client is authenticated (has a valid token) */
   checkHealth(): boolean {
     return this.token !== null && this.token.length > 0;
   }
 
-  /** 设置 Token（登录成功后调用） */
+  /** Set token (called after successful login) */
   setToken(token: string): void {
     this.token = token;
-    logger.debug("Token 已更新");
+    logger.debug("Token updated");
   }
 
-  /** 获取当前 Token */
+  /** Get current token */
   getToken(): string | null {
     return this.token;
   }

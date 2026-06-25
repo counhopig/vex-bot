@@ -1,6 +1,6 @@
 /**
- * 个人微信二维码登录流程
- * 通过 iLink OC API 实现扫码登录，自动轮询二维码状态直到用户确认或超时。
+ * Personal WeChat QR Code Login Flow
+ * Implements QR code scan login via iLink OC API, automatically polls QR code status until user confirms or timeout.
  */
 
 import { getChildLogger } from "../../utils/logger.js";
@@ -9,13 +9,13 @@ import type { QRStatusResponse } from "./client.js";
 
 const logger = getChildLogger("weixin-login");
 
-/** 二维码刷新的最大次数 */
+/** Maximum number of QR code refreshes */
 const MAX_QR_REFRESHES = 3;
-/** 默认轮询间隔（毫秒） */
+/** Default poll interval (milliseconds) */
 const DEFAULT_POLL_INTERVAL_MS = 1500;
-/** 默认长轮询超时（毫秒） */
+/** Default long poll timeout (milliseconds) */
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
-/** 默认 Bot 类型 */
+/** Default bot type */
 const DEFAULT_BOT_TYPE = "3";
 
 export interface LoginResult {
@@ -25,7 +25,7 @@ export interface LoginResult {
   userId?: string;
 }
 
-/** 解析 QR 状态响应为操作指令 */
+/** Parse QR status response into an action instruction */
 type QRPollAction =
   | { kind: "confirmed"; result: LoginResult }
   | { kind: "expired" }
@@ -40,7 +40,7 @@ function mapQRStatus(
   if (rawStatus === "confirmed") {
     const botToken = statusResp.botToken ?? "";
     if (!botToken) {
-      throw new Error("登录成功但未返回 token");
+      throw new Error("Login successful but token not returned");
     }
     const baseUrl = statusResp.baseUrl || defaultBaseUrl;
     return {
@@ -59,7 +59,7 @@ function mapQRStatus(
   }
 
   if (["cancel", "canceled", "denied"].includes(rawStatus)) {
-    throw new Error("用户取消登录");
+    throw new Error("User cancelled login");
   }
 
   return { kind: "wait" };
@@ -67,8 +67,8 @@ function mapQRStatus(
 
 function displayQRCode(qrcode: string): void {
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrcode)}`;
-  logger.info("请使用手机微信扫描二维码登录，有效期5分钟");
-  logger.info(`二维码链接: ${qrUrl}`);
+  logger.info("Scan QR code with WeChat on your phone to log in (valid for 5 minutes)");
+  logger.info(`QR code link: ${qrUrl}`);
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -89,13 +89,13 @@ export async function startQRLogin(
   client: WeixinClient,
   botType: string = DEFAULT_BOT_TYPE,
 ): Promise<LoginResult> {
-  logger.info("开始个人微信二维码登录流程");
+  logger.info("Starting personal WeChat QR code login flow");
 
   let refreshCount = 0;
   const defaultBaseUrl = DEFAULT_WEIXIN_OC_BASE_URL;
 
   while (refreshCount < MAX_QR_REFRESHES) {
-    logger.info(`获取二维码 (第 ${refreshCount + 1}/${MAX_QR_REFRESHES} 次)`);
+    logger.info(`Getting QR code (attempt ${refreshCount + 1}/${MAX_QR_REFRESHES})`);
     const { qrcode, qrcodeImgContent } = await client.getQRCode(botType);
 
     displayQRCode(qrcodeImgContent);
@@ -111,25 +111,25 @@ export async function startQRLogin(
         );
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
-        if (errMsg.includes("用户取消") || errMsg.includes("未返回 token")) {
+        if (errMsg.includes("User cancelled") || errMsg.includes("token not returned")) {
           throw error;
         }
-        logger.warn({ error: errMsg }, "轮询失败，等待后重试");
+        logger.warn({ error: errMsg }, "Poll failed, retrying after delay");
         await sleep(DEFAULT_POLL_INTERVAL_MS);
         continue;
       }
 
       if (action.kind === "confirmed") {
-        logger.info({ accountId: action.result.accountId }, "个人微信登录成功");
+        logger.info({ accountId: action.result.accountId }, "Personal WeChat login successful");
         return action.result;
       }
 
       if (action.kind === "expired") {
-        logger.warn("二维码已过期，尝试刷新");
+        logger.warn("QR code expired, refreshing");
         break;
       }
 
-      logger.debug("等待用户扫码...");
+      logger.debug("Waiting for user to scan...");
       await sleep(DEFAULT_POLL_INTERVAL_MS);
     }
 
@@ -137,6 +137,6 @@ export async function startQRLogin(
   }
 
   throw new Error(
-    `二维码登录失败：已尝试 ${MAX_QR_REFRESHES} 次刷新，均未成功`,
+    `QR code login failed: attempted ${MAX_QR_REFRESHES} refreshes without success`,
   );
 }

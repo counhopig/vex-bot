@@ -1,5 +1,5 @@
 /**
- * 通道注册表
+ * Channel registry
  */
 
 import type { ChannelId } from "../../types/index.js";
@@ -10,17 +10,17 @@ export * from "./base.js";
 
 const logger = getChildLogger("channels");
 
-/** 通道注册表 */
+/** Channel registry */
 const channels = new Map<ChannelId, ChannelAdapter>();
 
-/** 全局消息处理器 */
+/** Global message handler */
 let globalMessageHandler: MessageHandler | undefined;
 
-/** 注册通道 */
+/** Register a channel */
 export function registerChannel(channel: ChannelAdapter): void {
   channels.set(channel.id, channel);
 
-  // 如果有全局消息处理器，设置到通道
+  // If there is a global message handler, set it on the channel
   if (globalMessageHandler && "setMessageHandler" in channel) {
     (channel as { setMessageHandler: (h: MessageHandler) => void }).setMessageHandler(
       globalMessageHandler
@@ -30,26 +30,26 @@ export function registerChannel(channel: ChannelAdapter): void {
   logger.info({ channel: channel.id }, "Channel registered");
 }
 
-/** 获取通道 */
+/** Get a channel by ID */
 export function getChannel(id: ChannelId): ChannelAdapter | undefined {
   return channels.get(id);
 }
 
-/** 获取所有通道 */
+/** Get all channels */
 export function getAllChannels(): ChannelAdapter[] {
   return Array.from(channels.values());
 }
 
-/** 检查通道是否可用 */
+/** Check whether a channel is available */
 export function hasChannel(id: ChannelId): boolean {
   return channels.has(id);
 }
 
-/** 设置全局消息处理器 */
+/** Set the global message handler */
 export function setGlobalMessageHandler(handler: MessageHandler): void {
   globalMessageHandler = handler;
 
-  // 更新所有已注册通道的处理器
+  // Update handlers for all registered channels
   for (const channel of channels.values()) {
     if ("setMessageHandler" in channel) {
       (channel as { setMessageHandler: (h: MessageHandler) => void }).setMessageHandler(handler);
@@ -57,7 +57,7 @@ export function setGlobalMessageHandler(handler: MessageHandler): void {
   }
 }
 
-/** 初始化所有通道 */
+/** Initialize all channels */
 export async function initializeAllChannels(): Promise<void> {
   for (const channel of channels.values()) {
     try {
@@ -69,7 +69,7 @@ export async function initializeAllChannels(): Promise<void> {
   }
 }
 
-/** 关闭所有通道 */
+/** Shut down all channels */
 export async function shutdownAllChannels(): Promise<void> {
   for (const channel of channels.values()) {
     try {

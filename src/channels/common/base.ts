@@ -1,5 +1,5 @@
 /**
- * 通道基类和接口
+ * Channel base class and interfaces
  */
 
 import type {
@@ -12,39 +12,40 @@ import type {
 } from "../../types/index.js";
 import { getChildLogger } from "../../utils/logger.js";
 
-/** 通道适配器接口 */
+/** Channel adapter interface */
 export interface ChannelAdapter {
-  /** 通道 ID */
+  /** Channel ID */
   id: ChannelId;
 
-  /** 通道元数据 */
+  /** Channel metadata */
   meta: ChannelMeta;
 
-  /** 初始化通道 */
+  /** Initialize the channel */
   initialize(): Promise<void>;
 
-  /** 关闭通道 */
+  /** Shut down the channel */
   shutdown(): Promise<void>;
 
-  /** 发送消息 */
+  /** Send a message */
   sendMessage(message: OutboundMessage): Promise<SendResult>;
 
-  /** 发送文本消息 */
+  /** Send a text message */
   sendText(chatId: string, text: string, replyToId?: string): Promise<SendResult>;
 
   /**
-   * 根据入站消息上下文回复（由 Gateway 统一调用，通道可覆盖以实现会话级回复等）
+   * Reply based on inbound message context (called by Gateway uniformly;
+   * channels may override for session-level replies, etc.)
    */
   replyToContext(context: InboundMessageContext, text: string): Promise<SendResult>;
 
-  /** 检查通道状态 */
+  /** Check channel health status */
   isHealthy(): Promise<boolean>;
 }
 
-/** 消息处理器类型 */
+/** Message handler type */
 export type MessageHandler = (context: InboundMessageContext) => Promise<void>;
 
-/** 通道基类 */
+/** Channel base class */
 export abstract class BaseChannelAdapter implements ChannelAdapter {
   abstract id: ChannelId;
   abstract meta: ChannelMeta;
@@ -52,12 +53,12 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   protected logger = getChildLogger("channel");
   protected messageHandler?: MessageHandler;
 
-  /** 设置消息处理器 */
+  /** Set the message handler */
   setMessageHandler(handler: MessageHandler): void {
     this.messageHandler = handler;
   }
 
-  /** 处理入站消息 */
+  /** Handle an inbound message */
   protected async handleInboundMessage(context: InboundMessageContext): Promise<void> {
     if (this.messageHandler) {
       await this.messageHandler(context);
@@ -71,7 +72,7 @@ export abstract class BaseChannelAdapter implements ChannelAdapter {
   abstract sendMessage(message: OutboundMessage): Promise<SendResult>;
   abstract sendText(chatId: string, text: string, replyToId?: string): Promise<SendResult>;
 
-  /** 默认实现：使用 chatId 与 messageId 调用 sendText */
+  /** Default implementation: calls sendText with chatId and messageId */
   async replyToContext(context: InboundMessageContext, text: string): Promise<SendResult> {
     return this.sendText(context.chatId, text, context.messageId);
   }

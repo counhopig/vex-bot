@@ -24,8 +24,8 @@ const DEFAULT_LONG_POLL_TIMEOUT_MS = 35000;
 
 const WEIXIN_META: ChannelMeta = {
   id: "weixin",
-  name: "个人微信",
-  description: "个人微信机器人 (iLink OC API)",
+  name: "Personal WeChat",
+  description: "Personal WeChat bot (iLink OC API)",
   capabilities: {
     chatTypes: ["direct", "group"],
     supportsMedia: true,
@@ -97,7 +97,7 @@ export class WeixinChannel extends BaseChannelAdapter {
   async initialize(): Promise<void> {
     if (this.pollingActive) return;
 
-    this.logger.info("Initializing Weixin (个人微信) channel");
+    this.logger.info("Initializing Weixin (Personal WeChat) channel");
 
     if (this.config.token) {
       this.logger.info("Weixin channel using existing token from config");
@@ -287,22 +287,22 @@ export class WeixinChannel extends BaseChannelAdapter {
           break;
         }
         case 2:
-          textParts.push("[图片]");
+          textParts.push("[Image]");
           break;
         case 3: {
           const voiceText = item.voice_item?.text ?? "";
           if (voiceText.trim()) {
             textParts.push(voiceText);
           } else {
-            textParts.push("[语音]");
+            textParts.push("[Voice]");
           }
           break;
         }
         case 4:
-          textParts.push("[文件]");
+          textParts.push("[File]");
           break;
         case 5:
-          textParts.push("[视频]");
+          textParts.push("[Video]");
           break;
       }
     }
@@ -358,7 +358,7 @@ export class WeixinChannel extends BaseChannelAdapter {
     }
   }
 
-  /** 获取登录二维码（供 WebUI 使用） */
+  /** Get login QR code (for WebUI use) */
   async getLoginQRCode(): Promise<{ qrcode: string; qrcodeImgContent: string } | null> {
     try {
       const botType = this.config.botType ?? DEFAULT_WEIXIN_OC_BOT_TYPE;
@@ -369,7 +369,7 @@ export class WeixinChannel extends BaseChannelAdapter {
     }
   }
 
-  /** 轮询二维码状态（供 WebUI 使用） */
+  /** Poll QR code status (for WebUI use) */
   async checkQRStatus(qrcode: string): Promise<{
     status: string;
     botToken?: string;

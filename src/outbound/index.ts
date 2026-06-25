@@ -1,8 +1,8 @@
 /**
- * 出站消息投递服务
+ * Outbound message delivery service
  *
- * 提供统一的消息投递接口，支持向各通道主动发送消息
- * 参考 moltbot 的 outbound 模块实现
+ * Provides a unified message delivery interface for actively sending messages
+ * across channels. Reference: moltbot's outbound module implementation.
  */
 
 import type { ChannelId, SendResult, OutboundMessage } from "../types/index.js";
@@ -11,64 +11,64 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("outbound");
 
-/** 投递目标 */
+/** Delivery target */
 export interface DeliveryTarget {
-  /** 通道 ID */
+  /** Channel ID */
   channel: ChannelId;
-  /** 聊天 ID (用户/群组) */
+  /** Chat ID (user/group) */
   to: string;
-  /** 账号 ID (可选，用于多账号场景) */
+  /** Account ID (optional, for multi-account scenarios) */
   accountId?: string;
 }
 
-/** 投递 Payload */
+/** Delivery payload */
 export interface DeliveryPayload {
-  /** 文本内容 */
+  /** Text content */
   text: string;
-  /** 媒体 URL 列表 */
+  /** Media URL list */
   mediaUrls?: string[];
-  /** 回复消息 ID */
+  /** Reply-to message ID */
   replyToId?: string;
 }
 
-/** 投递选项 */
+/** Delivery options */
 export interface DeliveryOptions {
-  /** 是否尽力投递 (出错不抛异常) */
+  /** Whether to use best-effort delivery (don't throw on error) */
   bestEffort?: boolean;
-  /** 超时时间 (毫秒) */
+  /** Timeout (milliseconds) */
   timeoutMs?: number;
-  /** 中止信号 */
+  /** Abort signal */
   abortSignal?: AbortSignal;
 }
 
-/** 投递结果 */
+/** Delivery result */
 export interface DeliveryResult {
-  /** 是否成功 */
+  /** Whether delivery succeeded */
   success: boolean;
-  /** 通道 ID */
+  /** Channel ID */
   channel: ChannelId;
-  /** 消息 ID */
+  /** Message ID */
   messageId?: string;
-  /** 错误信息 */
+  /** Error message */
   error?: string;
-  /** 错误详情 */
+  /** Error details */
   errorDetails?: unknown;
 }
 
 /**
- * 解析投递目标
- * 支持 "channel:chatId" 格式和 "last" 特殊值
+ * Parse delivery target
+ * Supports "channel:chatId" format and "last" special value
  */
 export function parseDeliveryTarget(
   target: string,
   fallbackChannel?: ChannelId
 ): DeliveryTarget | null {
   if (!target || target === "last") {
-    // "last" 需要从会话历史中获取，这里返回 null 表示需要外部处理
+    // "last" needs to be resolved from session history; returning null means external handling
     return null;
   }
 
-  // 尝试解析 "channel:chatId" 格式
+  // Try parsing "channel:chatId" format
   const colonIndex = target.indexOf(":");
   if (colonIndex > 0) {
     const channel = target.slice(0, colonIndex) as ChannelId;
@@ -78,7 +78,7 @@ export function parseDeliveryTarget(
     }
   }
 
-  // 如果有 fallback 通道，使用 target 作为 chatId
+  // If there is a fallback channel, use target as chatId
   if (fallbackChannel) {
     return { channel: fallbackChannel, to: target };
   }
@@ -87,7 +87,7 @@ export function parseDeliveryTarget(
 }
 
 /**
- * 投递单条消息到指定通道
+ * Deliver a single message to the specified channel
  */
 export async function deliverMessage(
   target: DeliveryTarget,
@@ -100,7 +100,7 @@ export async function deliverMessage(
   logger.debug({ channelId, to, text: payload.text.slice(0, 100) }, "Delivering message");
 
   try {
-    // 获取通道
+    // Get the channel
     const channel = getChannel(channelId);
     if (!channel) {
       const error = `Channel not found: ${channelId}`;
@@ -111,7 +111,7 @@ export async function deliverMessage(
       return { success: false, channel: channelId, error };
     }
 
-    // 构建出站消息
+    // Build outbound message
     const message: OutboundMessage = {
       chatId: to,
       content: payload.text,
@@ -119,7 +119,7 @@ export async function deliverMessage(
       mediaUrls: payload.mediaUrls,
     };
 
-    // 发送消息
+    // Send the message
     const result = await channel.sendMessage(message);
 
     if (result.success) {
@@ -158,7 +158,7 @@ export async function deliverMessage(
 }
 
 /**
- * 投递多条消息 (批量)
+ * Deliver multiple messages (batch)
  */
 export async function deliverMessages(
   target: DeliveryTarget,
@@ -168,7 +168,7 @@ export async function deliverMessages(
   const results: DeliveryResult[] = [];
 
   for (const payload of payloads) {
-    // 检查中止信号
+    // Check abort signal
     if (options?.abortSignal?.aborted) {
       results.push({
         success: false,
@@ -179,16 +179,16 @@ export async function deliverMessages(
     }
 
     try {
-      // 总是使用 bestEffort 在内部调用，以便我们可以收集结果
+      // Always use bestEffort internally so we can collect results
       const result = await deliverMessage(target, payload, { ...options, bestEffort: true });
       results.push(result);
 
-      // 如果不是 bestEffort 模式且失败，停止继续投递
+      // If not bestEffort mode and delivery failed, stop
       if (!result.success && !options?.bestEffort) {
         break;
       }
     } catch (err) {
-      // 理论上这里不应该进入，因为我们使用了 bestEffort
+      // This should not happen in theory since we use bestEffort internally
       const error = err instanceof Error ? err.message : String(err);
       results.push({
         success: false,
@@ -206,21 +206,21 @@ export async function deliverMessages(
 }
 
 /**
- * 统一投递接口 - 主入口
- * 参考 moltbot 的 deliverOutboundPayloads
+ * Unified delivery interface - main entry point
+ * Reference: moltbot's deliverOutboundPayloads
  */
 export async function deliverOutboundPayloads(params: {
-  /** 通道 ID */
+  /** Channel ID */
   channel: ChannelId;
-  /** 目标 (聊天 ID) */
+  /** Target (chat ID) */
   to: string;
-  /** 账号 ID (可选) */
+  /** Account ID (optional) */
   accountId?: string;
-  /** 要投递的 Payload 列表 */
+  /** Payloads to deliver */
   payloads: DeliveryPayload[];
-  /** 是否尽力投递 */
+  /** Whether to use best-effort delivery */
   bestEffort?: boolean;
-  /** 中止信号 */
+  /** Abort signal */
   abortSignal?: AbortSignal;
 }): Promise<DeliveryResult[]> {
   const { channel, to, payloads, bestEffort = false, abortSignal } = params;
@@ -235,7 +235,7 @@ export async function deliverOutboundPayloads(params: {
 }
 
 /**
- * 发送文本消息的便捷方法
+ * Convenience method for sending a text message
  */
 export async function sendText(
   channel: ChannelId,
@@ -251,14 +251,14 @@ export async function sendText(
 }
 
 /**
- * 获取所有可用的通道 ID
+ * Get all available channel IDs
  */
 export function getAvailableChannels(): ChannelId[] {
   return getAllChannels().map((ch) => ch.id);
 }
 
 /**
- * 检查通道是否可用
+ * Check whether a channel is available
  */
 export function isChannelAvailable(channelId: ChannelId): boolean {
   return getChannel(channelId) !== undefined;
