@@ -1,5 +1,5 @@
 /**
- * 静态文件服务和 Control UI
+ * Static file service and Control UI
  */
 
 import { existsSync, readFileSync } from "fs";
@@ -10,16 +10,16 @@ import type { VexConfig } from "../types/index.js";
 
 const logger = getChildLogger("static");
 
-/** 墨狗吉祥物 SVG (小尺寸，用于头像) */
+/** Vex mascot SVG (small, for avatar) */
 const MASCOT_SVG_SMALL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="32" height="32"><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="#10b981"/></svg>`;
 
-/** 墨狗吉祥物 SVG (中尺寸，用于侧边栏) */
+/** Vex mascot SVG (medium, for sidebar) */
 const MASCOT_SVG_MEDIUM = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="28" height="28"><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="#10b981"/></svg>`;
 
-/** 墨狗吉祥物 SVG (大尺寸，带动画，用于欢迎页面) */
+/** Vex mascot SVG (large, animated, for welcome page) */
 const MASCOT_SVG_LARGE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80"><defs><linearGradient id="mascot-g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><style>@keyframes mascot-wink{0%,90%,100%{transform:scaleY(1)}95%{transform:scaleY(0.1)}}@keyframes mascot-hide{0%,90%,100%{opacity:1}95%{opacity:0}}.mascot-left-eye{animation:mascot-wink 3s infinite;transform-origin:30px 44px}.mascot-left-highlight{animation:mascot-hide 3s infinite}</style><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M15 28 L22 12 L28 26 Z" fill="#fca5a5" opacity="0.3"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><path d="M52 26 L58 12 L65 28 Z" fill="#fca5a5" opacity="0.3"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse class="mascot-left-eye" cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle class="mascot-left-highlight" cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><ellipse cx="39" cy="51" rx="1" ry="0.8" fill="white" opacity="0.3"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="url(#mascot-g)"><animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite"/></circle></svg>`;
 
-/** MIME 类型映射 */
+/** MIME type mapping */
 const MIME_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -36,18 +36,18 @@ const MIME_TYPES: Record<string, string> = {
   ".ttf": "font/ttf",
 };
 
-/** 获取内嵌的 HTML 页面 */
+/** Get embedded HTML page */
 function getEmbeddedHtml(config: VexConfig): string {
   const assistantName = "Vex";
   const defaultModel = config.agent.defaultModel;
   const defaultProvider = config.agent.defaultProvider;
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${assistantName} - AI 助手</title>
+  <title>${assistantName} - AI Assistant</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -69,7 +69,7 @@ function getEmbeddedHtml(config: VexConfig): string {
       height: 100vh;
       display: flex;
     }
-    /* 侧边栏 */
+    /* Sidebar */
     .sidebar {
       width: var(--sidebar-width);
       background: var(--bg-card);
@@ -157,7 +157,7 @@ function getEmbeddedHtml(config: VexConfig): string {
       font-size: 0.75rem;
       color: var(--text-secondary);
     }
-    /* 主内容区 */
+    /* Main content area */
     .main-container {
       flex: 1;
       display: flex;
@@ -245,7 +245,7 @@ function getEmbeddedHtml(config: VexConfig): string {
     .message-content.markdown a:hover { text-decoration: underline; }
     .message-content.markdown strong { font-weight: 600; }
     .message-content.markdown em { font-style: italic; }
-    /* 响应式 */
+    /* Responsive */
     @media (max-width: 768px) {
       .sidebar { position: fixed; left: -100%; top: 0; bottom: 0; z-index: 100; transition: left 0.3s; }
       .sidebar.open { left: 0; }
@@ -264,13 +264,13 @@ function getEmbeddedHtml(config: VexConfig): string {
       <span class="sidebar-logo">${MASCOT_SVG_MEDIUM}</span>
       <span class="sidebar-title">${assistantName}</span>
     </div>
-    <button class="new-chat-btn" id="newChatBtn">➕ 新建对话</button>
+    <button class="new-chat-btn" id="newChatBtn">+ New Chat</button>
     <div class="session-list" id="sessionList">
-      <div class="empty-sessions">暂无历史会话</div>
+      <div class="empty-sessions">No recent sessions</div>
     </div>
     <div class="sidebar-footer">
-      <span id="sessionCount">0 个会话</span>
-      <a href="/control" style="color: var(--primary); text-decoration: none;">控制台</a>
+      <span id="sessionCount">0 sessions</span>
+      <a href="/control" style="color: var(--primary); text-decoration: none;">Console</a>
     </div>
   </aside>
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -286,7 +286,7 @@ function getEmbeddedHtml(config: VexConfig): string {
       </div>
       <div class="status">
         <span class="status-dot" id="statusDot"></span>
-        <span id="statusText">连接中...</span>
+        <span id="statusText">Connecting...</span>
       </div>
     </header>
 
@@ -294,21 +294,21 @@ function getEmbeddedHtml(config: VexConfig): string {
       <div class="messages" id="messages">
         <div class="welcome" id="welcome">
           <div class="welcome-icon">${MASCOT_SVG_LARGE}</div>
-          <h2>欢迎使用 ${assistantName}</h2>
-          <p>我是一个支持国产模型的智能助手，可以帮助你回答问题、编写代码、分析数据等。</p>
+          <h2>Welcome to ${assistantName}</h2>
+          <p>I'm an AI assistant powered by Chinese LLMs, here to help with questions, coding, data analysis, and more.</p>
           <div class="features">
-            <div class="feature"><div class="feature-icon">💬</div><div class="feature-text">智能对话</div></div>
-            <div class="feature"><div class="feature-icon">💻</div><div class="feature-text">代码助手</div></div>
-            <div class="feature"><div class="feature-icon">📊</div><div class="feature-text">数据分析</div></div>
-            <div class="feature"><div class="feature-icon">🔧</div><div class="feature-text">工具调用</div></div>
+            <div class="feature"><div class="feature-icon">💬</div><div class="feature-text">Smart Chat</div></div>
+            <div class="feature"><div class="feature-icon">💻</div><div class="feature-text">Code Assistant</div></div>
+            <div class="feature"><div class="feature-icon">📊</div><div class="feature-text">Data Analysis</div></div>
+            <div class="feature"><div class="feature-icon">🔧</div><div class="feature-text">Tool Calling</div></div>
           </div>
         </div>
       </div>
       <div class="input-area">
-        <textarea id="input" placeholder="输入消息... (Enter 发送, Shift+Enter 换行, Esc 取消)" rows="1"></textarea>
-        <button class="btn-icon" id="clearBtn" title="清除对话">🗑️</button>
-        <button id="cancelBtn" class="cancel-btn" title="取消本次请求" style="display: none;">取消</button>
-        <button id="sendBtn"><span>发送</span><span>↵</span></button>
+        <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for new line, Esc to cancel)" rows="1"></textarea>
+        <button class="btn-icon" id="clearBtn" title="Clear chat">🗑️</button>
+        <button id="cancelBtn" class="cancel-btn" title="Cancel this request" style="display: none;">Cancel</button>
+        <button id="sendBtn"><span>Send</span><span>↵</span></button>
       </div>
     </main>
   </div>
@@ -358,14 +358,14 @@ function getEmbeddedHtml(config: VexConfig): string {
 
       ws.onopen = () => {
         statusDot.classList.remove('disconnected');
-        statusText.textContent = '已连接';
+        statusText.textContent = 'Connected';
         sessionRestored = false;
-        // 注意：不在此处加载数据，等待服务器发送 connected 事件后再操作
+        // Note: don't load data here; wait for the connected event from the server
       };
 
       ws.onclose = () => {
         statusDot.classList.add('disconnected');
-        statusText.textContent = '已断开';
+        statusText.textContent = 'Disconnected';
         reconnectTimer = setTimeout(connect, 3000);
       };
 
@@ -405,16 +405,16 @@ function getEmbeddedHtml(config: VexConfig): string {
     }
 
     function renderSessionList() {
-      // 过滤掉没有消息的空会话
+      // Filter out sessions with no messages
       const sessionsWithMessages = allSessions.filter(s => (s.messageCount || 0) > 0);
 
       if (sessionsWithMessages.length === 0) {
-        sessionList.innerHTML = '<div class="empty-sessions">暂无历史会话</div>';
-        sessionCount.textContent = '0 个会话';
+        sessionList.innerHTML = '<div class="empty-sessions">No recent sessions</div>';
+        sessionCount.textContent = '0 sessions';
         return;
       }
 
-      sessionCount.textContent = sessionsWithMessages.length + ' 个会话';
+      sessionCount.textContent = sessionsWithMessages.length + ' sessions';
       const currentKey = getSavedSessionKey();
 
       sessionList.innerHTML = sessionsWithMessages.map(s => {
@@ -427,9 +427,9 @@ function getEmbeddedHtml(config: VexConfig): string {
             <span class="session-icon">💬</span>
             <div class="session-info">
               <div class="session-title">\${escapeHtml(title)}</div>
-              <div class="session-meta"><span>\${msgCount} 条消息</span><span>\${time}</span></div>
+              <div class="session-meta"><span>\${msgCount} messages</span><span>\${time}</span></div>
             </div>
-            <button class="session-delete" data-key="\${s.sessionKey}" title="删除">🗑️</button>
+            <button class="session-delete" data-key="\${s.sessionKey}" title="Delete">🗑️</button>
           </div>
         \`;
       }).join('');
@@ -473,7 +473,7 @@ function getEmbeddedHtml(config: VexConfig): string {
     }
 
     async function deleteSession(sessionKey) {
-      if (!confirm('确定要删除这个会话吗？')) return;
+      if (!confirm('Are you sure you want to delete this session?')) return;
       try {
         await request('sessions.delete', { sessionKey });
         if (getSavedSessionKey() === sessionKey) {
@@ -487,13 +487,13 @@ function getEmbeddedHtml(config: VexConfig): string {
 
     async function createNewChat() {
       if (isStreaming) return;
-      // 通知服务器创建新会话，清除 Agent 上下文
+      // Tell the server to create a new session and clear Agent context
       try {
         const result = await request('chat.clear');
-        // 不保存返回的 sessionKey 到 localStorage
-        // 这样 UI 会显示欢迎页面，而非立即绑定新会话
+        // Don't save the returned sessionKey to localStorage
+        // so the UI shows the welcome page instead of immediately binding to the new session
       } catch (e) {
-        // 如果当前没有 session（服务器端），忽略错误
+        // Ignore error if there's no current session (server-side)
         console.log('Create new chat:', e.message);
       }
       localStorage.removeItem(STORAGE_KEY);
@@ -542,12 +542,12 @@ function getEmbeddedHtml(config: VexConfig): string {
     function handleEvent(event, payload) {
       if (event === 'connected') {
         console.log('Connected, clientId:', payload.clientId);
-        // 服务器准备好了，现在加载数据
+        // Server is ready, now load data
         const savedSessionKey = getSavedSessionKey();
         if (savedSessionKey) {
           restoreSession(savedSessionKey);
         } else {
-          // 没有保存的 session，等第一次发消息时服务器会自动创建
+          // No saved session; server will auto-create on first message
           sessionRestored = true;
         }
         loadSessionList();
@@ -571,7 +571,7 @@ function getEmbeddedHtml(config: VexConfig): string {
             const msgEl = document.getElementById('streaming-message');
             if (msgEl) {
               const contentEl = msgEl.querySelector('.message-content');
-              if (contentEl) contentEl.innerHTML += '<p class="cancelled-hint"><em>（已取消）</em></p>';
+              if (contentEl) contentEl.innerHTML += '<p class="cancelled-hint"><em>(Cancelled)</em></p>';
             }
           }
           finalizeStreamingMessage();
@@ -581,19 +581,19 @@ function getEmbeddedHtml(config: VexConfig): string {
         isStreaming = false;
         sendBtn.style.display = '';
         cancelBtn.style.display = 'none';
-        addMessage('assistant', '❌ 错误: ' + payload.error);
+        addMessage('assistant', '❌ Error: ' + payload.error);
       }
     }
 
     function request(method, params) {
       return new Promise((resolve, reject) => {
         const id = String(++requestId);
-        console.log(\`发送请求: \${method}, id: \${id}, params:\`, params);
+        console.log(\`Sending request: \${method}, id: \${id}, params:\`, params);
         pendingRequests.set(id, { resolve, reject });
         if (ws?.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'req', id, method, params }));
         } else {
-          reject(new Error('WebSocket 未连接'));
+          reject(new Error('WebSocket not connected'));
         }
       });
     }
@@ -672,7 +672,7 @@ function getEmbeddedHtml(config: VexConfig): string {
       const msgEl = document.getElementById('streaming-message');
       if (msgEl && currentStreamContent.trim()) {
         const contentEl = msgEl.querySelector('.message-content');
-        if (contentEl) contentEl.innerHTML += '<p class="cancelled-hint"><em>（已取消）</em></p>';
+        if (contentEl) contentEl.innerHTML += '<p class="cancelled-hint"><em>(Cancelled)</em></p>';
       }
       finalizeStreamingMessage();
       loadSessionList();
@@ -687,7 +687,7 @@ function getEmbeddedHtml(config: VexConfig): string {
       try {
         await request('chat.send', { message });
       } catch (e) {
-        addMessage('assistant', '❌ 发送失败: ' + e.message);
+        addMessage('assistant', '❌ Send failed: ' + e.message);
       }
     }
 
@@ -725,18 +725,18 @@ function getEmbeddedHtml(config: VexConfig): string {
 </html>`;
 }
 
-/** 获取 Control UI 页面 */
+/** Get Control UI page */
 function getControlHtml(config: VexConfig): string {
   const assistantName = "Vex";
   const defaultModel = config.agent.defaultModel;
   const defaultProvider = config.agent.defaultProvider;
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${assistantName} - 控制台</title>
+  <title>${assistantName} - Console</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     :root {
@@ -761,7 +761,7 @@ function getControlHtml(config: VexConfig): string {
       display: flex;
       min-height: 100vh;
     }
-    /* 侧边栏 */
+    /* Sidebar */
     .sidebar {
       width: 240px;
       background: var(--bg-card);
@@ -803,7 +803,7 @@ function getControlHtml(config: VexConfig): string {
     .nav-item:hover { background: var(--bg); color: var(--text); }
     .nav-item.active { background: #eef2ff; color: var(--primary); font-weight: 500; }
     .nav-item-icon { font-size: 1.125rem; }
-    /* 主内容 */
+    /* Main content */
     .main-content {
       flex: 1;
       padding: 2rem;
@@ -820,7 +820,7 @@ function getControlHtml(config: VexConfig): string {
     .page-desc {
       color: var(--text-secondary);
     }
-    /* 卡片 */
+    /* Cards */
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -856,7 +856,7 @@ function getControlHtml(config: VexConfig): string {
       font-size: 0.875rem;
       color: var(--text-secondary);
     }
-    /* 状态指示器 */
+    /* Status indicator */
     .status-badge {
       display: inline-flex;
       align-items: center;
@@ -874,7 +874,7 @@ function getControlHtml(config: VexConfig): string {
       border-radius: 50%;
       background: currentColor;
     }
-    /* 表格 */
+    /* Table */
     .table-container {
       background: var(--bg-card);
       border-radius: 0.75rem;
@@ -910,7 +910,7 @@ function getControlHtml(config: VexConfig): string {
     }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: var(--bg); }
-    /* 按钮 */
+    /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -929,17 +929,17 @@ function getControlHtml(config: VexConfig): string {
     .btn-secondary:hover { background: var(--border); }
     .btn-danger { background: var(--error); color: white; }
     .btn-danger:hover { opacity: 0.9; }
-    /* 隐藏视图 */
+    /* Hidden views */
     .view { display: none; }
     .view.active { display: block; }
-    /* 空状态 */
+    /* Empty state */
     .empty-state {
       text-align: center;
       padding: 3rem;
       color: var(--text-secondary);
     }
     .empty-state-icon { font-size: 3rem; margin-bottom: 1rem; }
-    /* 模型卡片 */
+    /* Model cards */
     .model-card {
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -958,7 +958,7 @@ function getControlHtml(config: VexConfig): string {
     }
     .model-tag.vision { background: #dbeafe; color: #1e40af; }
     .model-tag.reasoning { background: #fef3c7; color: #92400e; }
-    /* 日志 */
+    /* Logs */
     .log-container {
       background: #1e293b;
       border-radius: 0.75rem;
@@ -974,7 +974,7 @@ function getControlHtml(config: VexConfig): string {
     .log-entry.warn { color: #fbbf24; }
     .log-entry.error { color: #f87171; }
     .log-entry .time { color: #64748b; }
-    /* 表单样式 */
+    /* Form styles */
     .config-tabs button {
       padding: 0.5rem 1rem;
       background: transparent;
@@ -1057,7 +1057,7 @@ function getControlHtml(config: VexConfig): string {
     .checkbox-label input[type="checkbox"] {
       cursor: pointer;
     }
-    /* 开关 */
+    /* Toggle switch */
     .toggle-switch {
       position: relative;
       width: 44px;
@@ -1094,7 +1094,7 @@ function getControlHtml(config: VexConfig): string {
     .toggle-switch input:checked + .toggle-slider::before {
       transform: translateX(20px);
     }
-    /* 提供商网格 */
+    /* Provider grid */
     .providers-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -1164,7 +1164,7 @@ function getControlHtml(config: VexConfig): string {
     .channel-form-fields .checkbox-label {
       margin-top: 0.5rem;
     }
-    /* 保存结果 */
+    /* Save result */
     .save-result {
       padding: 0.75rem;
       border-radius: 0.5rem;
@@ -1244,76 +1244,76 @@ function getControlHtml(config: VexConfig): string {
           <span>${assistantName}</span>
         </div>
       </div>
-      <div class="nav-section">监控</div>
+      <div class="nav-section">Monitor</div>
       <div class="nav-item active" data-view="overview">
         <span class="nav-item-icon">📊</span>
-        <span>概览</span>
+        <span>Overview</span>
       </div>
       <div class="nav-item" data-view="sessions">
         <span class="nav-item-icon">💬</span>
-        <span>会话</span>
+        <span>Sessions</span>
       </div>
-      <div class="nav-section">配置</div>
+      <div class="nav-section">Configuration</div>
       <div class="nav-item" data-view="config">
         <span class="nav-item-icon">⚙️</span>
-        <span>配置</span>
+        <span>Config</span>
       </div>
       <div class="nav-item" data-view="providers">
         <span class="nav-item-icon">🤖</span>
-        <span>模型提供商</span>
+        <span>Model Providers</span>
       </div>
       <div class="nav-item" data-view="channels">
         <span class="nav-item-icon">📱</span>
-        <span>通讯通道</span>
+        <span>Channels</span>
       </div>
-      <div class="nav-section">工具</div>
+      <div class="nav-section">Tools</div>
       <div class="nav-item" data-view="logs">
         <span class="nav-item-icon">📋</span>
-        <span>日志</span>
+        <span>Logs</span>
       </div>
       <div style="flex:1"></div>
       <a href="/" class="nav-item">
         <span class="nav-item-icon">💬</span>
-        <span>返回聊天</span>
+        <span>Back to Chat</span>
       </a>
     </aside>
 
     <main class="main-content">
-      <!-- 概览视图 -->
+      <!-- Overview view -->
       <div class="view active" id="view-overview">
         <div class="page-header">
-          <h1 class="page-title">系统概览</h1>
-          <p class="page-desc">查看系统运行状态和关键指标</p>
+          <h1 class="page-title">System Overview</h1>
+          <p class="page-desc">View system runtime status and key metrics</p>
         </div>
         <div class="cards">
           <div class="card">
             <div class="card-header">
-              <span class="card-title">连接状态</span>
+              <span class="card-title">Connection Status</span>
               <span class="card-icon">🔌</span>
             </div>
             <div id="connection-status">
-              <span class="status-badge offline"><span class="status-dot"></span>连接中</span>
+              <span class="status-badge offline"><span class="status-dot"></span>Connecting</span>
             </div>
           </div>
           <div class="card">
             <div class="card-header">
-              <span class="card-title">运行时间</span>
+              <span class="card-title">Uptime</span>
               <span class="card-icon">⏱️</span>
             </div>
             <div class="card-value" id="uptime">--</div>
-            <div class="card-label">自服务启动</div>
+            <div class="card-label">since startup</div>
           </div>
           <div class="card">
             <div class="card-header">
-              <span class="card-title">活跃会话</span>
+              <span class="card-title">Active Sessions</span>
               <span class="card-icon">👥</span>
             </div>
             <div class="card-value" id="session-count">0</div>
-            <div class="card-label">当前连接数</div>
+            <div class="card-label">Current connections</div>
           </div>
           <div class="card">
             <div class="card-header">
-              <span class="card-title">默认模型</span>
+              <span class="card-title">Default Model</span>
               <span class="card-icon">🧠</span>
             </div>
             <div class="card-value" style="font-size:1rem;word-break:break-all">${defaultModel}</div>
@@ -1322,128 +1322,128 @@ function getControlHtml(config: VexConfig): string {
         </div>
         <div class="table-container">
           <div class="table-header">
-            <span class="table-title">系统信息</span>
-            <button class="btn btn-secondary" onclick="refreshStatus()">刷新</button>
+            <span class="table-title">System Info</span>
+            <button class="btn btn-secondary" onclick="refreshStatus()">Refresh</button>
           </div>
           <table>
             <tbody id="system-info">
-              <tr><td>版本</td><td id="version">--</td></tr>
-              <tr><td>模型提供商</td><td id="provider-count">--</td></tr>
-              <tr><td>通讯通道</td><td id="channel-count">--</td></tr>
+              <tr><td>Version</td><td id="version">--</td></tr>
+              <tr><td>Model Providers</td><td id="provider-count">--</td></tr>
+              <tr><td>Channels</td><td id="channel-count">--</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- 会话视图 -->
+      <!-- Sessions view -->
       <div class="view" id="view-sessions">
         <div class="page-header">
-          <h1 class="page-title">会话管理</h1>
-          <p class="page-desc">查看和管理当前活跃的聊天会话</p>
+          <h1 class="page-title">Session Management</h1>
+          <p class="page-desc">View and manage active chat sessions</p>
         </div>
         <div class="table-container">
           <div class="table-header">
-            <span class="table-title">活跃会话</span>
-            <button class="btn btn-secondary" onclick="refreshSessions()">刷新</button>
+            <span class="table-title">Active Sessions</span>
+            <button class="btn btn-secondary" onclick="refreshSessions()">Refresh</button>
           </div>
           <table>
             <thead>
               <tr>
-                <th>会话 ID</th>
-                <th>通道</th>
-                <th>消息数</th>
-                <th>最后活跃</th>
-                <th>操作</th>
+                <th>Session ID</th>
+                <th>Channel</th>
+                <th>Messages</th>
+                <th>Last Active</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody id="sessions-list">
-              <tr><td colspan="5" class="empty-state">暂无活跃会话</td></tr>
+              <tr><td colspan="5" class="empty-state">No active sessions</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- 模型提供商视图 -->
+      <!-- Model Providers view -->
       <div class="view" id="view-providers">
         <div class="page-header">
-          <h1 class="page-title">模型提供商</h1>
-          <p class="page-desc">查看已配置的 AI 模型提供商和可用模型</p>
+          <h1 class="page-title">Model Providers</h1>
+          <p class="page-desc">View configured AI model providers and available models</p>
         </div>
         <div class="cards" id="providers-list">
           <div class="empty-state">
             <div class="empty-state-icon">🤖</div>
-            <p>加载中...</p>
+            <p>Loading...</p>
           </div>
         </div>
       </div>
 
-      <!-- 通讯通道视图 -->
+      <!-- Channels view -->
       <div class="view" id="view-channels">
         <div class="page-header">
-          <h1 class="page-title">通讯通道</h1>
-          <p class="page-desc">查看已配置的通讯平台连接状态</p>
+          <h1 class="page-title">Channels</h1>
+          <p class="page-desc">View configured channel platform connection status</p>
         </div>
         <div class="table-container">
           <table>
             <thead>
               <tr>
-                <th>通道</th>
-                <th>状态</th>
-                <th>类型</th>
+                <th>Channel</th>
+                <th>Status</th>
+                <th>Type</th>
               </tr>
             </thead>
             <tbody id="channels-list">
-              <tr><td colspan="3" class="empty-state">加载中...</td></tr>
+              <tr><td colspan="3" class="empty-state">Loading...</td></tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      <!-- 配置视图 -->
+      <!-- Config view -->
       <div class="view" id="view-config">
         <div class="page-header">
-          <h1 class="page-title">配置管理</h1>
-          <p class="page-desc">可视化配置模型提供商、通讯通道和系统设置</p>
+          <h1 class="page-title">Configuration Management</h1>
+          <p class="page-desc">Visually configure model providers, channels, and system settings</p>
         </div>
         <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="loadConfig()">刷新配置</button>
-          <button class="btn btn-secondary" onclick="saveAllConfig()">保存所有更改</button>
+          <button class="btn btn-primary" onclick="loadConfig()">Refresh Config</button>
+          <button class="btn btn-secondary" onclick="saveAllConfig()">Save All Changes</button>
         </div>
         <div id="config-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;">
           <button class="config-tab active" data-tab="agent">Agent</button>
-          <button class="config-tab" data-tab="providers">模型提供商</button>
-          <button class="config-tab" data-tab="channels">通讯通道</button>
-          <button class="config-tab" data-tab="server">服务器</button>
-          <button class="config-tab" data-tab="memory">记忆系统</button>
+          <button class="config-tab" data-tab="providers">Model Providers</button>
+          <button class="config-tab" data-tab="channels">Channels</button>
+          <button class="config-tab" data-tab="server">Server</button>
+          <button class="config-tab" data-tab="memory">Memory</button>
         </div>
 
-        <!-- Agent 配置 -->
+        <!-- Agent config -->
         <div class="config-content active" id="tab-agent">
           <div class="form-section">
-            <h3 class="form-section-title">Agent 设置</h3>
+            <h3 class="form-section-title">Agent Settings</h3>
             <div class="form-group">
-              <label>默认提供商</label>
+              <label>Default Provider</label>
               <select id="agent-provider" class="form-input">
                 <option value="deepseek">DeepSeek</option>
-                <option value="doubao">豆包</option>
+                <option value="doubao">Doubao</option>
                 <option value="minimax">MiniMax</option>
                 <option value="kimi">Kimi</option>
-                <option value="stepfun">阶跃星辰</option>
+                <option value="stepfun">StepFun</option>
                 <option value="modelscope">ModelScope</option>
                 <option value="dashscope">DashScope (Qwen)</option>
-                <option value="zhipu">智谱 AI</option>
+                <option value="zhipu">Zhipu AI</option>
                 <option value="openai">OpenAI</option>
                 <option value="ollama">Ollama</option>
                 <option value="openrouter">OpenRouter</option>
                 <option value="together">Together AI</option>
                 <option value="groq">Groq</option>
-                <option value="custom-openai">自定义 OpenAI</option>
-                <option value="custom-anthropic">自定义 Anthropic</option>
+                <option value="custom-openai">Custom OpenAI</option>
+                <option value="custom-anthropic">Custom Anthropic</option>
               </select>
             </div>
             <div class="form-group">
-              <label>默认模型</label>
-              <input type="text" id="agent-model" class="form-input" placeholder="例如: deepseek-chat" />
+              <label>Default Model</label>
+              <input type="text" id="agent-model" class="form-input" placeholder="e.g. deepseek-chat" />
             </div>
             <div class="form-row">
               <div class="form-group">
@@ -1456,45 +1456,45 @@ function getControlHtml(config: VexConfig): string {
               </div>
             </div>
             <div class="form-group">
-              <label>系统提示词</label>
-              <textarea id="agent-system-prompt" class="form-input" rows="4" placeholder="自定义系统提示词..."></textarea>
+              <label>System Prompt</label>
+              <textarea id="agent-system-prompt" class="form-input" rows="4" placeholder="Custom system prompt..."></textarea>
             </div>
           </div>
         </div>
 
-        <!-- 提供商配置 -->
+        <!-- Providers config -->
         <div class="config-content" id="tab-providers">
           <div class="form-section">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-              <h3 class="form-section-title">模型提供商</h3>
-              <button class="btn btn-secondary" onclick="showAddProviderModal()">+ 添加提供商</button>
+              <h3 class="form-section-title">Model Providers</h3>
+              <button class="btn btn-secondary" onclick="showAddProviderModal()">+ Add Provider</button>
             </div>
             <div id="providers-list-form" class="providers-grid"></div>
           </div>
         </div>
 
-        <!-- 通道配置 -->
+        <!-- Channels config -->
         <div class="config-content" id="tab-channels">
           <div class="form-section">
-            <h3 class="form-section-title">通讯通道</h3>
+            <h3 class="form-section-title">Channels</h3>
             <div class="channels-form-grid">
               <div class="channel-config-card">
                 <div class="card-header">
-                  <span class="card-title">个人微信</span>
+                  <span class="card-title">Personal WeChat</span>
                   <label class="toggle-switch">
                     <input type="checkbox" id="weixin-enabled" />
                     <span class="toggle-slider"></span>
                   </label>
                 </div>
                 <div class="channel-form-fields">
-                  <p class="form-hint">个人微信使用扫码登录，无需手动填写凭证</p>
-                  <input type="text" id="weixin-bot-type" class="form-input" placeholder="Bot Type (默认: 3)" />
-                  <input type="text" id="weixin-base-url" class="form-input" placeholder="API Base URL (默认: https://ilinkai.weixin.qq.com)" />
-                  <p id="weixin-status" class="form-hint" style="color: #f59e0b;">状态: 未登录（点下方按钮扫码登录）</p>
-                  <button id="weixin-qr-btn" class="btn btn-primary" style="margin-top: 8px;" onclick="startWeixinQRLogin()">扫码登录</button>
+                  <p class="form-hint">Personal WeChat uses QR code login, no manual credentials needed</p>
+                  <input type="text" id="weixin-bot-type" class="form-input" placeholder="Bot Type (default: 3)" />
+                  <input type="text" id="weixin-base-url" class="form-input" placeholder="API Base URL (default: https://ilinkai.weixin.qq.com)" />
+                  <p id="weixin-status" class="form-hint" style="color: #f59e0b;">Status: Not logged in (click below to scan QR code)</p>
+                  <button id="weixin-qr-btn" class="btn btn-primary" style="margin-top: 8px;" onclick="startWeixinQRLogin()">Scan QR Login</button>
                   <div id="weixin-qr-area" style="display:none; margin-top: 12px; text-align: center;">
-                    <img id="weixin-qr-img" src="" alt="微信扫码" style="max-width: 280px; border: 1px solid #e5e7eb; border-radius: 8px;" />
-                    <p id="weixin-qr-status" style="color: #f59e0b; margin-top: 8px; font-weight: 500;">等待扫码...</p>
+                    <img id="weixin-qr-img" src="" alt="WeChat QR" style="max-width: 280px; border: 1px solid #e5e7eb; border-radius: 8px;" />
+                    <p id="weixin-qr-status" style="color: #f59e0b; margin-top: 8px; font-weight: 500;">Waiting for scan...</p>
                   </div>
                 </div>
               </div>
@@ -1502,22 +1502,22 @@ function getControlHtml(config: VexConfig): string {
           </div>
         </div>
 
-        <!-- 服务器配置 -->
+        <!-- Server config -->
         <div class="config-content" id="tab-server">
           <div class="form-section">
-            <h3 class="form-section-title">服务器设置</h3>
+            <h3 class="form-section-title">Server Settings</h3>
             <div class="form-row">
               <div class="form-group">
-                <label>端口</label>
+                <label>Port</label>
                 <input type="number" id="server-port" class="form-input" min="1" max="65535" />
               </div>
               <div class="form-group">
-                <label>主机</label>
+                <label>Host</label>
                 <input type="text" id="server-host" class="form-input" placeholder="0.0.0.0" />
               </div>
             </div>
             <div class="form-group">
-              <label>日志级别</label>
+              <label>Log Level</label>
               <select id="logging-level" class="form-input">
                 <option value="debug">Debug</option>
                 <option value="info">Info</option>
@@ -1525,79 +1525,79 @@ function getControlHtml(config: VexConfig): string {
                 <option value="error">Error</option>
               </select>
             </div>
-            <p class="form-hint">修改服务器端口需要重启服务才能生效</p>
+            <p class="form-hint">Changing server port requires a restart to take effect</p>
           </div>
         </div>
 
-        <!-- 记忆系统配置 -->
+        <!-- Memory config -->
         <div class="config-content" id="tab-memory">
           <div class="form-section">
-            <h3 class="form-section-title">记忆系统</h3>
+            <h3 class="form-section-title">Memory</h3>
             <div class="form-group">
               <label class="checkbox-label">
                 <input type="checkbox" id="memory-enabled" />
-                <span>启用长期记忆</span>
+                <span>Enable Long-Term Memory</span>
               </label>
-              <p class="form-hint">让 Agent 跨会话记住用户偏好和重要信息</p>
+              <p class="form-hint">Allow Agent to remember user preferences and important info across sessions</p>
             </div>
             <div class="form-group">
-              <label>存储目录</label>
+              <label>Storage Directory</label>
               <input type="text" id="memory-directory" class="form-input" placeholder="~/.vex/memory" />
             </div>
           </div>
         </div>
 
-        <!-- 保存结果 -->
+        <!-- Save result -->
         <div id="save-result" class="save-result"></div>
       </div>
 
-      <!-- 日志视图 -->
+      <!-- Logs view -->
       <div class="view" id="view-logs">
         <div class="page-header">
-          <h1 class="page-title">系统日志</h1>
-          <p class="page-desc">实时查看系统运行日志</p>
+          <h1 class="page-title">System Logs</h1>
+          <p class="page-desc">View real-time system runtime logs</p>
         </div>
         <div class="log-container" id="log-container">
-          <div class="log-entry info"><span class="time">[--:--:--]</span> 等待连接...</div>
+          <div class="log-entry info"><span class="time">[--:--:--]</span> Waiting for connection...</div>
         </div>
       </div>
     </main>
   </div>
 
-  <!-- 添加提供商 Modal -->
+  <!-- Add Provider Modal -->
   <div class="modal-overlay" id="add-provider-modal">
     <div class="modal">
       <div class="modal-header">
-        <h3>添加提供商</h3>
+        <h3>Add Provider</h3>
         <button class="modal-close" onclick="hideAddProviderModal()">&times;</button>
       </div>
       <div class="form-group">
-        <label>提供商类型</label>
+        <label>Provider Type</label>
         <select id="new-provider-type" class="form-input" onchange="updateProviderModalFields()">
           <option value="deepseek">DeepSeek</option>
-          <option value="doubao">豆包</option>
+          <option value="doubao">Doubao</option>
           <option value="minimax">MiniMax</option>
           <option value="kimi">Kimi</option>
-          <option value="stepfun">阶跃星辰</option>
+          <option value="stepfun">StepFun</option>
           <option value="modelscope">ModelScope</option>
           <option value="dashscope">DashScope (Qwen)</option>
-          <option value="zhipu">智谱 AI</option>
+          <option value="zhipu">Zhipu AI</option>
           <option value="openai">OpenAI</option>
           <option value="ollama">Ollama</option>
           <option value="openrouter">OpenRouter</option>
           <option value="together">Together AI</option>
           <option value="groq">Groq</option>
-          <option value="custom-openai">自定义 OpenAI</option>
-          <option value="custom-anthropic">自定义 Anthropic</option>
+          <option value="custom-openai">Custom OpenAI</option>
+          <option value="custom-anthropic">Custom Anthropic</option>
         </select>
       </div>
       <div class="form-group" id="new-provider-base-url-group" style="display:none;">
         <label>Base URL</label>
-        <input type="text" id="new-provider-base-url" class="form-input" placeholder="例如: https://api.openai.com/v1" />
+        <input type="text" id="new-provider-base-url" class="form-input" placeholder="e.g. https://api.openai.com/v1" />
       </div>
       <div class="form-group" id="new-provider-name-group" style="display:none;">
-        <label>显示名称</label>
-        <input type="text" id="new-provider-name" class="form-input" placeholder="例如: My OpenAI" />
+        <label>Display Name</label>
+        <input type="text" id="new-provider-name" class="form-input" placeholder="e.g. My OpenAI" />
       </div>
       <div class="form-group" id="new-provider-group-id-group" style="display:none;">
         <label>Group ID (MiniMax)</label>
@@ -1605,11 +1605,11 @@ function getControlHtml(config: VexConfig): string {
       </div>
       <div class="form-group">
         <label>API Key</label>
-        <input type="password" id="new-provider-api-key" class="form-input" placeholder="输入 API Key" />
+        <input type="password" id="new-provider-api-key" class="form-input" placeholder="Enter API Key" />
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="hideAddProviderModal()">取消</button>
-        <button class="btn btn-primary" onclick="addProvider()">添加</button>
+        <button class="btn btn-secondary" onclick="hideAddProviderModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="addProvider()">Add</button>
       </div>
     </div>
   </div>
@@ -1620,7 +1620,7 @@ function getControlHtml(config: VexConfig): string {
     let requestId = 0;
     let systemStatus = null;
 
-    // 导航
+    // Navigation
     document.querySelectorAll('.nav-item[data-view]').forEach(item => {
       item.addEventListener('click', () => {
         document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -1628,49 +1628,49 @@ function getControlHtml(config: VexConfig): string {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.getElementById('view-' + item.dataset.view).classList.add('active');
 
-        // 切换到配置页面时自动加载配置
+        // Auto-load config when switching to config page
         if (item.dataset.view === 'config' && ws?.readyState === WebSocket.OPEN) {
           loadConfig();
         }
       });
     });
 
-    // WebSocket 连接
+    // WebSocket connection
     function connect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       ws = new WebSocket(protocol + '//' + location.host + '/ws');
 
       ws.onopen = () => {
         document.getElementById('connection-status').innerHTML =
-          '<span class="status-badge online"><span class="status-dot"></span>已连接</span>';
-        addLog('info', '已连接到服务器');
+          '<span class="status-badge online"><span class="status-dot"></span>Connected</span>';
+        addLog('info', 'Connected to server');
         refreshStatus();
       };
 
       ws.onclose = () => {
         document.getElementById('connection-status').innerHTML =
-          '<span class="status-badge offline"><span class="status-dot"></span>已断开</span>';
-        addLog('warn', '连接已断开，正在重连...');
+          '<span class="status-badge offline"><span class="status-dot"></span>Disconnected</span>';
+        addLog('warn', 'Connection lost, reconnecting...');
         setTimeout(connect, 3000);
       };
 
       ws.onmessage = (event) => {
         try {
           const frame = JSON.parse(event.data);
-          console.log('收到 WebSocket 消息:', frame);
+          console.log('Received WebSocket message:', frame);
           if (frame.type === 'res') {
             const pending = pendingRequests.get(frame.id);
             if (pending) {
               pendingRequests.delete(frame.id);
               if (frame.ok) {
-                console.log('请求成功:', frame.id, frame.payload);
+                console.log('Request succeeded:', frame.id, frame.payload);
                 pending.resolve(frame.payload);
               } else {
-                console.error('请求失败:', frame.id, frame.error);
+                console.error('Request failed:', frame.id, frame.error);
                 pending.reject(new Error(frame.error?.message || 'Unknown error'));
               }
             } else {
-              console.warn('未找到挂起请求:', frame.id);
+              console.warn('No pending request found:', frame.id);
             }
           }
         } catch (e) {
@@ -1693,17 +1693,17 @@ function getControlHtml(config: VexConfig): string {
         updateOverview(systemStatus);
         updateProviders(systemStatus);
         updateChannels(systemStatus);
-        addLog('info', '状态已刷新');
+        addLog('info', 'Status refreshed');
       } catch (e) {
-        addLog('error', '获取状态失败: ' + e.message);
+        addLog('error', 'Failed to get status: ' + e.message);
       }
     }
 
     function updateOverview(status) {
       document.getElementById('version').textContent = status.version || '--';
       document.getElementById('session-count').textContent = status.sessions || 0;
-      document.getElementById('provider-count').textContent = (status.providers || []).length + ' 个';
-      document.getElementById('channel-count').textContent = (status.channels || []).length + ' 个';
+      document.getElementById('provider-count').textContent = (status.providers || []).length + ' providers';
+      document.getElementById('channel-count').textContent = (status.channels || []).length + ' channels';
 
       const uptime = status.uptime || 0;
       const hours = Math.floor(uptime / 3600000);
@@ -1716,7 +1716,7 @@ function getControlHtml(config: VexConfig): string {
       const container = document.getElementById('providers-list');
 
       if (providers.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p>暂无已配置的提供商</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p>No providers configured</p></div>';
         return;
       }
 
@@ -1725,7 +1725,7 @@ function getControlHtml(config: VexConfig): string {
           <div class="card-header">
             <span class="card-title">\${p.name || p.id}</span>
             <span class="status-badge \${p.available ? 'online' : 'offline'}">
-              <span class="status-dot"></span>\${p.available ? '可用' : '不可用'}
+              <span class="status-dot"></span>\${p.available ? 'Available' : 'Unavailable'}
             </span>
           </div>
           <div class="card-label">ID: \${p.id}</div>
@@ -1737,7 +1737,7 @@ function getControlHtml(config: VexConfig): string {
       const channels = status.channels || [];
       const tbody = document.getElementById('channels-list');
 
-      // 添加 WebChat
+      // Add WebChat
       const allChannels = [
         { id: 'webchat', name: 'WebChat', connected: true },
         ...channels
@@ -1748,7 +1748,7 @@ function getControlHtml(config: VexConfig): string {
           <td>\${c.name || c.id}</td>
           <td>
             <span class="status-badge \${c.connected ? 'online' : 'offline'}">
-              <span class="status-dot"></span>\${c.connected ? '已连接' : '未连接'}
+              <span class="status-dot"></span>\${c.connected ? 'Connected' : 'Disconnected'}
             </span>
           </td>
           <td>\${c.id}</td>
@@ -1757,8 +1757,8 @@ function getControlHtml(config: VexConfig): string {
     }
 
     function refreshSessions() {
-      // 会话数据通过 status 获取
-      addLog('info', '会话列表已刷新');
+      // Session data retrieved via status
+      addLog('info', 'Session list refreshed');
     }
 
     function addLog(level, message) {
@@ -1770,17 +1770,17 @@ function getControlHtml(config: VexConfig): string {
       container.appendChild(entry);
       container.scrollTop = container.scrollHeight;
 
-      // 限制日志数量
+      // Limit log entries
       while (container.children.length > 100) {
         container.removeChild(container.firstChild);
       }
     }
 
-    // ===== 配置管理 =====
+    // ===== Configuration Management =====
     let currentConfig = null;
-    let pendingProviders = {};  // 临时保存提供商数据
+    let pendingProviders = {};  // Temporary provider data storage
 
-    // 配置标签切换
+    // Config tab switching
     document.querySelectorAll('.config-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
@@ -1790,13 +1790,13 @@ function getControlHtml(config: VexConfig): string {
       });
     });
 
-    // 加载配置
+    // Load config
     async function loadConfig() {
       try {
-        console.log('开始加载配置...');
+        console.log('Loading config...');
         if (ws?.readyState !== WebSocket.OPEN) {
-          console.warn('WebSocket 未连接，等待连接...');
-          // 等待连接后加载
+          console.warn('WebSocket not connected, waiting...');
+          // Wait for connection then load
           const waitConnection = new Promise(resolve => {
             const check = () => {
               if (ws?.readyState === WebSocket.OPEN) {
@@ -1809,29 +1809,29 @@ function getControlHtml(config: VexConfig): string {
           });
           await waitConnection;
         }
-        console.log('发送 config.get 请求...');
+        console.log('Sending config.get request...');
         currentConfig = await request('config.get');
-        console.log('收到配置数据:', currentConfig);
+        console.log('Config data received:', currentConfig);
         populateConfigForm(currentConfig);
         hideSaveResult();
-        addLog('info', '配置已加载');
+        addLog('info', 'Config loaded');
       } catch (e) {
-        console.error('加载配置失败:', e);
-        addLog('error', '加载配置失败: ' + e.message);
-        showSaveResult('error', '加载配置失败: ' + e.message);
+        console.error('Failed to load config:', e);
+        addLog('error', 'Failed to load config: ' + e.message);
+        showSaveResult('error', 'Failed to load config: ' + e.message);
       }
     }
 
-    // 填充表单
+    // Populate form
     function populateConfigForm(config) {
-      console.log('populateConfigForm 调用，配置:', config);
+      console.log('populateConfigForm called, config:', config);
 
-      // Agent 配置
+      // Agent config
       if (config.agent) {
         const providerSelect = document.getElementById('agent-provider');
         if (providerSelect) {
           providerSelect.value = config.agent.defaultProvider || 'deepseek';
-          console.log('设置提供商值:', providerSelect.value);
+          console.log('Set provider value:', providerSelect.value);
         }
         document.getElementById('agent-model').value = config.agent.defaultModel || '';
         document.getElementById('agent-temperature').value = config.agent.temperature || '';
@@ -1839,46 +1839,46 @@ function getControlHtml(config: VexConfig): string {
         document.getElementById('agent-system-prompt').value = config.agent.systemPrompt || '';
       }
 
-      // 提供商列表
+      // Provider list
       populateProvidersForm(config.providers);
 
-      // 通道配置
+      // Channels config
       if (config.channels) {
         populateChannelsForm(config.channels);
       }
 
-      // 服务器配置
+      // Server config
       if (config.server) {
         document.getElementById('server-port').value = config.server.port || 3000;
         document.getElementById('server-host').value = config.server.host || '0.0.0.0';
       }
 
-      // 日志配置
+      // Logging config
       if (config.logging) {
         document.getElementById('logging-level').value = config.logging.level || 'info';
       }
 
-      // 记忆系统配置
+      // Memory config
       if (config.memory) {
         document.getElementById('memory-enabled').checked = config.memory.enabled !== false;
         document.getElementById('memory-directory').value = config.memory.directory || '';
       }
     }
 
-    // 填充提供商列表
+    // Populate provider list
     function populateProvidersForm(providers) {
       const container = document.getElementById('providers-list-form');
       if (!providers || Object.keys(providers).length === 0) {
-        container.innerHTML = '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:var(--text-muted);">暂无配置的提供商</div>';
+        container.innerHTML = '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:var(--text-muted);">No providers configured</div>';
         return;
       }
 
       const providerNames = {
-        deepseek: 'DeepSeek', doubao: '豆包', minimax: 'MiniMax', kimi: 'Kimi',
-        stepfun: '阶跃星辰', modelscope: 'ModelScope', dashscope: 'DashScope',
-        zhipu: '智谱 AI', openai: 'OpenAI', ollama: 'Ollama',
+        deepseek: 'DeepSeek', doubao: 'Doubao', minimax: 'MiniMax', kimi: 'Kimi',
+        stepfun: 'StepFun', modelscope: 'ModelScope', dashscope: 'DashScope',
+        zhipu: 'Zhipu AI', openai: 'OpenAI', ollama: 'Ollama',
         openrouter: 'OpenRouter', together: 'Together AI', groq: 'Groq',
-        'custom-openai': '自定义 OpenAI', 'custom-anthropic': '自定义 Anthropic'
+        'custom-openai': 'Custom OpenAI', 'custom-anthropic': 'Custom Anthropic'
       };
 
       container.innerHTML = Object.entries(providers).map(([id, p]) => \`
@@ -1886,23 +1886,23 @@ function getControlHtml(config: VexConfig): string {
           <div class="provider-form-header">
             <h4>\${p.name || providerNames[id] || id}</h4>
             <span class="provider-status-badge \${p.hasApiKey ? 'configured' : ''}">
-              \${p.hasApiKey ? '已配置' : '未配置'}
+              \${p.hasApiKey ? 'Configured' : 'Not configured'}
             </span>
           </div>
           <div class="provider-actions">
-            <button onclick="editProvider('\${id}')">编辑</button>
-            <button class="danger" onclick="removeProvider('\${id}')">删除</button>
+            <button onclick="editProvider('\${id}')">Edit</button>
+            <button class="danger" onclick="removeProvider('\${id}')">Delete</button>
           </div>
         </div>
       \`).join('');
     }
 
-    // 填充通道配置
+    // Populate channels config
     function populateChannelsForm(channels) {
       document.getElementById('weixin-enabled').checked = false;
       document.getElementById('weixin-bot-type').value = '';
       document.getElementById('weixin-base-url').value = '';
-      document.getElementById('weixin-status').textContent = '状态: 未登录';
+      document.getElementById('weixin-status').textContent = 'Status: Not logged in';
 
       const weixin = channels.weixin;
       if (weixin) {
@@ -1911,8 +1911,8 @@ function getControlHtml(config: VexConfig): string {
         document.getElementById('weixin-bot-type').value = weixin.botType || '';
         document.getElementById('weixin-base-url').value = weixin.baseUrl || '';
         document.getElementById('weixin-status').textContent = weixin.hasToken
-          ? '状态: 已登录 (Token 有效)'
-          : '状态: 未登录（需在终端扫码或重启后自动登录）';
+          ? 'Status: Logged in (Token valid)'
+          : 'Status: Not logged in (scan QR in terminal or restart to auto-login)';
         if (weixin.hasToken) {
           document.getElementById('weixin-status').style.color = '#10b981';
         } else {
@@ -1920,23 +1920,23 @@ function getControlHtml(config: VexConfig): string {
         }
       }
 
-    // 显示添加提供商 Modal
+    // Show add provider modal
     function showAddProviderModal() {
       document.getElementById('add-provider-modal').classList.add('show');
       updateProviderModalFields();
     }
 
-    // 隐藏添加提供商 Modal
+    // Hide add provider modal
     function hideAddProviderModal() {
       document.getElementById('add-provider-modal').classList.remove('show');
-      // 清空表单
+      // Clear form
       document.getElementById('new-provider-api-key').value = '';
       document.getElementById('new-provider-base-url').value = '';
       document.getElementById('new-provider-name').value = '';
       document.getElementById('new-provider-group-id').value = '';
     }
 
-    // 更新提供商 Modal 字段显示
+    // Update provider modal field visibility
     function updateProviderModalFields() {
       const type = document.getElementById('new-provider-type').value;
       const baseUrlGroup = document.getElementById('new-provider-base-url-group');
@@ -1948,7 +1948,7 @@ function getControlHtml(config: VexConfig): string {
       groupIdGroup.style.display = type === 'minimax' ? 'block' : 'none';
     }
 
-    // 添加提供商
+    // Add Provider
     function addProvider() {
       const type = document.getElementById('new-provider-type').value;
       const apiKey = document.getElementById('new-provider-api-key').value.trim();
@@ -1957,81 +1957,81 @@ function getControlHtml(config: VexConfig): string {
       const groupId = document.getElementById('new-provider-group-id').value.trim();
 
       if (!apiKey) {
-        alert('请输入 API Key');
+        alert('Please enter API Key');
         return;
       }
 
       if ((type === 'custom-openai' || type === 'custom-anthropic') && !baseUrl) {
-        alert('请输入 Base URL');
+        alert('Please enter Base URL');
         return;
       }
 
-      // 保存到 pendingProviders，包含 apiKey
+      // Save to pendingProviders, including apiKey
       pendingProviders[type] = {
         id: type,
         name: name || undefined,
         baseUrl: baseUrl || undefined,
         groupId: groupId || undefined,
         hasApiKey: true,
-        apiKey: apiKey  // 保存 apiKey
+        apiKey: apiKey  // Save apiKey
       };
 
       hideAddProviderModal();
-      // 刷新提供商列表显示
+      // Refresh provider list display
       if (currentConfig) {
         const mergedProviders = { ...currentConfig.providers, ...pendingProviders };
         populateProvidersForm(mergedProviders);
       }
 
-      showSaveResult('success', '提供商已添加（请点击保存使更改生效）');
+      showSaveResult('success', 'Provider added (click Save to apply changes)');
     }
 
-    // 编辑提供商
+    // Edit provider
     function editProvider(id) {
       const provider = currentConfig?.providers[id];
       if (!provider) return;
 
-      const apiKey = prompt('请输入新的 API Key（留空保持不变）:');
+      const apiKey = prompt('Enter new API Key (leave blank to keep current):');
       if (apiKey === null) return;
 
       if (apiKey) {
         pendingProviders[id] = {
           ...provider,
           hasApiKey: true,
-          apiKey: apiKey  // 保存新的 apiKey
+          apiKey: apiKey  // Save new apiKey
         };
-        showSaveResult('success', '提供商已更新（请点击保存使更改生效）');
+        showSaveResult('success', 'Provider updated (click Save to apply changes)');
       }
     }
 
-    // 删除提供商
+    // Remove provider
     function removeProvider(id) {
-      if (!confirm('确定要删除此提供商吗？')) return;
+      if (!confirm('Are you sure you want to remove this provider?')) return;
 
       pendingProviders[id] = { id: id, hasApiKey: false };
       const mergedProviders = { ...currentConfig.providers };
       delete mergedProviders[id];
       populateProvidersForm(mergedProviders);
 
-      showSaveResult('success', '提供商已删除（请点击保存使更改生效）');
+      showSaveResult('success', 'Provider removed (click Save to apply changes)');
     }
 
-    // 保存所有配置
+    // Save all config
     async function saveAllConfig() {
       try {
         hideSaveResult();
 
-        // 构建配置对象
+        // Build config object
         const configToSave = {};
 
-        // Agent 配置
+        // Agent config
         const agentProvider = document.getElementById('agent-provider').value;
         const agentModel = document.getElementById('agent-model').value.trim();
         const agentTemperatureStr = document.getElementById('agent-temperature').value;
         const agentMaxTokensStr = document.getElementById('agent-max-tokens').value;
         const agentSystemPrompt = document.getElementById('agent-system-prompt').value.trim();
 
-        // 只要任何字段与当前配置不同，就需要保存
+        // Only save if any field differs from current config
         const currentAgent = currentConfig && currentConfig.agent ? currentConfig.agent : {};
         const agentChanged =
           agentProvider !== (currentAgent.defaultProvider || '') ||
@@ -2053,12 +2053,12 @@ function getControlHtml(config: VexConfig): string {
           };
         }
 
-        // 提供商配置
+        // Provider config
         if (Object.keys(pendingProviders).length > 0) {
           configToSave.providers = pendingProviders;
         }
 
-        // 通道配置
+        // Channels config
         const channels = {};
 
         const weixinEnabled = document.getElementById('weixin-enabled').checked;
@@ -2080,12 +2080,12 @@ function getControlHtml(config: VexConfig): string {
           configToSave.channels = channels;
         }
 
-        // 服务器配置
+        // Server config
         const serverPortStr = document.getElementById('server-port').value;
         const serverPort = parseInt(serverPortStr, 10);
         const serverHost = document.getElementById('server-host').value.trim();
 
-        // 检查配置是否有变化
+        // Check if config changed
         const currentServer = currentConfig && currentConfig.server ? currentConfig.server : {};
         const serverChanged =
           serverPortStr !== String(currentServer.port || '3000') ||
@@ -2098,7 +2098,7 @@ function getControlHtml(config: VexConfig): string {
           };
         }
 
-        // 日志配置
+        // Logging config
         const logLevel = document.getElementById('logging-level').value;
         const currentLogging = currentConfig && currentConfig.logging ? currentConfig.logging : {};
         const logLevelChanged = logLevel !== (currentLogging.level || 'info');
@@ -2106,7 +2106,7 @@ function getControlHtml(config: VexConfig): string {
           configToSave.logging = { level: logLevel };
         }
 
-        // 记忆系统配置
+        // Memory config
         const memoryEnabled = document.getElementById('memory-enabled').checked;
         const memoryDir = document.getElementById('memory-directory').value.trim();
         const currentMemory = currentConfig && currentConfig.memory ? currentConfig.memory : {};
@@ -2121,45 +2121,45 @@ function getControlHtml(config: VexConfig): string {
           };
         }
 
-        // 保存
+        // Save
         const result = await request('config.save', configToSave);
 
         if (result.success) {
           showSaveResult(result.requiresRestart ? 'warning' : 'success', result.message);
-          // 清空 pending
+          // Clear pending
           pendingProviders = {};
-          // 重新加载配置
+          // Reload config
           await loadConfig();
           addLog('info', result.message);
         } else {
-          showSaveResult('error', result.message || '保存失败');
+          showSaveResult('error', result.message || 'Save failed');
         }
 
       } catch (e) {
-        addLog('error', '保存配置失败: ' + e.message);
-        showSaveResult('error', '保存配置失败: ' + e.message);
+        addLog('error', 'Failed to save config: ' + e.message);
+        showSaveResult('error', 'Failed to save config: ' + e.message);
       }
     }
 
-    // 显示保存结果
+    // Show save result
     function showSaveResult(type, message) {
       const resultEl = document.getElementById('save-result');
       resultEl.textContent = message;
       resultEl.className = 'save-result show ' + type;
-      // 5秒后隐藏
+      // Hide after 5 seconds
       setTimeout(() => {
         hideSaveResult();
       }, 5000);
     }
 
-    // 隐藏保存结果
+    // Hide save result
     function hideSaveResult() {
       const resultEl = document.getElementById('save-result');
       resultEl.className = 'save-result';
       resultEl.textContent = '';
     }
 
-    // 启动
+    // ===== WeChat QR Login =====
     let qrPollTimer = null;
     let currentQRCode = null;
 
@@ -2169,13 +2169,13 @@ function getControlHtml(config: VexConfig): string {
       const img = document.getElementById('weixin-qr-img');
       const statusEl = document.getElementById('weixin-qr-status');
 
-      btn.textContent = '获取二维码中...';
+      btn.textContent = 'Getting QR code...';
       btn.disabled = true;
 
       try {
         const result = await request('weixin.qr', {});
         if (result.error) {
-          btn.textContent = '扫码登录';
+          btn.textContent = 'Scan QR Login';
           btn.disabled = false;
           alert(result.error);
           return;
@@ -2184,16 +2184,16 @@ function getControlHtml(config: VexConfig): string {
         currentQRCode = result.qrcode;
         img.src = result.qrcode_url;
         area.style.display = 'block';
-        statusEl.textContent = '等待扫码...';
+        statusEl.textContent = 'Waiting for scan...';
         statusEl.style.color = '#f59e0b';
-        btn.textContent = '刷新二维码';
+        btn.textContent = 'Refresh QR';
         btn.disabled = false;
 
         startQRPolling();
       } catch (e) {
-        btn.textContent = '扫码登录';
+        btn.textContent = 'Scan QR Login';
         btn.disabled = false;
-        alert('获取二维码失败: ' + e.message);
+        alert('Failed to get QR code: ' + e.message);
       }
     }
 
@@ -2212,19 +2212,19 @@ function getControlHtml(config: VexConfig): string {
             qrPollTimer = null;
             currentQRCode = null;
             const btn = document.getElementById('weixin-qr-btn');
-            btn.textContent = '已登录 ✓';
+            btn.textContent = 'Logged in ✓';
             btn.disabled = true;
-            document.getElementById('weixin-status').textContent = '状态: 已登录 (Token 有效)';
+            document.getElementById('weixin-status').textContent = 'Status: Logged in (Token valid)';
             document.getElementById('weixin-status').style.color = '#10b981';
-            alert('个人微信登录成功！请点击「保存配置」并重启服务。');
+            alert('WeChat login successful! Click "Save All Changes" and restart the service.');
           } else if (result.status === 'expired') {
-            statusEl.textContent = '二维码已过期，请点击刷新';
+            statusEl.textContent = 'QR code expired, please refresh';
             statusEl.style.color = '#ef4444';
             clearInterval(qrPollTimer);
             qrPollTimer = null;
             currentQRCode = null;
             const btn = document.getElementById('weixin-qr-btn');
-            btn.textContent = '刷新二维码';
+            btn.textContent = 'Refresh QR';
             btn.disabled = false;
           } else if (result.status === 'canceled' || result.status === 'denied') {
             statusEl.textContent = result.message;
@@ -2245,12 +2245,12 @@ function getControlHtml(config: VexConfig): string {
 </html>`;
 }
 
-/** 静态文件服务选项 */
+/** Static file service options */
 export interface StaticServerOptions {
   config: VexConfig;
 }
 
-/** 处理静态文件请求 */
+/** Handle static file request */
 export function handleStaticRequest(
   req: IncomingMessage,
   res: ServerResponse,
@@ -2259,17 +2259,17 @@ export function handleStaticRequest(
   const url = req.url || "/";
   const pathname = url.split("?")[0] || "/";
 
-  // WebSocket 路径跳过
+  // Skip WebSocket path
   if (pathname === "/ws") {
     return false;
   }
 
-  // API 路径跳过
+  // Skip API path
   if (pathname.startsWith("/api/") || pathname.startsWith("/webhook/")) {
     return false;
   }
 
-  // 健康检查跳过
+  // Skip health check
   if (pathname === "/health") {
     return false;
   }
@@ -2285,7 +2285,7 @@ export function handleStaticRequest(
     return true;
   }
 
-  // 根路径或 index.html - 返回 WebChat HTML
+  // Root path or index.html - return WebChat HTML
   if (pathname === "/" || pathname === "/index.html") {
     const html = getEmbeddedHtml(options.config);
     res.writeHead(200, {
@@ -2296,8 +2296,8 @@ export function handleStaticRequest(
     return true;
   }
 
-  // 其他静态文件 - 暂不支持外部文件
-  // 可以后续添加从 public 目录读取文件的功能
+  // Other static files - external files not yet supported
+  // Can add file reading from public directory later
 
   return false;
 }

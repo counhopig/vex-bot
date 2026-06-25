@@ -1,5 +1,5 @@
 /**
- * 日志工具
+ * Logger utility
  */
 
 import pino, { type Logger as PinoLogger } from "pino";
@@ -11,24 +11,24 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 let globalLogger: PinoLogger | null = null;
 
-/** 获取日志目录 */
+/** Get the log directory */
 export function getLogDir(): string {
-  // 优先使用环境变量
+  // Prefer environment variable
   if (process.env.VEX_LOG_DIR) {
     return process.env.VEX_LOG_DIR;
   }
-  // 默认在用户主目录下
+  // Default to user home directory
   return join(homedir(), ".vex", "logs");
 }
 
-/** 获取当前日志文件路径 */
+/** Get the current log file path */
 export function getLogFile(): string {
   const logDir = getLogDir();
   const date = new Date().toISOString().split("T")[0];
   return join(logDir, `vex-${date}.log`);
 }
 
-/** 确保日志目录存在 */
+/** Ensure the log directory exists */
 function ensureLogDir(): void {
   const logDir = getLogDir();
   if (!existsSync(logDir)) {
@@ -36,7 +36,7 @@ function ensureLogDir(): void {
   }
 }
 
-/** 创建日志器 */
+/** Create a logger */
 export function createLogger(options: {
   level?: LogLevel;
   name?: string;
@@ -50,15 +50,15 @@ export function createLogger(options: {
     logToFile = true
   } = options;
 
-  // 如果需要写入文件，确保目录存在
+  // If logging to file, ensure directory exists
   if (logToFile) {
     ensureLogDir();
   }
 
-  // 配置多目标输出
+  // Configure multi-destination output
   const targets: pino.TransportTargetOptions[] = [];
 
-  // 控制台输出 (带格式化)
+  // Console output (with formatting)
   if (pretty) {
     targets.push({
       target: "pino-pretty",
@@ -77,7 +77,7 @@ export function createLogger(options: {
     });
   }
 
-  // 文件输出
+  // File output
   if (logToFile) {
     targets.push({
       target: "pino/file",
@@ -97,7 +97,7 @@ export function createLogger(options: {
   return logger;
 }
 
-/** 获取全局日志器 */
+/** Get the global logger */
 export function getLogger(): PinoLogger {
   if (!globalLogger) {
     globalLogger = createLogger({
@@ -108,12 +108,12 @@ export function getLogger(): PinoLogger {
   return globalLogger;
 }
 
-/** 设置全局日志器 */
+/** Set the global logger */
 export function setLogger(logger: PinoLogger): void {
   globalLogger = logger;
 }
 
-/** 创建子日志器 */
+/** Create a child logger */
 export function getChildLogger(name: string): PinoLogger {
   return getLogger().child({ module: name });
 }

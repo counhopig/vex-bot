@@ -1,8 +1,8 @@
 /**
- * Web 模块类型定义
+ * Web module type definitions
  */
 
-/** WebSocket 请求帧 */
+/** WebSocket request frame */
 export interface WsRequestFrame {
   type: "req";
   id: string;
@@ -10,7 +10,7 @@ export interface WsRequestFrame {
   params?: unknown;
 }
 
-/** WebSocket 响应帧 */
+/** WebSocket response frame */
 export interface WsResponseFrame {
   type: "res";
   id: string;
@@ -23,17 +23,17 @@ export interface WsResponseFrame {
   };
 }
 
-/** WebSocket 事件帧 */
+/** WebSocket event frame */
 export interface WsEventFrame {
   type: "event";
   event: string;
   payload?: unknown;
 }
 
-/** WebSocket 帧类型 */
+/** WebSocket frame type */
 export type WsFrame = WsRequestFrame | WsResponseFrame | WsEventFrame;
 
-/** 聊天消息 */
+/** Chat message */
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
@@ -41,49 +41,49 @@ export interface ChatMessage {
   timestamp: number;
 }
 
-/** 聊天请求参数 */
+/** Chat send request params */
 export interface ChatSendParams {
   message: string;
   sessionKey?: string;
 }
 
-/** 会话列表请求参数 */
+/** Session list request params */
 export interface SessionsListParams {
   limit?: number;
   activeMinutes?: number;
   search?: string;
 }
 
-/** 会话历史请求参数 */
+/** Session history request params */
 export interface SessionsHistoryParams {
   sessionKey: string;
 }
 
-/** 会话删除请求参数 */
+/** Session delete request params */
 export interface SessionsDeleteParams {
   sessionKey: string;
 }
 
-/** 会话重置请求参数 */
+/** Session reset request params */
 export interface SessionsResetParams {
   sessionKey: string;
 }
 
-/** 恢复会话请求参数 */
+/** Session restore request params */
 export interface SessionsRestoreParams {
   sessionKey: string;
 }
 
-/** 聊天流事件 */
+/** Chat stream delta event */
 export interface ChatDeltaEvent {
   sessionId: string;
   delta: string;
   done: boolean;
-  /** 是否为用户取消 */
+  /** Whether the user cancelled */
   cancelled?: boolean;
 }
 
-/** 会话信息 */
+/** Session information */
 export interface SessionInfo {
   id: string;
   messageCount: number;
@@ -92,7 +92,7 @@ export interface SessionInfo {
   model: string;
 }
 
-/** 系统状态 */
+/** System status */
 export interface SystemStatus {
   version: string;
   uptime: number;
@@ -109,7 +109,7 @@ export interface SystemStatus {
   sessions: number;
 }
 
-/** 配置信息 */
+/** Configuration information */
 export interface ConfigInfo {
   providers: Record<string, ProviderConfigInfo>;
   channels: Record<string, ChannelConfigInfo>;
@@ -120,7 +120,7 @@ export interface ConfigInfo {
   skills: SkillsConfigInfo;
 }
 
-/** 提供商配置信息（脱敏） */
+/** Provider config info (redacted) */
 export interface ProviderConfigInfo {
   id: string;
   name?: string;
@@ -129,7 +129,7 @@ export interface ProviderConfigInfo {
   groupId?: string;
 }
 
-/** 通道配置信息（脱敏） */
+/** Channel config info (redacted) */
 export interface ChannelConfigInfo {
   id: string;
   name: string;
@@ -140,7 +140,7 @@ export interface ChannelConfigInfo {
   hasToken?: boolean;
 }
 
-/** Agent 配置信息 */
+/** Agent Configuration information */
 export interface AgentConfigInfo {
   defaultProvider: string;
   defaultModel: string;
@@ -149,18 +149,18 @@ export interface AgentConfigInfo {
   systemPrompt?: string;
 }
 
-/** 服务器配置信息 */
+/** Server config info */
 export interface ServerConfigInfo {
   port: number;
   host: string;
 }
 
-/** 日志配置信息 */
+/** Logging config info */
 export interface LoggingConfigInfo {
   level: "debug" | "info" | "warn" | "error";
 }
 
-/** 记忆系统配置信息 */
+/** Memory system config info */
 export interface MemoryConfigInfo {
   enabled?: boolean;
   directory?: string;
@@ -168,7 +168,7 @@ export interface MemoryConfigInfo {
   embeddingProvider?: string;
 }
 
-/** Skills 配置信息 */
+/** Skills Configuration information */
 export interface SkillsConfigInfo {
   enabled?: boolean;
   userDir?: string;
@@ -177,7 +177,7 @@ export interface SkillsConfigInfo {
   only?: string[];
 }
 
-/** 保存配置请求参数 */
+/** Save config request params */
 export interface ConfigSaveParams {
   providers?: Record<string, ProviderConfigInfo>;
   channels?: Record<string, ChannelConfigInfo & {
@@ -191,7 +191,7 @@ export interface ConfigSaveParams {
   skills?: SkillsConfigInfo;
 }
 
-/** 配置验证结果 */
+/** Config validation result */
 export interface ConfigValidateResult {
   valid: boolean;
   errors: string[];

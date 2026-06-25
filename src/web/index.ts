@@ -1,5 +1,5 @@
 /**
- * Web 模块 - WebChat 和 Control UI
+ * Web module - WebChat and Control UI
  */
 
 export * from "./types.js";

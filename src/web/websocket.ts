@@ -1,5 +1,5 @@
 /**
- * WebSocket 服务器 - 提供实时通信
+ * WebSocket server - real-time communication
  */
 
 import { WebSocketServer, WebSocket } from "ws";
@@ -139,18 +139,18 @@ function getRequestId(data: string): string | undefined {
   return undefined;
 }
 
-/** WebSocket 客户端 */
+/** WebSocket client */
 interface WsClient {
   id: string;
   ws: WebSocket;
-  sessionKey: string | null;  // null 表示尚未绑定 session
+  sessionKey: string | null;  // null means session not yet bound
   sessionId: string | null;
   lastPing: number;
-  /** 当前聊天请求的 AbortController，用于取消 */
+  /** AbortController for current chat, used for cancellation */
   currentAbortController: AbortController | null;
 }
 
-/** WebSocket 服务选项 */
+/** WebSocket server options */
 export interface WsServerOptions {
   server: HttpServer;
   agent: Agent;
@@ -160,7 +160,7 @@ export interface WsServerOptions {
   clientTimeout?: number;
 }
 
-/** WebSocket 服务器类 */
+/** WebSocket server class */
 export class WsServer {
   private wss: WebSocketServer;
   private clients = new Map<string, WsClient>();
@@ -187,17 +187,17 @@ export class WsServer {
       this.handleConnection(ws);
     });
 
-    // 心跳检测
+    // Heartbeat check
     setInterval(() => this.checkHeartbeat(), this.heartbeatInterval);
 
     logger.info("WebSocket server initialized");
   }
 
-  /** 处理新连接 */
+  /** Handle new connection */
   private async handleConnection(ws: WebSocket): Promise<void> {
     const clientId = generateId("client");
 
-    // 不立即创建 session，等待客户端发送 sessions.restore 或 chat.send 时再创建
+    // Don't create session immediately; wait for client to send sessions.restore or chat.send
     const client: WsClient = {
       id: clientId,
       ws,
@@ -210,7 +210,7 @@ export class WsServer {
     this.clients.set(clientId, client);
     logger.info({ clientId }, "Client connected");
 
-    // 发送欢迎消息 - 不包含 session 信息，等待客户端决定
+    // Send welcome message - no session info, wait for client to decide
     this.sendEvent(ws, "connected", {
       clientId,
       version: "1.0.0",
@@ -234,7 +234,7 @@ export class WsServer {
     });
   }
 
-  /** 处理消息 */
+  /** Handle message */
   private async handleMessage(client: WsClient, data: string): Promise<void> {
     try {
       const frame = parseRequestFrame(data);
@@ -252,7 +252,7 @@ export class WsServer {
     }
   }
 
-  /** 处理请求 */
+  /** Handle request */
   private async handleRequest(
     client: WsClient,
     frame: WsRequestFrame
@@ -334,11 +334,11 @@ export class WsServer {
 
   private async handleWeixinQR(): Promise<{ qrcode_url: string; qrcode: string } | { error: string }> {
     if (!this.weixinChannel) {
-      return { error: "个人微信通道未启用" };
+      return { error: "Personal WeChat channel not enabled" };
     }
     const result = await this.weixinChannel.getLoginQRCode();
     if (!result) {
-      return { error: "获取二维码失败" };
+      return { error: "Failed to get QR code" };
     }
     const qrcode_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.qrcodeImgContent)}`;
     return { qrcode_url, qrcode: result.qrcode };
@@ -350,15 +350,15 @@ export class WsServer {
     accountId?: string;
   }> {
     if (!this.weixinChannel) {
-      return { status: "error", message: "个人微信通道未启用" };
+      return { status: "error", message: "Personal WeChat channel not enabled" };
     }
     const result = await this.weixinChannel.checkQRStatus(params.qrcode);
     const statusMessages: Record<string, string> = {
-      wait: "等待扫码...",
-      confirmed: "登录成功！",
-      expired: "二维码已过期",
-      canceled: "用户取消登录",
-      denied: "用户拒绝登录",
+      wait: "Waiting for scan...",
+      confirmed: "Login successful!",
+      expired: "QR code expired",
+      canceled: "User cancelled login",
+      denied: "User denied login",
     };
     return {
       status: result.status,
@@ -367,7 +367,7 @@ export class WsServer {
     };
   }
 
-  /** 确保客户端有 session，如果没有则创建 */
+  /** Ensure client has a session; create if none */
   private async ensureSession(client: WsClient): Promise<void> {
     if (client.sessionKey && client.sessionId) {
       return;
@@ -383,20 +383,20 @@ export class WsServer {
     logger.info({ clientId: client.id, sessionKey, sessionId: session.sessionId }, "Session created");
   }
 
-  /** 处理聊天发送 */
+  /** Handle chat send */
   private async handleChatSend(
     client: WsClient,
     params: ChatSendParams
   ): Promise<{ messageId: string }> {
-    // 确保有 session
+    // Ensure session exists
     await this.ensureSession(client);
 
     const { message } = params;
     const messageId = generateId("msg");
     const store = getSessionStore();
 
-    // 构造消息上下文
-    // 使用 sessionKey 作为 senderId，确保会话恢复后 Agent 能找到历史上下文
+    // Construct message context
+    // Use sessionKey as senderId to ensure Agent can find history after session restore
     const stableSenderId = client.sessionKey!.replace("webchat:", "");
 
     logger.debug(
@@ -404,7 +404,7 @@ export class WsServer {
       "Chat send"
     );
 
-    // 保存用户消息到 transcript
+    // Save user message to transcript
     const userMessage: TranscriptMessage = {
       id: messageId,
       role: "user",
@@ -442,7 +442,7 @@ export class WsServer {
 
       client.currentAbortController = null;
 
-      // 保存助手消息到 transcript
+      // Save assistant message to transcript
       const assistantMessage: TranscriptMessage = {
         id: generateId("msg"),
         role: "assistant",
@@ -480,7 +480,7 @@ export class WsServer {
     return { messageId };
   }
 
-  /** 取消当前客户端的聊天请求 */
+  /** Cancel current client's chat request */
   private handleChatCancel(client: WsClient): { cancelled: boolean } {
     if (client.currentAbortController) {
       client.currentAbortController.abort();
@@ -490,18 +490,18 @@ export class WsServer {
     return { cancelled: false };
   }
 
-  /** 处理清除会话 */
+  /** Handle clear session */
   private async handleChatClear(client: WsClient): Promise<{ success: boolean; sessionKey: string; sessionId: string }> {
-    // 确保有 session
+    // Ensure session exists
     await this.ensureSession(client);
 
     const store = getSessionStore();
     const oldSessionKey = client.sessionKey!;
 
-    // 重置会话
+    // Reset session
     const newSession = await store.reset(client.sessionKey!);
 
-    // 更新客户端会话 ID 和 sessionKey
+    // Update client session ID and sessionKey
     client.sessionKey = newSession.sessionKey;
     client.sessionId = newSession.sessionId;
 
@@ -517,7 +517,7 @@ export class WsServer {
     };
   }
 
-  /** 处理会话列表 */
+  /** Handle session list */
   private async handleSessionsList(params?: SessionsListParams): Promise<unknown> {
     const store = getSessionStore();
     const sessions = await store.list({
@@ -528,7 +528,7 @@ export class WsServer {
     return { sessions };
   }
 
-  /** 处理获取会话历史 */
+  /** Handle get session history */
   private async handleSessionsHistory(params: SessionsHistoryParams): Promise<unknown> {
     const store = getSessionStore();
     const session = await store.get(params.sessionKey);
@@ -543,14 +543,14 @@ export class WsServer {
     };
   }
 
-  /** 处理删除会话 */
+  /** Handle delete session */
   private async handleSessionsDelete(params: SessionsDeleteParams): Promise<{ success: boolean }> {
     const store = getSessionStore();
     await store.delete(params.sessionKey);
     return { success: true };
   }
 
-  /** 处理重置会话 */
+  /** Handle reset session */
   private async handleSessionsReset(params: SessionsResetParams): Promise<unknown> {
     const store = getSessionStore();
     const session = await store.reset(params.sessionKey);
@@ -561,7 +561,7 @@ export class WsServer {
     };
   }
 
-  /** 处理恢复会话 */
+  /** Handle restore session */
   private async handleSessionsRestore(client: WsClient, params: SessionsRestoreParams): Promise<unknown> {
     const store = getSessionStore();
     const session = await store.get(params.sessionKey);
@@ -569,16 +569,16 @@ export class WsServer {
       throw new Error(`Session not found: ${params.sessionKey}`);
     }
 
-    // 更新客户端会话
+    // Update client session
     client.sessionKey = session.sessionKey;
     client.sessionId = session.sessionId;
 
-    // 加载历史消息
+    // Load history messages
     const messages = await store.loadTranscript(session.sessionId);
 
-    // 恢复 Agent 的会话上下文
-    // Agent 使用 "webchat:{senderId}" 作为 sessionKey，对于 direct chat
-    // senderId 从 sessionKey 中提取（去掉 "webchat:" 前缀）
+    // Restore Agent's session context
+    // Agent uses "webchat:{senderId}" as sessionKey for direct chat
+    // senderId extracted from sessionKey (remove "webchat:" prefix)
     const agentSessionKey = session.sessionKey; // webchat:session_xxx
     const transcriptMessages = messages
       .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
@@ -595,7 +595,7 @@ export class WsServer {
     };
   }
 
-  /** 获取系统状态 */
+  /** Get system status */
   private getSystemStatus(): SystemStatus {
     const providers = getAllProviders().map((p) => ({
       id: p.id,
@@ -605,8 +605,8 @@ export class WsServer {
 
     const channels = getAllChannels().map((c) => ({
       id: c.id,
-      name: c.id,  // 使用 id 作为 name
-      connected: true,  // 简化：假设已配置的通道都是连接的
+      name: c.id,  // Use id as name
+      connected: true,  // Simplification: assume configured channels are all connected
     }));
 
     return {
@@ -618,7 +618,7 @@ export class WsServer {
     };
   }
 
-  /** 获取会话信息 */
+  /** Get session info */
   private getSessionInfo(client: WsClient): unknown {
     const context = {
       channelId: "webchat" as const,
@@ -639,9 +639,9 @@ export class WsServer {
     };
   }
 
-  /** 获取配置信息（脱敏） */
+  /** Get config info (redacted) */
   private getConfigInfo(): ConfigInfo {
-    // 提供商信息（脱敏 API Key）
+    // Provider info (API key redacted)
     const providers: Record<string, ConfigInfo["providers"][string]> = {};
     for (const [id, config] of Object.entries(this.config.providers)) {
       providers[id] = {
@@ -653,10 +653,10 @@ export class WsServer {
       };
     }
 
-    // 通道信息（脱敏敏感字段）
+    // Channel info (redact sensitive fields)
     const channels: Record<string, ConfigInfo["channels"][string]> = {};
     const channelNames: Record<string, string> = {
-      weixin: "个人微信",
+      weixin: "Personal WeChat",
     };
     for (const [id, config] of Object.entries(this.config.channels)) {
       if (config) {
@@ -679,7 +679,7 @@ export class WsServer {
       }
     }
 
-    // Agent 配置
+    // Agent configuration
     const agent = {
       defaultProvider: this.config.agent.defaultProvider,
       defaultModel: this.config.agent.defaultModel,
@@ -688,18 +688,18 @@ export class WsServer {
       systemPrompt: this.config.agent.systemPrompt,
     };
 
-    // 服务器配置
+    // Server configuration
     const server = {
       port: this.config.server.port,
       host: this.config.server.host || "0.0.0.0",
     };
 
-    // 日志配置
+    // Logging configuration
     const logging = {
       level: this.config.logging.level,
     };
 
-    // 记忆系统配置
+    // Memory system configuration
     const memory = {
       enabled: this.config.memory?.enabled,
       directory: this.config.memory?.directory,
@@ -707,7 +707,7 @@ export class WsServer {
       embeddingProvider: this.config.memory?.embeddingProvider,
     };
 
-    // Skills 配置
+    // Skills configuration
     const skills = {
       enabled: this.config.skills?.enabled,
       userDir: this.config.skills?.userDir,
@@ -727,42 +727,42 @@ export class WsServer {
     };
   }
 
-  /** 验证配置 */
+  /** Validate config */
   private validateConfig(params: ConfigSaveParams): ConfigValidateResult {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // 验证提供商
+    // Validate providers
     if (params.providers) {
       let hasApiKey = false;
       for (const [id, p] of Object.entries(params.providers)) {
         if (p.hasApiKey) {
           hasApiKey = true;
         }
-        // 验证自定义 OpenAI/Anthropic 需要 baseUrl
+        // Validate custom OpenAI/Anthropic need baseUrl
         if (p.hasApiKey && (id === "custom-openai" || id === "custom-anthropic")) {
           if (!p.baseUrl) {
-            errors.push(`${id} 需要 baseUrl 配置`);
+            errors.push(`${id} requires baseUrl configuration`);
           }
         }
       }
       if (!hasApiKey && Object.keys(params.providers).length > 0) {
-        warnings.push("没有配置任何 API Key，将无法使用模型功能");
+        warnings.push("No API Key configured, model functions will be unavailable");
       }
     }
 
-    // 验证通道
+    // Validate channels
     if (params.channels) {
       for (const [id, c] of Object.entries(params.channels)) {
         if (c.hasConfig) {
           if (id === "weixin" && !c.hasConfig) {
-            errors.push("个人微信需要完成扫码登录");
+            errors.push("Personal WeChat requires QR scan login");
           }
         }
       }
     }
 
-    // 验证 Agent 配置
+    // Validate Agent configuration
     if (params.agent) {
       const validProviders = [
         "deepseek", "doubao", "minimax", "kimi", "stepfun", "modelscope",
@@ -770,28 +770,28 @@ export class WsServer {
         "together", "groq", "custom-openai", "custom-anthropic",
       ];
       if (params.agent.defaultProvider && !validProviders.includes(params.agent.defaultProvider)) {
-        errors.push(`无效的提供商: ${params.agent.defaultProvider}`);
+        errors.push(`Invalid provider: ${params.agent.defaultProvider}`);
       }
       if (params.agent.temperature !== undefined && (params.agent.temperature < 0 || params.agent.temperature > 2)) {
-        errors.push("temperature 必须在 0 到 2 之间");
+        errors.push("temperature must be between 0 and 2");
       }
       if (params.agent.maxTokens !== undefined && params.agent.maxTokens < 1) {
-        errors.push("maxTokens 必须大于 0");
+        errors.push("maxTokens must be greater than 0");
       }
     }
 
-    // 验证服务器配置
+    // Validate server configuration
     if (params.server) {
       if (params.server.port < 1 || params.server.port > 65535) {
-        errors.push("端口必须在 1 到 65535 之间");
+        errors.push("Port must be between 1 and 65535");
       }
     }
 
-    // 验证日志配置
+    // Validate logging configuration
     if (params.logging) {
       const validLevels = ["debug", "info", "warn", "error"];
       if (params.logging.level && !validLevels.includes(params.logging.level)) {
-        errors.push(`无效的日志级别: ${params.logging.level}`);
+        errors.push(`Invalid log level: ${params.logging.level}`);
       }
     }
 
@@ -802,21 +802,21 @@ export class WsServer {
     };
   }
 
-  /** 保存配置到文件 */
+  /** Save config to file */
   private async saveConfig(params: ConfigSaveParams): Promise<{ success: boolean; message: string; requiresRestart?: boolean }> {
     const vexDir = join(homedir(), ".vex");
     const configPath = join(vexDir, "config.local.json5");
 
-    // 验证配置
+    // Validate config
     const validation = this.validateConfig(params);
     if (!validation.valid) {
       return {
         success: false,
-        message: "配置验证失败: " + validation.errors.join("; "),
+        message: "Config validation failed: " + validation.errors.join("; "),
       };
     }
 
-    // 先读取现有配置，然后合并
+    // Read existing config first, then merge
     let existingConfig: Partial<VexConfig> = {};
     if (existsSync(configPath)) {
       try {
@@ -826,13 +826,13 @@ export class WsServer {
       }
     }
 
-    // 构建要保存的配置
+    // Build config to save
     const configToSave: Partial<VexConfig> = { ...existingConfig };
 
-    // 更新提供商
+    // Update providers
     if (params.providers) {
       const providers: VexConfig["providers"] = {};
-      // 保留原有的未修改的提供商
+      // Keep existing unmodified providers
       if (existingConfig.providers) {
         for (const [id, p] of Object.entries(existingConfig.providers)) {
           if (id && p) {
@@ -840,21 +840,21 @@ export class WsServer {
           }
         }
       }
-      // 更新/添加新的提供商
+      // Update/add new providers
       for (const [id, p] of Object.entries(params.providers)) {
         if (!id || !p.hasApiKey) {
-          // 删除提供商
+          // Remove provider
           delete providers[id];
           continue;
         }
-        // 从现有配置中获取 apiKey
+        // Get apiKey from existing config
         const existing = (existingConfig.providers as any)?.[id];
         providers[id] = {
           ...existing,
           baseUrl: p.baseUrl,
           ...(p.groupId ? { groupId: p.groupId } : {}),
         };
-        // 优先使用前端发送的 apiKey（新增时），否则保留原有 apiKey
+        // Prioritize frontend-sent apiKey (for new providers), otherwise keep existing
         const apiKey = (p as any).apiKey || existing?.apiKey;
         if (apiKey) {
           (providers[id] as any).apiKey = apiKey;
@@ -863,7 +863,7 @@ export class WsServer {
       configToSave.providers = providers;
     }
 
-    // 更新通道
+    // Update channels
     if (params.channels) {
       const channels: VexConfig["channels"] = {
         weixin: existingConfig.channels?.weixin,
@@ -886,7 +886,7 @@ export class WsServer {
       configToSave.channels = channels;
     }
 
-    // 更新 Agent 配置
+    // Update Agent configuration
     if (params.agent) {
       configToSave.agent = {
         ...existingConfig.agent,
@@ -895,7 +895,7 @@ export class WsServer {
       };
     }
 
-    // 更新服务器配置
+    // Update server configuration
     if (params.server) {
       configToSave.server = {
         ...existingConfig.server,
@@ -903,7 +903,7 @@ export class WsServer {
       };
     }
 
-    // 更新日志配置
+    // Update logging configuration
     if (params.logging) {
       configToSave.logging = {
         ...existingConfig.logging,
@@ -911,7 +911,7 @@ export class WsServer {
       };
     }
 
-    // 更新记忆系统配置
+    // Update memory system configuration
     if (params.memory) {
       configToSave.memory = {
         ...existingConfig.memory,
@@ -920,7 +920,7 @@ export class WsServer {
       };
     }
 
-    // 更新 Skills 配置
+    // Update Skills configuration
     if (params.skills) {
       configToSave.skills = {
         ...existingConfig.skills,
@@ -928,26 +928,26 @@ export class WsServer {
       };
     }
 
-    // 确保目录存在
+    // Ensure directory exists
     if (!existsSync(vexDir)) {
       mkdirSync(vexDir, { recursive: true });
     }
 
-    // 生成 JSON5 格式
+    // Generate JSON5 format
     const json5Content = this.generateJson5(configToSave);
 
-    // 写入文件
+    // Write file
     writeFileSync(configPath, json5Content, "utf-8");
 
     logger.info({ configPath }, "Configuration saved");
 
-    // 检查是否需要重启
+    // Check if restart required
     let requiresRestart = false;
     if (params.server?.port && params.server.port !== this.config.server.port) {
       requiresRestart = true;
     }
     if (params.channels) {
-      // 如果新增或删除了通道，需要重启
+      // If channels added or removed, restart required
       for (const [id, c] of Object.entries(params.channels)) {
         const existingHasConfig = Boolean((existingConfig.channels as any)?.[id]);
         if (c.hasConfig !== existingHasConfig) {
@@ -959,12 +959,12 @@ export class WsServer {
 
     return {
       success: true,
-      message: "配置已保存" + (requiresRestart ? "，需要重启服务才能生效" : ""),
+      message: "Configuration saved" + (requiresRestart ? ", restart required for changes to take effect" : ""),
       requiresRestart,
     };
   }
 
-  /** 生成 JSON5 格式的配置字符串 */
+  /** Generate JSON5 format config string */
   private generateJson5(obj: unknown, indent = 0): string {
     const spaces = "  ".repeat(indent);
     const innerSpaces = "  ".repeat(indent + 1);
@@ -992,7 +992,7 @@ export class WsServer {
       if (entries.length === 0) return "{}";
 
       const items = entries.map(([key, value]) => {
-        // 使用不带引号的 key（如果是有效的 ECMAScript 标识符）
+        // Use unquoted key (if valid ECMAScript identifier)
         const safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? key : `"${key}"`;
         return `${innerSpaces}${safeKey}: ${this.generateJson5(value, indent + 1)}`;
       });
@@ -1003,7 +1003,7 @@ export class WsServer {
     return String(obj);
   }
 
-  /** 发送响应 */
+  /** Send response */
   private sendResponse(
     ws: WebSocket,
     id: string,
@@ -1015,13 +1015,13 @@ export class WsServer {
     ws.send(JSON.stringify(frame));
   }
 
-  /** 发送事件 */
+  /** Send event */
   private sendEvent(ws: WebSocket, event: string, payload?: unknown): void {
     const frame: WsEventFrame = { type: "event", event, payload };
     ws.send(JSON.stringify(frame));
   }
 
-  /** 广播事件 */
+  /** Broadcast event */
   broadcast(event: string, payload?: unknown): void {
     const frame: WsEventFrame = { type: "event", event, payload };
     const data = JSON.stringify(frame);
@@ -1033,7 +1033,7 @@ export class WsServer {
     }
   }
 
-  /** 心跳检测 */
+  /** Heartbeat check */
   private checkHeartbeat(): void {
     const now = Date.now();
 
@@ -1048,7 +1048,7 @@ export class WsServer {
     }
   }
 
-  /** 关闭服务器 */
+  /** Close server */
   close(): void {
     for (const client of this.clients.values()) {
       client.ws.close();

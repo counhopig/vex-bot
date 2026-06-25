@@ -1,21 +1,21 @@
 /**
- * 工具函数
+ * Utility functions
  */
 
 import crypto from "crypto";
 
-/** 生成唯一 ID */
+/** Generate a unique ID */
 export function generateId(prefix?: string): string {
   const id = crypto.randomBytes(8).toString("hex");
   return prefix ? `${prefix}_${id}` : id;
 }
 
-/** 安全获取环境变量 */
+/** Safely get an environment variable */
 export function getEnvVar(name: string, defaultValue?: string): string | undefined {
   return process.env[name] ?? defaultValue;
 }
 
-/** 必需环境变量 */
+/** Require an environment variable */
 export function requireEnvVar(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -24,12 +24,12 @@ export function requireEnvVar(name: string): string {
   return value;
 }
 
-/** 延迟执行 */
+/** Delay execution */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** 重试执行 */
+/** Retry execution */
 export async function retry<T>(
   fn: () => Promise<T>,
   options: {
@@ -60,13 +60,13 @@ export async function retry<T>(
   throw lastError;
 }
 
-/** 截断字符串 */
+/** Truncate a string */
 export function truncate(str: string, maxLength: number, suffix = "..."): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - suffix.length) + suffix;
 }
 
-/** 安全 JSON 解析 */
+/** Safe JSON parse */
 export function safeJsonParse<T>(str: string, defaultValue: T): T {
   try {
     return JSON.parse(str) as T;
@@ -75,7 +75,7 @@ export function safeJsonParse<T>(str: string, defaultValue: T): T {
   }
 }
 
-/** 深度合并对象 */
+/** Deep merge objects */
 export function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial<T>): T {
   const result = { ...target };
 
@@ -103,17 +103,17 @@ export function deepMerge<T extends Record<string, unknown>>(target: T, source: 
   return result;
 }
 
-/** 计算 HMAC-SHA256 签名 */
+/** Compute HMAC-SHA256 signature */
 export function computeHmacSha256(secret: string, data: string): string {
   return crypto.createHmac("sha256", secret).update(data).digest("base64");
 }
 
-/** AES-256-CBC 解密 */
+/** AES-256-CBC decryption */
 export function aesDecrypt(key: string, encryptedData: string): string {
   const keyBuffer = crypto.createHash("sha256").update(key).digest();
   const encryptedBuffer = Buffer.from(encryptedData, "base64");
 
-  // 提取 IV (前 16 字节)
+  // Extract IV (first 16 bytes)
   const iv = encryptedBuffer.subarray(0, 16);
   const encrypted = encryptedBuffer.subarray(16);
 
@@ -124,17 +124,17 @@ export function aesDecrypt(key: string, encryptedData: string): string {
   return decrypted.toString("utf8");
 }
 
-/** 格式化时间戳 */
+/** Format a timestamp */
 export function formatTimestamp(ts: number): string {
   return new Date(ts).toISOString();
 }
 
-/** 判断是否为空对象 */
+/** Check if an object is empty */
 export function isEmpty(obj: Record<string, unknown>): boolean {
   return Object.keys(obj).length === 0;
 }
 
-/** 移除对象中的 undefined 值 */
+/** Remove undefined values from an object */
 export function removeUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   const result: Partial<T> = {};
   for (const [key, value] of Object.entries(obj)) {
