@@ -1,5 +1,5 @@
 /**
- * 内置工具 - 文件系统工具
+ * Built-in tools - File system tools
  */
 
 import { Type } from "@sinclair/typebox";
@@ -10,7 +10,7 @@ import { glob } from "glob";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { jsonResult, textResult, readStringParam, readNumberParam, readBooleanParam } from "../common.js";
 
-/** 文件系统工具选项 */
+/** File system tools options */
 export interface FilesystemToolsOptions {
   allowedPaths?: string[];
   maxFileSize?: number;
@@ -32,8 +32,8 @@ function isPathAllowed(filePath: string, allowedPaths: string[]): boolean {
 }
 
 /**
- * 解析路径的真实位置（跟随 symlink），用于防止越权。
- * 对于尚不存在的文件（如 write_file 创建新文件），解析其父目录的真实路径再拼回 basename。
+ * Resolve the real path (follow symlinks) to prevent path traversal.
+ * For non-existent files (e.g., write_file creating a new file), resolve the parent directory's real path and rejoin the basename.
  */
 async function resolveRealPath(filePath: string): Promise<string> {
   const abs = resolve(filePath);
@@ -51,7 +51,7 @@ async function resolveRealPath(filePath: string): Promise<string> {
 }
 
 /**
- * 与 isPathAllowed 相同，但跟随 symlink 后再校验，避免通过工作区内的 symlink 越权访问外部。
+ * Same as isPathAllowed, but follows symlinks before validating to prevent escaping allowed paths via symlinks within the workspace.
  */
 async function isRealPathAllowed(filePath: string, allowedPaths: string[]): Promise<boolean> {
   const real = await resolveRealPath(filePath);

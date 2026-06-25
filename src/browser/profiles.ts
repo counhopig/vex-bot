@@ -1,8 +1,8 @@
 /**
- * Chrome 配置文件管理
+ * Chrome profile management
  *
- * 参考 moltbot 的 profiles.ts 和 chrome.profile-decoration.ts 实现
- * 支持多配置文件管理、端口分配、目录隔离
+ * Based on moltbot's profiles.ts and chrome.profile-decoration.ts implementation
+ * Supports multi-profile management, port allocation, directory isolation
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from "fs";
@@ -12,30 +12,30 @@ import json5 from "json5";
 import type { BrowserProfile, BrowserConfig } from "./types.js";
 import { CDP_PORT_RANGE_START, CDP_PORT_RANGE_END, PROFILE_COLORS, DEFAULT_BROWSER_CONFIG } from "./types.js";
 
-/** 配置文件名正则 */
+/** Profile name regex */
 const PROFILE_NAME_REGEX = /^[a-z0-9][a-z0-9-]*$/;
 
-/** 默认浏览器数据目录 */
+/** Default browser data directory */
 const BROWSER_DATA_DIR = join(homedir(), ".vex", "browser");
 
-/** 配置文件存储路径 */
+/** Profile data store path */
 const PROFILES_STORE_PATH = join(BROWSER_DATA_DIR, "profiles.json");
 
-/** 配置文件数据存储 */
+/** Profile data store */
 interface ProfilesStore {
   version: 1;
   profiles: Record<string, BrowserProfile>;
 }
 
 /**
- * 验证配置文件名是否合法
+ * Validate profile name format
  */
 export function isValidProfileName(name: string): boolean {
   return PROFILE_NAME_REGEX.test(name) && name.length <= 32;
 }
 
 /**
- * 分配 CDP 端口
+ * Allocate a CDP port
  */
 export function allocateCdpPort(usedPorts: Set<number>): number | null {
   for (let port = CDP_PORT_RANGE_START; port <= CDP_PORT_RANGE_END; port++) {
@@ -47,7 +47,7 @@ export function allocateCdpPort(usedPorts: Set<number>): number | null {
 }
 
 /**
- * 分配配置文件颜色
+ * Allocate a profile color
  */
 export function allocateColor(usedColors: Set<string>): string {
   for (const color of PROFILE_COLORS) {
@@ -59,7 +59,7 @@ export function allocateColor(usedColors: Set<string>): string {
 }
 
 /**
- * 加载配置文件存储
+ * Load profile data store
  */
 export function loadProfilesStore(): ProfilesStore {
   if (!existsSync(PROFILES_STORE_PATH)) {
@@ -74,7 +74,7 @@ export function loadProfilesStore(): ProfilesStore {
 }
 
 /**
- * 保存配置文件存储 (原子写入)
+ * Save profile data store (atomic write)
  */
 export function saveProfilesStore(store: ProfilesStore): void {
   mkdirSync(BROWSER_DATA_DIR, { recursive: true });
@@ -87,14 +87,14 @@ export function saveProfilesStore(store: ProfilesStore): void {
 }
 
 /**
- * 获取配置文件的用户数据目录
+ * Get the user data directory for a profile
  */
 export function getProfileDataDir(profileName: string): string {
   return join(BROWSER_DATA_DIR, "profiles", profileName);
 }
 
 /**
- * 配置文件管理器
+ * Profile manager
  */
 export class ProfileManager {
   private store: ProfilesStore;
@@ -103,37 +103,37 @@ export class ProfileManager {
     this.store = loadProfilesStore();
   }
 
-  /** 重新加载存储 */
+  /** Reload the store */
   reload(): void {
     this.store = loadProfilesStore();
   }
 
-  /** 列出所有配置文件 */
+  /** List all profiles */
   list(): BrowserProfile[] {
     return Object.values(this.store.profiles);
   }
 
-  /** 获取指定配置文件 */
+  /** Get a specific profile */
   get(name: string): BrowserProfile | undefined {
     return this.store.profiles[name];
   }
 
-  /** 获取默认配置文件 */
+  /** Get the default profile */
   getDefault(): BrowserProfile {
-    // 先找 isDefault 的
+    // Try finding an isDefault one first
     const defaultProfile = Object.values(this.store.profiles).find(p => p.isDefault);
     if (defaultProfile) return defaultProfile;
 
-    // 找名为 "default" 的
+    // Try finding one named "default"
     if (this.store.profiles["default"]) {
       return this.store.profiles["default"];
     }
 
-    // 没有任何配置文件，创建默认的
+    // No profiles exist, create a default one
     return this.create({ name: "default", isDefault: true });
   }
 
-  /** 创建配置文件 */
+  /** Create a profile */
   create(params: {
     name: string;
     color?: string;
@@ -150,18 +150,18 @@ export class ProfileManager {
       throw new Error(`Profile "${name}" already exists`);
     }
 
-    // 分配端口
+    // Allocate port
     const usedPorts = new Set(Object.values(this.store.profiles).map(p => p.cdpPort));
     const cdpPort = params.cdpPort ?? allocateCdpPort(usedPorts);
     if (!cdpPort) {
       throw new Error("No available CDP ports");
     }
 
-    // 分配颜色
+    // Allocate color
     const usedColors = new Set(Object.values(this.store.profiles).map(p => p.color).filter(Boolean) as string[]);
     const profileColor = color ?? allocateColor(usedColors);
 
-    // 创建用户数据目录
+    // Create user data directory
     const userDataDir = getProfileDataDir(name);
     mkdirSync(userDataDir, { recursive: true });
 
@@ -174,7 +174,7 @@ export class ProfileManager {
       createdAt: Date.now(),
     };
 
-    // 如果设为默认，清除其他默认标记
+    // If set as default, clear other default markers
     if (isDefault) {
       for (const p of Object.values(this.store.profiles)) {
         p.isDefault = false;
@@ -187,18 +187,18 @@ export class ProfileManager {
     return profile;
   }
 
-  /** 删除配置文件 */
+  /** Delete a profile */
   delete(name: string): boolean {
     const profile = this.store.profiles[name];
     if (!profile) return false;
 
-    // 删除用户数据目录
+    // Delete user data directory
     const dataDir = getProfileDataDir(name);
     if (existsSync(dataDir)) {
       try {
         rmSync(dataDir, { recursive: true, force: true });
       } catch {
-        // 忽略删除失败
+        // Ignore deletion failure
       }
     }
 
@@ -208,7 +208,7 @@ export class ProfileManager {
     return true;
   }
 
-  /** 设置默认配置文件 */
+  /** Set a profile as default */
   setDefault(name: string): boolean {
     const profile = this.store.profiles[name];
     if (!profile) return false;
@@ -221,14 +221,14 @@ export class ProfileManager {
     return true;
   }
 
-  /** 重置配置文件数据 */
+  /** Reset profile data */
   reset(name: string): boolean {
     const profile = this.store.profiles[name];
     if (!profile) return false;
 
     const dataDir = getProfileDataDir(name);
     if (existsSync(dataDir)) {
-      // 移动到回收站目录
+      // Move to trash directory
       const trashDir = join(BROWSER_DATA_DIR, "trash");
       mkdirSync(trashDir, { recursive: true });
       const trashPath = join(trashDir, `${name}-${Date.now()}`);
@@ -239,7 +239,7 @@ export class ProfileManager {
       }
     }
 
-    // 重新创建空目录
+    // Re-create an empty directory
     mkdirSync(dataDir, { recursive: true });
     return true;
   }

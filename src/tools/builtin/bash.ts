@@ -1,5 +1,5 @@
 /**
- * 内置工具 - Bash 命令执行工具
+ * Built-in tool - Bash command execution tool
  */
 
 import { Type } from "@sinclair/typebox";

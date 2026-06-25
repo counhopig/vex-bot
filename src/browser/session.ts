@@ -1,8 +1,8 @@
 /**
- * 浏览器会话管理
+ * Browser session management
  *
- * 参考 moltbot 的 pw-session.ts 实现
- * 管理浏览器实例的生命周期、页面状态追踪
+ * Based on moltbot's pw-session.ts implementation
+ * Manages browser instance lifecycle and page state tracking
  */
 
 import type {
@@ -16,13 +16,13 @@ import type {
 } from "./types.js";
 import { getProfileDataDir, ProfileManager } from "./profiles.js";
 
-/** 活跃会话 */
+/** Active sessions */
 const activeSessions = new Map<string, BrowserSessionState>();
 
-/** Playwright 模块缓存 */
+/** Playwright module cache */
 let playwrightModule: any = null;
 
-/** 延迟加载 Playwright */
+/** Lazy-load Playwright */
 async function getPlaywright() {
   if (!playwrightModule) {
     try {
@@ -35,7 +35,7 @@ async function getPlaywright() {
 }
 
 /**
- * 启动浏览器会话
+ * Start a browser session
  */
 export async function startSession(options: {
   profileName?: string;
@@ -52,13 +52,13 @@ export async function startSession(options: {
     executablePath,
   } = options;
 
-  // 检查是否已有该配置文件的会话
+  // Check if a session already exists for this profile
   const existing = activeSessions.get(profileName);
   if (existing) {
     return existing;
   }
 
-  // 获取或创建配置文件
+  // Get or create profile
   const manager = new ProfileManager();
   let profile = manager.get(profileName);
   if (!profile) {
@@ -80,10 +80,10 @@ export async function startSession(options: {
     launchOptions.executablePath = executablePath;
   }
 
-  // 设置用户数据目录
+  // Set user data directory
   const userDataDir = getProfileDataDir(profileName);
 
-  // 使用 launchPersistentContext 以支持持久化配置
+  // Use launchPersistentContext for persistent profile support
   const context = await playwright.chromium.launchPersistentContext(userDataDir, {
     ...launchOptions,
     viewport: { width: viewportWidth, height: viewportHeight },
@@ -107,7 +107,7 @@ export async function startSession(options: {
     networkRequests: [],
   };
 
-  // 监听页面事件
+  // Observe page events
   observePage(page, session);
 
   activeSessions.set(profileName, session);
@@ -115,12 +115,12 @@ export async function startSession(options: {
 }
 
 /**
- * 监听页面事件 (控制台、错误、网络)
+ * Observe page events (console, errors, network)
  */
 function observePage(page: any, session: BrowserSessionState): void {
   const maxLogs = 100;
 
-  // 控制台日志
+  // Console log
   page.on("console", (msg: any) => {
     const entry: ConsoleLogEntry = {
       type: msg.type() as ConsoleLogEntry["type"],
@@ -133,7 +133,7 @@ function observePage(page: any, session: BrowserSessionState): void {
     }
   });
 
-  // 页面错误
+  // Page errors
   page.on("pageerror", (error: any) => {
     const entry: PageError = {
       message: error.message || String(error),
@@ -146,7 +146,7 @@ function observePage(page: any, session: BrowserSessionState): void {
     }
   });
 
-  // 网络请求
+  // Network requests
   page.on("response", (response: any) => {
     const request: NetworkRequest = {
       url: response.url(),
@@ -162,14 +162,14 @@ function observePage(page: any, session: BrowserSessionState): void {
 }
 
 /**
- * 获取活跃会话
+ * Get an active session
  */
 export function getSession(profileName = "default"): BrowserSessionState | undefined {
   return activeSessions.get(profileName);
 }
 
 /**
- * 获取或抛出活跃会话
+ * Get an active session or throw
  */
 export function requireSession(profileName = "default"): BrowserSessionState {
   const session = activeSessions.get(profileName);
@@ -180,7 +180,7 @@ export function requireSession(profileName = "default"): BrowserSessionState {
 }
 
 /**
- * 停止浏览器会话
+ * Stop a browser session
  */
 export async function stopSession(profileName = "default"): Promise<boolean> {
   const session = activeSessions.get(profileName);
@@ -190,7 +190,7 @@ export async function stopSession(profileName = "default"): Promise<boolean> {
     const context = session.context as any;
     await context.close();
   } catch {
-    // 忽略关闭错误
+    // Ignore close errors
   }
 
   activeSessions.delete(profileName);
@@ -198,7 +198,7 @@ export async function stopSession(profileName = "default"): Promise<boolean> {
 }
 
 /**
- * 停止所有会话
+ * Stop all sessions
  */
 export async function stopAllSessions(): Promise<void> {
   const profileNames = Array.from(activeSessions.keys());
@@ -208,7 +208,7 @@ export async function stopAllSessions(): Promise<void> {
 }
 
 /**
- * 列出所有活跃会话
+ * List all active sessions
  */
 export function listActiveSessions(): Array<{
   profileName: string;
@@ -239,7 +239,7 @@ export function listActiveSessions(): Array<{
 }
 
 /**
- * 通过 ref 获取元素定位器
+ * Get an element locator by ref
  */
 export function getRefLocator(page: any, ref: string, session: BrowserSessionState): any {
   const normalized = ref.startsWith("@")
@@ -261,12 +261,12 @@ export function getRefLocator(page: any, ref: string, session: BrowserSessionSta
     return info.nth !== undefined ? locator.nth(info.nth) : locator;
   }
 
-  // CSS 选择器后备
+  // CSS selector fallback
   return page.locator(ref);
 }
 
 /**
- * 解析 ARIA 快照，生成元素引用
+ * Parse an ARIA snapshot to generate element references
  */
 export function parseAriaSnapshot(snapshot: string): RefMap {
   const refs: RefMap = new Map();
@@ -311,7 +311,7 @@ export function parseAriaSnapshot(snapshot: string): RefMap {
 }
 
 /**
- * 生成带 ref 标记的快照文本
+ * Generate ref-tagged snapshot text
  */
 export function generateRefSnapshot(refs: RefMap): string {
   const lines: string[] = [];
@@ -324,7 +324,7 @@ export function generateRefSnapshot(refs: RefMap): string {
 }
 
 /**
- * 获取页面调试信息
+ * Get page debug information
  */
 export function getSessionDebugInfo(profileName = "default"): {
   consoleLogs: ConsoleLogEntry[];

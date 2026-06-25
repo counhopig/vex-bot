@@ -1,20 +1,20 @@
 /**
- * 截图功能增强
+ * Screenshot enhancement features
  *
- * 参考 moltbot 的 screenshot.ts 和 pw-tools-core.snapshot.ts 实现
- * 支持截图压缩、带标签截图等功能
+ * Based on moltbot's screenshot.ts and pw-tools-core.snapshot.ts implementation
+ * Supports screenshot compression, labeled screenshots, and more
  */
 
 import type { ScreenshotOptions, ScreenshotResult, SnapshotOptions, SnapshotResult } from "./types.js";
 import { requireSession, getRefLocator, parseAriaSnapshot } from "./session.js";
 
-/** 默认截图最大边长 */
+/** Default maximum screenshot side length */
 const DEFAULT_MAX_SIDE = 2000;
-/** 默认截图最大字节数 */
+/** Default maximum screenshot bytes */
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
- * 规范化截图 - 压缩以符合 AI 模型限制
+ * Normalize screenshot - compress to fit AI model limits
  */
 export async function normalizeScreenshot(
   buffer: Buffer,
@@ -26,7 +26,7 @@ export async function normalizeScreenshot(
   const maxSide = options?.maxSide ?? DEFAULT_MAX_SIDE;
   const maxBytes = options?.maxBytes ?? DEFAULT_MAX_BYTES;
 
-  // 如果已满足要求，直接返回
+  // If already within limits, return as-is
   if (buffer.byteLength <= maxBytes) {
     return {
       buffer,
@@ -35,9 +35,9 @@ export async function normalizeScreenshot(
     };
   }
 
-  // 尝试使用 sharp 压缩 (如果可用)
+  // Try compressing with sharp (if available)
   try {
-    // @ts-ignore - sharp 是可选依赖
+    // @ts-ignore - sharp is an optional dependency
     const sharpModule = await import("sharp");
     const sharp = sharpModule.default;
     const metadata = await sharp(buffer).metadata();
@@ -45,9 +45,9 @@ export async function normalizeScreenshot(
     const height = metadata.height || 720;
     const maxDim = Math.max(width, height);
 
-    // 质量梯度
+    // Quality gradient
     const qualities = [85, 75, 65, 55, 45, 35];
-    // 尺寸梯度
+    // Size gradient
     const sideSteps = [maxSide, 1800, 1600, 1400, 1200, 1000, 800];
 
     for (const targetSide of sideSteps) {
@@ -74,7 +74,7 @@ export async function normalizeScreenshot(
       }
     }
 
-    // 最后尝试：最低质量
+    // Last resort: lowest quality
     const result = await sharp(buffer)
       .resize(800, 600, { fit: "inside" })
       .jpeg({ quality: 30 })
@@ -87,7 +87,7 @@ export async function normalizeScreenshot(
       compressed: true,
     };
   } catch {
-    // sharp 不可用，返回原图
+    // sharp not available, return original
     return {
       buffer,
       contentType: "image/png",
@@ -97,7 +97,7 @@ export async function normalizeScreenshot(
 }
 
 /**
- * 截取页面或元素截图
+ * Take a screenshot of a page or element
  */
 export async function takeScreenshot(
   options?: ScreenshotOptions,
@@ -126,17 +126,17 @@ export async function takeScreenshot(
     const locator = page.locator(selector).first();
     buffer = await locator.screenshot({ type: format, quality });
   } else if (withLabels && session.refs.size > 0) {
-    // 带标签截图
+    // Labeled screenshot
     buffer = await takeScreenshotWithLabels(page, session, maxLabels, format);
   } else {
     buffer = await page.screenshot({ fullPage, type: format, quality });
   }
 
-  // 规范化截图
+  // Normalize screenshot
   return normalizeScreenshot(buffer);
 }
 
-/** 元素位置信息 */
+/** Element box position information */
 interface BoxInfo {
   ref: string;
   x: number;
@@ -146,7 +146,7 @@ interface BoxInfo {
 }
 
 /**
- * 带标签截图 - 在交互元素上绘制引用标签
+ * Labeled screenshot - draws reference labels on interactive elements
  */
 async function takeScreenshotWithLabels(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,7 +159,7 @@ async function takeScreenshotWithLabels(
   const refsArray = Array.from(session.refs.entries() as Iterable<[string, { role: string; name?: string; nth?: number }]>);
   const refs = refsArray.slice(0, maxLabels);
 
-  // 收集元素位置
+  // Collect element positions
   const boxes: BoxInfo[] = [];
 
   for (const [ref, info] of refs) {
@@ -175,14 +175,14 @@ async function takeScreenshotWithLabels(
         boxes.push({ ref, x: box.x, y: box.y, width: box.width, height: box.height });
       }
     } catch {
-      // 忽略获取位置失败的元素
+      // Ignore elements whose positions could not be obtained
     }
   }
 
-  // 在页面上注入标签 (使用字符串形式的函数避免 DOM 类型问题)
+  // Inject labels into the page (use string form to avoid DOM type issues)
   await page.evaluate(`
     (function(boxes) {
-      // 移除旧标签
+      // Remove old labels
       var oldRoot = document.querySelector("[data-vex-labels]");
       if (oldRoot) oldRoot.remove();
 
@@ -192,12 +192,12 @@ async function takeScreenshotWithLabels(
 
       for (var i = 0; i < boxes.length; i++) {
         var box = boxes[i];
-        // 边框
+        // Border
         var border = document.createElement("div");
         border.style.cssText = "position:fixed;left:" + box.x + "px;top:" + box.y + "px;width:" + box.width + "px;height:" + box.height + "px;border:2px solid #ffb020;box-sizing:border-box;pointer-events:none";
         root.appendChild(border);
 
-        // 标签
+        // Label
         var label = document.createElement("div");
         label.textContent = box.ref;
         label.style.cssText = "position:fixed;left:" + box.x + "px;top:" + Math.max(0, box.y - 16) + "px;background:#ffb020;color:#000;font:bold 10px sans-serif;padding:1px 3px;border-radius:2px;pointer-events:none";
@@ -208,10 +208,10 @@ async function takeScreenshotWithLabels(
     })(${JSON.stringify(boxes)})
   `);
 
-  // 截图
+  // Take screenshot
   const buffer = await page.screenshot({ type: format });
 
-  // 移除标签
+  // Remove labels
   await page.evaluate(`
     (function() {
       var root = document.querySelector("[data-vex-labels]");
@@ -223,7 +223,7 @@ async function takeScreenshotWithLabels(
 }
 
 /**
- * 获取页面快照
+ * Get a page snapshot
  */
 export async function getPageSnapshot(
   options?: SnapshotOptions,
@@ -241,12 +241,12 @@ export async function getPageSnapshot(
   const title = await page.title();
   const url = page.url();
 
-  // 尝试使用 ariaSnapshot API
+  // Try using ariaSnapshot API
   let ariaSnapshot = "";
   try {
     ariaSnapshot = await page.locator(selector).ariaSnapshot();
   } catch {
-    // 不支持 ariaSnapshot，使用传统方式
+    // ariaSnapshot not supported, fall back to traditional method
   }
 
   if (ariaSnapshot) {
@@ -254,7 +254,7 @@ export async function getPageSnapshot(
     session.refs = refs;
     session.refsMode = "role";
 
-    // 截断
+    // Truncate
     const truncated = ariaSnapshot.length > maxChars;
     const truncatedSnapshot = truncated
       ? ariaSnapshot.slice(0, maxChars) + "\n...[truncated]"
@@ -270,7 +270,7 @@ export async function getPageSnapshot(
     };
   }
 
-  // 传统方式：提取可交互元素 (使用字符串形式避免 DOM 类型问题)
+  // Traditional method: extract interactive elements (use string form to avoid DOM type issues)
   const elements = await page.evaluate(`
     (function() {
       var result = [];
@@ -306,7 +306,7 @@ export async function getPageSnapshot(
     id: string;
   }>;
 
-  // 更新 refs
+  // Update refs
   session.refs.clear();
   for (const el of elements) {
     session.refs.set(el.ref, {

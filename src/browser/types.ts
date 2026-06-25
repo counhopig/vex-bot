@@ -1,50 +1,50 @@
 /**
- * 浏览器模块类型定义
+ * Browser module type definitions
  */
 
-/** 浏览器配置文件 */
+/** Browser profile */
 export interface BrowserProfile {
-  /** 配置文件名称 */
+  /** Profile name */
   name: string;
-  /** CDP 调试端口 */
+  /** CDP debug port */
   cdpPort: number;
-  /** 用户数据目录路径 */
+  /** User data directory path */
   userDataDir: string;
-  /** 主题颜色 (十六进制) */
+  /** Theme color (hexadecimal) */
   color?: string;
-  /** 是否为默认配置文件 */
+  /** Whether it is the default profile */
   isDefault?: boolean;
-  /** 创建时间 */
+  /** Creation time */
   createdAt?: number;
 }
 
-/** 浏览器配置 */
+/** Browser configuration */
 export interface BrowserConfig {
-  /** 是否启用浏览器控制 */
+  /** Whether browser control is enabled */
   enabled: boolean;
-  /** 是否以无头模式运行 */
+  /** Whether to run in headless mode */
   headless: boolean;
-  /** 默认配置文件名称 */
+  /** Default profile name */
   defaultProfile: string;
-  /** 配置文件列表 */
+  /** Profile list */
   profiles: Record<string, Partial<BrowserProfile>>;
-  /** Chrome 可执行文件路径 (可选) */
+  /** Chrome executable path (optional) */
   executablePath?: string;
-  /** 默认视口宽度 */
+  /** Default viewport width */
   viewportWidth: number;
-  /** 默认视口高度 */
+  /** Default viewport height */
   viewportHeight: number;
-  /** 默认超时时间 (毫秒) */
+  /** Default timeout (milliseconds) */
   defaultTimeout: number;
-  /** 截图最大边长 */
+  /** Screenshot maximum side length */
   screenshotMaxSide: number;
-  /** 截图最大字节数 */
+  /** Screenshot maximum bytes */
   screenshotMaxBytes: number;
-  /** 快照最大字符数 */
+  /** Snapshot maximum characters */
   snapshotMaxChars: number;
 }
 
-/** 默认浏览器配置 */
+/** Default browser configuration */
 export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
   enabled: true,
   headless: true,
@@ -58,11 +58,11 @@ export const DEFAULT_BROWSER_CONFIG: BrowserConfig = {
   snapshotMaxChars: 80000,
 };
 
-/** CDP 端口范围 */
+/** CDP port range */
 export const CDP_PORT_RANGE_START = 19800;
 export const CDP_PORT_RANGE_END = 19899;
 
-/** 配置文件颜色预设 */
+/** Profile color presets */
 export const PROFILE_COLORS = [
   "#FF4500", // Orange-red
   "#0066CC", // Blue
@@ -76,74 +76,74 @@ export const PROFILE_COLORS = [
   "#2F4F4F", // Dark slate
 ];
 
-/** 浏览器标签页信息 */
+/** Browser tab information */
 export interface BrowserTab {
-  /** 目标 ID */
+  /** Target ID */
   targetId: string;
-  /** 页面标题 */
+  /** Page title */
   title: string;
-  /** 页面 URL */
+  /** Page URL */
   url: string;
-  /** WebSocket 调试 URL */
+  /** WebSocket debug URL */
   wsUrl?: string;
-  /** 目标类型 */
+  /** Target type */
   type?: string;
 }
 
-/** 元素引用信息 */
+/** Element reference information */
 export interface ElementRef {
-  /** 角色 */
+  /** Role */
   role: string;
-  /** 名称 */
+  /** Name */
   name?: string;
-  /** 第 n 个相同角色+名称的元素 (从 0 开始) */
+  /** Nth element with the same role+name (0-based) */
   nth?: number;
 }
 
-/** 元素引用映射 */
+/** Element reference mapping */
 export type RefMap = Map<string, ElementRef>;
 
-/** 浏览器会话状态 */
+/** Browser session state */
 export interface BrowserSessionState {
-  /** 配置文件名称 */
+  /** Profile name */
   profileName: string;
-  /** Playwright Browser 实例 */
+  /** Playwright Browser instance */
   browser: unknown;
-  /** Playwright BrowserContext 实例 */
+  /** Playwright BrowserContext instance */
   context: unknown;
-  /** 当前活动页面 */
+  /** Current active page */
   page: unknown;
-  /** 元素引用映射 */
+  /** Element reference mapping */
   refs: RefMap;
-  /** 引用模式 */
+  /** Reference mode */
   refsMode: "aria" | "role";
-  /** 是否以无头模式运行 */
+  /** Whether to run in headless mode */
   headless: boolean;
-  /** 启动时间 */
+  /** Start time */
   startedAt: number;
-  /** 控制台日志 */
+  /** Console logs */
   consoleLogs: ConsoleLogEntry[];
-  /** 页面错误 */
+  /** Page errors */
   pageErrors: PageError[];
-  /** 网络请求记录 */
+  /** Network request records */
   networkRequests: NetworkRequest[];
 }
 
-/** 控制台日志条目 */
+/** Console log entry */
 export interface ConsoleLogEntry {
   type: "log" | "info" | "warn" | "error" | "debug";
   text: string;
   timestamp: number;
 }
 
-/** 页面错误 */
+/** Page error */
 export interface PageError {
   message: string;
   stack?: string;
   timestamp: number;
 }
 
-/** 网络请求记录 */
+/** Network request record */
 export interface NetworkRequest {
   url: string;
   method: string;
@@ -151,65 +151,65 @@ export interface NetworkRequest {
   timestamp: number;
 }
 
-/** 截图选项 */
+/** Screenshot options */
 export interface ScreenshotOptions {
-  /** 是否全页面截图 */
+  /** Whether to take a full-page screenshot */
   fullPage?: boolean;
-  /** 元素引用 */
+  /** Element reference */
   ref?: string;
-  /** CSS 选择器 */
+  /** CSS selector */
   selector?: string;
-  /** 图片格式 */
+  /** Image format */
   format?: "png" | "jpeg";
-  /** JPEG 质量 (0-100) */
+  /** JPEG quality (0-100) */
   quality?: number;
-  /** 是否绘制元素标签 */
+  /** Whether to draw element labels */
   withLabels?: boolean;
-  /** 最大标签数量 */
+  /** Maximum number of labels */
   maxLabels?: number;
 }
 
-/** 截图结果 */
+/** Screenshot result */
 export interface ScreenshotResult {
-  /** 图片 Buffer */
+  /** Image buffer */
   buffer: Buffer;
-  /** 内容类型 */
+  /** Content type */
   contentType: "image/png" | "image/jpeg";
-  /** 原始尺寸 */
+  /** Original size */
   originalSize?: { width: number; height: number };
-  /** 是否被压缩 */
+  /** Whether it was compressed */
   compressed?: boolean;
-  /** 绘制的标签数量 */
+  /** Number of labels drawn */
   labelsDrawn?: number;
 }
 
-/** 快照选项 */
+/** Snapshot options */
 export interface SnapshotOptions {
-  /** 最大字符数 */
+  /** Maximum characters */
   maxChars?: number;
-  /** 选择器 (默认 body) */
+  /** Selector (default body) */
   selector?: string;
-  /** 是否包含静态内容 */
+  /** Whether to include static content */
   includeStatic?: boolean;
 }
 
-/** 快照结果 */
+/** Snapshot result */
 export interface SnapshotResult {
-  /** 页面 URL */
+  /** Page URL */
   url: string;
-  /** 页面标题 */
+  /** Page title */
   title: string;
-  /** ARIA 快照文本 */
+  /** ARIA snapshot text */
   ariaSnapshot?: string;
-  /** 元素引用映射 */
+  /** Element reference mapping */
   refs: RefMap;
-  /** 元素数量 */
+  /** Number of elements */
   elementsCount: number;
-  /** 是否被截断 */
+  /** Whether it was truncated */
   truncated?: boolean;
 }
 
-/** 浏览器操作请求 */
+/** Browser action request */
 export type BrowserAction =
   | { kind: "click"; ref: string; doubleClick?: boolean; button?: "left" | "right" | "middle"; modifiers?: string[] }
   | { kind: "type"; ref: string; text: string; slowly?: boolean; submit?: boolean }
@@ -223,7 +223,7 @@ export type BrowserAction =
   | { kind: "evaluate"; code: string; ref?: string }
   | { kind: "close" };
 
-/** 浏览器操作结果 */
+/** Browser action result */
 export interface BrowserActionResult {
   success: boolean;
   action: string;

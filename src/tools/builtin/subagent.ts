@@ -1,5 +1,5 @@
 /**
- * 子 Agent 工具
+ * Sub-agent tool
  */
 
 import { Type } from "@sinclair/typebox";

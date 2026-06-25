@@ -1,5 +1,5 @@
 /**
- * 工具系统主导出
+ * Tool system main export
  */
 
 export * from "./types.js";

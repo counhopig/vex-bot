@@ -1,5 +1,5 @@
 /**
- * 内置工具 - 网络搜索和获取
+ * Built-in tools - Web search and fetch
  */
 
 import { Type } from "@sinclair/typebox";
@@ -16,11 +16,11 @@ const DEFAULT_SEARCH_COUNT = 5;
 const MAX_SEARCH_COUNT = 10;
 const DEFAULT_TIMEOUT_MS = 30000;
 
-/** 搜索结果缓存 */
+/** Search result cache */
 const searchCache = new Map<string, { data: unknown; timestamp: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5分钟
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
-/** Brave Search 返回结构 */
+/** Brave Search response structure */
 type BraveSearchResult = {
   title?: string;
   url?: string;
@@ -34,12 +34,12 @@ type BraveSearchResponse = {
   };
 };
 
-/** 获取 API Key */
+/** Get API key */
 function getSearchApiKey(): string | undefined {
   return process.env.BRAVE_API_KEY?.trim() || undefined;
 }
 
-/** 从 URL 提取站点名称 */
+/** Extract site name from URL */
 function extractSiteName(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
@@ -49,12 +49,12 @@ function extractSiteName(url: string | undefined): string | undefined {
   }
 }
 
-/** 生成缓存 Key */
+/** Generate cache key */
 function generateCacheKey(query: string, count: number, country?: string): string {
   return `${query}:${count}:${country || "default"}`.toLowerCase();
 }
 
-/** 读取缓存 */
+/** Read from cache */
 function readCache(key: string): unknown | undefined {
   const entry = searchCache.get(key);
   if (!entry) return undefined;
@@ -65,9 +65,9 @@ function readCache(key: string): unknown | undefined {
   return entry.data;
 }
 
-/** 写入缓存 */
+/** Write to cache */
 function writeCache(key: string, data: unknown): void {
-  // 清理过期缓存
+  // Clean expired cache
   const now = Date.now();
   for (const [k, v] of searchCache) {
     if (now - v.timestamp > CACHE_TTL_MS) {
@@ -77,7 +77,7 @@ function writeCache(key: string, data: unknown): void {
   searchCache.set(key, { data, timestamp: now });
 }
 
-/** 执行 Brave Search */
+/** Execute Brave Search */
 async function runBraveSearch(params: {
   query: string;
   count: number;
@@ -98,7 +98,7 @@ async function runBraveSearch(params: {
   const { query, count, apiKey, country } = params;
   const startTime = Date.now();
 
-  // 构建 URL
+  // Build URL
   const url = new URL(BRAVE_SEARCH_ENDPOINT);
   url.searchParams.set("q", query);
   url.searchParams.set("count", String(count));
@@ -106,7 +106,7 @@ async function runBraveSearch(params: {
     url.searchParams.set("country", country);
   }
 
-  // 发起请求
+  // Send request
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
 
@@ -147,7 +147,7 @@ async function runBraveSearch(params: {
   }
 }
 
-/** 网络搜索工具 */
+/** Web search tool */
 export function createWebSearchTool(): AgentTool {
   return {
     name: "web_search",
@@ -178,7 +178,7 @@ export function createWebSearchTool(): AgentTool {
       );
       const country = readStringParam(params, "country");
 
-      // 检查 API Key
+      // Check API key
       const apiKey = getSearchApiKey();
       if (!apiKey) {
         return jsonResult({
@@ -188,7 +188,7 @@ export function createWebSearchTool(): AgentTool {
         });
       }
 
-      // 检查缓存
+      // Check cache
       const cacheKey = generateCacheKey(query, count, country);
       const cached = readCache(cacheKey);
       if (cached) {
@@ -210,7 +210,7 @@ export function createWebSearchTool(): AgentTool {
   };
 }
 
-/** 网页获取工具 */
+/** Web page fetch tool */
 export function createWebFetchTool(): AgentTool {
   return {
     name: "web_fetch",
@@ -226,7 +226,7 @@ export function createWebFetchTool(): AgentTool {
       const maxLength = readNumberParam(params, "maxLength", { min: 100 }) ?? 10000;
 
       try {
-        // 验证 URL
+        // Validate URL
         new URL(url);
 
         const response = await fetch(url, {
@@ -243,12 +243,12 @@ export function createWebFetchTool(): AgentTool {
         const contentType = response.headers.get("content-type") ?? "";
         let content = await response.text();
 
-        // 截断过长内容
+        // Truncate overly long content
         if (content.length > maxLength) {
           content = content.slice(0, maxLength) + "\n...[truncated]";
         }
 
-        // 简单的 HTML 清理 (移除脚本和样式)
+        // Simple HTML cleanup (remove scripts and styles)
         if (contentType.includes("text/html")) {
           content = content
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")

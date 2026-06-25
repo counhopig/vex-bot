@@ -1,12 +1,12 @@
 /**
- * 内置工具 - 系统工具
+ * Built-in tools - System tools
  */
 
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { jsonResult, readStringParam, readNumberParam } from "../common.js";
 
-/** 当前时间工具 */
+/** Current time tool */
 export function createCurrentTimeTool(): AgentTool {
   return {
     name: "current_time",
@@ -33,7 +33,7 @@ export function createCurrentTimeTool(): AgentTool {
           break;
         case "locale":
         default:
-          formatted = now.toLocaleString("zh-CN", { timeZone: timezone });
+          formatted = now.toLocaleString("en-US", { timeZone: timezone });
       }
 
       return jsonResult({
@@ -47,7 +47,7 @@ export function createCurrentTimeTool(): AgentTool {
   };
 }
 
-/** 计算器工具 */
+/** Calculator tool */
 export function createCalculatorTool(): AgentTool {
   return {
     name: "calculator",
@@ -61,7 +61,7 @@ export function createCalculatorTool(): AgentTool {
       const expression = readStringParam(params, "expression", { required: true })!;
 
       try {
-        // 安全的数学表达式求值
+        // Safe mathematical expression evaluator
         const result = evaluateMathExpression(expression);
 
         return jsonResult({
@@ -80,14 +80,14 @@ export function createCalculatorTool(): AgentTool {
   };
 }
 
-/** 安全的数学表达式求值 */
+/** Safe mathematical expression evaluator */
 function evaluateMathExpression(expr: string): number {
-  // 替换常量
+  // Replace constants
   let sanitized = expr
     .replace(/\bPI\b/gi, String(Math.PI))
     .replace(/\bE\b/g, String(Math.E));
 
-  // 替换函数
+  // Replace functions
   const mathFunctions: Record<string, (x: number) => number> = {
     sqrt: Math.sqrt,
     abs: Math.abs,
@@ -113,12 +113,12 @@ function evaluateMathExpression(expr: string): number {
     });
   }
 
-  // 只允许数字、运算符和括号
+  // Only allow numbers, operators, and parentheses
   if (!/^[\d\s+\-*/().]+$/.test(sanitized)) {
     throw new Error("Invalid expression: contains disallowed characters");
   }
 
-  // 使用 Function 安全求值 (只允许数学运算)
+  // Safe evaluation using Function (only allow math operations)
   const result = Function(`"use strict"; return (${sanitized})`)();
 
   if (typeof result !== "number" || !Number.isFinite(result)) {
@@ -128,7 +128,7 @@ function evaluateMathExpression(expr: string): number {
   return result;
 }
 
-/** 延迟工具 (用于测试) */
+/** Delay tool (for testing) */
 export function createDelayTool(): AgentTool {
   return {
     name: "delay",

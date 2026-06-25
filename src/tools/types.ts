@@ -1,37 +1,37 @@
 /**
- * 工具系统 - 类型定义
- * 使用 pi-agent-core 的 AgentTool 类型
+ * Tool system - type definitions
+ * Uses pi-agent-core AgentTool type
  */
 
 import type { TSchema, Static } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 
-// 重新导出 AgentTool 作为 Tool 类型
+// Re-export AgentTool as Tool type
 export type Tool<TParameters extends TSchema = TSchema, TDetails = unknown> = AgentTool<TParameters, TDetails>;
 
-/** 工具结果内容项 */
+/** Tool result content item */
 export type ToolResultContent =
   | { type: "text"; text: string }
   | { type: "image"; data: string; mimeType: string };
 
-/** 工具执行结果 */
+/** Tool execution result */
 export interface ToolResult {
   content: ToolResultContent[];
   details?: unknown;
   isError?: boolean;
 }
 
-/** 工具更新回调 */
+/** Tool update callback */
 export type ToolUpdateCallback = (partial: { text?: string }) => void;
 
-/** 工具调用 */
+/** Tool call */
 export interface ToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
 }
 
-/** 工具调用结果 */
+/** Tool call result */
 export interface ToolCallResult {
   toolCallId: string;
   name: string;
@@ -40,13 +40,13 @@ export interface ToolCallResult {
   durationMs: number;
 }
 
-/** 工具策略 */
+/** Tool policy */
 export interface ToolPolicy {
   allow?: string[];
   deny?: string[];
 }
 
-/** 工具组定义 */
+/** Tool group definition */
 export const TOOL_GROUPS: Record<string, string[]> = {
   "group:web": ["web_search", "web_fetch"],
   "group:memory": ["memory_search", "memory_store"],
@@ -54,7 +54,7 @@ export const TOOL_GROUPS: Record<string, string[]> = {
   "group:system": ["current_time", "calculator"],
 };
 
-/** 创建 AgentTool 结果 */
+/** Create an AgentTool result */
 export function createToolResult(
   text: string,
   details?: unknown,
@@ -67,7 +67,7 @@ export function createToolResult(
   };
 }
 
-/** 创建错误结果 */
+/** Create an error result */
 export function createErrorToolResult(error: string): AgentToolResult<unknown> & { isError: true } {
   return {
     content: [{ type: "text", text: JSON.stringify({ status: "error", error }, null, 2) }],

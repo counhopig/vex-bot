@@ -1,19 +1,19 @@
 /**
- * 进程会话注册表 - 管理后台进程
- * 参考 moltbot 的 bash-process-registry.ts
+ * Process session registry - background process management
+ * Based on moltbot's bash-process-registry.ts
  */
 
 import type { ChildProcess } from "child_process";
 import { spawn } from "child_process";
 
-/** 判断是否是 Windows 平台 */
+/** Check if running on Windows */
 const isWindows = process.platform === "win32";
 
-/** 跨平台终止进程 */
+/** Cross-platform process termination */
 function killProcessCrossPlatform(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
   try {
     if (isWindows) {
-      // Windows 上使用 taskkill
+      // On Windows, use taskkill
       if (child.pid) {
         spawn("taskkill", ["/pid", String(child.pid), "/f", "/t"], { stdio: "ignore" });
       }
@@ -25,10 +25,10 @@ function killProcessCrossPlatform(child: ChildProcess, signal: "SIGTERM" | "SIGK
   }
 }
 
-/** 进程会话状态 */
+/** Process session status */
 export type SessionStatus = "running" | "completed" | "failed";
 
-/** 进程会话 */
+/** Process session */
 export interface ProcessSession {
   id: string;
   command: string;
@@ -49,22 +49,22 @@ export interface ProcessSession {
   maxOutputChars: number;
 }
 
-/** 会话注册表 */
+/** Session registry */
 const runningSessions = new Map<string, ProcessSession>();
 const finishedSessions = new Map<string, ProcessSession>();
 
-/** 会话 TTL (默认 30 分钟) */
+/** Session TTL (default 30 minutes) */
 let sessionTtlMs = 30 * 60 * 1000;
 
-/** 尾部字符数 */
+/** Number of tail characters */
 const TAIL_CHARS = 2000;
 
-/** 设置会话 TTL */
+/** Set session TTL */
 export function setSessionTtlMs(ms: number): void {
   sessionTtlMs = ms;
 }
 
-/** 生成会话 ID */
+/** Generate a session ID */
 export function createSessionId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "";
@@ -74,38 +74,38 @@ export function createSessionId(): string {
   return id;
 }
 
-/** 添加会话 */
+/** Add a session */
 export function addSession(session: ProcessSession): void {
   runningSessions.set(session.id, session);
 }
 
-/** 获取运行中的会话 */
+/** Get a running session */
 export function getSession(id: string): ProcessSession | undefined {
   return runningSessions.get(id);
 }
 
-/** 获取已完成的会话 */
+/** Get a finished session */
 export function getFinishedSession(id: string): ProcessSession | undefined {
   return finishedSessions.get(id);
 }
 
-/** 列出运行中的会话 */
+/** List running sessions */
 export function listRunningSessions(): ProcessSession[] {
   return Array.from(runningSessions.values());
 }
 
-/** 列出已完成的会话 */
+/** List finished sessions */
 export function listFinishedSessions(): ProcessSession[] {
   cleanupExpiredSessions();
   return Array.from(finishedSessions.values());
 }
 
-/** 标记为后台运行 */
+/** Mark as backgrounded */
 export function markBackgrounded(session: ProcessSession): void {
   session.backgrounded = true;
 }
 
-/** 标记为已退出 */
+/** Mark as exited */
 export function markExited(
   session: ProcessSession,
   exitCode: number | null,
@@ -117,12 +117,12 @@ export function markExited(
   session.exitSignal = exitSignal;
   session.endedAt = Date.now();
 
-  // 从运行中移到已完成
+  // Move from running to finished
   runningSessions.delete(session.id);
   finishedSessions.set(session.id, session);
 }
 
-/** 追加输出 */
+/** Append output */
 export function appendOutput(
   session: ProcessSession,
   stream: "stdout" | "stderr",
@@ -144,18 +144,18 @@ export function appendOutput(
     }
   }
 
-  // 更新聚合输出
+  // Update aggregated output
   session.aggregated += chunk;
   if (session.aggregated.length > maxChars) {
     session.aggregated = session.aggregated.slice(-maxChars);
     session.truncated = true;
   }
 
-  // 更新尾部
+  // Update tail
   session.tail = session.aggregated.slice(-TAIL_CHARS);
 }
 
-/** 获取并清空待处理输出 */
+/** Drain and clear pending output */
 export function drainSession(session: ProcessSession): { stdout: string; stderr: string } {
   const stdout = session.stdout;
   const stderr = session.stderr;
@@ -164,7 +164,7 @@ export function drainSession(session: ProcessSession): { stdout: string; stderr:
   return { stdout, stderr };
 }
 
-/** 删除会话 */
+/** Delete a session */
 export function deleteSession(id: string): boolean {
   if (finishedSessions.has(id)) {
     finishedSessions.delete(id);
@@ -173,7 +173,7 @@ export function deleteSession(id: string): boolean {
   return false;
 }
 
-/** 终止会话 */
+/** Terminate a session */
 export function killSession(session: ProcessSession): void {
   if (session.child && !session.child.killed) {
     killProcessCrossPlatform(session.child, "SIGTERM");
@@ -185,7 +185,7 @@ export function killSession(session: ProcessSession): void {
   }
 }
 
-/** 清理过期会话 */
+/** Clean up expired sessions */
 function cleanupExpiredSessions(): void {
   const now = Date.now();
   for (const [id, session] of finishedSessions) {
@@ -195,7 +195,7 @@ function cleanupExpiredSessions(): void {
   }
 }
 
-/** 获取日志切片 */
+/** Get log slice */
 export function sliceLogLines(
   content: string,
   offset?: number,
@@ -213,26 +213,26 @@ export function sliceLogLines(
   return { slice, totalLines, totalChars };
 }
 
-/** 获取尾部输出 */
+/** Get tail output */
 export function tail(content: string, chars: number): string {
   if (content.length <= chars) return content;
   return "..." + content.slice(-chars);
 }
 
-/** 从命令推导会话名称 */
+/** Derive session name from command */
 export function deriveSessionName(command: string): string {
-  // 提取第一个命令
+  // Extract the first command
   const match = command.match(/^\s*(?:sudo\s+)?(\S+)/);
   if (match) {
     const cmd = match[1]!;
-    // 去掉路径
+    // Strip path
     const basename = cmd.split("/").pop() || cmd;
     return basename.slice(0, 20);
   }
   return command.slice(0, 20);
 }
 
-/** 格式化持续时间 */
+/** Format duration */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -240,7 +240,7 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(ms / 3600000)}h${Math.floor((ms % 3600000) / 60000)}m`;
 }
 
-/** 截断中间部分 */
+/** Truncate middle */
 export function truncateMiddle(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   const half = Math.floor((maxLen - 3) / 2);

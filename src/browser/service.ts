@@ -1,7 +1,7 @@
 /**
- * 浏览器服务 - 统一管理入口
+ * Browser service - unified management entry point
  *
- * 提供浏览器控制的高级 API，整合会话、截图、操作等功能
+ * Provides high-level browser control API, integrating sessions, screenshots, actions, etc.
  */
 
 import type {
@@ -29,7 +29,7 @@ import {
 import { takeScreenshot, getPageSnapshot } from "./screenshot.js";
 
 /**
- * 浏览器服务类
+ * Browser service class
  */
 export class BrowserService {
   private config: BrowserConfig;
@@ -40,12 +40,12 @@ export class BrowserService {
     this.profileManager = new ProfileManager();
   }
 
-  /** 获取配置文件管理器 */
+  /** Get the profile manager */
   getProfileManager(): ProfileManager {
     return this.profileManager;
   }
 
-  /** 启动浏览器 */
+  /** Start the browser */
   async start(options?: {
     profileName?: string;
     headless?: boolean;
@@ -67,24 +67,24 @@ export class BrowserService {
     };
   }
 
-  /** 停止浏览器 */
+  /** Stop the browser */
   async stop(profileName?: string): Promise<{ status: string; stopped: boolean }> {
     const stopped = await stopSession(profileName ?? this.config.defaultProfile);
     return { status: stopped ? "stopped" : "not_running", stopped };
   }
 
-  /** 停止所有浏览器 */
+  /** Stop all browsers */
   async stopAll(): Promise<{ status: string }> {
     await stopAllSessions();
     return { status: "all_stopped" };
   }
 
-  /** 获取活跃会话列表 */
+  /** Get a list of active sessions */
   listSessions() {
     return listActiveSessions();
   }
 
-  /** 导航到 URL */
+  /** Navigate to a URL */
   async navigate(url: string, profileName?: string): Promise<{
     status: string;
     url: string;
@@ -93,7 +93,7 @@ export class BrowserService {
     const session = requireSession(profileName ?? this.config.defaultProfile);
     const page = session.page as any;
 
-    // 验证 URL
+    // Validate URL
     try {
       new URL(url);
     } catch {
@@ -105,7 +105,7 @@ export class BrowserService {
       waitUntil: "domcontentloaded",
     });
 
-    // 清除旧的 refs
+    // Clear old refs
     session.refs.clear();
 
     return {
@@ -115,17 +115,17 @@ export class BrowserService {
     };
   }
 
-  /** 截图 */
+  /** Take a screenshot */
   async screenshot(options?: ScreenshotOptions, profileName?: string): Promise<ScreenshotResult> {
     return takeScreenshot(options, profileName ?? this.config.defaultProfile);
   }
 
-  /** 获取页面快照 */
+  /** Get a page snapshot */
   async snapshot(options?: SnapshotOptions, profileName?: string): Promise<SnapshotResult> {
     return getPageSnapshot(options, profileName ?? this.config.defaultProfile);
   }
 
-  /** 获取标签页列表 */
+  /** Get a list of tabs */
   async getTabs(profileName?: string): Promise<BrowserTab[]> {
     const session = requireSession(profileName ?? this.config.defaultProfile);
     const context = session.context as any;
@@ -139,7 +139,7 @@ export class BrowserService {
     }));
   }
 
-  /** 执行浏览器操作 */
+  /** Execute a browser action */
   async executeAction(action: BrowserAction, profileName?: string): Promise<BrowserActionResult> {
     const session = requireSession(profileName ?? this.config.defaultProfile);
     const page = session.page as any;
@@ -295,16 +295,16 @@ export class BrowserService {
     }
   }
 
-  /** 获取调试信息 */
+  /** Get debug information */
   getDebugInfo(profileName?: string) {
     return getSessionDebugInfo(profileName ?? this.config.defaultProfile);
   }
 }
 
-/** 默认浏览器服务实例 */
+/** Default browser service instance */
 let defaultService: BrowserService | null = null;
 
-/** 获取默认浏览器服务 */
+/** Get the default browser service */
 export function getBrowserService(config?: Partial<BrowserConfig>): BrowserService {
   if (!defaultService) {
     defaultService = new BrowserService(config);

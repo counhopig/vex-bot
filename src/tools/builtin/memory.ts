@@ -1,5 +1,5 @@
 /**
- * 内置工具 - 记忆系统
+ * Built-in tool - Memory system
  */
 
 import { Type } from "@sinclair/typebox";

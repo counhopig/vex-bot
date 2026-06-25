@@ -1,5 +1,5 @@
 /**
- * 内置工具 - apply_patch 差异修补工具
+ * Built-in tool - apply_patch diff patching tool
  */
 
 import { Type } from "@sinclair/typebox";

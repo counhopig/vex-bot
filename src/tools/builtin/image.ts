@@ -1,5 +1,5 @@
 /**
- * 内置工具 - 图片分析
+ * Built-in tool - Image analysis
  */
 
 import { Type } from "@sinclair/typebox";
@@ -11,13 +11,13 @@ import { readFileSync, existsSync } from "fs";
 import { extname } from "path";
 import { completeSimple } from "@mariozechner/pi-ai";
 
-/** 图片分析工具选项 */
+/** Image analysis tool options */
 export interface ImageAnalyzeToolOptions {
   defaultProvider?: ProviderId;
   defaultModel?: string;
 }
 
-/** 获取图片的 MIME 类型 */
+/** Get MIME type for an image */
 function getMimeType(filePath: string): string {
   const ext = extname(filePath).toLowerCase();
   const mimeTypes: Record<string, string> = {
@@ -31,7 +31,7 @@ function getMimeType(filePath: string): string {
   return mimeTypes[ext] ?? "image/jpeg";
 }
 
-/** 图片分析工具 */
+/** Image analysis tool */
 export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): AgentTool {
   return {
     name: "image_analyze",
@@ -46,12 +46,12 @@ export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): Agent
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const image = readStringParam(params, "image", { required: true })!;
-      const prompt = readStringParam(params, "prompt") ?? "请详细描述这张图片的内容。";
+      const prompt = readStringParam(params, "prompt") ?? "Please describe this image in detail.";
       const providerParam = readStringParam(params, "provider") as ProviderId | undefined;
       const modelParam = readStringParam(params, "model");
 
       try {
-        // 解析图片数据
+        // Parse image data
         let imageData: { url?: string; base64?: string; mediaType?: string };
 
         if (image.startsWith("http://") || image.startsWith("https://")) {
@@ -74,7 +74,7 @@ export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): Agent
           return errorResult("Invalid image source. Provide a URL, file path, or base64 data.");
         }
 
-        // 查找支持视觉的模型
+        // Find vision-capable models
         const visionCandidates: Array<{ provider: ProviderId; model: string }> = [
           { provider: "kimi", model: "kimi-latest" },
           { provider: "minimax", model: "MiniMax-VL-01" },
@@ -105,7 +105,7 @@ export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): Agent
 
         const apiKey = getApiKeyForProvider(selectedProvider);
 
-        // 构建用户消息（包含图片信息）
+        // Build user message (including image info)
         const userContent = imageData.url
           ? `${prompt}\n\n![image](${imageData.url})`
           : `${prompt}\n\n[Attached image: ${imageData.mediaType}, base64 length=${imageData.base64?.length}]`;

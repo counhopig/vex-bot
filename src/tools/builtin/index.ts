@@ -1,5 +1,5 @@
 /**
- * 内置工具导出
+ * Built-in tools export
  */
 
 export * from "./web.js";
@@ -29,7 +29,7 @@ import { createCronTools, type CronToolsOptions } from "./cron.js";
 import type { MemoryManager } from "../../memory/index.js";
 import type { CronService } from "../../cron/service.js";
 
-/** 内置工具选项 */
+/** Built-in tools options */
 export interface BuiltinToolsOptions {
   image?: ImageAnalyzeToolOptions;
   filesystem?: FilesystemToolsOptions;
@@ -41,13 +41,13 @@ export interface BuiltinToolsOptions {
   enableProcess?: boolean;
   enableMemory?: boolean;
   enableCron?: boolean;
-  /** MemoryManager 实例 */
+  /** MemoryManager instance */
   memoryManager?: MemoryManager;
-  /** CronService 实例 */
+  /** CronService instance */
   cronService?: CronService;
 }
 
-/** 创建所有内置工具 */
+/** Create all built-in tools */
 export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
   const tools: AgentTool[] = [
     createCurrentTimeTool(),
@@ -58,38 +58,38 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     createDelayTool(),
   ];
 
-  // 文件系统工具 (默认启用)
+  // File system tools (enabled by default)
   if (options?.enableFilesystem !== false) {
     tools.push(...createFilesystemTools(options?.filesystem));
   }
 
-  // Bash 工具 (默认启用)
+  // Bash tool (enabled by default)
   if (options?.enableBash !== false) {
     tools.push(createBashTool(options?.bash));
   }
 
-  // 进程管理工具 (默认启用，随 Bash 工具)
+  // Process management tool (enabled by default, alongside Bash tool)
   if (options?.enableProcess !== false && options?.enableBash !== false) {
     tools.push(createProcessTool());
   }
 
-  // apply_patch 工具 (默认启用)
+  // apply_patch tool (enabled by default)
   if (options?.enableFilesystem !== false) {
     const allowedPaths = options?.filesystem?.allowedPaths ?? [process.cwd()];
     tools.push(createApplyPatchTool(allowedPaths));
   }
 
-  // 浏览器工具是可选的，因为需要安装 playwright-core
+  // Browser tool is optional, as it requires playwright-core to be installed
   if (options?.enableBrowser) {
     tools.push(createBrowserTool());
   }
 
-  // 记忆工具 (需要 MemoryManager 实例)
+  // Memory tools (require MemoryManager instance)
   if (options?.enableMemory !== false && options?.memoryManager) {
     tools.push(...createMemoryTools({ manager: options.memoryManager }));
   }
 
-  // 定时任务工具 (需要 CronService 实例)
+  // Cron tools (require CronService instance)
   if (options?.enableCron && options?.cronService) {
     tools.push(...createCronTools({ service: options.cronService }));
   }

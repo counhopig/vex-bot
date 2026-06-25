@@ -1,5 +1,5 @@
 /**
- * 内置工具 - 进程管理工具
+ * Built-in tool - Process management tool
  */
 
 import { Type } from "@sinclair/typebox";

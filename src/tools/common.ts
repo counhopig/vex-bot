@@ -1,5 +1,5 @@
 /**
- * 工具系统 - 通用工具函数
+ * Tool system - common utility functions
  */
 
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
@@ -8,7 +8,7 @@ export type VexToolResult<T = unknown> = AgentToolResult<T> & {
   isError?: boolean;
 };
 
-/** 创建 JSON 结果 */
+/** Create a JSON result */
 export function jsonResult(payload: unknown, isError = false): VexToolResult<unknown> {
   return {
     content: [
@@ -22,7 +22,7 @@ export function jsonResult(payload: unknown, isError = false): VexToolResult<unk
   };
 }
 
-/** 创建文本结果 */
+/** Create a text result */
 export function textResult(text: string, details?: unknown, isError = false): VexToolResult<unknown> {
   return {
     content: [{ type: "text", text }],
@@ -31,7 +31,7 @@ export function textResult(text: string, details?: unknown, isError = false): Ve
   };
 }
 
-/** 创建错误结果 */
+/** Create an error result */
 export function errorResult(error: string | Error): VexToolResult<unknown> {
   const message = error instanceof Error ? error.message : error;
   return {
@@ -46,7 +46,7 @@ export function errorResult(error: string | Error): VexToolResult<unknown> {
   };
 }
 
-/** 创建图片结果 */
+/** Create an image result */
 export function imageResult(params: {
   label: string;
   base64: string;
@@ -64,7 +64,7 @@ export function imageResult(params: {
   };
 }
 
-/** 读取字符串参数 */
+/** Read a string parameter */
 export function readStringParam(
   params: Record<string, unknown>,
   key: string,
@@ -84,7 +84,7 @@ export function readStringParam(
   return value || undefined;
 }
 
-/** 读取数字参数 */
+/** Read a number parameter */
 export function readNumberParam(
   params: Record<string, unknown>,
   key: string,
@@ -113,7 +113,7 @@ export function readNumberParam(
   return value;
 }
 
-/** 读取布尔参数 */
+/** Read a boolean parameter */
 export function readBooleanParam(
   params: Record<string, unknown>,
   key: string,
@@ -130,7 +130,7 @@ export function readBooleanParam(
   return Boolean(raw);
 }
 
-/** 读取字符串数组参数 */
+/** Read a string array parameter */
 export function readStringArrayParam(
   params: Record<string, unknown>,
   key: string,
@@ -155,7 +155,7 @@ export function readStringArrayParam(
   throw new Error(`${options.label ?? key} must be an array`);
 }
 
-/** 截断文本 */
+/** Truncate text */
 export function truncateToolText(text: string, maxLength = 8000): string {
   if (text.length <= maxLength) return text;
   return text.slice(0, maxLength) + "\n...[truncated]";

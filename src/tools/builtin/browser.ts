@@ -1,15 +1,15 @@
 /**
- * 内置工具 - 浏览器控制
+ * Built-in tool - Browser control
  *
- * 基于 Playwright 实现的浏览器自动化工具
- * 支持页面导航、截图、内容提取、元素交互等功能
+ * Playwright-based browser automation tool
+ * Supports page navigation, screenshots, content extraction, element interactions, etc.
  */
 
 import { Type } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { jsonResult, errorResult, readStringParam, readNumberParam, readBooleanParam } from "../common.js";
 
-// 浏览器会话状态
+// Browser session state
 interface BrowserSession {
   browser: unknown;
   context: unknown;
@@ -22,11 +22,11 @@ let browserSession: BrowserSession | null = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let playwrightModule: any = null;
 
-/** 延迟加载 Playwright */
+/** Lazy-load Playwright */
 async function getPlaywright() {
   if (!playwrightModule) {
     try {
-      // @ts-ignore - 动态导入可选依赖
+      // @ts-ignore - Dynamic import of optional dependency
       playwrightModule = await import("playwright-core");
     } catch {
       throw new Error("Playwright not installed. Run: npm install playwright-core");
@@ -35,7 +35,7 @@ async function getPlaywright() {
   return playwrightModule;
 }
 
-/** 获取或创建浏览器会话 */
+/** Get or create browser session */
 async function getBrowserSession(): Promise<BrowserSession> {
   if (browserSession) {
     return browserSession;
@@ -43,7 +43,7 @@ async function getBrowserSession(): Promise<BrowserSession> {
   throw new Error("Browser not started. Use 'start' action first.");
 }
 
-/** 通过 ref 获取元素定位器 */
+/** Resolve element locator by ref */
 function getRefLocator(page: any, ref: string, session: BrowserSession) {
   const normalized = ref.startsWith("@")
     ? ref.slice(1)
@@ -64,7 +64,7 @@ function getRefLocator(page: any, ref: string, session: BrowserSession) {
   return page.locator(ref);
 }
 
-/** 解析 aria 快照，生成元素引用 */
+/** Parse aria snapshot to generate element references */
 function parseAriaSnapshot(snapshot: string): Map<string, { role: string; name?: string; nth?: number }> {
   const refs = new Map<string, { role: string; name?: string; nth?: number }>();
   let refCounter = 1;
@@ -105,7 +105,7 @@ function parseAriaSnapshot(snapshot: string): Map<string, { role: string; name?:
   return refs;
 }
 
-/** 生成带 ref 标记的快照文本 */
+/** Generate ref-tagged snapshot text */
 function generateRefSnapshot(refs: Map<string, { role: string; name?: string; nth?: number }>): string {
   const lines: string[] = [];
   for (const [ref, info] of refs) {
@@ -116,7 +116,7 @@ function generateRefSnapshot(refs: Map<string, { role: string; name?: string; nt
   return lines.join("\n");
 }
 
-/** 浏览器控制工具 */
+/** Browser control tool */
 export function createBrowserTool(): AgentTool {
   return {
     name: "browser",
