@@ -1,101 +1,132 @@
-# Vex — 从 OpenMozi 分叉的改动记录
+# Vex — Changes from OpenMozi
 
 Vex was forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0) as a personal WeChat-specific version.
 
-## 1. 全项目改名
+## 1. Full Project Rename
 
-| 原名 | 改为 |
-|------|------|
+| Original | Changed To |
+|----------|------------|
 | `openmozi` / `mozi-bot` | `vex-bot` |
 | `Mozi` | `Vex` |
 | `mozi` CLI | `vex` CLI |
-| `MOZI_` 环境变量 | `VEX_` |
-| `~/.mozi/` 配置目录 | `~/.vex/` |
+| `MOZI_` env var prefix | `VEX_` |
+| `~/.mozi/` config directory | `~/.vex/` |
 
-## 2. 删除多通道支持，只保留个人微信
+## 2. Removed Multi-Channel Support — WeChat Only
 
-删除以下通道模块及依赖：
+Removed channel modules and dependencies:
 
-- `src/channels/feishu/` — 飞书
-- `src/channels/dingtalk/` — 钉钉
+- `src/channels/feishu/` — Feishu (Lark)
+- `src/channels/dingtalk/` — DingTalk
 - `src/channels/qq/` — QQ
-- `src/channels/wecom/` — 企业微信
+- `src/channels/wecom/` — WeCom (WeChat Work)
 
-移除的 npm 依赖：
+Removed npm dependencies:
 
 - `@larksuiteoapi/node-sdk`
 - `dingtalk-stream`
 - `qq-guild-bot`
 - `crypto-js`
 
-类型简化：
+Type simplifications:
 
-- `ChannelId` 从 `"feishu" | "dingtalk" | "qq" | "wecom" | "weixin" | "webchat"` 简化为 `"weixin" | "webchat"`
-- `MoziConfig.channels` 只保留 `weixin?: WeixinConfig`
-- 移除 `FeishuConfig`、`DingtalkConfig`、`QQConfig`、`WeComConfig` 类型
+- `ChannelId` narrowed from `"feishu" | "dingtalk" | "qq" | "wecom" | "weixin" | "webchat"` to `"weixin" | "webchat"`
+- `MoziConfig.channels` now only holds `weixin?: WeixinConfig`
+- Removed `FeishuConfig`, `DingtalkConfig`, `QQConfig`, `WeComConfig` types
 
-## 3. 新增个人微信通道
+## 3. New Personal WeChat Channel
 
-基于腾讯 iLink OC API (`https://ilinkai.weixin.qq.com`)，参考 [AstrBot](https://github.com/Soulter/AstrBot) 的 `weixin_oc` 适配器实现。
+Built on Tencent iLink OC API (`https://ilinkai.weixin.qq.com`), modeled after [AstrBot](https://github.com/Soulter/AstrBot)'s `weixin_oc` adapter.
 
-新增文件：
+New files:
 
 ```
 src/channels/weixin/
-├── client.ts    # iLink API HTTP 客户端（二维码获取、轮询、消息收发）
-├── login.ts     # 二维码扫码登录流程
-├── adapter.ts   # WeixinChannel 通道适配器（长轮询、消息处理）
-└── index.ts     # 模块 barrel 导出
+├── client.ts    # iLink API HTTP client (QR fetch, polling, message send/receive)
+├── login.ts     # QR code scan login flow
+├── adapter.ts   # WeixinChannel adapter (long-polling, message handling)
+└── index.ts     # Module barrel export
 ```
 
-### 扫码登录流程
+### QR Code Login Flow
 
-1. 调用 `ilink/bot/get_bot_qrcode` 获取二维码
-2. 终端 / WebUI 显示二维码链接
-3. 手机微信扫码确认登录
-4. 轮询 `ilink/bot/get_qrcode_status` 等待确认
-5. 获取 `bot_token` 后保存到 `config.local.json5`
-6. 下次启动直接复用 token
+1. Call `ilink/bot/get_bot_qrcode` to get QR code
+2. Display QR link in terminal / WebUI
+3. Scan with mobile WeChat to confirm login
+4. Poll `ilink/bot/get_qrcode_status` until confirmed
+5. Save `bot_token` to `config.local.json5`
+6. Reuse token on next start
 
-### 消息收发
+### Message Send/Receive
 
-- 入站：POST `ilink/bot/getupdates` 长轮询拉取消息
-- 出站：POST `ilink/bot/sendmessage` 发送回复
-- 支持：文本消息、图片/视频/文件/语音的占位符提取
+- Inbound: POST `ilink/bot/getupdates` long-polling
+- Outbound: POST `ilink/bot/sendmessage` for replies
+- Supports: text messages, image/video/file/voice placeholder extraction
 
-## 4. WebUI 二维码登录
+## 4. WebUI QR Code Login
 
-在 `/control` 配置页面中：
+In the `/control` configuration page:
 
-- 个人微信卡片：开关、Bot Type、API Base URL
-- 「扫码登录」按钮 → 前端直接显示二维码图片
-- 每 2 秒轮询扫码状态 → 成功后显示「已登录 ✓」
-- 新增 WebSocket 方法：`weixin.qr`、`weixin.qr.status`
+- Personal WeChat card: toggle, Bot Type, API Base URL
+- "Scan QR Login" button → displays QR image directly in browser
+- Polls QR status every 2 seconds → shows "Logged in ✓" on success
+- New WebSocket methods: `weixin.qr`, `weixin.qr.status`
 
-## 5. MiniMax M3 支持
+## 5. MiniMax M3 Support
 
-- 将 MiniMax baseUrl 从 `/v1/text/chatcompletion_v2` 修正为 `/v1`
-- 将 `MiniMax-M3` 加入预设模型列表（1M 上下文 / 65K tokens）
+- Fixed MiniMax baseUrl from `/v1/text/chatcompletion_v2` to `/v1`
+- Added `MiniMax-M3` to preset model list (1M context / 65K tokens)
 
-## 6. 修复
+## 6. Fixes
 
-- `thinkingLevel` 从 `"medium"` 改为 `"low"`，不再输出 `<think>` 推理块
-- Token 持久化路径从 `~/.mozi/` 改为项目目录 `./config.local.json5`
-- `mergeConfigs()` 和 `validateRequiredConfig()` 包含 weixin 通道
-- `cron/executor.ts` 和 `tools/builtin/cron.ts` 通道列表更新
+- `thinkingLevel` changed from `"medium"` to `"low"` — no more `<think>` reasoning blocks in output
+- Token persistence path moved from `~/.mozi/` to project-local `./config.local.json5`
+- `mergeConfigs()` and `validateRequiredConfig()` include weixin channel
+- `cron/executor.ts` and `tools/builtin/cron.ts` channel lists updated
 
-## 7. 关键文件修改
+## 7. Key File Modifications
 
-| 文件 | 改动 |
-|------|------|
-| `src/types/index.ts` | ChannelId 简化，移除旧通道类型，保留 WeixinConfig |
-| `src/config/index.ts` | 移除旧通道 schema，简化 merge/validate/env |
-| `src/gateway/server.ts` | 只初始化 weixin 通道，传递 weixinChannel 给 WsServer |
-| `src/channels/index.ts` | 移除旧通道 barrel 导出 |
-| `src/index.ts` | 移除旧通道的公开 API 导出 |
-| `src/cli/index.ts` | onboard 向导只询问个人微信，check 命令只检查 weixin |
-| `src/web/websocket.ts` | 通道配置返回/验证/保存只处理 weixin |
-| `src/web/static.ts` | 控制台 UI 只显示个人微信卡片 |
-| `src/agents/runtime.ts` | thinkingLevel 改为 low |
-| `src/providers/model-resolver.ts` | MiniMax baseUrl 修正，M3 加入预设 |
-| `package.json` | 改名 vex-bot，移除旧通道依赖 |
+| File | Change |
+|------|--------|
+| `src/types/index.ts` | Simplified ChannelId, removed old channel types, kept WeixinConfig |
+| `src/config/index.ts` | Removed old channel schemas, simplified merge/validate/env |
+| `src/gateway/server.ts` | Only init weixin channel, pass weixinChannel to WsServer |
+| `src/channels/index.ts` | Removed old channel barrel exports |
+| `src/index.ts` | Removed old channel public API exports |
+| `src/cli/index.ts` | Onboard wizard only asks about Personal WeChat, check cmd only validates weixin |
+| `src/web/websocket.ts` | Channel config return/validate/save only handles weixin |
+| `src/web/static.ts` | Control panel UI only shows Personal WeChat card |
+| `src/agents/runtime.ts` | thinkingLevel → low |
+| `src/providers/model-resolver.ts` | MiniMax baseUrl fix, M3 added to presets |
+| `package.json` | Renamed to vex-bot, removed old channel deps |
+
+## 8. Full Internationalization to English (2026-06-25)
+
+Translated ALL Chinese text across the entire codebase to English:
+
+- **68 source files** — JSDoc comments, inline `//` comments, log messages, error strings, console output, tool descriptions, system prompts
+- **WebChat UI** (`src/web/static.ts`) — all button labels, status messages, config panel text, QR login flow text
+- **CLI** (`src/cli/index.ts`) — command descriptions, onboard wizard prompts, status/logs output, error messages
+- **System prompts** (`src/agents/system-prompt.ts`) — changed from instructing AI to respond in Chinese to responding in English. Locale switched from `zh-CN` to `en-US`
+- **WeChat channel** — placeholder labels (`[Image]`, `[Voice]`, `[File]`, `[Video]`) kept as English
+
+## 9. Project Documentation (2026-06-25)
+
+Created comprehensive English documentation:
+
+| Document | Lines | Content |
+|----------|-------|---------|
+| `README.md` | ~220 | Project homepage with Mermaid architecture diagram, features, quick start, CLI reference, config overview |
+| `docs/api-reference.md` | ~1,720 | Full API reference across 15 modules — Agent, Gateway, Types, Plugins, Tools, Skills, Memory, Cron, Outbound, Hooks, Config, Providers, Channels, CLI, top-level exports |
+| `docs/developer-guide.md` | ~730 | Architecture deep dive, message flow (WeChat + WebChat), extension guides for channels/tools/plugins/skills/providers, build & test workflow, coding conventions, known issues |
+| `docs/user-manual.md` | ~940 | Installation (npm/Docker/source), `vex onboard` wizard, config file reference, 9 CLI commands, WebChat usage, WeChat QR login, 8 Chinese provider configs, Docker deployment, FAQ |
+| `AGENTS.md` | ~200 | AI agent knowledge base with project structure, code map, conventions, anti-patterns, cross-cutting concerns |
+
+## 10. GitHub Repository Setup
+
+- Fork source corrected to `github.com/oujingzhou/openmozi`
+- Repository: `github.com/counhopig/vex-bot`
+- Static badges (no npm dependency): version, license, Node.js
+- Topics: `chatbot`, `wechat`, `ai-agent`, `typescript`, `deepseek`, `llm`, `weixin`
+- Issues enabled, Wiki disabled
+
