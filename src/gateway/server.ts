@@ -1,5 +1,5 @@
 /**
- * Gateway 服务器 - HTTP Webhook 处理 + WebChat
+ * Gateway server - HTTP webhook processing + WebChat
  */
 
 import express, { type Express, type Request, type Response, type NextFunction } from "express";
@@ -63,7 +63,7 @@ export class Gateway {
       this.weixinChannel = createWeixinChannel(this.config.channels.weixin);
       this.weixinChannel.setMessageHandler(this.handleMessage.bind(this));
       registerChannel(this.weixinChannel);
-      logger.info("Weixin (个人微信) channel enabled");
+      logger.info("Weixin (Personal WeChat) channel enabled");
     }
 
     this.app.use((req, res, next) => {
@@ -102,7 +102,7 @@ export class Gateway {
       logger.info({ channel: context.channelId, chatId: context.chatId, responseLength: response.content.length }, "Reply sent");
     } catch (error) {
       logger.error({ error, context }, "Failed to process message");
-      await this.sendReply(context, "抱歉，处理您的消息时出现了错误。请稍后重试。");
+      await this.sendReply(context, "Sorry, an error occurred while processing your message. Please try again later.");
     }
   }
 
@@ -150,12 +150,12 @@ export class Gateway {
 
     this.httpServer.listen(port, host || "0.0.0.0", () => {
       logger.info({ port, host: host || "0.0.0.0" }, "Gateway server started");
-      console.log(`\n🚀 Vex Gateway 已启动`);
-      console.log(`   地址: http://${host || "localhost"}:${port}`);
+      console.log(`\n🚀 Vex Gateway started`);
+      console.log(`   Address: http://${host || "localhost"}:${port}`);
       console.log(`   WebChat: http://${host || "localhost"}:${port}/`);
-      console.log(`   控制台: http://${host || "localhost"}:${port}/control`);
+      console.log(`   Control Panel: http://${host || "localhost"}:${port}/control`);
       if (this.weixinChannel) {
-        console.log(`   个人微信: iLink OC API 已就绪`);
+        console.log(`   Personal WeChat: iLink OC API ready`);
       }
       console.log("");
     });
@@ -184,7 +184,7 @@ export async function startGateway(config: VexConfig): Promise<Gateway> {
   setLogger(createLogger({ level: config.logging.level }));
   const gateway = await createGateway(config);
   await gateway.start();
-  process.on("SIGINT", async () => { console.log("\n收到 SIGINT 信号，正在关闭..."); await gateway.shutdown(); process.exit(0); });
-  process.on("SIGTERM", async () => { console.log("\n收到 SIGTERM 信号，正在关闭..."); await gateway.shutdown(); process.exit(0); });
+  process.on("SIGINT", async () => { console.log("\nReceived SIGINT, shutting down..."); await gateway.shutdown(); process.exit(0); });
+  process.on("SIGTERM", async () => { console.log("\nReceived SIGTERM, shutting down..."); await gateway.shutdown(); process.exit(0); });
   return gateway;
 }

@@ -1,5 +1,5 @@
 /**
- * 命令系统 - 斜杠命令处理
+ * Command system - slash command processing
  */
 
 import type { InboundMessageContext } from "../types/index.js";
@@ -7,52 +7,52 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("commands");
 
-// ============== 命令类型 ==============
+// ============== Command Types ==============
 
-/** 命令参数 */
+/** Command context */
 export interface CommandContext {
-  /** 原始消息上下文 */
+  /** Original message context */
   message: InboundMessageContext;
-  /** 命令参数 (去除命令名后的部分) */
+  /** Command arguments (everything after command name) */
   args: string;
-  /** 解析后的参数数组 */
+  /** Parsed arguments array */
   argsArray: string[];
-  /** 命名参数 (--key=value 格式) */
+  /** Named arguments (--key=value format) */
   namedArgs: Record<string, string>;
 }
 
-/** 命令处理器 */
+/** Command handler */
 export type CommandHandler = (
   ctx: CommandContext
 ) => string | Promise<string>;
 
-/** 命令定义 */
+/** Command definition */
 export interface CommandDefinition {
-  /** 命令名称 (不含斜杠) */
+  /** Command name (without slash) */
   name: string;
-  /** 命令别名 */
+  /** Command aliases */
   aliases?: string[];
-  /** 命令描述 */
+  /** Command description */
   description: string;
-  /** 使用说明 */
+  /** Usage instructions */
   usage?: string;
-  /** 处理函数 */
+  /** Handler function */
   handler: CommandHandler;
-  /** 是否隐藏 (不在帮助中显示) */
+  /** Whether to hide (not shown in help) */
   hidden?: boolean;
 }
 
-// ============== 命令注册表 ==============
+// ============== Command Registry ==============
 
-/** 命令注册表 */
+/** Command registry */
 const commandRegistry = new Map<string, CommandDefinition>();
 
-/** 注册命令 */
+/** Register a command */
 export function registerCommand(command: CommandDefinition): void {
   const normalizedName = command.name.toLowerCase();
   commandRegistry.set(normalizedName, command);
 
-  // 注册别名
+  // Register aliases
   if (command.aliases) {
     for (const alias of command.aliases) {
       commandRegistry.set(alias.toLowerCase(), command);
@@ -62,19 +62,19 @@ export function registerCommand(command: CommandDefinition): void {
   logger.debug({ command: command.name }, "Command registered");
 }
 
-/** 批量注册命令 */
+/** Register multiple commands */
 export function registerCommands(commands: CommandDefinition[]): void {
   for (const command of commands) {
     registerCommand(command);
   }
 }
 
-/** 获取命令 */
+/** Get a command by name */
 export function getCommand(name: string): CommandDefinition | undefined {
   return commandRegistry.get(name.toLowerCase());
 }
 
-/** 获取所有命令 */
+/** Get all commands */
 export function getAllCommands(): CommandDefinition[] {
   const uniqueCommands = new Map<string, CommandDefinition>();
   for (const command of commandRegistry.values()) {
@@ -83,18 +83,18 @@ export function getAllCommands(): CommandDefinition[] {
   return Array.from(uniqueCommands.values());
 }
 
-// ============== 命令解析 ==============
+// ============== Command Parsing ==============
 
-/** 命令前缀 */
+/** Command prefixes */
 const COMMAND_PREFIXES = ["/", "!"];
 
-/** 检查是否为命令 */
+/** Check whether text is a command */
 export function isCommand(text: string): boolean {
   const trimmed = text.trim();
   return COMMAND_PREFIXES.some((prefix) => trimmed.startsWith(prefix));
 }
 
-/** 解析命令 */
+/** Parse a command */
 export function parseCommand(text: string): {
   name: string;
   args: string;
@@ -103,7 +103,7 @@ export function parseCommand(text: string): {
 } | null {
   const trimmed = text.trim();
 
-  // 检查前缀
+  // Check prefix
   let content = "";
   for (const prefix of COMMAND_PREFIXES) {
     if (trimmed.startsWith(prefix)) {
@@ -114,28 +114,28 @@ export function parseCommand(text: string): {
 
   if (!content) return null;
 
-  // 分离命令名和参数
+  // Separate command name and arguments
   const spaceIndex = content.indexOf(" ");
   const name = spaceIndex === -1 ? content : content.slice(0, spaceIndex);
   const args = spaceIndex === -1 ? "" : content.slice(spaceIndex + 1).trim();
 
-  // 解析参数
+  // Parse arguments
   const argsArray: string[] = [];
   const namedArgs: Record<string, string> = {};
 
   if (args) {
-    // 简单的参数解析 (支持引号)
+    // Simple argument parsing (supports quoting)
     const regex = /--(\w+)=("([^"]*)"|'([^']*)'|(\S+))|"([^"]*)"|'([^']*)'|(\S+)/g;
     let match;
 
     while ((match = regex.exec(args)) !== null) {
       if (match[1]) {
-        // 命名参数 --key=value
+        // Named argument --key=value
         const key = match[1];
         const value = match[3] ?? match[4] ?? match[5] ?? "";
         namedArgs[key] = value;
       } else {
-        // 位置参数
+        // Positional argument
         const value = match[6] ?? match[7] ?? match[8] ?? "";
         argsArray.push(value);
       }
@@ -145,9 +145,9 @@ export function parseCommand(text: string): {
   return { name: name.toLowerCase(), args, argsArray, namedArgs };
 }
 
-// ============== 命令执行 ==============
+// ============== Command Execution ==============
 
-/** 执行命令 */
+/** Execute a command */
 export async function executeCommand(
   message: InboundMessageContext
 ): Promise<string | null> {
@@ -160,7 +160,7 @@ export async function executeCommand(
 
   const command = getCommand(parsed.name);
   if (!command) {
-    return `未知命令: ${parsed.name}\n使用 /help 查看可用命令`;
+    return `Unknown command: ${parsed.name}\nUse /help to see available commands`;
   }
 
   const ctx: CommandContext = {
@@ -175,71 +175,71 @@ export async function executeCommand(
     return await command.handler(ctx);
   } catch (error) {
     logger.error({ command: parsed.name, error }, "Command execution error");
-    return `命令执行错误: ${error instanceof Error ? error.message : String(error)}`;
+    return `Command execution error: ${error instanceof Error ? error.message : String(error)}`;
   }
 }
 
-// ============== 内置命令 ==============
+// ============== Built-in Commands ==============
 
-/** 帮助命令 */
+/** Help command */
 const helpCommand: CommandDefinition = {
   name: "help",
   aliases: ["h", "?"],
-  description: "显示帮助信息",
-  usage: "/help [命令名]",
+  description: "Show help information",
+  usage: "/help [command name]",
   handler: (ctx) => {
     const { argsArray } = ctx;
 
     if (argsArray.length > 0) {
-      // 显示特定命令的帮助
+      // Show help for a specific command
       const commandName = argsArray[0]!;
       const command = getCommand(commandName);
       if (!command) {
-        return `未知命令: ${commandName}`;
+        return `Unknown command: ${commandName}`;
       }
-      return `📖 ${command.name}\n\n${command.description}\n\n用法: ${command.usage ?? `/${command.name}`}`;
+      return `📖 ${command.name}\n\n${command.description}\n\nUsage: ${command.usage ?? `/${command.name}`}`;
     }
 
-    // 显示所有命令
+    // Show all commands
     const commands = getAllCommands().filter((c) => !c.hidden);
-    const lines = ["📚 可用命令:\n"];
+    const lines = ["📚 Available commands:\n"];
 
     for (const cmd of commands) {
       lines.push(`  /${cmd.name} - ${cmd.description}`);
     }
 
-    lines.push("\n使用 /help <命令名> 查看详细用法");
+    lines.push("\nUse /help <command name> for detailed usage");
     return lines.join("\n");
   },
 };
 
-/** 清除会话命令 */
+/** Clear session command */
 const clearCommand: CommandDefinition = {
   name: "clear",
-  aliases: ["reset", "新对话"],
-  description: "清除当前会话历史",
+  aliases: ["reset", "newchat"],
+  description: "Clear current session history",
   handler: () => {
-    return "会话已清除。我们可以开始新的对话了！";
+    return "Session cleared. Let's start a new conversation!";
   },
 };
 
-/** 状态命令 */
+/** Status command */
 const statusCommand: CommandDefinition = {
   name: "status",
-  description: "显示当前状态",
+  description: "Show current status",
   handler: (ctx) => {
     const lines = [
-      "📊 当前状态",
+      "📊 Current Status",
       "",
-      `通道: ${ctx.message.channelId}`,
-      `会话类型: ${ctx.message.chatType === "group" ? "群聊" : "私聊"}`,
-      `发送者: ${ctx.message.senderName ?? ctx.message.senderId}`,
+      `Channel: ${ctx.message.channelId}`,
+      `Chat type: ${ctx.message.chatType === "group" ? "Group" : "Direct"}`,
+      `Sender: ${ctx.message.senderName ?? ctx.message.senderId}`,
     ];
     return lines.join("\n");
   },
 };
 
-/** 注册内置命令 */
+/** Register built-in commands */
 export function registerBuiltinCommands(): void {
   registerCommands([helpCommand, clearCommand, statusCommand]);
 }

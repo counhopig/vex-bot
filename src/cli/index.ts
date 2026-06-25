@@ -7,7 +7,7 @@
 import "./fetch-patch.js";
 
 /**
- * Vex CLI - 命令行界面
+ * Vex CLI - Command Line Interface
  */
 
 import { Command } from "commander";
@@ -22,10 +22,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
-// 加载环境变量
+// Load environment variables
 dotenv.config();
 
-// 从 package.json 读取版本号
+// Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageJsonPath = join(__dirname, "..", "..", "package.json");
 const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
@@ -34,60 +34,60 @@ const program = new Command();
 
 program
   .name("vex")
-  .description("Vex - 支持国产模型和国产通讯软件的智能助手机器人")
+  .description("Vex - AI assistant supporting Chinese LLMs and communication platforms")
   .version(packageJson.version);
 
-// 启动命令
+// Start command
 program
   .command("start")
-  .description("启动 Gateway 服务器")
-  .option("-c, --config <path>", "配置文件路径")
-  .option("-p, --port <port>", "服务器端口")
-  .option("--web-only", "仅启用 WebChat (不需要配置通讯通道)")
+  .description("Start Gateway server")
+  .option("-c, --config <path>", "Config file path")
+  .option("-p, --port <port>", "Server port")
+  .option("--web-only", "WebChat only (no channel configuration required)")
   .action(async (options) => {
     try {
       const config = loadConfig({ configPath: options.config });
 
-      // 覆盖端口
+      // Override port
       if (options.port) {
         config.server.port = parseInt(options.port, 10);
       }
 
-      // 验证配置
+      // Validate configuration
       const errors = validateRequiredConfig(config, { webOnly: options.webOnly });
       if (errors.length > 0) {
-        console.error("❌ 配置错误:");
+        console.error("ERROR: Configuration error:");
         errors.forEach((err) => console.error(`   - ${err}`));
         process.exit(1);
       }
 
       await startGateway(config);
     } catch (error) {
-      console.error("❌ 启动失败:", error instanceof Error ? error.message : error);
+      console.error("ERROR: Startup failed:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 模型列表命令
+// Model listing command
 program
   .command("models")
-  .description("列出可用的模型")
+  .description("List available models")
   .action(async () => {
     try {
       const config = loadConfig();
-      setLogger(createLogger({ level: "error" })); // 静默日志
+      setLogger(createLogger({ level: "error" })); // Silence logs
       initializeProviders(config);
 
       const models = getAllModels();
 
       if (models.length === 0) {
-        console.log("没有配置任何模型提供商。请检查 API Key 配置。");
+        console.log("No model providers configured. Please check API Key configuration.");
         return;
       }
 
-      console.log("\n可用模型:\n");
+      console.log("\nAvailable models:\n");
 
-      // 按提供商分组
+      // Group by provider
       const byProvider = new Map<string, typeof models>();
       for (const item of models) {
         const list = byProvider.get(item.provider) || [];
@@ -105,93 +105,93 @@ program
         console.log("");
       }
     } catch (error) {
-      console.error("错误:", error instanceof Error ? error.message : error);
+      console.error("Error:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 配置检查命令
+// Configuration check command
 program
   .command("check")
-  .description("检查配置")
-  .option("-c, --config <path>", "配置文件路径")
+  .description("Check configuration")
+  .option("-c, --config <path>", "Config file path")
   .action(async (options) => {
     try {
-      console.log("正在检查配置...\n");
+      console.log("Checking configuration...\n");
 
       const config = loadConfig({ configPath: options.config });
 
-      // 检查提供商
-      console.log("📦 模型提供商:");
+      // Check providers
+      console.log("Model providers:");
       const chinaProviders = ["deepseek", "doubao", "zhipu", "dashscope", "kimi", "stepfun", "minimax", "modelscope"] as const;
       for (const id of chinaProviders) {
         const providerConfig = config.providers[id];
-        const status = providerConfig?.apiKey ? "✅ 已配置" : "⬜ 未配置";
+        const status = providerConfig?.apiKey ? "Configured" : "Not configured";
         console.log(`   ${id}: ${status}`);
       }
 
-      // 检查自定义和海外提供商
+      // Check custom and overseas providers
       const extraProviders = ["openai", "openrouter", "together", "groq", "ollama", "vllm"] as const;
       for (const id of extraProviders) {
         const providerConfig = config.providers[id];
         if (providerConfig) {
-          const status = (providerConfig as any).apiKey || id === "ollama" || id === "vllm" ? "✅ 已配置" : "⬜ 未配置";
+          const status = (providerConfig as any).apiKey || id === "ollama" || id === "vllm" ? "Configured" : "Not configured";
           console.log(`   ${id}: ${status}`);
         }
       }
       if (config.providers["custom-openai"]) {
         const c = config.providers["custom-openai"] as Record<string, unknown>;
         const modelCount = Array.isArray(c.models) ? c.models.length : 0;
-        console.log(`   custom-openai: ✅ 已配置 (${c.baseUrl}, ${modelCount} 个模型)`);
+        console.log(`   custom-openai: Configured (${c.baseUrl}, ${modelCount} models)`);
       }
       if (config.providers["custom-anthropic"]) {
         const c = config.providers["custom-anthropic"] as Record<string, unknown>;
         const modelCount = Array.isArray(c.models) ? c.models.length : 0;
-        console.log(`   custom-anthropic: ✅ 已配置 (${c.baseUrl}, ${modelCount} 个模型)`);
+        console.log(`   custom-anthropic: Configured (${c.baseUrl}, ${modelCount} models)`);
       }
 
-      // 检查通道
-      console.log("\n📱 通讯通道:");
+      // Check channels
+      console.log("\nCommunication channels:");
       const channels = [
-        { id: "weixin", name: "个人微信", config: config.channels.weixin },
+        { id: "weixin", name: "Personal WeChat", config: config.channels.weixin },
       ];
       for (const channel of channels) {
-        const status = channel.config ? "✅ 已配置" : "⬜ 未配置";
+        const status = channel.config ? "Configured" : "Not configured";
         console.log(`   ${channel.name}: ${status}`);
       }
 
-      // 检查 Agent
-      console.log("\n🤖 Agent 配置:");
-      console.log(`   默认模型: ${config.agent.defaultModel}`);
-      console.log(`   默认提供商: ${config.agent.defaultProvider}`);
-      console.log(`   温度: ${config.agent.temperature}`);
-      console.log(`   最大 Token: ${config.agent.maxTokens}`);
+      // Check Agent
+      console.log("\nAgent configuration:");
+      console.log(`   Default model: ${config.agent.defaultModel}`);
+      console.log(`   Default provider: ${config.agent.defaultProvider}`);
+      console.log(`   Temperature: ${config.agent.temperature}`);
+      console.log(`   Max tokens: ${config.agent.maxTokens}`);
 
-      // 检查服务器
-      console.log("\n🌐 服务器配置:");
-      console.log(`   端口: ${config.server.port}`);
-      console.log(`   主机: ${config.server.host || "0.0.0.0"}`);
+      // Check server
+      console.log("\nServer configuration:");
+      console.log(`   Port: ${config.server.port}`);
+      console.log(`   Host: ${config.server.host || "0.0.0.0"}`);
 
-      // 验证
+      // Validation
       const errors = validateRequiredConfig(config);
       if (errors.length > 0) {
-        console.log("\n⚠️ 配置问题:");
+        console.log("\nConfiguration issues:");
         errors.forEach((err) => console.log(`   - ${err}`));
       } else {
-        console.log("\n✅ 配置检查通过!");
+        console.log("\nConfiguration check passed!");
       }
     } catch (error) {
-      console.error("❌ 配置错误:", error instanceof Error ? error.message : error);
+      console.error("ERROR: Configuration error:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 测试聊天命令
+// Chat test command
 program
   .command("chat")
-  .description("测试聊天功能")
-  .option("-m, --model <model>", "使用的模型")
-  .option("-p, --provider <provider>", "使用的提供商")
+  .description("Test chat functionality")
+  .option("-m, --model <model>", "Model to use")
+  .option("-p, --provider <provider>", "Provider to use")
   .action(async (options) => {
     try {
       const config = loadConfig();
@@ -207,16 +207,16 @@ program
       const model = options.model || config.agent.defaultModel;
       const provider = options.provider || config.agent.defaultProvider;
 
-      console.log(`\n🤖 Vex 聊天测试`);
-      console.log(`   模型: ${model}`);
-      console.log(`   提供商: ${provider}`);
-      console.log(`   输入 'exit' 退出\n`);
+      console.log(`\nVex Chat Test`);
+      console.log(`   Model: ${model}`);
+      console.log(`   Provider: ${provider}`);
+      console.log(`   Type 'exit' to quit\n`);
 
       const { streamSimple } = await import("@mariozechner/pi-ai");
       const piModel = resolveModel(provider, model);
 
       if (!piModel) {
-        console.error(`找不到模型 ${model} 的提供商`);
+        console.error(`Model not found: ${model}  provider`);
         process.exit(1);
       }
 
@@ -227,7 +227,7 @@ program
       const ask = () => {
         rl.question("You: ", async (input) => {
           if (input.toLowerCase() === "exit") {
-            console.log("再见!");
+            console.log("Goodbye!");
             rl.close();
             return;
           }
@@ -273,7 +273,7 @@ program
             console.log("\n");
             messages.push({ role: "assistant", content: fullResponse });
           } catch (error) {
-            console.error("\n错误:", error instanceof Error ? error.message : error);
+            console.error("\nError:", error instanceof Error ? error.message : error);
           }
 
           ask();
@@ -282,15 +282,15 @@ program
 
       ask();
     } catch (error) {
-      console.error("错误:", error instanceof Error ? error.message : error);
+      console.error("Error:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 配置引导命令
+// Configuration wizard command
 program
   .command("onboard")
-  .description("配置引导向导（模型/平台/服务器/Agent/记忆系统）")
+  .description("Configuration wizard (model/platform/server/Agent/memory)")
   .action(async () => {
     const readline = await import("readline");
     const fs = await import("fs");
@@ -311,14 +311,14 @@ program
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   🐕 欢迎使用 Vex 配置向导                                ║
+║   Welcome to the Vex Configuration Wizard                                ║
 ║                                                            ║
-║   支持国产模型和国产通讯软件的智能助手                       ║
+║   AI assistant supporting Chinese LLMs and comm platforms                       ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
 `);
 
-    // 配置对象（用于 config.local.json5）
+    // Configuration object (for config.local.json5)
     const config: {
       providers: Record<string, unknown>;
       channels: Record<string, unknown>;
@@ -336,20 +336,20 @@ program
     let defaultProvider = "";
     let defaultModel = "";
 
-    // 步骤 1: 选择配置模式
-    console.log("\n📦 步骤 1/5: 选择提供商类型\n");
-    console.log("  1. 国产模型 (DeepSeek, 豆包, 智谱AI, DashScope, Kimi, 阶跃星辰, MiniMax, ModelScope)");
-    console.log("  2. 自定义 OpenAI 兼容接口 (支持任意 OpenAI API 格式的服务)");
-    console.log("  3. 自定义 Anthropic 兼容接口 (支持任意 Claude API 格式的服务)");
+    // Step 1: Choose provider type
+    console.log("\n[Step 1/5] Choose Provider Type\n");
+    console.log("  1. Chinese Models (DeepSeek, Doubao, Zhipu AI, DashScope, Kimi, StepFun, MiniMax, ModelScope)");
+    console.log("  2. Custom OpenAI-compatible (supports any OpenAI API format)");
+    console.log("  3. Custom Anthropic-compatible (supports any Claude API format)");
     console.log("");
 
-    const providerType = await question("请选择 (1/2/3，可多选用逗号分隔，如 1,2): ");
+    const providerType = await question("Choose (1/2/3, comma-separated for multiple, e.g. 1,2): ");
     const selectedTypes = providerType.split(",").map((s) => s.trim());
 
-    // 国产模型配置
+    // Chinese model configuration
     if (selectedTypes.includes("1")) {
-      console.log("\n--- 国产模型配置 ---\n");
-      console.log("(至少配置一个，直接回车跳过)\n");
+      console.log("\n--- Chinese Model Configuration ---\n");
+      console.log("(Configure at least one, press Enter to skip)\n");
 
       const deepseekKey = await question("DeepSeek API Key: ");
       if (deepseekKey.trim()) {
@@ -360,7 +360,7 @@ program
         }
       }
 
-      const doubaoKey = await question("豆包 API Key (火山引擎 ARK，深度思考模型): ");
+      const doubaoKey = await question("Doubao API Key (Volcano Engine ARK, deep thinking models): ");
       if (doubaoKey.trim()) {
         config.providers["doubao"] = { apiKey: doubaoKey.trim() };
         if (!defaultProvider) {
@@ -369,7 +369,7 @@ program
         }
       }
 
-      const zhipuKey = await question("智谱AI API Key (GLM系列，有免费额度): ");
+      const zhipuKey = await question("Zhipu AI API Key (GLM series, free quota available): ");
       if (zhipuKey.trim()) {
         config.providers["zhipu"] = { apiKey: zhipuKey.trim() };
         if (!defaultProvider) {
@@ -378,7 +378,7 @@ program
         }
       }
 
-      const dashscopeKey = await question("DashScope API Key (阿里云灵积，通义千问/Qwen3): ");
+      const dashscopeKey = await question("DashScope API Key (Alibaba Cloud, Qwen series): ");
       if (dashscopeKey.trim()) {
         config.providers["dashscope"] = { apiKey: dashscopeKey.trim() };
         if (!defaultProvider) {
@@ -396,7 +396,7 @@ program
         }
       }
 
-      const stepfunKey = await question("阶跃星辰 API Key: ");
+      const stepfunKey = await question("StepFun API Key: ");
       if (stepfunKey.trim()) {
         config.providers["stepfun"] = { apiKey: stepfunKey.trim() };
         if (!defaultProvider) {
@@ -418,7 +418,7 @@ program
         }
       }
 
-      const modelscopeKey = await question("ModelScope API Key (阿里魔搭社区，有免费额度): ");
+      const modelscopeKey = await question("ModelScope API Key (Alibaba ModelScope, free quota available): ");
       if (modelscopeKey.trim()) {
         config.providers["modelscope"] = { apiKey: modelscopeKey.trim() };
         if (!defaultProvider) {
@@ -428,17 +428,17 @@ program
       }
     }
 
-    // 自定义 OpenAI 兼容接口
+    // Custom OpenAI-compatible interface
     if (selectedTypes.includes("2")) {
-      console.log("\n--- 自定义 OpenAI 兼容接口配置 ---\n");
-      console.log("适用于: OpenAI、Azure OpenAI、vLLM、Ollama、其他 OpenAI 兼容服务\n");
+      console.log("\n--- Custom OpenAI-Compatible Interface ---\n");
+      console.log("Suitable for: OpenAI, Azure OpenAI, vLLM, Ollama, other OpenAI-compatible services\n");
 
-      const customOpenaiBaseUrl = await question("API Endpoint (如 https://api.openai.com/v1): ");
+      const customOpenaiBaseUrl = await question("API Endpoint (e.g. https://api.openai.com/v1): ");
       if (customOpenaiBaseUrl.trim()) {
         const customOpenaiKey = await question("API Key: ");
-        const customOpenaiName = await question("提供商名称 (如 OpenAI、vLLM): ");
+        const customOpenaiName = await question("Provider name (e.g. OpenAI, vLLM): ");
 
-        console.log("\n配置模型列表 (至少添加一个模型):");
+        console.log("\nConfigure model list (add at least one model):");
         const models: Array<{
           id: string;
           name?: string;
@@ -449,19 +449,19 @@ program
 
         let addMore = true;
         while (addMore) {
-          const modelId = await question("\n模型 ID (如 gpt-4o, gpt-3.5-turbo): ");
+          const modelId = await question("\nModel ID (e.g. gpt-4o, gpt-3.5-turbo): ");
           if (!modelId.trim()) {
             if (models.length === 0) {
-              console.log("⚠️  至少需要添加一个模型");
+              console.log("⚠️  At least one model required");
               continue;
             }
             break;
           }
 
-          const modelName = await question("模型显示名称 (可选，直接回车使用 ID): ");
-          const contextWindow = await question("上下文窗口大小 (默认 128000): ");
-          const maxTokens = await question("最大输出 Token (默认 4096): ");
-          const supportsVision = await question("是否支持视觉/图片 (y/n，默认 n): ");
+          const modelName = await question("Model display name (optional, Enter to use ID): ");
+          const contextWindow = await question("Context window size (default 128000): ");
+          const maxTokens = await question("Max output tokens (default 4096): ");
+          const supportsVision = await question("Supports vision/images? (y/n, default n): ");
 
           models.push({
             id: modelId.trim(),
@@ -471,8 +471,8 @@ program
             supportsVision: supportsVision.toLowerCase() === "y" ? true : undefined,
           });
 
-          console.log(`✓ 已添加模型: ${modelId.trim()}`);
-          const continueAdd = await question("继续添加模型? (y/n): ");
+          console.log(`✓ Model added: ${modelId.trim()}`);
+          const continueAdd = await question("Add another model? (y/n): ");
           addMore = continueAdd.toLowerCase() === "y";
         }
 
@@ -493,18 +493,18 @@ program
       }
     }
 
-    // 自定义 Anthropic 兼容接口
+    // Custom Anthropic-compatible interface
     if (selectedTypes.includes("3")) {
-      console.log("\n--- 自定义 Anthropic 兼容接口配置 ---\n");
-      console.log("适用于: Anthropic Claude、AWS Bedrock Claude、其他 Claude API 兼容服务\n");
+      console.log("\n--- Custom Anthropic-Compatible Interface ---\n");
+      console.log("Suitable for: Anthropic Claude, AWS Bedrock Claude, other Claude API-compatible services\n");
 
-      const customAnthropicBaseUrl = await question("API Endpoint (如 https://api.anthropic.com/v1): ");
+      const customAnthropicBaseUrl = await question("API Endpoint (e.g. https://api.anthropic.com/v1): ");
       if (customAnthropicBaseUrl.trim()) {
         const customAnthropicKey = await question("API Key: ");
-        const customAnthropicName = await question("提供商名称 (如 Anthropic、Bedrock): ");
-        const apiVersion = await question("API 版本 (默认 2023-06-01): ");
+        const customAnthropicName = await question("Provider name (e.g. Anthropic, Bedrock): ");
+        const apiVersion = await question("API version (default 2023-06-01): ");
 
-        console.log("\n配置模型列表 (至少添加一个模型):");
+        console.log("\nConfigure model list (add at least one model):");
         const models: Array<{
           id: string;
           name?: string;
@@ -515,19 +515,19 @@ program
 
         let addMore = true;
         while (addMore) {
-          const modelId = await question("\n模型 ID (如 claude-3-5-sonnet-20241022): ");
+          const modelId = await question("\nModel ID (e.g. claude-3-5-sonnet-20241022): ");
           if (!modelId.trim()) {
             if (models.length === 0) {
-              console.log("⚠️  至少需要添加一个模型");
+              console.log("⚠️  At least one model required");
               continue;
             }
             break;
           }
 
-          const modelName = await question("模型显示名称 (可选，直接回车使用 ID): ");
-          const contextWindow = await question("上下文窗口大小 (默认 200000): ");
-          const maxTokens = await question("最大输出 Token (默认 8192): ");
-          const supportsVision = await question("是否支持视觉/图片 (y/n，默认 n): ");
+          const modelName = await question("Model display name (optional, Enter to use ID): ");
+          const contextWindow = await question("Context window size (default 200000): ");
+          const maxTokens = await question("Max output tokens (default 8192): ");
+          const supportsVision = await question("Supports vision/images? (y/n, default n): ");
 
           models.push({
             id: modelId.trim(),
@@ -537,8 +537,8 @@ program
             supportsVision: supportsVision.toLowerCase() === "y" ? true : undefined,
           });
 
-          console.log(`✓ 已添加模型: ${modelId.trim()}`);
-          const continueAdd = await question("继续添加模型? (y/n): ");
+          console.log(`✓ Model added: ${modelId.trim()}`);
+          const continueAdd = await question("Add another model? (y/n): ");
           addMore = continueAdd.toLowerCase() === "y";
         }
 
@@ -560,41 +560,41 @@ program
       }
     }
 
-    // 步骤 2: 通道配置
-    console.log("\n📱 步骤 2/5: 配置通讯平台\n");
-    console.log("支持的平台: 个人微信");
-    console.log("(可选配置，直接回车跳过)\n");
+    // Step 2: Channel configuration
+    console.log("\n[Step 2/5] Configure Communication Platform\n");
+    console.log("Supported platforms: Personal WeChat");
+    console.log("(Optional, press Enter to skip)\n");
 
-    // 个人微信使用扫码登录，不需要手动填写凭证
-    const configWeixin = await question("是否启用个人微信? (y/n): ");
+    // Personal WeChat uses QR code login, no manual credentials needed
+    const configWeixin = await question("Enable Personal WeChat? (y/n): ");
     if (configWeixin.toLowerCase() === "y") {
       config.channels["weixin"] = { enabled: true };
-      console.log("   个人微信已启用，首次启动时会显示二维码进行扫码登录\n");
+      console.log("   Personal WeChat enabled. QR code will be displayed on first start for login.\n");
     }
 
-    // 步骤 3: 服务器配置
-    console.log("\n🌐 步骤 3/5: 配置服务器\n");
+    // Step 3: Server configuration
+    console.log("\n[Step 3/5] Configure Server\n");
 
-    const port = await question("服务器端口 (默认 3000): ");
+    const port = await question("Server port (default 3000): ");
     config.server = {
       port: parseInt(port.trim(), 10) || 3000,
     };
 
-    // 步骤 4: Agent 配置
-    console.log("\n🤖 步骤 4/5: 配置 Agent\n");
+    // Step 4: Agent configuration
+    console.log("\n[Step 4/5] Configure Agent\n");
 
     if (defaultProvider && defaultModel) {
-      console.log(`检测到默认模型: ${defaultProvider} / ${defaultModel}`);
-      const changeDefault = await question("是否修改默认模型? (y/n): ");
+      console.log(`Detected default model: ${defaultProvider} / ${defaultModel}`);
+      const changeDefault = await question("Change default model? (y/n): ");
       if (changeDefault.toLowerCase() === "y") {
-        const newProvider = await question(`默认提供商 (当前: ${defaultProvider}): `);
-        const newModel = await question(`默认模型 (当前: ${defaultModel}): `);
+        const newProvider = await question(`Default provider (current: ${defaultProvider}): `);
+        const newModel = await question(`Default model (current: ${defaultModel}): `);
         if (newProvider.trim()) defaultProvider = newProvider.trim();
         if (newModel.trim()) defaultModel = newModel.trim();
       }
     } else {
-      defaultProvider = await question("默认提供商: ");
-      defaultModel = await question("默认模型: ");
+      defaultProvider = await question("Default provider: ");
+      defaultModel = await question("Default model: ");
     }
 
     if (defaultProvider && defaultModel) {
@@ -604,18 +604,18 @@ program
       };
     }
 
-    // 步骤 5: 记忆系统配置
-    console.log("\n🧠 步骤 5/5: 配置记忆系统\n");
-    console.log("记忆系统可让 Agent 记住跨会话的信息（如用户偏好、重要事实等）");
-    console.log("记忆默认启用，存储在 ~/.vex/memory/ 目录\n");
+    // Step 5: Memory system configuration
+    console.log("\n[Step 5/5] Configure Memory System\n");
+    console.log("Memory system allows Agent to remember info across sessions (preferences, facts, etc.)");
+    console.log("Memory is enabled by default, stored in ~/.vex/memory/\n");
 
-    const configMemory = await question("是否自定义记忆系统配置? (y/n，默认 n): ");
+    const configMemory = await question("Customize memory system config? (y/n, default n): ");
     if (configMemory.toLowerCase() === "y") {
-      const memoryEnabled = await question("是否启用记忆系统? (y/n，默认 y): ");
+      const memoryEnabled = await question("Enable memory system? (y/n, default y): ");
       const isEnabled = memoryEnabled.toLowerCase() !== "n";
 
       if (isEnabled) {
-        const storageDir = await question("记忆存储目录 (默认 ~/.vex/memory): ");
+        const storageDir = await question("Memory storage directory (default ~/.vex/memory): ");
         config.memory = {
           enabled: true,
           storageDir: storageDir.trim() || undefined,
@@ -627,69 +627,69 @@ program
       }
     }
 
-    // 写入配置文件
+    // Write config file
     console.log("\n");
 
     const hasProviders = Object.keys(config.providers).length > 0;
     if (!hasProviders) {
-      console.log("⚠️  未配置任何模型提供商，请至少配置一个。\n");
+      console.log("⚠️  No model provider configured. Please configure at least one.\n");
       rl.close();
       return;
     }
 
-    // 清理空对象
+    // Clean up empty objects
     if (Object.keys(config.channels).length === 0) delete (config as Record<string, unknown>).channels;
     if (Object.keys(config.agent).length === 0) delete (config as Record<string, unknown>).agent;
     if (Object.keys(config.memory).length === 0) delete (config as Record<string, unknown>).memory;
 
-    // 生成 JSON5 格式配置
+    // Generate JSON5 format config
     const configContent = generateJson5(config);
 
-    // 配置文件路径
+    // Config file path
     const vexDir = path.join(os.homedir(), ".vex");
     const configPath = path.join(vexDir, "config.local.json5");
 
-    console.log("📋 生成的配置文件:\n");
+    console.log("Generated configuration:\n");
     console.log("---");
     console.log(configContent);
     console.log("---\n");
 
-    const writeConfig = await question(`是否写入配置到 ${configPath}? (y/n): `);
+    const writeConfig = await question(`Write config to ${configPath}? (y/n): `);
     if (writeConfig.toLowerCase() === "y") {
-      // 确保目录存在
+      // Ensure directory exists
       if (!fs.existsSync(vexDir)) {
         fs.mkdirSync(vexDir, { recursive: true });
       }
       fs.writeFileSync(configPath, configContent);
-      console.log(`\n✅ 配置已保存到 ${configPath}`);
+      console.log(`\nConfiguration saved to ${configPath}`);
     } else {
-      console.log("\n📋 请手动将上述配置保存到配置文件中。");
+      console.log("\nPlease save the above configuration to your config file manually.");
     }
 
     const hasChannels = Object.keys(config.channels || {}).length > 0;
     const startCmd = hasChannels ? "vex start" : "vex start --web-only";
     const startNote = hasChannels
-      ? "   (已配置通讯平台，将同时启动)"
-      : "   (仅 WebChat，如需通讯平台请配置 channels)";
+      ? "   (Communication platform configured, will start together)"
+      : "   (WebChat only, configure channels for communication platforms)";
 
     console.log(`
 ╔════════════════════════════════════════════════════════════╗
 ║                                                            ║
-║   ✅ 配置完成!                                             ║
+║   Configuration complete!                                             ║
 ║                                                            ║
-║   下一步:                                                  ║
+║   Next steps:                                                  ║
 ║                                                            ║
-║   1. 检查配置: vex check                                  ║
-║   2. 启动服务: ${startCmd.padEnd(26)}║
+║   1. Check configuration: vex check                                  ║
+║   2. Start service: ${startCmd.padEnd(26)}║
 ${startNote.padEnd(61)}║
-║   3. 测试聊天: vex chat                                   ║
+║   3. Test chat: vex chat                                   ║
 ║                                                            ║
-║   启动选项:                                                ║
-║   - vex start           完整服务 (WebChat+个人微信)        ║
-║   - vex start --web-only 仅 WebChat                       ║
+║   Startup options:                                                ║
+║   - vex start           Full service (WebChat+Personal WeChat)        ║
+║   - vex start --web-only WebChat only                       ║
 ║                                                            ║
-║   配置文件: ~/.vex/config.local.json5                     ║
-║   文档: https://github.com/King-Chau/vex                  ║
+║   Config file: ~/.vex/config.local.json5                     ║
+║   Docs: https://github.com/King-Chau/vex                  ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
 `);
@@ -697,7 +697,7 @@ ${startNote.padEnd(61)}║
     rl.close();
   });
 
-/** 生成 JSON5 格式的配置字符串 */
+/** Generate JSON5 format config string */
 function generateJson5(obj: unknown, indent = 0): string {
   const spaces = "  ".repeat(indent);
   const innerSpaces = "  ".repeat(indent + 1);
@@ -725,7 +725,7 @@ function generateJson5(obj: unknown, indent = 0): string {
     if (entries.length === 0) return "{}";
 
     const items = entries.map(([key, value]) => {
-      // 使用不带引号的 key（如果是有效的 ECMAScript 标识符）
+      // Use unquoted key (if valid ECMAScript identifier)
       const safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? key : `"${key}"`;
       return `${innerSpaces}${safeKey}: ${generateJson5(value, indent + 1)}`;
     });
@@ -736,88 +736,88 @@ function generateJson5(obj: unknown, indent = 0): string {
   return String(obj);
 }
 
-// 停止服务命令
+// Stop service command
 program
   .command("kill")
   .alias("stop")
-  .description("停止运行中的 Vex 服务")
+  .description("Stop running Vex service")
   .action(async () => {
     const { execSync } = await import("child_process");
 
     try {
-      // 查找 vex 相关进程
+      // Find vex processes
       const result = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
       const pids = result.trim().split("\n").filter(Boolean);
 
       if (pids.length === 0) {
-        console.log("没有找到运行中的 Vex 服务");
+        console.log("No running Vex service found");
         return;
       }
 
-      console.log(`找到 ${pids.length} 个 Vex 进程: ${pids.join(", ")}`);
+      console.log(`Found ${pids.length} Vex process(es): ${pids.join(", ")}`);
 
-      // 终止进程
+      // Kill processes
       for (const pid of pids) {
         try {
           process.kill(parseInt(pid, 10), "SIGTERM");
-          console.log(`✅ 已发送终止信号到进程 ${pid}`);
+          console.log(`Termination signal sent to process ${pid}`);
         } catch (err) {
-          console.error(`❌ 无法终止进程 ${pid}:`, err instanceof Error ? err.message : err);
+          console.error(`Cannot terminate process ${pid}:`, err instanceof Error ? err.message : err);
         }
       }
 
-      // 等待进程退出
+      // Wait for process exit
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // 检查是否还有进程在运行
+      // Check if any processes still running
       const remaining = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" }).trim();
       if (remaining) {
-        console.log("⚠️  部分进程仍在运行，尝试强制终止...");
+        console.log("Some processes still running, attempting force kill...");
         execSync(`pkill -9 -f "node.*dist/cli.*start" 2>/dev/null || true`);
       }
 
-      console.log("🛑 Vex 服务已停止");
+      console.log("Vex service stopped");
     } catch (error) {
-      console.error("停止服务时出错:", error instanceof Error ? error.message : error);
+      console.error("Error stopping service:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 重启服务命令
+// Restart service command
 program
   .command("restart")
-  .description("重启 Vex 服务")
-  .option("-c, --config <path>", "配置文件路径")
-  .option("-p, --port <port>", "服务器端口")
-  .option("--web-only", "仅启用 WebChat")
+  .description("Restart Vex service")
+  .option("-c, --config <path>", "Config file path")
+  .option("-p, --port <port>", "Server port")
+  .option("--web-only", "WebChat only")
   .action(async (options) => {
     const { execSync, spawn: spawnProcess } = await import("child_process");
 
-    console.log("🔄 正在重启 Vex 服务...\n");
+    console.log("Restarting Vex service...\n");
 
-    // 1. 停止现有服务
+    // 1. Stop existing service
     try {
       const result = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
       const pids = result.trim().split("\n").filter(Boolean);
 
       if (pids.length > 0) {
-        console.log(`停止现有服务 (PID: ${pids.join(", ")})...`);
+        console.log(`Stopping existing service (PID: ${pids.join(", ")})...`);
         execSync(`pkill -f "node.*dist/cli.*start" 2>/dev/null || true`);
         await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     } catch {
-      // 忽略错误
+      // Ignore errors
     }
 
-    // 2. 启动新服务
-    console.log("启动新服务...\n");
+    // 2. Start new service
+    console.log("Starting new service...\n");
 
     const args = ["start"];
     if (options.config) args.push("-c", options.config);
     if (options.port) args.push("-p", options.port);
     if (options.webOnly) args.push("--web-only");
 
-    // 使用当前进程直接启动（而不是后台）
+    // Start directly with current process (not background)
     try {
       const config = loadConfig({ configPath: options.config });
 
@@ -827,40 +827,40 @@ program
 
       const errors = validateRequiredConfig(config, { webOnly: options.webOnly });
       if (errors.length > 0) {
-        console.error("❌ 配置错误:");
+        console.error("ERROR: Configuration error:");
         errors.forEach((err) => console.error(`   - ${err}`));
         process.exit(1);
       }
 
       await startGateway(config);
     } catch (error) {
-      console.error("❌ 重启失败:", error instanceof Error ? error.message : error);
+      console.error("Restart failed:", error instanceof Error ? error.message : error);
       process.exit(1);
     }
   });
 
-// 服务状态命令
+// Service status command
 program
   .command("status")
-  .description("查看 Vex 服务状态")
+  .description("View Vex service status")
   .action(async () => {
     const { execSync } = await import("child_process");
 
-    console.log("\n📊 Vex 服务状态\n");
+    console.log("\nVex Service Status\n");
 
     try {
-      // 查找 vex 进程
+      // Find vex processes
       const result = execSync('ps aux | grep -E "node.*dist/cli.*start" | grep -v grep 2>/dev/null || echo ""', { encoding: "utf-8" });
       const lines = result.trim().split("\n").filter(Boolean);
 
       if (lines.length === 0) {
-        console.log("状态: 🔴 未运行");
-        console.log("\n提示: 使用 'vex start' 或 'vex start --web-only' 启动服务");
+        console.log("Status: Not running");
+        console.log("\nTip: Use 'vex start' or 'vex start --web-only' to start the service");
         return;
       }
 
-      console.log("状态: 🟢 运行中");
-      console.log(`进程数: ${lines.length}\n`);
+      console.log("Status: Running");
+      console.log(`Process count: ${lines.length}\n`);
 
       for (const line of lines) {
         const parts = line.split(/\s+/);
@@ -871,13 +871,13 @@ program
         const cmd = parts.slice(10).join(" ").slice(0, 60);
 
         console.log(`  PID: ${pid}`);
-        console.log(`  CPU: ${cpu}%  内存: ${mem}%`);
-        console.log(`  运行时间: ${time}`);
-        console.log(`  命令: ${cmd}...`);
+        console.log(`  CPU: ${cpu}%  Memory: ${mem}%`);
+        console.log(`  Uptime: ${time}`);
+        console.log(`  Command: ${cmd}...`);
         console.log("");
       }
 
-      // 检查健康状态
+      // Check health status
       try {
         const config = loadConfig();
         const port = config.server?.port || 3000;
@@ -885,36 +885,36 @@ program
 
         if (health) {
           const healthData = JSON.parse(health);
-          console.log(`健康检查: ✅ ${healthData.status}`);
-          console.log(`服务地址: http://localhost:${port}`);
+          console.log(`Health check: ${healthData.status}`);
+          console.log(`Service URL: http://localhost:${port}`);
         }
       } catch {
-        // 忽略健康检查错误
+        // Ignore health check errors
       }
     } catch (error) {
-      console.error("检查状态时出错:", error instanceof Error ? error.message : error);
+      console.error("Error checking status:", error instanceof Error ? error.message : error);
     }
   });
 
-// 日志查看命令
+// Log viewing command
 program
   .command("logs")
-  .description("查看日志")
-  .option("-f, --follow", "实时跟踪日志 (类似 tail -f)")
-  .option("-n, --lines <number>", "显示最后 N 行", "50")
-  .option("-l, --list", "列出所有日志文件")
-  .option("--date <date>", "查看指定日期的日志 (格式: YYYY-MM-DD)")
-  .option("--level <level>", "过滤日志级别 (debug, info, warn, error)")
-  .option("--pretty", "格式化输出 (默认开启)", true)
+  .description("View logs")
+  .option("-f, --follow", "Follow log output (like tail -f)")
+  .option("-n, --lines <number>", "Show last N lines", "50")
+  .option("-l, --list", "List all log files")
+  .option("--date <date>", "Show logs for specific date (format: YYYY-MM-DD)")
+  .option("--level <level>", "Filter by log level (debug, info, warn, error)")
+  .option("--pretty", "Pretty output (on by default)", true)
   .action(async (options) => {
     const logDir = getLogDir();
 
-    // 列出所有日志文件
+    // List all log files
     if (options.list) {
-      console.log(`\n日志目录: ${logDir}\n`);
+      console.log(`\nLog directory: ${logDir}\n`);
 
       if (!existsSync(logDir)) {
-        console.log("暂无日志文件");
+        console.log("No log files found");
         return;
       }
 
@@ -924,11 +924,11 @@ program
         .reverse();
 
       if (files.length === 0) {
-        console.log("暂无日志文件");
+        console.log("No log files found");
         return;
       }
 
-      console.log("日志文件:");
+      console.log("Log files:");
       for (const file of files) {
         const filePath = join(logDir, file);
         const stats = statSync(filePath);
@@ -938,7 +938,7 @@ program
       return;
     }
 
-    // 确定要查看的日志文件
+    // Determine which log file to view
     let logFile: string;
     if (options.date) {
       logFile = join(logDir, `vex-${options.date}.log`);
@@ -947,16 +947,16 @@ program
     }
 
     if (!existsSync(logFile)) {
-      console.error(`日志文件不存在: ${logFile}`);
-      console.log(`\n提示: 使用 'vex logs --list' 查看所有日志文件`);
+      console.error(`Log file not found: ${logFile}`);
+      console.log(`\nTip: Use 'vex logs --list' to view all log files`);
       return;
     }
 
-    console.log(`日志文件: ${logFile}\n`);
+    console.log(`Log files: ${logFile}\n`);
 
-    // 实时跟踪模式
+    // Follow mode
     if (options.follow) {
-      console.log("正在跟踪日志... (Ctrl+C 退出)\n");
+      console.log("Following logs... (Ctrl+C to exit)\n");
 
       const args = ["-f", logFile];
       if (options.lines) {
@@ -985,7 +985,7 @@ program
       return;
     }
 
-    // 显示最后 N 行
+    // Show last N lines
     const content = readFileSync(logFile, "utf-8");
     const lines = content.split("\n").filter((l) => l.trim());
     const lastN = parseInt(options.lines, 10) || 50;
@@ -995,16 +995,16 @@ program
       printLogLine(line, options.level, options.pretty);
     }
 
-    console.log(`\n显示最后 ${displayLines.length} 条日志`);
-    console.log(`提示: 使用 'vex logs -f' 实时跟踪日志`);
+    console.log(`\nShowing last ${displayLines.length} log entries`);
+    console.log(`Tip: Use 'vex logs -f' to follow logs in real time`);
   });
 
-/** 打印日志行 */
+/** Print log line */
 function printLogLine(line: string, levelFilter?: string, pretty?: boolean): void {
   try {
     const log = JSON.parse(line);
 
-    // 级别过滤
+    // Level filter
     if (levelFilter) {
       const levelOrder = ["debug", "info", "warn", "error"];
       const logLevel = levelOrder.indexOf(log.level?.toString() || "info");
@@ -1013,13 +1013,13 @@ function printLogLine(line: string, levelFilter?: string, pretty?: boolean): voi
     }
 
     if (pretty) {
-      // 格式化输出
+      // Pretty output
       const time = log.time ? new Date(log.time).toLocaleString() : "";
       const level = (log.level || "INFO").toString().toUpperCase().padEnd(5);
       const module = log.module ? `[${log.module}]` : "";
       const msg = log.msg || "";
 
-      // 颜色
+      // Colors
       let levelColor = "\x1b[0m"; // reset
       if (log.level === 30 || log.level === "info") levelColor = "\x1b[32m"; // green
       else if (log.level === 40 || log.level === "warn") levelColor = "\x1b[33m"; // yellow
@@ -1028,7 +1028,7 @@ function printLogLine(line: string, levelFilter?: string, pretty?: boolean): voi
 
       console.log(`\x1b[90m${time}\x1b[0m ${levelColor}${level}\x1b[0m ${module} ${msg}`);
 
-      // 显示额外字段
+      // Show extra fields
       const extraKeys = Object.keys(log).filter(
         (k) => !["time", "level", "module", "msg", "name", "pid", "hostname"].includes(k)
       );
@@ -1041,7 +1041,7 @@ function printLogLine(line: string, levelFilter?: string, pretty?: boolean): voi
       console.log(line);
     }
   } catch {
-    // 非 JSON 格式，直接输出
+    // Non-JSON format, output directly
     console.log(line);
   }
 }

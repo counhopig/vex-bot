@@ -1,5 +1,5 @@
 /**
- * Gateway 导出
+ * Gateway exports
  */
 
 export * from "./server.js";
