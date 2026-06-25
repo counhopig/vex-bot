@@ -1,25 +1,25 @@
 /**
- * 核心类型定义
+ * Core type definitions
  */
 
-// ============== 模型相关类型 ==============
+// ============== Model-related Types ==============
 
-/** 支持的模型 API 类型 */
+/** Supported model API types */
 export type ModelApi =
-  | "openai-compatible"      // OpenAI 兼容接口 (DeepSeek, Kimi, Stepfun)
-  | "openai"                 // OpenAI 原生/兼容接口 (自定义)
-  | "anthropic"              // Anthropic 兼容接口 (自定义)
-  | "minimax-v1"             // MiniMax 原生接口
-  | "anthropic-messages";    // Anthropic 消息接口
+  | "openai-compatible"      // OpenAI-compatible interface (DeepSeek, Kimi, Stepfun)
+  | "openai"                 // OpenAI native/compatible interface (custom)
+  | "anthropic"              // Anthropic-compatible interface (custom)
+  | "minimax-v1"             // MiniMax native interface
+  | "anthropic-messages";    // Anthropic messages interface
 
-/** 模型提供商 ID */
+/** Model provider ID */
 export type ProviderId =
   | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun" | "modelscope" | "dashscope" | "zhipu"
   | "openai" | "ollama" | "openrouter" | "together" | "groq"
   | "azure-openai" | "vllm"
   | "custom-openai" | "custom-anthropic";
 
-/** 模型定义 */
+/** Model definition */
 export interface ModelDefinition {
   id: string;
   name: string;
@@ -29,16 +29,16 @@ export interface ModelDefinition {
   maxTokens: number;
   supportsVision: boolean;
   supportsReasoning: boolean;
-  /** 是否支持工具调用 (默认 true) */
+  /** Whether tool calls are supported (default true) */
   supportsToolCalls?: boolean;
   cost?: {
-    input: number;   // 每百万 token 成本
+    input: number;   // Cost per million tokens
     output: number;
     cacheRead?: number;
   };
 }
 
-/** 简化的提供商配置 (用于用户配置) */
+/** Simplified provider config (for user configuration) */
 export interface SimpleProviderConfig {
   baseUrl?: string;
   apiKey?: string;
@@ -46,21 +46,21 @@ export interface SimpleProviderConfig {
   groupId?: string;  // MiniMax specific
 }
 
-// ============== 消息相关类型 ==============
+// ============== Message-related Types ==============
 
-/** 消息角色 */
+/** Message role */
 export type MessageRole = "system" | "user" | "assistant" | "tool";
 
-/** 消息内容类型 */
+/** Content type */
 export type ContentType = "text" | "image";
 
-/** 文本内容 */
+/** Text content */
 export interface TextContent {
   type: "text";
   text: string;
 }
 
-/** 图片内容 */
+/** Image content */
 export interface ImageContent {
   type: "image";
   url?: string;
@@ -68,40 +68,40 @@ export interface ImageContent {
   mediaType?: string;
 }
 
-/** 消息内容 */
+/** Message content */
 export type MessageContent = TextContent | ImageContent;
 
-/** 工具调用 (在 assistant 消息中) */
+/** Tool call (in assistant messages) */
 export interface MessageToolCall {
   id: string;
   type: "function";
   function: {
     name: string;
-    arguments: string;  // JSON 字符串
+    arguments: string;  // JSON string
   };
 }
 
-/** 聊天消息 */
+/** Chat message */
 export interface ChatMessage {
   role: MessageRole;
   content: string | MessageContent[] | null;
-  /** assistant 消息中的工具调用 */
+  /** Tool calls in assistant messages */
   tool_calls?: MessageToolCall[];
-  /** tool 消息中的工具调用 ID */
+  /** Tool call ID in tool messages */
   tool_call_id?: string;
-  /** tool 消息中的工具名称 */
+  /** Tool name in tool messages */
   name?: string;
 }
 
-// ============== 通道相关类型 ==============
+// ============== Channel-related Types ==============
 
-/** 通道 ID */
+/** Channel ID */
 export type ChannelId = "weixin" | "webchat";
 
-/** 聊天类型 */
+/** Chat type */
 export type ChatType = "direct" | "group";
 
-/** 通道能力 */
+/** Channel capabilities */
 export interface ChannelCapabilities {
   chatTypes: ChatType[];
   supportsMedia: boolean;
@@ -113,7 +113,7 @@ export interface ChannelCapabilities {
   maxMessageLength: number;
 }
 
-/** 通道元数据 */
+/** Channel metadata */
 export interface ChannelMeta {
   id: ChannelId;
   name: string;
@@ -121,7 +121,7 @@ export interface ChannelMeta {
   capabilities: ChannelCapabilities;
 }
 
-/** 入站消息上下文 */
+/** Inbound message context */
 export interface InboundMessageContext {
   channelId: ChannelId;
   messageId: string;
@@ -137,7 +137,7 @@ export interface InboundMessageContext {
   raw?: unknown;
 }
 
-/** 出站消息 */
+/** Outbound message */
 export interface OutboundMessage {
   chatId: string;
   content: string;
@@ -146,72 +146,72 @@ export interface OutboundMessage {
   mentions?: string[];
 }
 
-/** 发送结果 */
+/** Send result */
 export interface SendResult {
   success: boolean;
   messageId?: string;
   error?: string;
 }
 
-// ============== 配置相关类型 ==============
+// ============== Config-related Types ==============
 
-/** 个人微信 (iLink OC) 配置 */
+/** Personal WeChat (iLink OC) config */
 export interface WeixinConfig {
-  /** API 基础地址，默认 https://ilinkai.weixin.qq.com */
+  /** API base URL, default https://ilinkai.weixin.qq.com */
   baseUrl?: string;
-  /** Bot Token（扫码登录后获取的 bot_token） */
+  /** Bot token (bot_token obtained after QR code login) */
   token?: string;
   /** iLink Bot ID */
   accountId?: string;
-  /** Bot 类型，默认 "3" */
+  /** Bot type, default "3" */
   botType?: string;
-  /** 二维码轮询间隔（秒），默认 1 */
+  /** QR code polling interval (seconds), default 1 */
   qrPollInterval?: number;
-  /** 长轮询超时（毫秒），默认 35000 */
+  /** Long poll timeout (milliseconds), default 35000 */
   longPollTimeoutMs?: number;
-  /** API 请求超时（毫秒），默认 120000 */
+  /** API request timeout (milliseconds), default 120000 */
   apiTimeoutMs?: number;
-  /** CDN 基础地址，默认 https://novac2c.cdn.weixin.qq.com/c2c */
+  /** CDN base URL, default https://novac2c.cdn.weixin.qq.com/c2c */
   cdnBaseUrl?: string;
-  /** 是否启用该通道 */
+  /** Whether the channel is enabled */
   enabled?: boolean;
 }
 
-/** Agent 配置 */
+/** Agent config */
 export interface AgentConfig {
   defaultModel: string;
   defaultProvider: ProviderId;
   systemPrompt?: string;
   temperature?: number;
   maxTokens?: number;
-  /** 工作目录 */
+  /** Working directory */
   workingDirectory?: string;
-  /** 是否启用 function calling */
+  /** Whether function calling is enabled */
   enableFunctionCalling?: boolean;
 }
 
-/** 会话存储配置 */
+/** Session store config */
 export interface SessionStoreConfig {
-  /** 存储类型 */
+  /** Store type */
   type: "memory" | "file";
-  /** 文件存储目录 */
+  /** File store directory */
   directory?: string;
-  /** 会话 TTL (毫秒) */
+  /** Session TTL (milliseconds) */
   ttlMs?: number;
 }
 
-/** Memory 配置 */
+/** Memory config */
 export interface MemoryConfig {
   enabled?: boolean;
-  /** 存储目录 */
+  /** Storage directory */
   directory?: string;
-  /** 嵌入模型 */
+  /** Embedding model */
   embeddingModel?: string;
-  /** 嵌入提供商 */
+  /** Embedding provider */
   embeddingProvider?: ProviderId;
 }
 
-/** 主配置 */
+/** Main config */
 export interface VexConfig {
   providers: Record<string, SimpleProviderConfig | Record<string, unknown>>;
   channels: {
@@ -225,11 +225,11 @@ export interface VexConfig {
   logging: {
     level: "debug" | "info" | "warn" | "error";
   };
-  /** 会话存储配置 */
+  /** Session store config */
   sessions?: SessionStoreConfig;
-  /** Memory 配置 */
+  /** Memory config */
   memory?: MemoryConfig;
-  /** Skills 配置 */
+  /** Skills config */
   skills?: {
     enabled?: boolean;
     userDir?: string;
@@ -239,9 +239,9 @@ export interface VexConfig {
   };
 }
 
-// ============== 事件相关类型 ==============
+// ============== Event-related Types ==============
 
-/** 事件类型 */
+/** Event type */
 export type EventType =
   | "message_received"
   | "message_sent"
@@ -249,12 +249,12 @@ export type EventType =
   | "channel_connected"
   | "channel_disconnected";
 
-/** 事件处理器 */
+/** Event handler */
 export type EventHandler<T = unknown> = (data: T) => void | Promise<void>;
 
-// ============== 错误类型 ==============
+// ============== Error Types ==============
 
-/** Vex 错误 */
+/** Vex error */
 export class VexError extends Error {
   constructor(
     message: string,
@@ -266,7 +266,7 @@ export class VexError extends Error {
   }
 }
 
-/** 提供商错误 */
+/** Provider error */
 export class ProviderError extends VexError {
   constructor(
     message: string,
@@ -278,7 +278,7 @@ export class ProviderError extends VexError {
   }
 }
 
-/** 通道错误 */
+/** Channel error */
 export class ChannelError extends VexError {
   constructor(
     message: string,

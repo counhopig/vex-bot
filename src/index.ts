@@ -1,16 +1,16 @@
 /**
- * Vex - 国产AI模型 + 国产通讯软件的智能助手
+ * Vex - Smart assistant for Chinese AI models + Chinese communication platforms
  *
- * 主入口文件
+ * Main entry point
  */
 
-// 类型导出
+// Type exports
 export * from "./types/index.js";
 
-// 配置
+// Config
 export { loadConfig, validateRequiredConfig } from "./config/index.js";
 
-// 模型提供商
+// Model providers
 export {
   initializeProviders,
   getAllProviders,
@@ -20,7 +20,7 @@ export {
   isProviderAvailable,
 } from "./providers/index.js";
 
-// 通道
+// Channels
 export {
   BaseChannelAdapter,
   createWeixinChannel,
@@ -132,7 +132,7 @@ export {
   type EmbeddingProvider,
 } from "./memory/index.js";
 
-// Outbound (主动发消息)
+// Outbound (proactive message sending)
 export {
   deliverMessage,
   deliverMessages,
@@ -147,7 +147,7 @@ export {
   type DeliveryResult,
 } from "./outbound/index.js";
 
-// Cron (定时任务)
+// Cron (scheduled tasks)
 export {
   CronService,
   getCronService,

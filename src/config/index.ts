@@ -1,5 +1,5 @@
 /**
- * 配置加载与管理
+ * Configuration loading and management
  */
 
 import { z } from "zod";
@@ -17,7 +17,7 @@ const ProviderConfigSchema = z.object({
   baseUrl: z.string().optional(),
   apiKey: z.string().optional(),
   headers: z.record(z.string()).optional(),
-}).passthrough();  // 允许额外字段 (如 custom-openai 和 custom-anthropic 的 id, name, models 等)
+}).passthrough();  // Allow extra fields (e.g. id, name, models for custom-openai and custom-anthropic)
 
 const WeixinConfigSchema = z.object({
   baseUrl: z.string().optional(),
@@ -88,9 +88,9 @@ const VexConfigSchema = z.object({
   skills: SkillsConfigSchema.optional(),
 });
 
-// ============== 配置加载 ==============
+// ============== Configuration Loading ==============
 
-/** 从文件加载配置 */
+/** Load config from a file */
 function loadConfigFromFile(configPath: string): Partial<VexConfig> {
   if (!existsSync(configPath)) {
     return {};
@@ -107,14 +107,14 @@ function loadConfigFromFile(configPath: string): Partial<VexConfig> {
   return {};
 }
 
-/** 从环境变量加载配置 */
+/** Load config from environment variables */
 function loadConfigFromEnv(): Partial<VexConfig> {
   const config: Partial<VexConfig> = {
     providers: {},
     channels: {},
   };
 
-  // 模型提供商
+  // Model providers
   const providers: VexConfig["providers"] = {};
 
   const deepseekKey = getEnvVar("DEEPSEEK_API_KEY");
@@ -137,19 +137,19 @@ function loadConfigFromEnv(): Partial<VexConfig> {
     providers.stepfun = { apiKey: stepfunKey };
   }
 
-  // ModelScope (支持 MODELSCOPE_API_KEY)
+  // ModelScope (supports MODELSCOPE_API_KEY)
   const modelscopeKey = getEnvVar("MODELSCOPE_API_KEY");
   if (modelscopeKey) {
     providers.modelscope = { apiKey: modelscopeKey };
   }
 
-  // DashScope (阿里云灵积)
+  // DashScope (Alibaba Cloud Model Studio)
   const dashscopeKey = getEnvVar("DASHSCOPE_API_KEY");
   if (dashscopeKey) {
     providers.dashscope = { apiKey: dashscopeKey };
   }
 
-  // 智谱 AI
+  // Zhipu AI
   const zhipuKey = getEnvVar("ZHIPU_API_KEY");
   if (zhipuKey) {
     providers.zhipu = { apiKey: zhipuKey };
@@ -194,7 +194,7 @@ function loadConfigFromEnv(): Partial<VexConfig> {
 
   config.providers = providers;
 
-  // 个人微信 (iLink OC) 配置
+  // Personal WeChat (iLink OC) config
   const weixinToken = getEnvVar("WEIXIN_OC_TOKEN");
   const weixinAccountId = getEnvVar("WEIXIN_OC_ACCOUNT_ID");
   const weixinBaseUrl = getEnvVar("WEIXIN_OC_BASE_URL");
@@ -209,13 +209,13 @@ function loadConfigFromEnv(): Partial<VexConfig> {
     };
   }
 
-  // 服务器配置
+  // Server config
   const port = getEnvVar("PORT");
   if (port) {
     config.server = { port: parseInt(port, 10) };
   }
 
-  // 日志配置
+  // Logging config
   const logLevel = getEnvVar("LOG_LEVEL");
   if (logLevel && ["debug", "info", "warn", "error"].includes(logLevel)) {
     config.logging = { level: logLevel as "debug" | "info" | "warn" | "error" };
@@ -225,7 +225,9 @@ function loadConfigFromEnv(): Partial<VexConfig> {
 }
 
 /**
- * 一层深度合并：对每个顶层 key 做 object 浅合并（后传入的 config 同名字段覆盖前面的），便于多环境配置叠加。
+ * One-level deep merge: for each top-level key, shallow-merge objects
+ * (later config's fields of the same name override earlier ones),
+ * making it easy to layer multiple environment configs.
  */
 function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
   const result: Partial<VexConfig> = {};
@@ -266,7 +268,7 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
   return result;
 }
 
-/** 加载配置 */
+/** Load configuration */
 export function loadConfig(options?: { configPath?: string; configDir?: string; cwd?: string }): VexConfig {
   const vexDir = options?.configDir ?? join(homedir(), ".vex");
   const cwd = options?.cwd ?? process.cwd();
@@ -295,13 +297,13 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
     }
   }
 
-  // 从环境变量加载
+  // Load from environment variables
   const envConfig = loadConfigFromEnv();
 
-  // 合并配置 (环境变量优先级更高)
+  // Merge configs (environment variables take higher priority)
   const merged = mergeConfigs(fileConfig, envConfig);
 
-  // 验证配置
+  // Validate configuration
   const result = VexConfigSchema.safeParse(merged);
   if (!result.success) {
     throw new Error(`Invalid configuration: ${result.error.message}`);
@@ -310,21 +312,21 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
   return result.data as VexConfig;
 }
 
-/** 验证必需配置 */
+/** Validate required configuration */
 export function validateRequiredConfig(config: VexConfig, options?: { webOnly?: boolean }): string[] {
   const errors: string[] = [];
 
-  // 检查是否至少配置了一个提供商
+  // Check that at least one provider is configured
   const hasProvider = Object.values(config.providers).some((p) => p?.apiKey);
   if (!hasProvider) {
     errors.push("At least one model provider must be configured with an API key");
   }
 
-  // 检查是否至少配置了一个通道 (webOnly 模式下可以只使用 WebChat)
+  // Check that at least one channel is configured (webOnly mode allows WebChat only)
   if (!options?.webOnly) {
 const hasChannel = config.channels.weixin;
 if (!hasChannel) {
-  errors.push("Weixin (个人微信) channel must be configured. Use --web-only to run with WebChat only.");
+  errors.push("Weixin (Personal WeChat) channel must be configured. Use --web-only to run with WebChat only.");
     }
   }
 
