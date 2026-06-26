@@ -13,6 +13,7 @@ import { initializeProviders } from "../providers/index.js";
 import { getChildLogger, setLogger, createLogger } from "../utils/logger.js";
 import { WsServer } from "../web/websocket.js";
 import { handleStaticRequest } from "../web/static.js";
+import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 
 const logger = getChildLogger("gateway");
 
@@ -84,8 +85,12 @@ export class Gateway {
   }
 
   private async handleMessage(context: InboundMessageContext): Promise<void> {
+    const startedAt = Date.now();
     if (this.isDuplicateMessage(context.messageId)) {
-      logger.debug({ messageId: context.messageId }, "Skipping duplicate message");
+      logger.debug(
+        { messageId: context.messageId, channel: context.channelId, chatId: context.chatId, senderId: context.senderId },
+        "Skipping duplicate message"
+      );
       return;
     }
 
@@ -94,14 +99,78 @@ export class Gateway {
       "Received message"
     );
 
-    if (!context.content.trim()) return;
+    if (!context.content.trim()) {
+      logger.debug(
+        { channel: context.channelId, chatId: context.chatId, senderId: context.senderId, messageId: context.messageId },
+        "Skipping empty message"
+      );
+      return;
+    }
+
+    // Run message interceptors (commands, auto-detect, skill capture)
+    logger.debug(
+      {
+        channel: context.channelId,
+        chatId: context.chatId,
+        senderId: context.senderId,
+        messageId: context.messageId,
+        contentLength: context.content.length,
+      },
+      "Running gateway interceptors"
+    );
+    const intercepted = await runMessageInterceptors(context);
+    if (intercepted !== null) {
+      await this.sendReply(context, intercepted);
+      logger.info(
+        {
+          channel: context.channelId,
+          chatId: context.chatId,
+          responseLength: intercepted.length,
+          durationMs: Date.now() - startedAt,
+        },
+        "Interceptor reply sent"
+      );
+      return;
+    }
 
     try {
+      logger.debug(
+        { channel: context.channelId, chatId: context.chatId, senderId: context.senderId, messageId: context.messageId },
+        "Dispatching message to agent"
+      );
       const response = await this.agent.processMessage(context);
       await this.sendReply(context, response.content);
-      logger.info({ channel: context.channelId, chatId: context.chatId, responseLength: response.content.length }, "Reply sent");
+      logger.info(
+        {
+          channel: context.channelId,
+          chatId: context.chatId,
+          responseLength: response.content.length,
+          provider: response.provider,
+          model: response.model,
+          usage: response.usage,
+          durationMs: Date.now() - startedAt,
+        },
+        "Reply sent"
+      );
+
+      // Run response observers
+      await runResponseObservers(context, response.content);
+      logger.debug(
+        { channel: context.channelId, chatId: context.chatId, senderId: context.senderId, responseLength: response.content.length },
+        "Gateway response observers completed"
+      );
     } catch (error) {
-      logger.error({ error, context }, "Failed to process message");
+      logger.error(
+        {
+          error,
+          channel: context.channelId,
+          chatId: context.chatId,
+          senderId: context.senderId,
+          messageId: context.messageId,
+          durationMs: Date.now() - startedAt,
+        },
+        "Failed to process message"
+      );
       await this.sendReply(context, "Sorry, an error occurred while processing your message. Please try again later.");
     }
   }

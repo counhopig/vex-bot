@@ -22,6 +22,7 @@ import { buildSystemPrompt } from "./system-prompt.js";
 import type { SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/service.js";
+import { gatherPromptInjections } from "../pipeline/index.js";
 
 const logger = getChildLogger("runtime");
 
@@ -111,18 +112,32 @@ export class AgentRuntime {
   /** Register custom tool */
   registerCustomTool(tool: AgentTool): void {
     this.customTools.push(wrapErrorAwareTool(tool));
+    logger.debug({ toolName: tool.name, toolCount: this.customTools.length }, "Custom tool registered");
   }
 
   /** Get or create session */
   private async getOrCreateSession(sessionKey: string): Promise<AgentSession> {
     let session = this.sessions.get(sessionKey);
-    if (session) return session;
+    if (session) {
+      logger.debug({ sessionKey }, "Reusing existing session");
+      return session;
+    }
 
     // Resolve model
     const model = resolveModel(this.config.provider, this.config.model);
     if (!model) {
       throw new Error(`Cannot resolve model: ${this.config.provider}/${this.config.model}`);
     }
+    logger.debug(
+      {
+        sessionKey,
+        provider: this.config.provider,
+        model: this.config.model,
+        resolvedProvider: model.provider,
+        customToolCount: this.customTools.length,
+      },
+      "Creating agent session"
+    );
 
     // Create independent SessionManager per session
     const sessionFile = join(this.sessionDir, `${this.sanitizeSessionKey(sessionKey)}.jsonl`);
@@ -192,7 +207,7 @@ export class AgentRuntime {
     }
 
     this.sessions.set(sessionKey, newSession);
-    logger.debug({ sessionKey }, "New session created");
+    logger.debug({ sessionKey, systemPromptLength: systemPrompt.length, customToolCount: this.customTools.length }, "New session created");
 
     return newSession;
   }
@@ -223,31 +238,85 @@ export class AgentRuntime {
     return `${context.channelId}:${context.senderId}`;
   }
 
+  /** Apply prompt injections for a single turn, returning a restore function */
+  private async applyPromptInjections(session: AgentSession, context: InboundMessageContext): Promise<() => void> {
+    const basePrompt = this.buildSystemPromptText();
+    const injections = await gatherPromptInjections(context);
+
+    if (injections.length > 0) {
+      const injectedPrompt = `${basePrompt}\n\n${injections.join("\n\n")}`;
+      session.agent.setSystemPrompt(injectedPrompt);
+      (session as unknown as Record<string, unknown>)._baseSystemPrompt = injectedPrompt;
+      logger.debug(
+        {
+          channelId: context.channelId,
+          chatId: context.chatId,
+          senderId: context.senderId,
+          injectionCount: injections.length,
+          basePromptLength: basePrompt.length,
+          injectedPromptLength: injectedPrompt.length,
+        },
+        "Prompt injected"
+      );
+    } else {
+      logger.debug(
+        { channelId: context.channelId, chatId: context.chatId, senderId: context.senderId, basePromptLength: basePrompt.length },
+        "No prompt injections for turn"
+      );
+    }
+
+    // Return restore function
+    return () => {
+      session.agent.setSystemPrompt(basePrompt);
+      (session as unknown as Record<string, unknown>)._baseSystemPrompt = basePrompt;
+      logger.debug(
+        { channelId: context.channelId, chatId: context.chatId, senderId: context.senderId, basePromptLength: basePrompt.length },
+        "Prompt restored"
+      );
+    };
+  }
+
   /** Non-streaming chat */
   async chat(context: InboundMessageContext): Promise<ChatResponse> {
     const sessionKey = this.getSessionKey(context);
-    logger.debug({ sessionKey, content: context.content.slice(0, 100) }, "Processing message");
+    const startedAt = Date.now();
+    logger.debug({ sessionKey, contentPreview: context.content.slice(0, 100), contentLength: context.content.length }, "Processing message");
 
     const session = await this.getOrCreateSession(sessionKey);
+    const restorePrompt = await this.applyPromptInjections(session, context);
 
-    await session.prompt(context.content);
-    await session.agent.waitForIdle();
+    try {
+      await session.prompt(context.content);
+      await session.agent.waitForIdle();
 
-    const lastText = session.getLastAssistantText() ?? "";
+      const lastText = session.getLastAssistantText() ?? "";
 
-    // Get usage statistics
-    const stats = session.getSessionStats();
+      // Get usage statistics
+      const stats = session.getSessionStats();
 
-    return {
-      content: lastText,
-      provider: this.config.provider,
-      model: this.config.model,
-      usage: {
-        promptTokens: stats.tokens.input,
-        completionTokens: stats.tokens.output,
-        totalTokens: stats.tokens.total,
-      },
-    };
+      logger.debug(
+        {
+          sessionKey,
+          responseLength: lastText.length,
+          durationMs: Date.now() - startedAt,
+          usage: stats.tokens,
+        },
+        "Message processed"
+      );
+
+      return {
+        content: lastText,
+        provider: this.config.provider,
+        model: this.config.model,
+        usage: {
+          promptTokens: stats.tokens.input,
+          completionTokens: stats.tokens.output,
+          totalTokens: stats.tokens.total,
+        },
+      };
+    } finally {
+      restorePrompt();
+    }
   }
 
   /** Streaming chat */
@@ -256,9 +325,11 @@ export class AgentRuntime {
     options?: { signal?: AbortSignal }
   ): AsyncGenerator<StreamEvent, ChatResponse, unknown> {
     const sessionKey = this.getSessionKey(context);
-    logger.debug({ sessionKey, content: context.content.slice(0, 100) }, "Processing message (stream)");
+    const startedAt = Date.now();
+    logger.debug({ sessionKey, contentPreview: context.content.slice(0, 100), contentLength: context.content.length }, "Processing message (stream)");
 
     const session = await this.getOrCreateSession(sessionKey);
+    const restorePrompt = await this.applyPromptInjections(session, context);
 
     // Event queue
     const eventQueue: StreamEvent[] = [];
@@ -276,11 +347,14 @@ export class AgentRuntime {
         const toolEvent = event as { type: "tool_execution_start"; toolName: string; args: Record<string, unknown> };
         const argsPreview = this.getArgsPreview(toolEvent.args);
         eventQueue.push({ type: "tool_start", name: toolEvent.toolName, argsPreview });
+        logger.debug({ sessionKey, toolName: toolEvent.toolName, argsPreview }, "Tool execution started");
       } else if (event.type === "tool_execution_end") {
         const toolEvent = event as { type: "tool_execution_end"; isError: boolean };
         eventQueue.push({ type: "tool_end", isError: toolEvent.isError });
+        logger.debug({ sessionKey, isError: toolEvent.isError }, "Tool execution ended");
       } else if (event.type === "agent_end") {
         done = true;
+        logger.debug({ sessionKey }, "Agent stream ended");
       }
     });
 
@@ -326,6 +400,18 @@ export class AgentRuntime {
     // Get result
     const lastText = session.getLastAssistantText() ?? "";
     const stats = session.getSessionStats();
+
+    // Restore base prompt after turn
+    restorePrompt();
+    logger.debug(
+      {
+        sessionKey,
+        responseLength: lastText.length,
+        durationMs: Date.now() - startedAt,
+        usage: stats.tokens,
+      },
+      "Stream message processed"
+    );
 
     return {
       content: lastText,

@@ -10,6 +10,9 @@ import json5 from "json5";
 import yaml from "yaml";
 import type { VexConfig, ProviderId } from "../types/index.js";
 import { getEnvVar } from "../utils/index.js";
+import { getChildLogger } from "../utils/logger.js";
+
+const logger = getChildLogger("config");
 
 // ============== Zod Schema ==============
 
@@ -75,6 +78,41 @@ const SkillsConfigSchema = z.object({
   only: z.array(z.string()).optional(),
 });
 
+const SkillLearnerConfigSchema = z.object({
+  enabled: z.boolean().optional().default(true),
+  autoTriggerKeywords: z.array(z.string()).optional().default([
+    "记住这个", "保存为skill", "学习一下", "记下来", "记住", "保存技能", "学一下", "learn this",
+  ]),
+  maxLearningTurns: z.number().optional().default(20),
+  enableAutoLearn: z.boolean().optional().default(true),
+  enableProactiveSuggest: z.boolean().optional().default(true),
+  proactiveThreshold: z.number().optional().default(3),
+  autoDeployToSkills: z.boolean().optional().default(true),
+});
+
+const ShareLinkConfigSchema = z.object({
+  enabled: z.boolean().optional().default(true),
+  responseMode: z.enum(["simple", "detailed"]).optional().default("detailed"),
+  includeDescription: z.boolean().optional().default(true),
+  includeCover: z.boolean().optional().default(true),
+  descriptionMaxLength: z.number().int().positive().optional().default(120),
+  bilibiliCookie: z.object({
+    sessdata: z.string().optional(),
+    biliJct: z.string().optional(),
+  }).optional().default({}),
+  summarizeProviderId: z.string().optional(),
+  sttProviderId: z.string().optional(),
+  audioDownloadTimeout: z.number().int().positive().optional().default(300_000),
+  subtitleMaxLength: z.number().int().positive().optional().default(5000),
+  llmShortContentThreshold: z.number().int().positive().optional().default(2000),
+  llmChunkSize: z.number().int().positive().optional().default(6000),
+  autoDetect: z.boolean().optional().default(false),
+});
+
+const PersonaConfigSchema = z.object({
+  enabled: z.boolean().optional().default(true),
+}).passthrough();
+
 const VexConfigSchema = z.object({
   providers: z.record(ProviderConfigSchema).optional().default({}),
   channels: z.object({
@@ -86,6 +124,9 @@ const VexConfigSchema = z.object({
   sessions: SessionStoreConfigSchema.optional(),
   memory: MemoryConfigSchema.optional(),
   skills: SkillsConfigSchema.optional(),
+  skillLearner: SkillLearnerConfigSchema.optional(),
+  sharelink: ShareLinkConfigSchema.optional(),
+  persona: PersonaConfigSchema.optional(),
 });
 
 // ============== Configuration Loading ==============
@@ -263,6 +304,15 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
     if (config.skills) {
       result.skills = { ...result.skills, ...config.skills };
     }
+    if (config.skillLearner) {
+      result.skillLearner = { ...result.skillLearner, ...config.skillLearner };
+    }
+    if (config.sharelink) {
+      result.sharelink = { ...result.sharelink, ...config.sharelink };
+    }
+    if (config.persona) {
+      result.persona = { ...result.persona, ...config.persona };
+    }
   }
 
   return result;
@@ -290,24 +340,65 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
       ];
 
   let fileConfig: Partial<VexConfig> = {};
+  const loadedConfigPaths: string[] = [];
   for (const configPath of configPaths) {
     const config = loadConfigFromFile(configPath);
     if (Object.keys(config).length > 0) {
       fileConfig = mergeConfigs(fileConfig, config);
+      loadedConfigPaths.push(configPath);
+      logger.debug({ configPath, topLevelKeys: Object.keys(config) }, "Config file loaded");
+    } else {
+      logger.debug({ configPath }, "Config file skipped");
     }
   }
 
-  // Load from environment variables
   const envConfig = loadConfigFromEnv();
+  logger.debug(
+    {
+      providerEnvCount: Object.keys(envConfig.providers ?? {}).length,
+      hasWeixinEnv: Boolean(envConfig.channels?.weixin),
+      hasServerEnv: Boolean(envConfig.server),
+      hasLoggingEnv: Boolean(envConfig.logging),
+    },
+    "Environment config loaded"
+  );
 
-  // Merge configs (environment variables take higher priority)
   const merged = mergeConfigs(fileConfig, envConfig);
+  logger.debug(
+    {
+      loadedConfigPaths,
+      mergedTopLevelKeys: Object.keys(merged),
+      providerIds: Object.keys(merged.providers ?? {}),
+      hasWeixin: Boolean(merged.channels?.weixin),
+      sharelinkEnabled: merged.sharelink?.enabled,
+      skillLearnerEnabled: merged.skillLearner?.enabled,
+      personaEnabled: merged.persona?.enabled,
+    },
+    "Config merged"
+  );
 
-  // Validate configuration
   const result = VexConfigSchema.safeParse(merged);
   if (!result.success) {
+    logger.error({ issues: result.error.issues }, "Config validation failed");
     throw new Error(`Invalid configuration: ${result.error.message}`);
   }
+
+  logger.info(
+    {
+      loadedConfigPaths,
+      providerIds: Object.keys(result.data.providers),
+      defaultProvider: result.data.agent.defaultProvider,
+      defaultModel: result.data.agent.defaultModel,
+      server: result.data.server,
+      channels: Object.keys(result.data.channels),
+      extensions: {
+        sharelink: result.data.sharelink?.enabled !== false,
+        skillLearner: result.data.skillLearner?.enabled !== false,
+        persona: result.data.persona?.enabled !== false,
+      },
+    },
+    "Config loaded"
+  );
 
   return result.data as VexConfig;
 }

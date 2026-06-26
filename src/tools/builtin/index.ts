@@ -14,6 +14,7 @@ export * from "./apply-patch.js";
 export * from "./subagent.js";
 export * from "./memory.js";
 export * from "./cron.js";
+export * from "./sharelink.js";
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createWebSearchTool, createWebFetchTool } from "./web.js";
@@ -26,6 +27,7 @@ import { createProcessTool } from "./process-tool.js";
 import { createApplyPatchTool } from "./apply-patch.js";
 import { createMemoryTools, type MemoryToolsOptions } from "./memory.js";
 import { createCronTools, type CronToolsOptions } from "./cron.js";
+import { createShareLinkTool } from "./sharelink.js";
 import type { MemoryManager } from "../../memory/index.js";
 import type { CronService } from "../../cron/service.js";
 
@@ -56,6 +58,7 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     createWebFetchTool(),
     createImageAnalyzeTool(options?.image),
     createDelayTool(),
+    createShareLinkTool(),
   ];
 
   // File system tools (enabled by default)

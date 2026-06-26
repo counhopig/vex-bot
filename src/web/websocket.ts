@@ -34,6 +34,7 @@ import { join } from "path";
 import { homedir } from "os";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import json5 from "json5";
+import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 const logger = getChildLogger("websocket");
 
 const EmptyParamsSchema = z.object({}).passthrough().default({});
@@ -388,6 +389,7 @@ export class WsServer {
     client: WsClient,
     params: ChatSendParams
   ): Promise<{ messageId: string }> {
+    const startedAt = Date.now();
     // Ensure session exists
     await this.ensureSession(client);
 
@@ -400,7 +402,13 @@ export class WsServer {
     const stableSenderId = client.sessionKey!.replace("webchat:", "");
 
     logger.debug(
-      { clientId: client.id, sessionKey: client.sessionKey, stableSenderId, message: message.slice(0, 100) },
+      {
+        clientId: client.id,
+        sessionKey: client.sessionKey,
+        stableSenderId,
+        messagePreview: message.slice(0, 100),
+        messageLength: message.length,
+      },
       "Chat send"
     );
 
@@ -412,6 +420,10 @@ export class WsServer {
       timestamp: Date.now(),
     };
     await store.appendTranscript(client.sessionId!, client.sessionKey!, userMessage);
+    logger.debug(
+      { clientId: client.id, sessionKey: client.sessionKey, sessionId: client.sessionId, messageId, role: "user" },
+      "WebChat transcript appended"
+    );
 
     const context = {
       channelId: "webchat" as const,
@@ -424,15 +436,57 @@ export class WsServer {
       timestamp: Date.now(),
     };
 
+    // Run message interceptors (commands, auto-detect, skill capture)
+    const intercepted = await runMessageInterceptors(context);
+    if (intercepted !== null) {
+      logger.debug(
+        {
+          clientId: client.id,
+          sessionKey: client.sessionKey,
+          messageId,
+          responseLength: intercepted.length,
+          durationMs: Date.now() - startedAt,
+        },
+        "WebChat message intercepted"
+      );
+      this.sendEvent(client.ws, "chat.delta", {
+        sessionId: client.sessionId,
+        delta: intercepted,
+        done: false,
+      } as ChatDeltaEvent);
+      this.sendEvent(client.ws, "chat.delta", {
+        sessionId: client.sessionId,
+        delta: "",
+        done: true,
+      } as ChatDeltaEvent);
+
+      // Save assistant message to transcript
+      const assistantMessage: TranscriptMessage = {
+        id: generateId("msg"),
+        role: "assistant",
+        content: intercepted,
+        timestamp: Date.now(),
+      };
+      await store.appendTranscript(client.sessionId!, client.sessionKey!, assistantMessage);
+      logger.debug(
+        { clientId: client.id, sessionKey: client.sessionKey, sessionId: client.sessionId, role: "assistant", responseLength: intercepted.length },
+        "WebChat intercepted reply appended"
+      );
+
+      return { messageId };
+    }
+
     const controller = new AbortController();
     client.currentAbortController = controller;
 
     try {
       const stream = this.agent.processMessageStream(context, { signal: controller.signal });
       let fullContent = "";
+      let deltaCount = 0;
 
       for await (const delta of stream) {
         fullContent += delta;
+        deltaCount += 1;
         this.sendEvent(client.ws, "chat.delta", {
           sessionId: client.sessionId,
           delta,
@@ -450,18 +504,43 @@ export class WsServer {
         timestamp: Date.now(),
       };
       await store.appendTranscript(client.sessionId!, client.sessionKey!, assistantMessage);
+      logger.debug(
+        {
+          clientId: client.id,
+          sessionKey: client.sessionKey,
+          sessionId: client.sessionId,
+          responseLength: fullContent.length,
+          deltaCount,
+        },
+        "WebChat assistant transcript appended"
+      );
 
       this.sendEvent(client.ws, "chat.delta", {
         sessionId: client.sessionId,
         delta: "",
         done: true,
       } as ChatDeltaEvent);
+
+      // Run response observers
+      await runResponseObservers(context, fullContent);
+      logger.debug(
+        {
+          clientId: client.id,
+          sessionKey: client.sessionKey,
+          messageId,
+          responseLength: fullContent.length,
+          deltaCount,
+          durationMs: Date.now() - startedAt,
+        },
+        "WebChat chat.send completed"
+      );
     } catch (error) {
       client.currentAbortController = null;
       const isAborted =
         error instanceof Error &&
         (error.name === "AbortError" || error.message === "Aborted" || (error as { code?: string }).code === "ABORT_ERR");
       if (isAborted) {
+        logger.debug({ clientId: client.id, sessionKey: client.sessionKey, messageId, durationMs: Date.now() - startedAt }, "WebChat chat.send aborted");
         this.sendEvent(client.ws, "chat.delta", {
           sessionId: client.sessionId,
           delta: "",
@@ -470,6 +549,10 @@ export class WsServer {
         } as ChatDeltaEvent);
       } else {
         const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(
+          { error, clientId: client.id, sessionKey: client.sessionKey, messageId, durationMs: Date.now() - startedAt },
+          "WebChat chat.send failed"
+        );
         this.sendEvent(client.ws, "chat.error", {
           sessionId: client.sessionId,
           error: errorMessage,

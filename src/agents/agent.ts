@@ -16,6 +16,7 @@ import { initSkills, type SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
 import { getCronService } from "../cron/service.js";
 import { createDefaultCronExecuteJob } from "../cron/executor.js";
+import { initExtensions } from "../extensions/index.js";
 
 const logger = getChildLogger("agent");
 
@@ -252,6 +253,8 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
       logger.warn({ error }, "Failed to load skills");
     }
   }
+
+  await initExtensions(config, agent);
 
   return agent;
 }
