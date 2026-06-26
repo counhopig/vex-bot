@@ -1,6 +1,7 @@
 /**
  * 平台适配器抽象基类与统一数据结构
  */
+import { unlinkSync } from "fs";
 
 /** 视频元信息，所有平台适配器统一返回此结构 */
 export interface VideoMetadata {
@@ -62,14 +63,11 @@ export abstract class BasePlatformAdapter {
 
   /** 清理下载的临时音频文件 */
   static cleanupAudio(audioPath: string): void {
-    if (audioPath) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const { unlinkSync } = require("fs");
-        unlinkSync(audioPath);
-      } catch {
-        // ignore cleanup errors
-      }
+    if (!audioPath) return;
+    try {
+      unlinkSync(audioPath);
+    } catch {
+      // ignore cleanup errors
     }
   }
 

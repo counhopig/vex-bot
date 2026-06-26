@@ -10,6 +10,8 @@ import type { VexConfig, ProviderId } from "../types/index.js";
 import { registerTool, registerTools } from "../tools/registry.js";
 import { registerHook, type HookEventType, type HookHandler } from "../hooks/index.js";
 import { getChildLogger } from "../utils/logger.js";
+import { homedir } from "os";
+import { join } from "path";
 
 const logger = getChildLogger("plugins");
 
@@ -236,11 +238,7 @@ export async function registerPlugin(
       logger.debug({ pluginId: meta.id, serviceId: service.id }, "Plugin registered service");
     },
     getLogger: (name) => getChildLogger(name ?? `plugin:${meta.id}`),
-    getStateDir: () => {
-      const { homedir } = require("os");
-      const { join } = require("path");
-      return join(homedir(), ".vex", "plugins", meta.id);
-    },
+    getStateDir: () => join(homedir(), ".vex", "plugins", meta.id),
   };
 
   // Execute register phase
@@ -296,11 +294,7 @@ export async function activatePlugin(pluginId: string): Promise<void> {
       return unsubscribe;
     },
     getLogger: (name) => getChildLogger(name ?? `plugin:${plugin.id}`),
-    getStateDir: () => {
-      const { homedir } = require("os");
-      const { join } = require("path");
-      return join(homedir(), ".vex", "plugins", plugin.id);
-    },
+    getStateDir: () => join(homedir(), ".vex", "plugins", plugin.id),
   };
 
   // Execute activate phase

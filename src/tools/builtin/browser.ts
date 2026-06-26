@@ -8,25 +8,25 @@
 import { Type } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { jsonResult, errorResult, readStringParam, readNumberParam, readBooleanParam } from "../common.js";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 
 // Browser session state
 interface BrowserSession {
-  browser: unknown;
-  context: unknown;
-  page: unknown;
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
   refs: Map<string, { role: string; name?: string; nth?: number }>;
   refsMode: "aria" | "role";
 }
 
 let browserSession: BrowserSession | null = null;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let playwrightModule: any = null;
+type PlaywrightModule = typeof import("playwright-core");
+let playwrightModule: PlaywrightModule | null = null;
 
 /** Lazy-load Playwright */
-async function getPlaywright() {
+async function getPlaywright(): Promise<PlaywrightModule> {
   if (!playwrightModule) {
     try {
-      // @ts-ignore - Dynamic import of optional dependency
       playwrightModule = await import("playwright-core");
     } catch {
       throw new Error("Playwright not installed. Run: npm install playwright-core");
@@ -44,7 +44,7 @@ async function getBrowserSession(): Promise<BrowserSession> {
 }
 
 /** Resolve element locator by ref */
-function getRefLocator(page: any, ref: string, session: BrowserSession) {
+function getRefLocator(page: Page, ref: string, session: BrowserSession) {
   const normalized = ref.startsWith("@")
     ? ref.slice(1)
     : ref.startsWith("ref=")
@@ -57,9 +57,8 @@ function getRefLocator(page: any, ref: string, session: BrowserSession) {
       throw new Error(`Unknown ref "${normalized}". Run a new snapshot first.`);
     }
     const locator = info.name
-      ? page.getByRole(info.role, { name: info.name, exact: true })
-      : page.getByRole(info.role);
-    return info.nth !== undefined ? locator.nth(info.nth) : locator;
+      ? page.getByRole(info.role as Parameters<typeof page.getByRole>[0], { name: info.name, exact: true })
+      : page.getByRole(info.role as Parameters<typeof page.getByRole>[0]);
   }
   return page.locator(ref);
 }
@@ -190,7 +189,7 @@ async function startBrowser(params: Record<string, unknown>): Promise<AgentToolR
   const playwright = await getPlaywright();
 
   const browser = await playwright.chromium.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
-  const context = await (browser as any).newContext({
+  const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
     userAgent: "Vexlla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
@@ -201,7 +200,9 @@ async function startBrowser(params: Record<string, unknown>): Promise<AgentToolR
 
 async function stopBrowser(): Promise<AgentToolResult<unknown>> {
   if (!browserSession) return jsonResult({ status: "not_running" });
-  try { await (browserSession.browser as any).close(); } catch {}
+  try { await browserSession.browser.close(); } catch {
+    // Browser may already be torn down; ignore.
+  }
   browserSession = null;
   return jsonResult({ status: "stopped" });
 }
@@ -210,7 +211,7 @@ async function navigateTo(params: Record<string, unknown>, timeout: number): Pro
   const session = await getBrowserSession();
   const url = readStringParam(params, "url", { required: true })!;
   try { new URL(url); } catch { return errorResult(`Invalid URL: ${url}`); }
-  const page = session.page as any;
+  const page = session.page;
   await page.goto(url, { timeout, waitUntil: "domcontentloaded" });
   session.refs.clear();
   return jsonResult({ status: "navigated", url: page.url(), title: await page.title() });
@@ -221,7 +222,7 @@ async function takeScreenshot(params: Record<string, unknown>, timeout: number):
   const fullPage = readBooleanParam(params, "fullPage") ?? false;
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
-  const page = session.page as any;
+  const page = session.page;
   let buffer: Buffer;
   if (ref) {
     const locator = getRefLocator(page, ref, session);
@@ -236,7 +237,7 @@ async function takeScreenshot(params: Record<string, unknown>, timeout: number):
 
 async function getSnapshot(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const session = await getBrowserSession();
-  const page = session.page as any;
+  const page = session.page;
   const title = await page.title();
   const url = page.url();
   let ariaSnapshot = "";
@@ -246,7 +247,8 @@ async function getSnapshot(params: Record<string, unknown>, timeout: number): Pr
     session.refs = refs;
     return jsonResult({ status: "snapshot", url, title, elementsCount: refs.size, elements: generateRefSnapshot(refs), ariaSnapshot: ariaSnapshot.slice(0, 8000) });
   }
-  const interactiveElements = await page.evaluate(`(() => {
+  type InteractiveElement = { ref: string; tag: string; type: string; text: string };
+  const interactiveElements: InteractiveElement[] = await page.evaluate(`(() => {
     const elements = [];
     const selectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [role="textbox"]';
     const els = document.querySelectorAll(selectors);
@@ -270,7 +272,7 @@ async function clickElement(params: Record<string, unknown>, timeout: number): P
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
-  const page = session.page as any;
+  const page = session.page;
   const locator = ref ? getRefLocator(page, ref, session) : page.locator(selector!);
   const doubleClick = readBooleanParam(params, "doubleClick") ?? false;
   const button = readStringParam(params, "button") as "left" | "right" | "middle" | undefined;
@@ -285,7 +287,7 @@ async function typeText(params: Record<string, unknown>, timeout: number): Promi
   const selector = readStringParam(params, "selector");
   const text = readStringParam(params, "text", { required: true })!;
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
-  const page = session.page as any;
+  const page = session.page;
   const locator = ref ? getRefLocator(page, ref, session) : page.locator(selector!);
   const slowly = readBooleanParam(params, "slowly") ?? false;
   const submit = readBooleanParam(params, "submit") ?? false;
@@ -300,7 +302,7 @@ async function hoverElement(params: Record<string, unknown>, timeout: number): P
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
-  const page = session.page as any;
+  const page = session.page;
   const locator = ref ? getRefLocator(page, ref, session) : page.locator(selector!);
   await locator.hover({ timeout });
   return jsonResult({ status: "hovered", element: ref || selector });
@@ -310,7 +312,7 @@ async function dragElement(params: Record<string, unknown>, timeout: number): Pr
   const session = await getBrowserSession();
   const startRef = readStringParam(params, "startRef", { required: true })!;
   const endRef = readStringParam(params, "endRef", { required: true })!;
-  const page = session.page as any;
+  const page = session.page;
   await getRefLocator(page, startRef, session).dragTo(getRefLocator(page, endRef, session), { timeout });
   return jsonResult({ status: "dragged", from: startRef, to: endRef });
 }
@@ -329,7 +331,7 @@ async function selectOption(params: Record<string, unknown>, timeout: number): P
   const values = params.values as string[] | undefined;
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
   if (!values?.length) return errorResult("'values' array is required");
-  const page = session.page as any;
+  const page = session.page;
   const locator = ref ? getRefLocator(page, ref, session) : page.locator(selector!);
   await locator.selectOption(values, { timeout });
   return jsonResult({ status: "selected", element: ref || selector, values });
@@ -340,7 +342,7 @@ async function scrollPage(params: Record<string, unknown>, timeout: number): Pro
   const ref = readStringParam(params, "ref");
   const direction = readStringParam(params, "direction") ?? "down";
   const amount = readNumberParam(params, "amount", { min: 100, max: 10000 }) ?? 500;
-  const page = session.page as any;
+  const page = session.page;
   if (ref) { await getRefLocator(page, ref, session).scrollIntoViewIfNeeded({ timeout }); return jsonResult({ status: "scrolled", element: ref }); }
   const deltas: Record<string, [number, number]> = { up: [0, -amount], down: [0, amount], left: [-amount, 0], right: [amount, 0] };
   const [dx, dy] = deltas[direction] ?? [0, amount];
@@ -352,7 +354,7 @@ async function evaluateScript(params: Record<string, unknown>, timeout: number):
   const session = await getBrowserSession();
   const code = readStringParam(params, "code", { required: true })!;
   const ref = readStringParam(params, "ref");
-  const page = session.page as any;
+  const page = session.page;
   const result = ref ? await getRefLocator(page, ref, session).evaluate((el: any, c: string) => eval(c), code) : await page.evaluate(code);
   return jsonResult({ status: "evaluated", result: JSON.stringify(result, null, 2).slice(0, 2000) });
 }
@@ -361,7 +363,7 @@ async function waitFor(params: Record<string, unknown>, timeout: number): Promis
   const session = await getBrowserSession();
   const waitForCondition = readStringParam(params, "waitFor") ?? "timeout";
   const value = readStringParam(params, "value");
-  const page = session.page as any;
+  const page = session.page;
   switch (waitForCondition) {
     case "selector": if (!value) return errorResult("Selector required"); await page.waitForSelector(value, { timeout }); return jsonResult({ status: "waited", condition: "selector" });
     case "text": if (!value) return errorResult("Text required"); await page.getByText(value).first().waitFor({ state: "visible", timeout }); return jsonResult({ status: "waited", condition: "text" });
@@ -375,7 +377,7 @@ async function fillForm(params: Record<string, unknown>, timeout: number): Promi
   const session = await getBrowserSession();
   const fields = params.fields as Array<{ ref: string; type: string; value: string | boolean | number }> | undefined;
   if (!fields?.length) return errorResult("'fields' array is required");
-  const page = session.page as any;
+  const page = session.page;
   const results: Array<{ ref: string; status: string }> = [];
   for (const field of fields) {
     if (!field.ref || !field.type) { results.push({ ref: field.ref || "unknown", status: "skipped" }); continue; }

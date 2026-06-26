@@ -5,6 +5,7 @@
 
 import * as os from "os";
 import * as path from "path";
+import { existsSync } from "fs";
 import type { Tool } from "../tools/types.js";
 
 const DEFAULT_TIMEZONE = "Asia/Shanghai";
@@ -92,14 +93,8 @@ function buildEnvironmentSection(options: SystemPromptOptions): string {
   }
 
   // Check if git repository
-  try {
-    const gitDir = path.join(cwd, ".git");
-    const fs = require("fs");
-    if (fs.existsSync(gitDir)) {
-      sections.push(`Git repository: Yes`);
-    }
-  } catch {
-    // ignore
+  if (existsSync(path.join(cwd, ".git"))) {
+    sections.push(`Git repository: Yes`);
   }
 
   if (options.userName) {

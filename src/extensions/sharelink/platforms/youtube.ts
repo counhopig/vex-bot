@@ -5,7 +5,7 @@
 import { BasePlatformAdapter, type VideoMetadata } from "./base.js";
 import { getChildLogger } from "../../../utils/logger.js";
 import { spawn } from "child_process";
-import { existsSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -145,7 +145,6 @@ export class YouTubeAdapter extends BasePlatformAdapter {
           return;
         }
         try {
-          const { readdirSync } = require("fs");
           const files = readdirSync(tmpdir());
           for (const fname of files) {
             if (fname.startsWith(`youtube_audio_${videoId}`)) {
