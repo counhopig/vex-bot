@@ -11,6 +11,7 @@ import yaml from "yaml";
 import type { VexConfig, ProviderId } from "../types/index.js";
 import { getEnvVar } from "../utils/index.js";
 import { getChildLogger } from "../utils/logger.js";
+import { PROVIDER_IDS } from "../providers/metadata.js";
 
 const logger = getChildLogger("config");
 
@@ -36,11 +37,7 @@ const WeixinConfigSchema = z.object({
 
 const AgentConfigSchema = z.object({
   defaultModel: z.string().default("deepseek-chat"),
-  defaultProvider: z.enum([
-    "deepseek", "minimax", "kimi", "stepfun", "modelscope", "dashscope", "zhipu",
-    "openai", "ollama", "openrouter", "together", "groq",
-    "custom-openai", "custom-anthropic"
-  ]).default("deepseek"),
+  defaultProvider: z.enum(PROVIDER_IDS as [ProviderId, ...ProviderId[]]).default("deepseek"),
   systemPrompt: z.string().optional(),
   temperature: z.number().min(0).max(2).optional().default(0.7),
   maxTokens: z.number().optional().default(4096),

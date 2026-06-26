@@ -31,6 +31,8 @@ import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type TranscriptMessage } from "../sessions/index.js";
 import { join } from "path";
+import { getProviderName, getProviderMeta, PROVIDER_IDS } from "../providers/metadata.js";
+import { toJson5 } from "../config/json5-writer.js";
 import { homedir } from "os";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import json5 from "json5";
@@ -727,12 +729,13 @@ export class WsServer {
     // Provider info (API key redacted)
     const providers: Record<string, ConfigInfo["providers"][string]> = {};
     for (const [id, config] of Object.entries(this.config.providers)) {
+      const cfg = config as Record<string, unknown>;
       providers[id] = {
         id,
-        name: (config as any).name || id,
-        baseUrl: (config as any).baseUrl,
-        hasApiKey: Boolean((config as any).apiKey),
-        groupId: (config as any).groupId,
+        name: typeof cfg.name === "string" && cfg.name ? cfg.name : getProviderName(id),
+        baseUrl: typeof cfg.baseUrl === "string" ? cfg.baseUrl : undefined,
+        hasApiKey: Boolean(cfg.apiKey),
+        groupId: typeof cfg.groupId === "string" ? cfg.groupId : undefined,
       };
     }
 
@@ -847,12 +850,7 @@ export class WsServer {
 
     // Validate Agent configuration
     if (params.agent) {
-      const validProviders = [
-        "deepseek", "doubao", "minimax", "kimi", "stepfun", "modelscope",
-        "dashscope", "zhipu", "openai", "ollama", "openrouter",
-        "together", "groq", "custom-openai", "custom-anthropic",
-      ];
-      if (params.agent.defaultProvider && !validProviders.includes(params.agent.defaultProvider)) {
+      if (params.agent.defaultProvider && !PROVIDER_IDS.includes(params.agent.defaultProvider)) {
         errors.push(`Invalid provider: ${params.agent.defaultProvider}`);
       }
       if (params.agent.temperature !== undefined && (params.agent.temperature < 0 || params.agent.temperature > 2)) {
@@ -1017,7 +1015,7 @@ export class WsServer {
     }
 
     // Generate JSON5 format
-    const json5Content = this.generateJson5(configToSave);
+    const json5Content = toJson5(configToSave);
 
     // Write file
     writeFileSync(configPath, json5Content, "utf-8");
@@ -1045,45 +1043,6 @@ export class WsServer {
       message: "Configuration saved" + (requiresRestart ? ", restart required for changes to take effect" : ""),
       requiresRestart,
     };
-  }
-
-  /** Generate JSON5 format config string */
-  private generateJson5(obj: unknown, indent = 0): string {
-    const spaces = "  ".repeat(indent);
-    const innerSpaces = "  ".repeat(indent + 1);
-
-    if (obj === null || obj === undefined) {
-      return "null";
-    }
-
-    if (typeof obj === "string") {
-      return `"${obj.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-    }
-
-    if (typeof obj === "number" || typeof obj === "boolean") {
-      return String(obj);
-    }
-
-    if (Array.isArray(obj)) {
-      if (obj.length === 0) return "[]";
-      const items = obj.map((item) => `${innerSpaces}${this.generateJson5(item, indent + 1)}`);
-      return `[\n${items.join(",\n")}\n${spaces}]`;
-    }
-
-    if (typeof obj === "object") {
-      const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
-      if (entries.length === 0) return "{}";
-
-      const items = entries.map(([key, value]) => {
-        // Use unquoted key (if valid ECMAScript identifier)
-        const safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? key : `"${key}"`;
-        return `${innerSpaces}${safeKey}: ${this.generateJson5(value, indent + 1)}`;
-      });
-
-      return `{\n${items.join(",\n")}\n${spaces}}`;
-    }
-
-    return String(obj);
   }
 
   /** Send response */

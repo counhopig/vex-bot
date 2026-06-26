@@ -1873,18 +1873,10 @@ function getControlHtml(config: VexConfig): string {
         return;
       }
 
-      const providerNames = {
-        deepseek: 'DeepSeek', doubao: 'Doubao', minimax: 'MiniMax', kimi: 'Kimi',
-        stepfun: 'StepFun', modelscope: 'ModelScope', dashscope: 'DashScope',
-        zhipu: 'Zhipu AI', openai: 'OpenAI', ollama: 'Ollama',
-        openrouter: 'OpenRouter', together: 'Together AI', groq: 'Groq',
-        'custom-openai': 'Custom OpenAI', 'custom-anthropic': 'Custom Anthropic'
-      };
-
       container.innerHTML = Object.entries(providers).map(([id, p]) => \`
         <div class="provider-form-card" data-provider-id="\${id}">
           <div class="provider-form-header">
-            <h4>\${p.name || providerNames[id] || id}</h4>
+            <h4>\${p.name || id}</h4>
             <span class="provider-status-badge \${p.hasApiKey ? 'configured' : ''}">
               \${p.hasApiKey ? 'Configured' : 'Not configured'}
             </span>

@@ -16,6 +16,8 @@ import { loadConfig, validateRequiredConfig } from "../config/index.js";
 import { startGateway } from "../gateway/server.js";
 import { initializeProviders, getAllModels, resolveModel, getApiKeyForProvider } from "../providers/index.js";
 import { createLogger, setLogger, getLogDir, getLogFile } from "../utils/logger.js";
+import { CHINA_PROVIDER_IDS, OVERSEAS_PROVIDER_IDS, getProviderMeta } from "../providers/metadata.js";
+import { toJson5 } from "../config/json5-writer.js";
 import dotenv from "dotenv";
 import { spawn } from "child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
@@ -123,31 +125,28 @@ program
 
       // Check providers
       console.log("Model providers:");
-      const chinaProviders = ["deepseek", "doubao", "zhipu", "dashscope", "kimi", "stepfun", "minimax", "modelscope"] as const;
-      for (const id of chinaProviders) {
+      for (const id of CHINA_PROVIDER_IDS) {
         const providerConfig = config.providers[id];
         const status = providerConfig?.apiKey ? "Configured" : "Not configured";
         console.log(`   ${id}: ${status}`);
       }
 
-      // Check custom and overseas providers
-      const extraProviders = ["openai", "openrouter", "together", "groq", "ollama", "vllm"] as const;
-      for (const id of extraProviders) {
+      // Overseas / local providers
+      for (const id of OVERSEAS_PROVIDER_IDS) {
         const providerConfig = config.providers[id];
         if (providerConfig) {
-          const status = (providerConfig as any).apiKey || id === "ollama" || id === "vllm" ? "Configured" : "Not configured";
+          const meta = getProviderMeta(id);
+          const status = providerConfig.apiKey || meta?.requiresApiKey === false ? "Configured" : "Not configured";
           console.log(`   ${id}: ${status}`);
         }
       }
-      if (config.providers["custom-openai"]) {
-        const c = config.providers["custom-openai"] as Record<string, unknown>;
-        const modelCount = Array.isArray(c.models) ? c.models.length : 0;
-        console.log(`   custom-openai: Configured (${c.baseUrl}, ${modelCount} models)`);
-      }
-      if (config.providers["custom-anthropic"]) {
-        const c = config.providers["custom-anthropic"] as Record<string, unknown>;
-        const modelCount = Array.isArray(c.models) ? c.models.length : 0;
-        console.log(`   custom-anthropic: Configured (${c.baseUrl}, ${modelCount} models)`);
+      for (const id of ["custom-openai", "custom-anthropic"] as const) {
+        const c = config.providers[id] as Record<string, unknown> | undefined;
+        if (c) {
+          const modelCount = Array.isArray(c.models) ? c.models.length : 0;
+          const baseUrl = typeof c.baseUrl === "string" ? c.baseUrl : "";
+          console.log(`   ${id}: Configured (${baseUrl}, ${modelCount} models)`);
+        }
       }
 
       // Check channels
@@ -643,7 +642,7 @@ program
     if (Object.keys(config.memory).length === 0) delete (config as Record<string, unknown>).memory;
 
     // Generate JSON5 format config
-    const configContent = generateJson5(config);
+    const configContent = toJson5(config);
 
     // Config file path
     const vexDir = path.join(os.homedir(), ".vex");
@@ -696,45 +695,6 @@ ${startNote.padEnd(61)}║
 
     rl.close();
   });
-
-/** Generate JSON5 format config string */
-function generateJson5(obj: unknown, indent = 0): string {
-  const spaces = "  ".repeat(indent);
-  const innerSpaces = "  ".repeat(indent + 1);
-
-  if (obj === null || obj === undefined) {
-    return "null";
-  }
-
-  if (typeof obj === "string") {
-    return `"${obj.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-  }
-
-  if (typeof obj === "number" || typeof obj === "boolean") {
-    return String(obj);
-  }
-
-  if (Array.isArray(obj)) {
-    if (obj.length === 0) return "[]";
-    const items = obj.map((item) => `${innerSpaces}${generateJson5(item, indent + 1)}`);
-    return `[\n${items.join(",\n")}\n${spaces}]`;
-  }
-
-  if (typeof obj === "object") {
-    const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
-    if (entries.length === 0) return "{}";
-
-    const items = entries.map(([key, value]) => {
-      // Use unquoted key (if valid ECMAScript identifier)
-      const safeKey = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) ? key : `"${key}"`;
-      return `${innerSpaces}${safeKey}: ${generateJson5(value, indent + 1)}`;
-    });
-
-    return `{\n${items.join(",\n")}\n${spaces}}`;
-  }
-
-  return String(obj);
-}
 
 // Stop service command
 program
