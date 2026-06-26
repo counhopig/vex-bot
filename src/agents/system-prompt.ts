@@ -7,6 +7,8 @@ import * as os from "os";
 import * as path from "path";
 import type { Tool } from "../tools/types.js";
 
+const DEFAULT_TIMEZONE = "Asia/Shanghai";
+
 /** System prompt options */
 export interface SystemPromptOptions {
   /** Base system prompt */
@@ -17,6 +19,7 @@ export interface SystemPromptOptions {
   includeEnvironment?: boolean;
   /** Whether to include date/time */
   includeDateTime?: boolean;
+  timezone?: string;
   /** Whether to include tool usage rules */
   includeToolRules?: boolean;
   /** Available tools list (for tool usage guide generation) */
@@ -49,15 +52,17 @@ function getPlatformInfo(): string {
 }
 
 /** Get current date and time */
-function getCurrentDateTime(): string {
+function getCurrentDateTime(timezone: string): string {
   const now = new Date();
   const dateStr = now.toLocaleDateString("zh-CN", {
+    timeZone: timezone,
     year: "numeric",
     month: "long",
     day: "numeric",
     weekday: "long",
   });
   const timeStr = now.toLocaleTimeString("zh-CN", {
+    timeZone: timezone,
     hour: "2-digit",
     minute: "2-digit",
     timeZoneName: "short",
@@ -82,7 +87,8 @@ function buildEnvironmentSection(options: SystemPromptOptions): string {
   sections.push(`Home: ${os.homedir()}`);
 
   if (options.includeDateTime !== false) {
-    sections.push(`Current time: ${getCurrentDateTime()}`);
+    const timezone = options.timezone ?? DEFAULT_TIMEZONE;
+    sections.push(`Current time (${timezone}): ${getCurrentDateTime(timezone)}`);
   }
 
   // Check if git repository
