@@ -21,11 +21,34 @@ import {
   UserProfile,
 } from "./models.js";
 import { getChildLogger } from "../../utils/logger.js";
+import {
+  emotionGetEmotion,
+  emotionUpdateEmotion,
+} from "./storage/emotion.js";
+import {
+  profileGetProfile,
+  profileUpdateProfile,
+  profileAddFact,
+  profileGetAllFacts,
+} from "./storage/profile.js";
+import {
+  todosGetByType,
+  todosAdd,
+  todosComplete,
+} from "./storage/todos.js";
+import {
+  historyAppend,
+  historyGet,
+  interactionsSave,
+  consolidationsProcess,
+  reflectionsGetAll,
+  reflectionsSave,
+} from "./storage/history.js";
 
 const logger = getChildLogger("persona-storage");
 
 /** 单个用户的完整数据 */
-type UserData = {
+export type UserData = {
   [key: string]: unknown;
   emotion?: Record<string, unknown>;
   profile?: Record<string, unknown>;
@@ -62,17 +85,12 @@ export class PersonaStorage {
   // ---------- Emotion ----------
 
   getEmotion(userId: string): EmotionState {
-    const data = this.load(userId);
-    const emotionData = data.emotion;
-    if (emotionData) {
-      return EmotionState.fromDict(emotionData);
-    }
-    return new EmotionState();
+    return emotionGetEmotion(this.load(userId), userId);
   }
 
   saveEmotion(userId: string, emotion: EmotionState): void {
     const data = this.load(userId);
-    data.emotion = emotion.toDict();
+    emotionUpdateEmotion(data, userId, emotion.toDict());
     this.save(userId, data);
   }
 
@@ -91,18 +109,16 @@ export class PersonaStorage {
 
   getProfile(userId: string): UserProfile {
     const data = this.load(userId);
-    const profileData = data.profile;
-    if (profileData) {
-      return UserProfile.fromDict(profileData);
+    const profile = profileGetProfile(data);
+    if (!profile.userId) {
+      profile.userId = userId;
     }
-    const profile = new UserProfile();
-    profile.userId = userId;
     return profile;
   }
 
   saveProfile(userId: string, profile: UserProfile): void {
     const data = this.load(userId);
-    data.profile = profile.toDict();
+    profileUpdateProfile(data, profile.toDict());
     this.save(userId, data);
   }
 
@@ -154,24 +170,16 @@ export class PersonaStorage {
   // ---------- Memory ----------
 
   getHistory(userId: string): ChatTurn[] {
-    const data = this.load(userId);
-    const historyData = data.history ?? [];
-    return historyData.map((h) => ChatTurn.fromDict(h));
+    return historyGet(this.load(userId));
   }
 
   appendHistory(userId: string, role: string, content: string): void {
     const data = this.load(userId);
-    const history = data.history ?? [];
     const turn = new ChatTurn();
     turn.role = role;
     turn.content = content;
     turn.timestamp = Date.now() / 1000;
-    history.push(turn.toDict());
-    if (history.length > 100) {
-      data.history = history.slice(-100);
-    } else {
-      data.history = history;
-    }
+    historyAppend(data, turn.toDict());
     this.save(userId, data);
   }
 
@@ -179,26 +187,19 @@ export class PersonaStorage {
     userId: string,
     role: string,
     content: string,
-    recovery: number
+    recovery: number,
   ): EmotionState {
     const data = this.load(userId);
 
-    const history = data.history ?? [];
     const turn = new ChatTurn();
     turn.role = role;
     turn.content = content;
     turn.timestamp = Date.now() / 1000;
-    history.push(turn.toDict());
-    if (history.length > 100) {
-      data.history = history.slice(-100);
-    } else {
-      data.history = history;
-    }
+    historyAppend(data, turn.toDict());
 
-    const emotionData = data.emotion;
-    const emotion = emotionData ? EmotionState.fromDict(emotionData) : new EmotionState();
+    const emotion = emotionGetEmotion(data, userId);
     emotion.onInteract(recovery);
-    data.emotion = emotion.toDict();
+    emotionUpdateEmotion(data, userId, emotion.toDict());
 
     this.save(userId, data);
     return emotion;
@@ -233,7 +234,7 @@ export class PersonaStorage {
     sourceDetail: string,
     decayStyle = "linear",
     recoveryStyle = "social",
-    durationHours = 6.0
+    durationHours = 6.0,
   ): Effect {
     const now = Date.now() / 1000;
     const effect = new Effect();
@@ -291,9 +292,7 @@ export class PersonaStorage {
   // ---------- Todo ----------
 
   getTodos(userId: string): Todo[] {
-    const data = this.load(userId);
-    const todosData = data.todos ?? [];
-    return todosData.map((t) => Todo.fromDict(t));
+    return todosGetByType(this.load(userId));
   }
 
   addTodo(userId: string, todoType: TodoTypeValue, content: string, priority = 0): Todo {
@@ -306,24 +305,18 @@ export class PersonaStorage {
     todo.done = false;
 
     const data = this.load(userId);
-    const todos = data.todos ?? [];
-    todos.push(todo.toDict());
-    data.todos = todos;
+    todosAdd(data, todo.toDict());
     this.save(userId, data);
     return todo;
   }
 
   markTodoDone(userId: string, todoId: string): boolean {
     const data = this.load(userId);
-    const todos = data.todos ?? [];
-    for (const t of todos) {
-      if ((t.id as string | undefined) === todoId) {
-        t.done = true;
-        this.save(userId, data);
-        return true;
-      }
+    const found = todosComplete(data, todoId);
+    if (found) {
+      this.save(userId, data);
     }
-    return false;
+    return found;
   }
 
   getActiveTodos(userId: string): Todo[] {
@@ -349,7 +342,7 @@ export class PersonaStorage {
     const todos = data.todos ?? [];
     const before = todos.length;
     const filtered = todos.filter(
-      (t) => (now - ((t.createdAt as number | undefined) ?? 0)) < maxAgeHours * 3600
+      (t) => (now - ((t.createdAt as number | undefined) ?? 0)) < maxAgeHours * 3600,
     );
     data.todos = filtered;
     this.save(userId, data);
@@ -361,20 +354,14 @@ export class PersonaStorage {
   recordInteraction(
     userId: string,
     mode: typeof InteractionMode.ACTIVE | typeof InteractionMode.PASSIVE,
-    outcome: InteractionOutcomeValue
+    outcome: InteractionOutcomeValue,
   ): void {
     const data = this.load(userId);
-    const existing = data.interactions ?? [];
     const event = new InteractionEvent();
     event.mode = mode;
     event.outcome = outcome;
     event.timestamp = Date.now() / 1000;
-    existing.push(event.toDict());
-    if (existing.length > 200) {
-      data.interactions = existing.slice(-200);
-    } else {
-      data.interactions = existing;
-    }
+    interactionsSave(data, event.toDict());
     this.save(userId, data);
   }
 
@@ -435,18 +422,18 @@ export class PersonaStorage {
     const interactions = this.getTodayInteractions(userId);
 
     const connected = interactions.filter(
-      (i) => i.outcome === InteractionOutcome.CONNECTED
+      (i) => i.outcome === InteractionOutcome.CONNECTED,
     ).length;
     const missed = interactions.filter(
-      (i) => i.outcome === InteractionOutcome.MISSED
+      (i) => i.outcome === InteractionOutcome.MISSED,
     ).length;
     const active = interactions.filter((i) => i.mode === InteractionMode.ACTIVE).length;
     const passive = interactions.filter((i) => i.mode === InteractionMode.PASSIVE).length;
     const awkward = interactions.filter(
-      (i) => i.outcome === InteractionOutcome.AWKWARD
+      (i) => i.outcome === InteractionOutcome.AWKWARD,
     ).length;
     const relief = interactions.filter(
-      (i) => i.outcome === InteractionOutcome.RELIEF
+      (i) => i.outcome === InteractionOutcome.RELIEF,
     ).length;
 
     let trajectory: string;
@@ -484,14 +471,7 @@ export class PersonaStorage {
     cons.shiftHint = shiftHint;
 
     const data = this.load(userId);
-    const consolidations = data.consolidations ?? [];
-    const filtered = consolidations.filter((c) => (c.date as string | undefined) !== targetDate);
-    filtered.push(cons.toDict());
-    if (filtered.length > 30) {
-      data.consolidations = filtered.slice(-30);
-    } else {
-      data.consolidations = filtered;
-    }
+    consolidationsProcess(data, cons.toDict(), targetDate);
     this.save(userId, data);
     this.clearInteractions(userId);
     return cons;
@@ -550,9 +530,7 @@ export class PersonaStorage {
   // ---------- Reflection ----------
 
   getReflections(userId: string): ReflectionRecord[] {
-    const data = this.load(userId);
-    const reflectionsData = data.reflections ?? [];
-    return reflectionsData.map((r) => ReflectionRecord.fromDict(r));
+    return reflectionsGetAll(this.load(userId));
   }
 
   addReflection(
@@ -560,7 +538,7 @@ export class PersonaStorage {
     trigger: string,
     note: string,
     factsStr = "",
-    bias = ""
+    bias = "",
   ): ReflectionRecord {
     const record = new ReflectionRecord();
     record.id = Math.random().toString(36).slice(2, 10);
@@ -570,13 +548,7 @@ export class PersonaStorage {
     record.bias = bias;
 
     const data = this.load(userId);
-    const reflections = data.reflections ?? [];
-    reflections.push(record.toDict());
-    if (reflections.length > 30) {
-      data.reflections = reflections.slice(-30);
-    } else {
-      data.reflections = reflections;
-    }
+    reflectionsSave(data, record.toDict());
     this.save(userId, data);
     return record;
   }
@@ -608,9 +580,7 @@ export class PersonaStorage {
   // ---------- Profile Facts ----------
 
   getProfileFacts(userId: string): ProfileFact[] {
-    const data = this.load(userId);
-    const factsData = data.profile_facts ?? [];
-    return factsData.map((f) => ProfileFact.fromDict(f));
+    return profileGetAllFacts(this.load(userId));
   }
 
   addProfileFact(
@@ -618,7 +588,7 @@ export class PersonaStorage {
     category: string,
     content: string,
     evidence = "",
-    confidence = 1.0
+    confidence = 1.0,
   ): ProfileFact {
     const fact = new ProfileFact();
     fact.id = Math.random().toString(36).slice(2, 10);
@@ -628,20 +598,9 @@ export class PersonaStorage {
     fact.confidence = confidence;
 
     const data = this.load(userId);
-    const facts = data.profile_facts ?? [];
-    for (const existing of facts) {
-      if (
-        (existing.category as string | undefined) === category &&
-        (existing.content as string | undefined) === content
-      ) {
-        return ProfileFact.fromDict(existing);
-      }
-    }
-    facts.push(fact.toDict());
-    if (facts.length > 50) {
-      data.profile_facts = facts.slice(-50);
-    } else {
-      data.profile_facts = facts;
+    const existing = profileAddFact(data, fact.toDict());
+    if (existing) {
+      return existing;
     }
     this.save(userId, data);
     return fact;
