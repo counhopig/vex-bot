@@ -14,6 +14,7 @@ import { getChildLogger, setLogger, createLogger } from "../utils/logger.js";
 import { WsServer } from "../web/websocket.js";
 import { handleStaticRequest } from "../web/static.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
+import { PluginService } from "../plugins/service.js";
 
 const logger = getChildLogger("gateway");
 
@@ -24,6 +25,7 @@ export class Gateway {
   private agent!: Agent;
   private weixinChannel?: WeixinChannel;
   private wsServer?: WsServer;
+  private pluginService?: PluginService;
   private processedMessages: NodeCache;
   private readonly MESSAGE_CACHE_TTL_SEC = 300;
   private readonly MESSAGE_CACHE_MAX_KEYS = 10000;
@@ -234,6 +236,7 @@ export class Gateway {
     logger.info("Shutting down gateway...");
     if (this.wsServer) this.wsServer.close();
     if (this.weixinChannel) await this.weixinChannel.shutdown();
+    if (this.pluginService) await this.pluginService.shutdown();
     this.httpServer.close();
     logger.info("Gateway shut down");
   }
@@ -241,10 +244,38 @@ export class Gateway {
   getApp(): Express {
     return this.app;
   }
+
+  attachPluginService(service: PluginService): void {
+    this.pluginService = service;
+  }
 }
 
 export async function createGateway(config: VexConfig): Promise<Gateway> {
   const gateway = new Gateway(config);
+
+  // Initialize plugin service before agent/tools so plugin-registered tools,
+  // hooks, and services are available to the agent on first message.
+  // Per-plugin failures are isolated inside PluginService; an outer catch
+  // guarantees plugin misconfiguration never blocks gateway startup.
+  const pluginService = new PluginService(config, undefined);
+  try {
+    const result = await pluginService.initialize();
+    if (result.failed.length > 0 || result.loaded.length > 0 || result.activated.length > 0) {
+      logger.info(
+        {
+          loaded: result.loaded,
+          activated: result.activated,
+          skipped: result.skipped.map((s) => `${s.id}: ${s.reason}`),
+          failed: result.failed,
+        },
+        "Plugin service initialized",
+      );
+    }
+  } catch (error) {
+    logger.error({ error }, "Plugin service failed to initialize; continuing without plugins");
+  }
+  gateway.attachPluginService(pluginService);
+
   await gateway.initAgent();
   return gateway;
 }
