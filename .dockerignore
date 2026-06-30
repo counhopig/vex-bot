@@ -36,8 +36,8 @@ logs/**
 npm-debug.log*
 .env
 .env.*
-config.local.json5
-config.local.json5.*
+config.local.yaml
+config.local.yaml.*
 *.tgz
 tmp
 tmp/**

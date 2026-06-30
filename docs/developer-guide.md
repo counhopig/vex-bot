@@ -753,10 +753,9 @@ The following issues come from project structure analysis. Developers should be 
 | 4 | **`require()` in ESM modules** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js. |
 | 5 | **Plugin auto-discovery not wired** | `src/plugins/service.ts` → `Gateway` | PluginService is implemented but Gateway never calls it. Bundled/global/workspace plugins are not auto-loaded on `vex start`. |
 | 6 | **Unused utility functions** | `src/utils/index.ts` | Exported utility functions such as `retry`, `delay`, `truncate`, `safeJsonParse`, and `deepMerge` are rarely imported internally. |
-| 7 | **Broken lint script** | `package.json` | `lint` script is `eslint src --ext .ts` but eslint is not installed. |
-| 8 | **`static.ts` is oversized** | `src/web/static.ts` (2,303 lines) | Two inline SPAs with no separation of concerns. Adding a third UI would worsen this. New UIs should be in separate modules or served as external static files. |
-| 9 | **WebSocket client code duplication** | `src/web/static.ts` | `getEmbeddedHtml()` and `getControlHtml()` duplicate WS connect/send/receive logic. Should extract shared client code before adding a third consumer. |
-| 10 | **CLI `chat` bypasses Agent** | `src/cli/index.ts:chat` | CLI chat subcommand constructs `@mariozechner/pi-ai` messages directly, completely bypassing the Agent layer. This is the only exception to the normal message processing flow. |
+| 7 | **`static.ts` is oversized** | `src/web/static.ts` (2,303 lines) | Two inline SPAs with no separation of concerns. Adding a third UI would worsen this. New UIs should be in separate modules or served as external static files. |
+| 8 | **WebSocket client code duplication** | `src/web/static.ts` | `getEmbeddedHtml()` and `getControlHtml()` duplicate WS connect/send/receive logic. Should extract shared client code before adding a third consumer. |
+| 9 | **CLI `chat` bypasses Agent** | `src/cli/index.ts:chat` | CLI chat subcommand constructs `@mariozechner/pi-ai` messages directly, completely bypassing the Agent layer. This is the only exception to the normal message processing flow. |
 
 ### Other Notes
 
@@ -764,8 +763,7 @@ The following issues come from project structure analysis. Developers should be 
 - **`src/cli/fetch-patch.ts`**: Monkey-patches `globalThis.fetch` at CLI startup for non-ASCII header support (MiniMax/Zhipu)
 - **Docker production**: Uses `npm ci --omit=dev` — never rely on devDependencies versions in production
 - **Config writes** from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.yaml` — no file locking
-- **No `.dockerignore`**: Referenced in `.gitignore` but file is absent
-- **No `.nvmrc`** and **no Makefile** in the project
+- **No Makefile** in the project
 
 ---
 

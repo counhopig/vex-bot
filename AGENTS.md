@@ -91,7 +91,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **Logger via pino**: `getChildLogger("moduleName")` pattern, child loggers named after module
 - **Node >= 18**: Uses `homedir()` from `os`, `readFileSync` from `fs`, ESM top-level await
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
-- **No formatter/linter configured**: `lint` script in package.json is broken (eslint not installed)
+- **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
 
 ## ANTI-PATTERNS
 
@@ -116,14 +116,14 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 | Stage | Detail |
 |-------|--------|
 | **Build** | `tsc` (NodeNext module, ES2022 target) → `dist/` |
-| **CI trigger** | GitHub Release `created` event → `npm ci` → `npm run build` → `npm publish` |
+| **CI trigger** | GitHub Release `created` event → verify gates → npm publish → GHCR image publish |
 | **CI runner** | ubuntu-latest, Node 20 |
-| **Tests in CI** | ❌ NOT run — `release.yml` has no test step |
-| **Lint in CI** | ❌ NOT run — eslint not installed, `lint` script broken |
+| **Tests in CI** | `npm test -- --run` |
+| **Type gate in CI** | `npm run lint` (`tsc --noEmit`) |
 | **Docker** | Multi-stage `node:20-alpine`: builder → production. Non-root `vex:vex` (1001:1001). CLI as ENTRYPOINT |
 | **docker-compose** | Default published-image compose (`--web-only`, 512M mem limit) + dev compose for local Dockerfile builds |
 | **Artifacts** | `dist/`, `skills/`, `package*.json` only. No Docker image push to registry |
-| **Missing** | No `.dockerignore` (referenced in `.gitignore` but file absent), no `.nvmrc`, no Makefile |
+| **Missing** | No Makefile |
 
 ## TEST INFRASTRUCTURE
 
@@ -184,7 +184,7 @@ vex logs -f           # Tail follow logs
 - WeChat channel uses iLink OC API long-polling, not WebSocket
 - Docker Compose health check depends on Express `/health` endpoint
 - Playwright (`playwright-core`) requires browser binaries: `npx playwright install chromium`
-- The `lint` script (`eslint src --ext .ts`) is currently broken — eslint is not installed
+- The `lint` script is a TypeScript type gate (`tsc --noEmit`); no formatter is configured
 - `src/cli/fetch-patch.ts` monkey-patches `globalThis.fetch` at CLI startup for non-ASCII headers (MiniMax/Zhipu)
 - `src/cli/index.ts:chat` bypasses Agent entirely — constructs `@mariozechner/pi-ai` messages directly
 - Config writes from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.yaml`
