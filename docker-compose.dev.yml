@@ -12,10 +12,6 @@ services:
 
     command: ["start", "--web-only"]
 
-    environment:
-      - PORT=3000
-      - LOG_LEVEL=info
-
     ports:
       - "3000:3000"
 

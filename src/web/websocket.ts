@@ -163,7 +163,7 @@ const ConfigSaveParamsSchema = z.object({
   skillLearner: SkillLearnerConfigSchema.optional(),
   sharelink: ShareLinkConfigSchema.optional(),
   sessions: SessionsConfigSchema.optional(),
-  rawJson5: z.string().optional(),
+  rawYaml: z.string().optional(),
 }).default({});
 const WeixinQrStatusParamsSchema = z.object({
   qrcode: z.string().min(1),

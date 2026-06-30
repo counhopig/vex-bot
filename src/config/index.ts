@@ -6,10 +6,8 @@ import { z } from "zod";
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-import json5 from "json5";
 import yaml from "yaml";
 import type { VexConfig, ProviderId } from "../types/index.js";
-import { getEnvVar } from "../utils/index.js";
 import { getChildLogger } from "../utils/logger.js";
 import { PROVIDER_IDS } from "../providers/metadata.js";
 
@@ -130,147 +128,28 @@ const VexConfigSchema = z.object({
 
 /** Load config from a file */
 function loadConfigFromFile(configPath: string): Partial<VexConfig> {
+  if (!configPath.endsWith(".yaml")) {
+    throw new Error(`Unsupported config file format: ${configPath}. Use config.local.yaml.`);
+  }
+
   if (!existsSync(configPath)) {
     return {};
   }
 
   const content = readFileSync(configPath, "utf-8");
-
-  if (configPath.endsWith(".json") || configPath.endsWith(".json5")) {
-    return json5.parse(content);
-  } else if (configPath.endsWith(".yaml") || configPath.endsWith(".yml")) {
-    return yaml.parse(content);
+  const parsed = yaml.parse(content) as unknown;
+  if (parsed === null) {
+    return {};
   }
-
-  return {};
-}
-
-/** Load config from environment variables */
-function loadConfigFromEnv(): Partial<VexConfig> {
-  const config: Partial<VexConfig> = {
-    providers: {},
-    channels: {},
-  };
-
-  // Model providers
-  const providers: VexConfig["providers"] = {};
-
-  const deepseekKey = getEnvVar("DEEPSEEK_API_KEY");
-  if (deepseekKey) {
-    providers.deepseek = { apiKey: deepseekKey };
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`Invalid config file format: ${configPath}. Top-level YAML value must be an object.`);
   }
-
-  const minimaxKey = getEnvVar("MINIMAX_API_KEY");
-  if (minimaxKey) {
-    providers.minimax = { apiKey: minimaxKey };
-  }
-
-  const kimiKey = getEnvVar("KIMI_API_KEY");
-  if (kimiKey) {
-    providers.kimi = { apiKey: kimiKey };
-  }
-
-  const stepfunKey = getEnvVar("STEPFUN_API_KEY");
-  if (stepfunKey) {
-    providers.stepfun = { apiKey: stepfunKey };
-  }
-
-  // ModelScope (supports MODELSCOPE_API_KEY)
-  const modelscopeKey = getEnvVar("MODELSCOPE_API_KEY");
-  if (modelscopeKey) {
-    providers.modelscope = { apiKey: modelscopeKey };
-  }
-
-  // DashScope (Alibaba Cloud Model Studio)
-  const dashscopeKey = getEnvVar("DASHSCOPE_API_KEY");
-  if (dashscopeKey) {
-    providers.dashscope = { apiKey: dashscopeKey };
-  }
-
-  // Zhipu AI
-  const zhipuKey = getEnvVar("ZHIPU_API_KEY");
-  if (zhipuKey) {
-    providers.zhipu = { apiKey: zhipuKey };
-  }
-
-  const longcatKey = getEnvVar("LONGCAT_API_KEY");
-  if (longcatKey) {
-    providers.longcat = { apiKey: longcatKey };
-  }
-
-  // OpenAI
-  const openaiKey = getEnvVar("OPENAI_API_KEY");
-  if (openaiKey) {
-    providers.openai = {
-      apiKey: openaiKey,
-      baseUrl: getEnvVar("OPENAI_BASE_URL"),
-    };
-  }
-
-  // Ollama
-  const ollamaBaseUrl = getEnvVar("OLLAMA_BASE_URL");
-  const ollamaModels = getEnvVar("OLLAMA_MODELS");
-  if (ollamaBaseUrl || ollamaModels) {
-    providers.ollama = {
-      baseUrl: ollamaBaseUrl,
-      models: ollamaModels?.split(",").map((m) => m.trim()),
-    } as unknown as { apiKey?: string };
-  }
-
-  // OpenRouter
-  const openrouterKey = getEnvVar("OPENROUTER_API_KEY");
-  if (openrouterKey) {
-    providers.openrouter = { apiKey: openrouterKey };
-  }
-
-  // Together AI
-  const togetherKey = getEnvVar("TOGETHER_API_KEY");
-  if (togetherKey) {
-    providers.together = { apiKey: togetherKey };
-  }
-
-  // Groq
-  const groqKey = getEnvVar("GROQ_API_KEY");
-  if (groqKey) {
-    providers.groq = { apiKey: groqKey };
-  }
-
-  config.providers = providers;
-
-  // Personal WeChat (iLink OC) config
-  const weixinToken = getEnvVar("WEIXIN_OC_TOKEN");
-  const weixinAccountId = getEnvVar("WEIXIN_OC_ACCOUNT_ID");
-  const weixinBaseUrl = getEnvVar("WEIXIN_OC_BASE_URL");
-  if (weixinToken || weixinAccountId || weixinBaseUrl) {
-    config.channels = {
-      ...config.channels,
-      weixin: {
-        token: weixinToken,
-        accountId: weixinAccountId,
-        baseUrl: weixinBaseUrl,
-      },
-    };
-  }
-
-  // Server config
-  const port = getEnvVar("PORT");
-  if (port) {
-    config.server = { port: parseInt(port, 10) };
-  }
-
-  // Logging config
-  const logLevel = getEnvVar("LOG_LEVEL");
-  if (logLevel && ["debug", "info", "warn", "error"].includes(logLevel)) {
-    config.logging = { level: logLevel as "debug" | "info" | "warn" | "error" };
-  }
-
-  return config;
+  return parsed as Partial<VexConfig>;
 }
 
 /**
- * One-level deep merge: for each top-level key, shallow-merge objects
- * (later config's fields of the same name override earlier ones),
- * making it easy to layer multiple environment configs.
+ * One-level deep merge: later config files shallow-merge fields of the same
+ * top-level key, so local config can override shared config.
  */
 function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
   const result: Partial<VexConfig> = {};
@@ -327,18 +206,8 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
   const configPaths = options?.configPath
     ? [options.configPath]
     : [
-        join(cwd, "config.yml"),
-        join(cwd, "config.yaml"),
-        join(cwd, "config.json"),
-        join(cwd, "config.json5"),
-        join(cwd, "config.local.json"),
-        join(cwd, "config.local.json5"),
-        join(vexDir, "config.yml"),
-        join(vexDir, "config.yaml"),
-        join(vexDir, "config.json"),
-        join(vexDir, "config.json5"),
-        join(vexDir, "config.local.json"),
-        join(vexDir, "config.local.json5"),
+        join(cwd, "config.local.yaml"),
+        join(vexDir, "config.local.yaml"),
       ];
 
   let fileConfig: Partial<VexConfig> = {};
@@ -354,18 +223,7 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
     }
   }
 
-  const envConfig = loadConfigFromEnv();
-  logger.debug(
-    {
-      providerEnvCount: Object.keys(envConfig.providers ?? {}).length,
-      hasWeixinEnv: Boolean(envConfig.channels?.weixin),
-      hasServerEnv: Boolean(envConfig.server),
-      hasLoggingEnv: Boolean(envConfig.logging),
-    },
-    "Environment config loaded"
-  );
-
-  const merged = mergeConfigs(fileConfig, envConfig);
+  const merged = fileConfig;
   logger.debug(
     {
       loadedConfigPaths,

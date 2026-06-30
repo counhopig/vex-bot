@@ -302,7 +302,7 @@ Global shared TypeScript type definitions.
 
 ### `VexConfig`
 
-Main configuration interface, corresponding to the structure of `config.local.json5` / YAML files.
+Main configuration interface, corresponding to the structure of `config.local.yaml`.
 
 ```typescript
 interface VexConfig {
@@ -1356,15 +1356,14 @@ emitError(error: Error, context?: string): void
 
 ## 11. Config
 
-Configuration loader supporting JSON5, JSON, and YAML formats with multi-file merging and environment variable override.
+Configuration loader supporting YAML files with multi-file merging.
 
 **Source:** `src/config/index.ts`
 
 ### Loading Order
 
-1. Working directory config files (CWD `config.yml`, `config.json5`, `config.local.json5`, etc.)
-2. User directory config files (`~/.vex/config.yml`, `config.local.json5`, etc.)
-3. Environment variables (highest priority)
+1. Working directory config file (`{cwd}/config.local.yaml`)
+2. User directory config file (`~/.vex/config.local.yaml`)
 
 ### Functions
 
@@ -1380,13 +1379,11 @@ function loadConfig(options?: {
 }): VexConfig
 ```
 
-**Search paths (in priority order):**
-1. `{cwd}/config.yml` / `.yaml` / `.json` / `.json5`
-2. `{cwd}/config.local.json` / `.json5`
-3. `{configDir}/config.yml` etc.
-4. `{configDir}/config.local.json` / `.json5`
+**Search paths:**
+1. `{cwd}/config.local.yaml`
+2. `{configDir}/config.local.yaml`
 
-Each found file is merged via `mergeConfigs`, with environment variables applied last. The final result is validated against a Zod schema (`VexConfigSchema`).
+Each found YAML file is merged via `mergeConfigs`; later files override earlier fields. The final result is validated against a Zod schema (`VexConfigSchema`).
 
 #### `validateRequiredConfig(config, options?): string[]`
 
@@ -1560,7 +1557,7 @@ The `vex` binary entry point (Commander.js). Provides the following subcommands:
 vex start                          # Start with default config
 vex start --port 8080              # Specify port
 vex start --web-only               # WebChat only, no communication channels
-vex start --config ./my-config.json5  # Specify config file
+vex start --config ./my-config.yaml   # Specify config file
 ```
 
 ---

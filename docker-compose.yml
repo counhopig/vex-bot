@@ -2,33 +2,12 @@ version: '3.8'
 
 services:
   vex:
-    image: ${VEX_IMAGE:-ghcr.io/counhopig/vex-bot:latest}
+    image: ghcr.io/counhopig/vex-bot:latest
     container_name: vex-bot
     restart: unless-stopped
 
     # Command to start (use --web-only for web-only mode, remove it for full mode)
     command: ["start", "--web-only"]
-
-    # Environment variables
-    environment:
-      # Server configuration
-      - PORT=3000
-      - LOG_LEVEL=info
-
-      # Model API Keys (required at least one)
-      # - DEEPSEEK_API_KEY=your_deepseek_api_key
-      # - MINIMAX_API_KEY=your_minimax_api_key
-      # - MINIMAX_GROUP_ID=your_minimax_group_id
-      # - KIMI_API_KEY=your_kimi_api_key
-      # - STEPFUN_API_KEY=your_stepfun_api_key
-      # - MODELSCOPE_API_KEY=your_modelscope_api_key
-      # - DASHSCOPE_API_KEY=your_dashscope_api_key
-      # - ZHIPU_API_KEY=your_zhipu_api_key
-      # - DOUBAO_API_KEY=your_doubao_api_key
-
-      # Personal WeChat (remove --web-only from command to enable)
-      # WeChat uses QR code login at startup, no env vars needed
-      # To enable: change command to ["start"]
 
     # Port mapping
     ports:
@@ -37,8 +16,6 @@ services:
     # Volume mounts for persistent data and optional config
     volumes:
       - vex-data:/home/vex/.vex
-      # Optional: mount custom config file (create config.local.json5 and uncomment)
-      # - ./config.local.json5:/app/config.local.json5:ro
 
     # Health check
     healthcheck:

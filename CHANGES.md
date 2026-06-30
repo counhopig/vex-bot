@@ -54,7 +54,7 @@ src/channels/weixin/
 2. Display QR link in terminal / WebUI
 3. Scan with mobile WeChat to confirm login
 4. Poll `ilink/bot/get_qrcode_status` until confirmed
-5. Save `bot_token` to `config.local.json5`
+5. Save `bot_token` to `config.local.yaml`
 6. Reuse token on next start
 
 ### Message Send/Receive
@@ -80,7 +80,7 @@ In the `/control` configuration page:
 ## 6. Fixes
 
 - `thinkingLevel` changed from `"medium"` to `"low"` — no more `<think>` reasoning blocks in output
-- Token persistence path moved from `~/.mozi/` to project-local `./config.local.json5`
+- Token persistence path moved from `~/.mozi/` to project-local `./config.local.yaml`
 - `mergeConfigs()` and `validateRequiredConfig()` include weixin channel
 - `cron/executor.ts` and `tools/builtin/cron.ts` channel lists updated
 
@@ -129,4 +129,3 @@ Created comprehensive English documentation:
 - Static badges (no npm dependency): version, license, Node.js
 - Topics: `chatbot`, `wechat`, `ai-agent`, `typescript`, `deepseek`, `llm`, `weixin`
 - Issues enabled, Wiki disabled
-

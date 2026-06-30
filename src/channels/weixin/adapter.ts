@@ -1,4 +1,4 @@
-import json5 from "json5";
+import yaml from "yaml";
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import type {
@@ -338,10 +338,10 @@ export class WeixinChannel extends BaseChannelAdapter {
 
   private persistToken(): void {
     try {
-      const configPath = join(process.cwd(), "config.local.json5");
+      const configPath = join(process.cwd(), "config.local.yaml");
       let existing: Record<string, unknown> = {};
       if (existsSync(configPath)) {
-        existing = json5.parse(readFileSync(configPath, "utf-8"));
+        existing = (yaml.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown> | null) ?? {};
       }
       const channels = (existing.channels as Record<string, unknown>) ?? {};
       channels.weixin = {
@@ -351,7 +351,7 @@ export class WeixinChannel extends BaseChannelAdapter {
         enabled: true,
       };
       existing.channels = channels;
-      writeFileSync(configPath, json5.stringify(existing, null, 2), "utf-8");
+      writeFileSync(configPath, yaml.stringify(existing), "utf-8");
       this.logger.info({ configPath }, "Weixin token persisted to config");
     } catch (error) {
       this.logger.error({ error }, "Failed to persist Weixin token");

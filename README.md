@@ -23,7 +23,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected into the agent system prompt at runtime
 - **Event hook system** — 12 event types with `on`/`once`/`off` registration for extending agent behavior
 - **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001), Compose files included
-- **JSON5 config** — configuration files support comments and trailing commas; environment variable overrides take highest priority
+- **YAML config** — a single `config.local.yaml` format for all application configuration
 
 ## Architecture
 
@@ -80,7 +80,7 @@ vex onboard
 
 The interactive configuration wizard walks you through: model providers (Chinese models, custom OpenAI/Anthropic endpoints), communication channels (personal WeChat), agent parameters (default model, temperature, max tokens), server port, and memory settings.
 
-The config file is stored at `~/.vex/config.local.json5` in JSON5 format (supports comments and trailing commas).
+The config file is stored at `~/.vex/config.local.yaml`. Vex only reads YAML config files.
 
 ### Start
 
@@ -100,11 +100,7 @@ Once running, open `http://localhost:PORT` in a browser to access the WebChat in
 docker compose up -d
 ```
 
-The default Compose file pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only mode, and persists state in the `vex-data` volume. For production configuration with `.env` and a mounted `config.local.json5`, use:
-
-```bash
-docker compose -f docker-compose.env.yml up -d
-```
+The default Compose file pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only mode, and persists state in the `vex-data` volume. For production, mount `config.local.yaml` into `/app/config.local.yaml`.
 
 For contributor builds from the local Dockerfile, use:
 
@@ -128,45 +124,48 @@ docker compose -f docker-compose.dev.yml up -d --build
 
 ## Configuration
 
-`config.local.json5` structure:
+`config.local.yaml` structure:
 
-```json5
-{
-  providers: {
-    // Chinese models
-    deepseek: { apiKey: "sk-xxx" },
-    kimi: { apiKey: "sk-xxx" },
-    minimax: { apiKey: "xxx" },
-    // Custom OpenAI-compatible endpoint
-    "custom-openai": { baseUrl: "https://api.example.com/v1", apiKey: "sk-xxx", models: [...] },
-    // Custom Anthropic-compatible endpoint
-    "custom-anthropic": { baseUrl: "...", apiKey: "...", models: [...] }
-  },
-  channels: {
-    weixin: { /* iLink OC API configuration */ }
-  },
-  agent: {
-    defaultProvider: "deepseek",
-    defaultModel: "deepseek-chat",
-    temperature: 0.7,
-    maxTokens: 4096,
-    workingDirectory: "/path/to/workspace"
-  },
-  server: {
-    port: 3000,
-    host: "0.0.0.0"
-  },
-  logging: {
-    level: "info"
-  },
-  memory: {
-    enabled: true,
-    embeddingProvider: "deepseek"
-  }
-}
+```yaml
+providers:
+  deepseek:
+    apiKey: sk-xxx
+  kimi:
+    apiKey: sk-xxx
+  minimax:
+    apiKey: xxx
+  custom-openai:
+    baseUrl: https://api.example.com/v1
+    apiKey: sk-xxx
+    models:
+      - id: qwen2.5-72b
+        name: Qwen 2.5 72B
+  custom-anthropic:
+    baseUrl: https://api.example.com
+    apiKey: sk-xxx
+    models:
+      - id: claude-3-5-sonnet
+        name: Claude 3.5 Sonnet
+channels:
+  weixin:
+    enabled: true
+agent:
+  defaultProvider: deepseek
+  defaultModel: deepseek-chat
+  temperature: 0.7
+  maxTokens: 4096
+  workingDirectory: /path/to/workspace
+server:
+  port: 3000
+  host: 0.0.0.0
+logging:
+  level: info
+memory:
+  enabled: true
+  embeddingProvider: deepseek
 ```
 
-Config loading priority: environment variables > `config.local.json5` > defaults.
+Config loading is YAML-only: Vex loads `config.local.yaml` from the current directory, then `~/.vex/config.local.yaml`, and falls back to built-in defaults for missing fields.
 
 ## Project Structure
 
@@ -187,7 +186,7 @@ Config loading priority: environment variables > `config.local.json5` > defaults
 │   ├── browser/         # Playwright headless browser automation
 │   ├── hooks/           # Event hook system (12 event types, on/once/off)
 │   ├── providers/       # Model resolution layer (pi-ai wrapper)
-│   ├── config/          # Config loading (JSON5/YAML/env, Zod validation)
+│   ├── config/          # YAML config loading + Zod validation
 │   ├── cli/             # Commander.js CLI (9 subcommands, onboard wizard)
 │   ├── commands/        # Chat command framework
 │   ├── types/           # Shared TypeScript types

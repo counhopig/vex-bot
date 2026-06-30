@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import json5 from "json5";
+import yaml from "yaml";
 
 vi.mock("../src/utils/logger.js", () => ({
   getChildLogger: () => ({
@@ -155,7 +155,7 @@ describe("control-settings config-handlers", () => {
     });
   });
 
-  describe("saveConfig round-trips new sections through config.local.json5", () => {
+  describe("saveConfig round-trips new sections through config.local.yaml", () => {
     it("writes and re-reads persona/skillLearner/sharelink/sessions", () => {
       const current = baseConfig();
       const params: ConfigSaveParams = {
@@ -169,10 +169,10 @@ describe("control-settings config-handlers", () => {
       expect(result.success).toBe(true);
 
       const written = fs.readFileSync(
-        path.join(tmpHome, ".vex", "config.local.json5"),
+        path.join(tmpHome, ".vex", "config.local.yaml"),
         "utf-8",
       );
-      const parsed = json5.parse(written);
+      const parsed = yaml.parse(written);
       expect(parsed.persona).toEqual(params.persona);
       expect(parsed.skillLearner).toEqual(params.skillLearner);
       expect(parsed.sharelink).toEqual({
@@ -188,8 +188,8 @@ describe("control-settings config-handlers", () => {
       const vexDir = path.join(tmpHome, ".vex");
       fs.mkdirSync(vexDir, { recursive: true });
       fs.writeFileSync(
-        path.join(vexDir, "config.local.json5"),
-        JSON.stringify({
+        path.join(vexDir, "config.local.yaml"),
+        yaml.stringify({
           sharelink: {
             enabled: true,
             bilibiliCookie: { sessdata: "old-sess", biliJct: "old-jct" },
@@ -202,8 +202,8 @@ describe("control-settings config-handlers", () => {
         sharelink: { enabled: false, responseMode: "simple" },
       });
 
-      const written = json5.parse(
-        fs.readFileSync(path.join(vexDir, "config.local.json5"), "utf-8"),
+      const written = yaml.parse(
+        fs.readFileSync(path.join(vexDir, "config.local.yaml"), "utf-8"),
       );
       expect(written.sharelink.bilibiliCookie).toEqual({
         sessdata: "old-sess",
@@ -212,30 +212,30 @@ describe("control-settings config-handlers", () => {
       expect(written.sharelink.enabled).toBe(false);
     });
 
-    it("rawJson5 patch overrides form fields and merges arbitrary keys", () => {
+    it("rawYaml patch overrides form fields and merges arbitrary keys", () => {
       const result = saveConfig(baseConfig(), {
         persona: { persona_name: "FormName" },
-        rawJson5: "{ persona: { persona_name: 'GeekName' }, customKey: 'geek' }",
+        rawYaml: "persona:\n  persona_name: GeekName\ncustomKey: geek\n",
       });
       expect(result.success).toBe(true);
 
-      const written = json5.parse(
-        fs.readFileSync(path.join(tmpHome, ".vex", "config.local.json5"), "utf-8"),
+      const written = yaml.parse(
+        fs.readFileSync(path.join(tmpHome, ".vex", "config.local.yaml"), "utf-8"),
       );
       expect(written.persona.persona_name).toBe("GeekName");
       expect(written.customKey).toBe("geek");
     });
 
-    it("rejects malformed rawJson5 with a parse error message", () => {
+    it("rejects malformed rawYaml with a parse error message", () => {
       const result = saveConfig(baseConfig(), {
-        rawJson5: "{ persona: { name: 'oops' }",
+        rawYaml: "persona: [unterminated",
       });
       expect(result.success).toBe(false);
-      expect(result.message).toContain("Raw JSON5 parse error");
+      expect(result.message).toContain("Raw YAML parse error");
     });
 
-    it("rejects non-object rawJson5 top-level", () => {
-      const result = saveConfig(baseConfig(), { rawJson5: "[1, 2, 3]" });
+    it("rejects non-object rawYaml top-level", () => {
+      const result = saveConfig(baseConfig(), { rawYaml: "- 1\n- 2\n- 3\n" });
       expect(result.success).toBe(false);
       expect(result.message).toContain("must be an object");
     });
@@ -245,8 +245,8 @@ describe("control-settings config-handlers", () => {
       const vexDir = path.join(tmpHome, ".vex");
       fs.mkdirSync(vexDir, { recursive: true });
       fs.writeFileSync(
-        path.join(vexDir, "config.local.json5"),
-        JSON.stringify({ sessions: { type: "memory" } }),
+        path.join(vexDir, "config.local.yaml"),
+        yaml.stringify({ sessions: { type: "memory" } }),
       );
       const current = baseConfig();
       current.sessions = { type: "memory" };

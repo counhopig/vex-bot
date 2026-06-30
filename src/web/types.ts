@@ -274,8 +274,7 @@ export interface ConfigSaveParams {
     bilibiliCookie?: { sessdata?: string; biliJct?: string };
   };
   sessions?: SessionsConfigInfo;
-  /** Raw JSON5 patch from the Geek tab; merged last, overrides form fields */
-  rawJson5?: string;
+  rawYaml?: string;
 }
 
 /** Config validation result */

@@ -110,7 +110,7 @@ vex-bot/
 │   │
 │   ├── web/                # Server-rendered WebChat SPA (inline HTML/CSS/JS, no frontend build)
 │   │   ├── types.ts        #   WsFrame union, ChatMessage, session info (⚠ incompatible with src/types ChatMessage)
-│   │   ├── websocket.ts    #   WsServer: connection management, 16 method handlers, heartbeat, JSON5 config save
+│   │   ├── websocket.ts    #   WsServer: connection management, 16 method handlers, heartbeat, YAML config save
 │   │   ├── static.ts       #   Two inline SPAs (WebChat UI + Control Panel UI)
 │   │   └── index.ts        #   Barrel export
 │   │
@@ -128,7 +128,7 @@ vex-bot/
 │   ├── hooks/              # Event hook system (12 event types)
 │   │   └── index.ts        #   registerHook, triggerHook
 │   │
-│   ├── config/             # Config loading (JSON5/YAML/env, Zod validation)
+│   ├── config/             # YAML config loading + Zod validation
 │   │   └── index.ts        #   loadConfig, validateRequiredConfig, Zod schemas
 │   │
 │   ├── cli/                # Commander.js CLI (onboard, start, logs, status ... 9 subcommands)
@@ -581,7 +581,7 @@ type ProviderId =
 - **ENTRYPOINT**: CLI binary
 - **Artifacts**: `dist/`, `skills/`, `package*.json` only
 - **Health check**: depends on Express `/health` endpoint (returns `{"status":"ok","timestamp":"..."}`)
-- **docker compose**: default and `.env.yml` variants pull the published GHCR image; `docker-compose.dev.yml` builds from the local Dockerfile
+- **docker compose**: default pulls the published GHCR image; `docker-compose.dev.yml` builds from the local Dockerfile
 
 ### Test Conventions
 
@@ -686,9 +686,9 @@ Rollback guidance:
 
 | Rule | Detail |
 |------|--------|
-| Format | JSON5 (supports comments and trailing commas), YAML as fallback |
-| Priority | `config.local.json5` > config files in `~/.vex/` > CWD; env vars take highest priority |
-| Git | `config.local.json5` in `.gitignore`, for local overrides only |
+| Format | YAML only (`.yaml`) |
+| Priority | CWD `config.local.yaml`, then `~/.vex/config.local.yaml`; later files override earlier fields |
+| Git | `config.local.yaml` in `.gitignore`, for local overrides only |
 
 ### Logging
 
@@ -731,7 +731,7 @@ Before modifying `src/agents/runtime.ts`, understand the pi-coding-agent API fir
 | `commander` | CLI framework | `src/cli/index.ts` |
 | `playwright-core` | Browser automation | `src/browser/` module (requires `npx playwright install chromium`) |
 | `node-cache` | Message deduplication | — |
-| `yaml` | YAML parsing (skills config) | `src/skills/parser.ts` |
+| `yaml` | YAML parsing (config and skills) | `src/config/index.ts`, `src/skills/parser.ts` |
 | `marked` | Markdown rendering (frontend CDN) | WebChat UI (not an npm dependency) |
 
 ### Node.js Requirements
@@ -747,25 +747,23 @@ The following issues come from project structure analysis. Developers should be 
 
 | # | Issue | Files Affected | Risk |
 |---|-------|---------------|------|
-| 1 | **`generateJson5()` duplication** | `src/cli/index.ts` + `src/web/websocket.ts` | Two files contain an identical ~40-line JSON5 serializer. Modifying one without the other will cause inconsistent behavior. Should be extracted to a shared utility module. |
-| 2 | **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Shared type has `tool_calls` field, web type has `id`/`timestamp` fields. The two `ChatMessage` shapes are incompatible. Mixing them causes type errors. |
-| 3 | **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places. Adding a new provider requires editing all 3 files. |
-| 4 | **No centralized config writer** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` | CLI onboard wizard and WebSocket `saveConfig` both independently write `~/.vex/config.local.json5`. Race condition risk with no file locking. |
-| 5 | **`require()` in ESM modules** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js. |
-| 6 | **Plugin auto-discovery not wired** | `src/plugins/service.ts` → `Gateway` | PluginService is implemented but Gateway never calls it. Bundled/global/workspace plugins are not auto-loaded on `vex start`. |
-| 7 | **Unused utility functions** | `src/utils/index.ts` | 10 of 13 exported functions never imported internally (`retry`, `delay`, `truncate`, `safeJsonParse`, `deepMerge`, etc.). Exist only in the public barrel export. |
-| 8 | **Broken lint script** | `package.json` | `lint` script is `eslint src --ext .ts` but eslint is not installed. |
-| 9 | **Stale `.env.example`** | Root `.env.example` | Lists Feishu/DingTalk/QQ/WeCom channels — these were stripped in the fork from OpenMozi. |
-| 10 | **`static.ts` is oversized** | `src/web/static.ts` (2,303 lines) | Two inline SPAs with no separation of concerns. Adding a third UI would worsen this. New UIs should be in separate modules or served as external static files. |
-| 11 | **WebSocket client code duplication** | `src/web/static.ts` | `getEmbeddedHtml()` and `getControlHtml()` duplicate WS connect/send/receive logic. Should extract shared client code before adding a third consumer. |
-| 12 | **CLI `chat` bypasses Agent** | `src/cli/index.ts:chat` | CLI chat subcommand constructs `@mariozechner/pi-ai` messages directly, completely bypassing the Agent layer. This is the only exception to the normal message processing flow. |
+| 1 | **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Shared type has `tool_calls` field, web type has `id`/`timestamp` fields. The two `ChatMessage` shapes are incompatible. Mixing them causes type errors. |
+| 2 | **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places. Adding a new provider requires editing all 3 files. |
+| 3 | **No centralized config writer** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` | CLI onboard wizard and WebSocket `saveConfig` both independently write `~/.vex/config.local.yaml`. Race condition risk with no file locking. |
+| 4 | **`require()` in ESM modules** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js. |
+| 5 | **Plugin auto-discovery not wired** | `src/plugins/service.ts` → `Gateway` | PluginService is implemented but Gateway never calls it. Bundled/global/workspace plugins are not auto-loaded on `vex start`. |
+| 6 | **Unused utility functions** | `src/utils/index.ts` | Exported utility functions such as `retry`, `delay`, `truncate`, `safeJsonParse`, and `deepMerge` are rarely imported internally. |
+| 7 | **Broken lint script** | `package.json` | `lint` script is `eslint src --ext .ts` but eslint is not installed. |
+| 8 | **`static.ts` is oversized** | `src/web/static.ts` (2,303 lines) | Two inline SPAs with no separation of concerns. Adding a third UI would worsen this. New UIs should be in separate modules or served as external static files. |
+| 9 | **WebSocket client code duplication** | `src/web/static.ts` | `getEmbeddedHtml()` and `getControlHtml()` duplicate WS connect/send/receive logic. Should extract shared client code before adding a third consumer. |
+| 10 | **CLI `chat` bypasses Agent** | `src/cli/index.ts:chat` | CLI chat subcommand constructs `@mariozechner/pi-ai` messages directly, completely bypassing the Agent layer. This is the only exception to the normal message processing flow. |
 
 ### Other Notes
 
 - **Playwright browser binaries**: Must run `npx playwright install chromium` before using browser features
 - **`src/cli/fetch-patch.ts`**: Monkey-patches `globalThis.fetch` at CLI startup for non-ASCII header support (MiniMax/Zhipu)
 - **Docker production**: Uses `npm ci --omit=dev` — never rely on devDependencies versions in production
-- **Config writes** from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.json5` — no file locking
+- **Config writes** from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.yaml` — no file locking
 - **No `.dockerignore`**: Referenced in `.gitignore` but file is absent
 - **No `.nvmrc`** and **no Makefile** in the project
 

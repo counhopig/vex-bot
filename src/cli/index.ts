@@ -18,14 +18,10 @@ import { initializeProviders, getAllModels, resolveModel, getApiKeyForProvider }
 import { createLogger, setLogger, getLogDir, getLogFile } from "../utils/logger.js";
 import { CHINA_PROVIDER_IDS, OVERSEAS_PROVIDER_IDS, getProviderMeta } from "../providers/metadata.js";
 import { runOnboardWizard } from "./onboard.js";
-import dotenv from "dotenv";
 import { spawn } from "child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-
-// Load environment variables
-dotenv.config();
 
 // Read version from package.json
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { toJson5 } from "../src/config/json5-writer.js";
 import {
 	PROVIDERS,
 	PROVIDER_IDS,
@@ -8,46 +7,6 @@ import {
 	CHINA_PROVIDER_IDS,
 	OVERSEAS_PROVIDER_IDS,
 } from "../src/providers/metadata.js";
-
-describe("config/json5-writer", () => {
-	it("round-trips a flat object with identifier keys unquoted", () => {
-		const out = toJson5({ apiKey: "abc", baseUrl: "https://x" });
-		expect(out).toBe('{\n  apiKey: "abc",\n  baseUrl: "https://x"\n}');
-	});
-
-	it("quotes non-identifier keys", () => {
-		const out = toJson5({ "x-foo": 1 });
-		expect(out).toBe('{\n  "x-foo": 1\n}');
-	});
-
-	it("drops undefined values from objects", () => {
-		const out = toJson5({ a: 1, b: undefined, c: "x" });
-		expect(out).toBe('{\n  a: 1,\n  c: "x"\n}');
-	});
-
-	it("renders nested arrays with inner indentation", () => {
-		const out = toJson5({ models: [{ id: "m1" }] });
-		expect(out).toBe('{\n  models: [\n    {\n      id: "m1"\n    }\n  ]\n}');
-	});
-
-	it("renders primitives and null", () => {
-		expect(toJson5(null)).toBe("null");
-		expect(toJson5(undefined)).toBe("null");
-		expect(toJson5("")).toBe('""');
-		expect(toJson5(0)).toBe("0");
-		expect(toJson5(false)).toBe("false");
-	});
-
-	it("renders empty object/array literal forms", () => {
-		expect(toJson5({})).toBe("{}");
-		expect(toJson5([])).toBe("[]");
-	});
-
-	it("escapes backslashes and double quotes in strings", () => {
-		const out = toJson5({ path: 'a\\b"c' });
-		expect(out).toBe('{\n  path: "a\\\\b\\"c"\n}');
-	});
-});
 
 describe("providers/metadata", () => {
 	it("exposes a stable list of 17 provider ids", () => {

@@ -1138,7 +1138,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       setValue('sessions-directory', se.directory);
       setValue('sessions-ttl-ms', se.ttlMs);
 
-      setValue('settings-raw-json5', '');
+      setValue('settings-raw-yaml', '');
       setRawError('');
     }
 
@@ -1260,9 +1260,9 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       };
       payload.sessions = sessions;
 
-      const raw = getValue('settings-raw-json5').trim();
+      const raw = getValue('settings-raw-yaml').trim();
       if (raw) {
-        payload.rawJson5 = raw;
+        payload.rawYaml = raw;
       }
 
       return payload;
@@ -1287,26 +1287,14 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       }
     }
 
-    function validateRawJson5() {
-      const raw = getValue('settings-raw-json5');
+    function validateRawYaml() {
+      const raw = getValue('settings-raw-yaml');
       if (!raw.trim()) {
         setRawError('');
-        alert('Raw JSON5 editor is empty — nothing to validate.');
+        alert('Raw YAML editor is empty — nothing to validate.');
         return;
       }
-      try {
-        JSON.parse(raw);
-        setRawError('');
-        alert('Valid JSON.');
-      } catch (jsonErr) {
-        try {
-          const fixed = raw.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, '"');
-          JSON.parse(fixed);
-          setRawError('Note: editor accepts JSON5 (unquoted keys, single quotes, comments). Backend parses as JSON5.');
-        } catch {
-          setRawError('Parse error: ' + jsonErr.message);
-        }
-      }
+      setRawError('YAML will be validated by the server when you save.');
     }
 
     function setRawError(msg) {

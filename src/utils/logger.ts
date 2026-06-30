@@ -13,11 +13,6 @@ let globalLogger: PinoLogger | null = null;
 
 /** Get the log directory */
 export function getLogDir(): string {
-  // Prefer environment variable
-  if (process.env.VEX_LOG_DIR) {
-    return process.env.VEX_LOG_DIR;
-  }
-  // Default to user home directory
   return join(homedir(), ".vex", "logs");
 }
 
@@ -46,7 +41,7 @@ export function createLogger(options: {
   const {
     level = "info",
     name = "vex",
-    pretty = process.env.NODE_ENV !== "production",
+    pretty = false,
     logToFile = true
   } = options;
 
@@ -101,8 +96,8 @@ export function createLogger(options: {
 export function getLogger(): PinoLogger {
   if (!globalLogger) {
     globalLogger = createLogger({
-      level: (process.env.LOG_LEVEL as LogLevel) || "info",
-      pretty: process.env.NODE_ENV !== "production",
+      level: "info",
+      pretty: false,
     });
   }
   return globalLogger;

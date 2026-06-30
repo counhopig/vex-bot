@@ -5,8 +5,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   generateId,
-  getEnvVar,
-  requireEnvVar,
   delay,
   retry,
   truncate,
@@ -33,57 +31,6 @@ describe("utils", () => {
     it("should add prefix when provided", () => {
       const id = generateId("msg");
       expect(id).toMatch(/^msg_[a-f0-9]{16}$/);
-    });
-  });
-
-  describe("getEnvVar", () => {
-    const originalEnv = process.env;
-
-    beforeEach(() => {
-      process.env = { ...originalEnv };
-    });
-
-    afterEach(() => {
-      process.env = originalEnv;
-    });
-
-    it("should return environment variable value", () => {
-      process.env.TEST_VAR = "test_value";
-      expect(getEnvVar("TEST_VAR")).toBe("test_value");
-    });
-
-    it("should return undefined for missing variable", () => {
-      delete process.env.TEST_VAR;
-      expect(getEnvVar("TEST_VAR")).toBeUndefined();
-    });
-
-    it("should return default value for missing variable", () => {
-      delete process.env.TEST_VAR;
-      expect(getEnvVar("TEST_VAR", "default")).toBe("default");
-    });
-  });
-
-  describe("requireEnvVar", () => {
-    const originalEnv = process.env;
-
-    beforeEach(() => {
-      process.env = { ...originalEnv };
-    });
-
-    afterEach(() => {
-      process.env = originalEnv;
-    });
-
-    it("should return environment variable value", () => {
-      process.env.TEST_VAR = "test_value";
-      expect(requireEnvVar("TEST_VAR")).toBe("test_value");
-    });
-
-    it("should throw error for missing variable", () => {
-      delete process.env.TEST_VAR;
-      expect(() => requireEnvVar("TEST_VAR")).toThrow(
-        "Missing required environment variable: TEST_VAR"
-      );
     });
   });
 

@@ -180,15 +180,13 @@ describe("config", () => {
   });
 
   describe("loadConfig", () => {
-    it("should load config from JSON file", () => {
-      const configPath = path.join(testDir, "config.json");
-      const configContent = JSON.stringify({
-        providers: {
-          deepseek: {
-            apiKey: "file-key",
-          },
-        },
-      });
+    it("should load config from YAML file", () => {
+      const configPath = path.join(testDir, "config.local.yaml");
+      const configContent = `
+providers:
+  deepseek:
+    apiKey: file-key
+`;
 
       fs.writeFileSync(configPath, configContent);
 
@@ -196,108 +194,84 @@ describe("config", () => {
       expect(config.providers.deepseek?.apiKey).toBe("file-key");
     });
 
-    it("should load config from YAML file", () => {
-      const configPath = path.join(testDir, "config.yaml");
-      const configContent = `
-providers:
-  deepseek:
-    apiKey: yaml-key
-`;
-
-      fs.writeFileSync(configPath, configContent);
-
-      const config = loadConfig({ configPath });
-      expect(config.providers.deepseek?.apiKey).toBe("yaml-key");
-    });
-
-    it("should load config from environment variables", () => {
-      process.env.DEEPSEEK_API_KEY = "env-key";
-
-      const config = loadConfig({ configPath: path.join(testDir, "nonexistent.json") });
-      expect(config.providers.deepseek?.apiKey).toBe("env-key");
-    });
-
-    it("should prioritize environment variables over file", () => {
+    it("should reject JSON config files", () => {
       const configPath = path.join(testDir, "config.json");
+      fs.writeFileSync(configPath, JSON.stringify({ providers: { deepseek: { apiKey: "json-key" } } }));
+
+      expect(() => loadConfig({ configPath })).toThrow(".yaml");
+    });
+
+    it("should reject JSON5 config files", () => {
+      const configPath = path.join(testDir, "config.local.json5");
+      fs.writeFileSync(configPath, `{ providers: { deepseek: { apiKey: "json5-key" } } }`);
+
+      expect(() => loadConfig({ configPath })).toThrow(".yaml");
+    });
+
+    it("should ignore environment variables and use only YAML config files", () => {
+      const configPath = path.join(testDir, "config.local.yaml");
       fs.writeFileSync(
         configPath,
-        JSON.stringify({
-          providers: {
-            deepseek: { apiKey: "file-key" },
-          },
-        })
+        `
+providers:
+  deepseek:
+    apiKey: file-key
+`
       );
 
       process.env.DEEPSEEK_API_KEY = "env-key";
-
-      const config = loadConfig({ configPath });
-      expect(config.providers.deepseek?.apiKey).toBe("env-key");
-    });
-
-    it("should load multiple providers from env", () => {
-      process.env.DEEPSEEK_API_KEY = "deepseek-key";
       process.env.KIMI_API_KEY = "kimi-key";
       process.env.ZHIPU_API_KEY = "zhipu-key";
       process.env.LONGCAT_API_KEY = "longcat-key";
-
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-
-      expect(config.providers.deepseek?.apiKey).toBe("deepseek-key");
-      expect(config.providers.kimi?.apiKey).toBe("kimi-key");
-      expect(config.providers.zhipu?.apiKey).toBe("zhipu-key");
-      expect(config.providers.longcat?.apiKey).toBe("longcat-key");
-    });
-
-    it("should load weixin channel from env", () => {
       process.env.WEIXIN_OC_TOKEN = "wx-token";
       process.env.WEIXIN_OC_ACCOUNT_ID = "wx-account";
-
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-
-      expect(config.channels.weixin?.token).toBe("wx-token");
-      expect(config.channels.weixin?.accountId).toBe("wx-account");
-    });
-
-    it("should load server port from env", () => {
       process.env.PORT = "8080";
-
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-      expect(config.server?.port).toBe(8080);
-    });
-
-    it("should load log level from env", () => {
       process.env.LOG_LEVEL = "debug";
 
-      const config = loadConfig({ configPath: path.join(testDir, "none.json") });
-      expect(config.logging?.level).toBe("debug");
+      const config = loadConfig({ configPath });
+      expect(config.providers.deepseek?.apiKey).toBe("file-key");
+      expect(config.providers.kimi).toBeUndefined();
+      expect(config.providers.zhipu).toBeUndefined();
+      expect(config.providers.longcat).toBeUndefined();
+      expect(config.channels.weixin).toBeUndefined();
+      expect(config.server.port).toBe(3000);
+      expect(config.logging.level).toBe("info");
     });
 
     it("should return empty config when no file and no env", () => {
-      const config = loadConfig({ configPath: path.join(testDir, "nonexistent.json") });
+      const config = loadConfig({ configPath: path.join(testDir, "nonexistent.yaml") });
 
       expect(config.providers).toEqual({});
       expect(config.channels).toEqual({});
     });
 
-    it("should merge config files by documented priority", () => {
+    it("should merge only config.local.yaml files by documented priority", () => {
       const homeDir = path.join(testDir, "home");
       const workDir = path.join(testDir, "work");
       const vexDir = path.join(homeDir, ".vex");
       fs.mkdirSync(vexDir, { recursive: true });
       fs.mkdirSync(workDir, { recursive: true });
-      fs.writeFileSync(path.join(workDir, "config.json5"), `{
-        providers: { deepseek: { apiKey: "cwd-key" } },
-        agent: { defaultModel: "cwd-model" },
-        server: { port: 3001 }
-      }`);
-      fs.writeFileSync(path.join(vexDir, "config.json5"), `{
-        providers: { kimi: { apiKey: "home-key" } },
-        agent: { defaultModel: "home-model" }
-      }`);
-      fs.writeFileSync(path.join(vexDir, "config.local.json5"), `{
-        agent: { temperature: 0.2 },
-        logging: { level: "debug" }
-      }`);
+      fs.writeFileSync(path.join(workDir, "config.local.json5"), `providers: { deepseek: { apiKey: ignored-cwd-key } }`);
+      fs.writeFileSync(path.join(workDir, "config.local.yaml"), `
+providers:
+  deepseek:
+    apiKey: cwd-key
+agent:
+  defaultModel: cwd-model
+server:
+  port: 3001
+`);
+      fs.writeFileSync(path.join(vexDir, "config.local.json5"), `providers: { kimi: { apiKey: ignored-home-key } }`);
+      fs.writeFileSync(path.join(vexDir, "config.local.yaml"), `
+providers:
+  kimi:
+    apiKey: home-key
+agent:
+  defaultModel: home-model
+  temperature: 0.2
+logging:
+  level: debug
+`);
 
       const config = loadConfig({ configDir: vexDir, cwd: workDir });
 

@@ -813,20 +813,18 @@ ${COMMON_CSS}${CONTROL_CSS}
           </div>
         </div>
 
-        <!-- Geek / Raw JSON tab -->
+        <!-- Geek / Raw YAML tab -->
         <div class="config-content" id="settings-tab-geek">
           <div class="form-section">
-            <h3 class="form-section-title">Raw JSON5 Editor</h3>
-            <p class="form-hint">Edit arbitrary config as JSON5. On save, this patch is merged last and overrides form fields above. Top-level must be an object.</p>
+            <h3 class="form-section-title">Raw YAML Editor</h3>
+            <p class="form-hint">Edit arbitrary config as YAML. On save, this patch is merged last and overrides form fields above. Top-level must be a mapping.</p>
             <div class="form-group">
-              <label>JSON5 Patch</label>
-              <textarea id="settings-raw-json5" class="form-input raw-json-editor" rows="18" spellcheck="false" placeholder="{
-  // arbitrary config keys
-  persona: { persona_name: 'Geek' }
-}"></textarea>
+              <label>YAML Patch</label>
+              <textarea id="settings-raw-yaml" class="form-input raw-json-editor" rows="18" spellcheck="false" placeholder="persona:
+  persona_name: Geek"></textarea>
               <p id="settings-raw-error" class="form-hint" style="color: var(--error);"></p>
             </div>
-            <button class="btn btn-secondary" onclick="validateRawJson5()">Validate JSON5</button>
+            <button class="btn btn-secondary" onclick="validateRawYaml()">Validate YAML</button>
           </div>
         </div>
 

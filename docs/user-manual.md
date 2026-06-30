@@ -120,7 +120,7 @@ The memory system lets the agent remember information across sessions (user pref
 
 ### Saving the configuration
 
-At the end, the wizard prints the generated JSON5 configuration and asks for confirmation. Confirming writes it to `~/.vex/config.local.json5`.
+At the end, the wizard prints the generated YAML configuration and asks for confirmation. Confirming writes it to `~/.vex/config.local.yaml`.
 
 ```
 Configuration complete!
@@ -135,84 +135,54 @@ Next steps:
 
 ## 4. Configuration File Reference
 
-The configuration file lives at `~/.vex/config.local.json5` (or a `config.local.json5` in your current directory). It uses JSON5 format, so comments and trailing commas are fine.
+The configuration file lives at `~/.vex/config.local.yaml` (or a `config.local.yaml` in your current directory). Vex only reads YAML config files.
 
-**Load priority**: environment variables > `config.local.json5` > built-in defaults.
+**Load order**: current directory `config.local.yaml`, then `~/.vex/config.local.yaml`; missing fields use built-in defaults.
 
 ### Full configuration structure
 
-```json5
-{
-  // === Model providers ===
-  providers: {
-    deepseek: {
-      apiKey: "sk-xxxxxxxxxxxxxxxx",       // API key (required)
-      // baseUrl and models use presets; typically no need to set manually
-    },
-    kimi: {
-      apiKey: "sk-xxxxxxxxxxxxxxxx",
-    },
-    minimax: {
-      apiKey: "xxxxxxxxxxxxxxxx",
-      groupId: "xxxxxxxx",                 // MiniMax-specific: Group ID
-    },
-    // Custom OpenAI-compatible endpoint example
-    "custom-openai": {
-      id: "custom-openai",
-      name: "My vLLM Service",
-      baseUrl: "https://my-server.com/v1",
-      apiKey: "sk-xxx",
-      models: [
-        { id: "qwen2.5-72b", name: "Qwen 2.5 72B", contextWindow: 32768, maxTokens: 4096 },
-      ],
-    },
-  },
-
-  // === Channels ===
-  channels: {
-    weixin: {
-      enabled: true,                        // Enable WeChat
-    },
-  },
-
-  // === Agent ===
-  agent: {
-    defaultProvider: "deepseek",           // Default model provider
-    defaultModel: "deepseek-chat",         // Default model ID
-    temperature: 0.7,                      // Generation temperature (0-2); lower = more deterministic
-    maxTokens: 4096,                       // Maximum tokens per response
-    workingDirectory: "/path/to/workspace", // Working directory for tool execution
-  },
-
-  // === Server ===
-  server: {
-    port: 3000,                            // HTTP / WebSocket port
-    host: "0.0.0.0",                       // Listen address
-  },
-
-  // === Logging ===
-  logging: {
-    level: "info",                         // Log level: trace | debug | info | warn | error | fatal
-  },
-
-  // === Memory ===
-  memory: {
-    enabled: true,                         // Enable long-term memory
-    directory: "/path/to/memory",          // Memory storage directory (default: ~/.vex/memory)
-  },
-
-  // === Sessions ===
-  sessions: {
-    directory: "/path/to/sessions",        // Session storage directory (default: ~/.vex/sessions)
-  },
-
-  // === Skills ===
-  skills: {
-    enabled: true,                         // Enable skill injection
-    // disabled: ["skill-name"],           // Skills to disable
-    // only: ["skill-name"],               // Limit to only these skills
-  },
-}
+```yaml
+providers:
+  deepseek:
+    apiKey: sk-xxxxxxxxxxxxxxxx
+  kimi:
+    apiKey: sk-xxxxxxxxxxxxxxxx
+  minimax:
+    apiKey: xxxxxxxxxxxxxxxx
+    groupId: xxxxxxxx
+  custom-openai:
+    id: custom-openai
+    name: My vLLM Service
+    baseUrl: https://my-server.com/v1
+    apiKey: sk-xxx
+    models:
+      - id: qwen2.5-72b
+        name: Qwen 2.5 72B
+        contextWindow: 32768
+        maxTokens: 4096
+channels:
+  weixin:
+    enabled: true
+agent:
+  defaultProvider: deepseek
+  defaultModel: deepseek-chat
+  temperature: 0.7
+  maxTokens: 4096
+  workingDirectory: /path/to/workspace
+server:
+  port: 3000
+  host: 0.0.0.0
+logging:
+  level: info
+memory:
+  enabled: true
+  directory: /path/to/memory
+sessions:
+  directory: /path/to/sessions
+skills:
+  enabled: true
+  disabled: []
+  only: []
 ```
 
 ### Field reference
@@ -235,39 +205,6 @@ The configuration file lives at `~/.vex/config.local.json5` (or a `config.local.
 | `sessions.directory` | Where session transcripts (JSONL format) are stored |
 | `skills` | Controls SKILL.md injection; `disabled` and `only` take skill name arrays |
 
-### Environment variable overrides
-
-You can override configuration values through environment variables. They take highest priority and are especially useful in Docker or CI/CD environments.
-
-**Provider API keys:**
-
-```bash
-export DEEPSEEK_API_KEY="sk-xxx"
-export MINIMAX_API_KEY="xxx"
-export MINIMAX_GROUP_ID="xxx"       # MiniMax only
-export KIMI_API_KEY="sk-xxx"
-export STEPFUN_API_KEY="xxx"
-export MODELSCOPE_API_KEY="xxx"
-export DASHSCOPE_API_KEY="sk-xxx"
-export ZHIPU_API_KEY="xxx"
-export LONGCAT_API_KEY="xxx"
-export OPENAI_API_KEY="sk-xxx"
-export OPENROUTER_API_KEY="sk-xxx"
-export TOGETHER_API_KEY="xxx"
-export GROQ_API_KEY="xxx"
-```
-
-**Server and logging:**
-
-```bash
-export PORT=3000
-export LOG_LEVEL=debug
-```
-
-**WeChat (iLink OC):**
-
-```bash
-export WEIXIN_OC_TOKEN="xxx"
 export WEIXIN_OC_ACCOUNT_ID="xxx"
 export WEIXIN_OC_BASE_URL="https://ilinkai.weixin.qq.com"
 ```
@@ -280,7 +217,7 @@ All commands start with `vex`. Run `vex --help` to see the full list.
 
 ### `vex onboard` — Interactive configuration wizard
 
-Guides you step by step through configuring providers, channels, server, agent, and memory. Saves to `~/.vex/config.local.json5`.
+Guides you step by step through configuring providers, channels, server, agent, and memory. Saves to `~/.vex/config.local.yaml`.
 
 ```bash
 vex onboard
@@ -303,7 +240,7 @@ vex start --web-only
 vex start -p 8080
 
 # Custom config file
-vex start -c /path/to/config.local.json5
+vex start -c /path/to/config.local.yaml
 
 # Combined
 vex start --web-only -p 8080
@@ -327,7 +264,7 @@ Checks configuration completeness and correctness. Lists configured providers, c
 vex check
 
 # With custom config path
-vex check -c /path/to/config.local.json5
+vex check -c /path/to/config.local.yaml
 ```
 
 Example output:
@@ -462,7 +399,7 @@ Stops the current service, then starts a new one.
 vex restart
 
 # Restart with custom config and port
-vex restart -c new-config.json5 -p 8080
+vex restart -c new-config.yaml -p 8080
 
 # Restart in web-only mode
 vex restart --web-only
@@ -492,7 +429,7 @@ Vex WebChat contains two server-rendered single-page applications:
 
 **Control panel (`/control`)**
 - View Vex service status
-- Edit your `config.local.json5` file online
+- Edit your `config.local.yaml` file online
 - Manage WeChat QR code login
 - Restart the service
 
@@ -530,16 +467,12 @@ A health check endpoint is available at `GET /health`, returning:
 
 ### Enabling the WeChat channel
 
-In `~/.vex/config.local.json5`:
+In `~/.vex/config.local.yaml`:
 
-```json5
-{
-  channels: {
-    weixin: {
-      enabled: true,
-    },
-  },
-}
+```yaml
+channels:
+  weixin:
+    enabled: true
 ```
 
 You can also enable it during `vex onboard` by answering `y` at the channel prompt.
@@ -599,80 +532,62 @@ Refer to each provider's official platform for API key registration.
 
 ### Configuration via config file
 
-```json5
-{
-  providers: {
-    deepseek: { apiKey: "sk-xxx" },
-    kimi: { apiKey: "sk-xxx" },
-    minimax: { apiKey: "xxx", groupId: "xxx" },
-  },
-}
-```
-
-### Configuration via environment variables
-
-```bash
-export DEEPSEEK_API_KEY="sk-xxxxxxxxxxxxxxxx"
-export MINIMAX_API_KEY="xxxxxxxxxxxxxxxx"
-export KIMI_API_KEY="sk-xxxxxxxxxxxxxxxx"
-export STEPFUN_API_KEY="xxxxxxxxxxxxxxxx"
-export ZHIPU_API_KEY="xxxxxxxxxxxxxxxx"
-export DASHSCOPE_API_KEY="sk-xxxxxxxxxxxxxxxx"
-export MODELSCOPE_API_KEY="xxxxxxxxxxxxxxxx"
+```yaml
+providers:
+  deepseek:
+    apiKey: sk-xxx
+  kimi:
+    apiKey: sk-xxx
+  minimax:
+    apiKey: xxx
+    groupId: xxx
 ```
 
 ### Custom OpenAI-compatible endpoints
 
 Use this for vLLM, Ollama, OpenAI, Azure, or any service with an OpenAI-compatible API:
 
-```json5
-{
-  providers: {
-    "custom-openai": {
-      id: "custom-openai",
-      name: "My Local Service",
-      baseUrl: "http://localhost:11434/v1",
-      apiKey: "ollama",
-      models: [
-        { id: "qwen2.5:72b", name: "Qwen2.5 72B", contextWindow: 32768, maxTokens: 4096 },
-      ],
-    },
-  },
-}
+```yaml
+providers:
+  custom-openai:
+    id: custom-openai
+    name: My Local Service
+    baseUrl: http://localhost:11434/v1
+    apiKey: ollama
+    models:
+      - id: qwen2.5:72b
+        name: Qwen2.5 72B
+        contextWindow: 32768
+        maxTokens: 4096
 ```
 
 ### Custom Anthropic-compatible endpoints
 
 Use this for Claude, Bedrock, or services with Anthropic-compatible APIs:
 
-```json5
-{
-  providers: {
-    "custom-anthropic": {
-      id: "custom-anthropic",
-      name: "Bedrock Claude",
-      baseUrl: "https://bedrock.example.com/v1",
-      apiKey: "xxx",
-      apiVersion: "2023-06-01",
-      models: [
-        { id: "claude-3-5-sonnet-20241022", name: "Claude 3.5 Sonnet", contextWindow: 200000, maxTokens: 8192 },
-      ],
-    },
-  },
-}
+```yaml
+providers:
+  custom-anthropic:
+    id: custom-anthropic
+    name: Bedrock Claude
+    baseUrl: https://bedrock.example.com/v1
+    apiKey: xxx
+    apiVersion: 2023-06-01
+    models:
+      - id: claude-3-5-sonnet-20241022
+        name: Claude 3.5 Sonnet
+        contextWindow: 200000
+        maxTokens: 8192
 ```
 
 ### Switching the default model
 
 Edit the `agent` section in your config:
 
-```json5
-{
-  agent: {
-    defaultProvider: "kimi",
-    defaultModel: "kimi-k2.5",
-  },
-}
+```yaml
+agent:
+  defaultProvider: kimi
+  defaultModel: kimi-k2.5
 ```
 
 Restart Vex for the change to take effect. You can also test a new model temporarily with `vex chat -p kimi -m kimi-k2.5`.
@@ -696,37 +611,18 @@ Resource limits:
 - CPU: 1 core max
 - Memory: 512 MB max
 
-### Option 2: Environment-variable Compose (full config mode)
+### Option 2: Mounted YAML config (full config mode)
 
 ```bash
-docker compose -f docker-compose.env.yml up -d
+cp ~/.vex/config.local.yaml ./config.local.yaml
+docker compose up -d
 ```
 
-This uses `docker-compose.env.yml`, which supports `.env` files and config file mounting. Suitable for production or when you need the WeChat channel.
-
-Before starting:
-
-1. Create a `.env` file in the project directory with your API keys:
-   ```
-   DEEPSEEK_API_KEY=sk-xxx
-   KIMI_API_KEY=sk-xxx
-   PORT=3000
-   LOG_LEVEL=info
-   ```
-2. Create a `config.local.json5` file in the project directory.
-3. Adjust the compose file's `command` field if needed (default is the image's entrypoint).
-
-The `.env.yml` compose file mounts your local config:
+For production or WeChat channel use, provide all provider keys and channel settings in `config.local.yaml` and mount it into the container:
 
 ```yaml
 volumes:
-  - ./config.local.json5:/app/config.local.json5:ro
-```
-
-To pin or override the image:
-
-```bash
-VEX_IMAGE=ghcr.io/counhopig/vex-bot:1.12.0 docker compose up -d
+  - ./config.local.yaml:/app/config.local.yaml:ro
 ```
 
 To upgrade:
@@ -754,7 +650,7 @@ This path builds from the local `Dockerfile` and is intended for contributors te
 ### Enabling WeChat in Docker
 
 1. Change the compose file's `command` to `["start"]` (remove `--web-only`).
-2. Make sure `channels.weixin.enabled` is `true` in your `config.local.json5`.
+2. Make sure `channels.weixin.enabled` is `true` in your `config.local.yaml`.
 3. Start the container and check the logs for the QR code: `docker logs vex-bot`.
 4. Scan the QR code with your phone.
 
@@ -799,18 +695,9 @@ From most verbose to least:
 
 Set the level in your config:
 
-```json5
-{
-  logging: {
-    level: "debug",   // Use debug or trace when troubleshooting
-  },
-}
-```
-
-Or via environment variable:
-
-```bash
-export LOG_LEVEL=debug
+```yaml
+logging:
+  level: debug
 ```
 
 ### Viewing logs
@@ -847,8 +734,8 @@ cat ~/.vex/sessions/*.jsonl | tail -20
 # Check configuration first
 vex check
 
-# Start with debug logging
-LOG_LEVEL=debug vex start
+# Then start the service
+vex start
 ```
 
 **Model not responding:**
@@ -888,15 +775,12 @@ vex start -p 3001
 
 ### Q: How do I switch AI models?
 
-Edit `~/.vex/config.local.json5` and update the `agent` section:
+Edit `~/.vex/config.local.yaml` and update the `agent` section:
 
-```json5
-{
-  agent: {
-    defaultProvider: "kimi",
-    defaultModel: "kimi-k2.5",
-  },
-}
+```yaml
+agent:
+  defaultProvider: kimi
+  defaultModel: kimi-k2.5
 ```
 
 Restart Vex. You can also test a model first with `vex chat -p kimi -m kimi-k2.5`.
@@ -907,32 +791,27 @@ Restart Vex. You can also test a model first with `vex chat -p kimi -m kimi-k2.5
 - **WeChat contact**: clear the session in the WebChat control panel, or delete the corresponding JSONL file under `~/.vex/sessions/`.
 - **Full reset**: stop Vex, delete the session files, and restart.
 
-### Q: Where is config.local.json5?
+### Q: Where is config.local.yaml?
 
 Vex searches in this order:
 
-1. The path you pass with `-c` (e.g. `vex start -c /path/to/config.json5`).
-2. `config.local.json5` in the current working directory.
-3. `~/.vex/config.local.json5` (this is where `vex onboard` writes it).
+1. The path you pass with `-c` (e.g. `vex start -c /path/to/config.yaml`).
+2. `config.local.yaml` in the current working directory.
+3. `~/.vex/config.local.yaml` (this is where `vex onboard` writes it).
 
 Run `vex check` to see which config file is actually loaded.
 
 ### Q: How do I mount a config file in Docker?
 
-Use `docker-compose.env.yml`:
+Mount `config.local.yaml` into `/app/config.local.yaml`:
 
 ```bash
 # 1. Copy your config into the project directory
-cp ~/.vex/config.local.json5 ./config.local.json5
+cp ~/.vex/config.local.yaml ./config.local.yaml
 
-# 2. Create .env file (optional)
-echo "DEEPSEEK_API_KEY=sk-xxx" > .env
-
-# 3. Start
-docker compose -f docker-compose.env.yml up -d
+# 2. Start
+docker compose up -d
 ```
-
-The Docker environment variable names use the short form (`DEEPSEEK_API_KEY`, `KIMI_API_KEY`, etc.), matching the code's `loadConfigFromEnv` function.
 
 ### Q: Which models are supported? How do I add a new one?
 
@@ -955,10 +834,6 @@ Yes. Configure API keys for multiple providers and switch between them in WebCha
 ### Q: Can I access the WebChat UI remotely?
 
 Yes. `vex start` binds to `0.0.0.0` by default. Other devices on your LAN can connect via your machine's IP (e.g. `http://192.168.1.x:3000`). Use this only on trusted networks, or place a reverse proxy (Nginx, Caddy) in front with HTTPS.
-
-### Q: My `doubao` API key isn't being picked up from the environment. Why?
-
-The Doubao (ByteDance) provider is configured through the config file only. Unlike other Chinese providers, there is no `DOUBAO_API_KEY` environment variable in the current `loadConfigFromEnv` implementation. Use the configuration file or `vex onboard` to provide your Doubao API key instead.
 
 ---
 

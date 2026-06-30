@@ -2,10 +2,10 @@ import * as readline from "node:readline";
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync, mkdirSync, writeFileSync } from "fs";
-import { toJson5 } from "../config/json5-writer.js";
+import yaml from "yaml";
 
 /**
- * Run the interactive configuration wizard and write ~/.vex/config.local.json5.
+ * Run the interactive configuration wizard and write ~/.vex/config.local.yaml.
  *
  * Guides the user through 5 steps:
  *   1. Model provider setup (Chinese, custom OpenAI, custom Anthropic)
@@ -36,7 +36,6 @@ export async function runOnboardWizard(): Promise<void> {
 ╚════════════════════════════════════════════════════════════╝
 `);
 
-	// Configuration object (for config.local.json5)
 	const config: {
 		providers: Record<string, unknown>;
 		channels: Record<string, unknown>;
@@ -369,12 +368,11 @@ export async function runOnboardWizard(): Promise<void> {
 	if (Object.keys(config.agent).length === 0) delete (config as Record<string, unknown>).agent;
 	if (Object.keys(config.memory).length === 0) delete (config as Record<string, unknown>).memory;
 
-	// Generate JSON5 format config
-	const configContent = toJson5(config);
+	const configContent = yaml.stringify(config);
 
 	// Config file path
 	const vexDir = join(homedir(), ".vex");
-	const configPath = join(vexDir, "config.local.json5");
+	const configPath = join(vexDir, "config.local.yaml");
 
 	console.log("Generated configuration:\n");
 	console.log("---");
@@ -415,7 +413,7 @@ ${startNote.padEnd(61)}║
 ║   - vex start           Full service (WebChat+Personal WeChat)        ║
 ║   - vex start --web-only WebChat only                       ║
 ║                                                            ║
-║   Config file: ~/.vex/config.local.json5                     ║
+║   Config file: ~/.vex/config.local.yaml                      ║
 ║   Docs: https://github.com/King-Chau/vex                  ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝

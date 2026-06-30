@@ -10,20 +10,6 @@ export function generateId(prefix?: string): string {
   return prefix ? `${prefix}_${id}` : id;
 }
 
-/** Safely get an environment variable */
-export function getEnvVar(name: string, defaultValue?: string): string | undefined {
-  return process.env[name] ?? defaultValue;
-}
-
-/** Require an environment variable */
-export function requireEnvVar(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
-}
-
 /** Delay execution */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

@@ -9,8 +9,7 @@
 import { homedir } from "os";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import json5 from "json5";
-import { toJson5 } from "../config/json5-writer.js";
+import yaml from "yaml";
 import { getProviderName, PROVIDER_IDS } from "../providers/metadata.js";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig, ProviderId, WeixinConfig, SimpleProviderConfig } from "../types/index.js";
@@ -289,7 +288,7 @@ export function validateConfig(params: ConfigSaveParams): ConfigValidateResult {
 }
 
 /**
- * Merge, serialize, and write config.local.json5.
+ * Merge, serialize, and write config.local.yaml.
  *
  * @param currentConfig - the live VexConfig (needed for restart heuristics).
  * @param params - the validated save payload from the frontend.
@@ -300,7 +299,7 @@ export function saveConfig(
   params: ConfigSaveParams,
 ): { success: boolean; message: string; requiresRestart?: boolean } {
   const vexDir = join(homedir(), ".vex");
-  const configPath = join(vexDir, "config.local.json5");
+  const configPath = join(vexDir, "config.local.yaml");
 
   // Validate config
   const validation = validateConfig(params);
@@ -315,7 +314,7 @@ export function saveConfig(
   let existingConfig: Partial<VexConfig> = {};
   if (existsSync(configPath)) {
     try {
-      existingConfig = json5.parse(readFileSync(configPath, "utf-8"));
+      existingConfig = yaml.parse(readFileSync(configPath, "utf-8")) as Partial<VexConfig>;
     } catch (e) {
       logger.warn({ error: e }, "Failed to parse existing config, creating new");
     }
@@ -483,21 +482,20 @@ export function saveConfig(
     configToSave.sessions = mergedSessions as VexConfig["sessions"];
   }
 
-  // Apply raw JSON5 patch from the Geek tab (merged last, overrides form fields)
-  if (params.rawJson5 && params.rawJson5.trim()) {
+  if (params.rawYaml && params.rawYaml.trim()) {
     let patch: unknown;
     try {
-      patch = json5.parse(params.rawJson5);
+      patch = yaml.parse(params.rawYaml);
     } catch (e) {
       return {
         success: false,
-        message: "Raw JSON5 parse error: " + (e instanceof Error ? e.message : String(e)),
+        message: "Raw YAML parse error: " + (e instanceof Error ? e.message : String(e)),
       };
     }
     if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
       return {
         success: false,
-        message: "Raw JSON5 must be an object at the top level",
+        message: "Raw YAML must be an object at the top level",
       };
     }
     const patchRecord = patch as Record<string, unknown>;
@@ -512,11 +510,8 @@ export function saveConfig(
     mkdirSync(vexDir, { recursive: true });
   }
 
-  // Generate JSON5 format
-  const json5Content = toJson5(configToSave);
-
-  // Write file
-  writeFileSync(configPath, json5Content, "utf-8");
+  const yamlContent = yaml.stringify(configToSave);
+  writeFileSync(configPath, yamlContent, "utf-8");
 
   logger.info({ configPath }, "Configuration saved");
 

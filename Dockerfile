@@ -50,15 +50,11 @@ USER vex
 # Expose the web server port
 EXPOSE 3000
 
-# Set environment variables
 ENV NODE_ENV=production \
-    HOME=/home/vex \
-    PORT=3000 \
-    LOG_LEVEL=info
+    HOME=/home/vex
 
 VOLUME ["/home/vex/.vex"]
 
 # Use ENTRYPOINT for CLI, CMD provides default arguments
-# Config should be provided via volume mount or environment variables
 ENTRYPOINT ["node", "dist/cli/index.js"]
 CMD ["start"]
