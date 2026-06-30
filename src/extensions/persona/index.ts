@@ -14,6 +14,10 @@ function userKey(ctx: InboundMessageContext): string {
   return `${ctx.channelId}:${ctx.senderId}`;
 }
 
+function normalizeTimestampMs(timestamp: number): number {
+  return timestamp < 1e12 ? timestamp * 1000 : timestamp;
+}
+
 function isIgnoredGroup(ctx: InboundMessageContext, ignoreGroupChat: boolean): boolean {
   return ignoreGroupChat && ctx.chatType === "group";
 }
@@ -47,7 +51,7 @@ function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: Inboun
   ];
 
   if (config.timeAwarenessEnabled) {
-    blocks.push(`【当前时间】${new Date(ctx.timestamp).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`);
+    blocks.push(`【当前时间】${new Date(normalizeTimestampMs(ctx.timestamp)).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`);
   }
   if (config.restEnabled && isSleeping(config)) {
     blocks.push("【休息状态】现在是你的休息时间，回复可以更困倦、更简短。");
