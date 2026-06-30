@@ -156,6 +156,10 @@ ${COMMON_CSS}${CONTROL_CSS}
         <span class="nav-item-icon">⚙️</span>
         <span>Config</span>
       </div>
+      <div class="nav-item" data-view="settings">
+        <span class="nav-item-icon">🛠️</span>
+        <span>Settings</span>
+      </div>
       <div class="nav-item" data-view="providers">
         <span class="nav-item-icon">🤖</span>
         <span>Model Providers</span>
@@ -447,6 +451,386 @@ ${COMMON_CSS}${CONTROL_CSS}
 
         <!-- Save result -->
         <div id="save-result" class="save-result"></div>
+      </div>
+
+      <!-- Settings view -->
+      <div class="view" id="view-settings">
+        <div class="page-header">
+          <h1 class="page-title">Settings</h1>
+          <p class="page-desc">Edit bot persona, extensions, skills, sessions, and raw config</p>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="loadSettings()">Refresh Settings</button>
+          <button class="btn btn-secondary" onclick="saveAllSettings()">Save Settings</button>
+        </div>
+        <div id="settings-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+          <button class="config-tab active" data-settings-tab="persona">Bot / Persona</button>
+          <button class="config-tab" data-settings-tab="extensions">Extensions</button>
+          <button class="config-tab" data-settings-tab="skills">Skills</button>
+          <button class="config-tab" data-settings-tab="sessions">Sessions</button>
+          <button class="config-tab" data-settings-tab="geek">Geek (Raw JSON)</button>
+        </div>
+
+        <!-- Persona tab -->
+        <div class="config-content active" id="settings-tab-persona">
+          <div class="form-section">
+            <h3 class="form-section-title">Bot Persona</h3>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="persona-enabled" />
+                <span>Enable Persona System</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Persona Name</label>
+                <input type="text" id="persona-name" class="form-input" placeholder="e.g. Vex" />
+              </div>
+              <div class="form-group">
+                <label>Reply Style</label>
+                <input type="text" id="persona-reply-style" class="form-input" placeholder="e.g. warm, concise" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Base Prompt</label>
+              <textarea id="persona-base-prompt" class="form-input" rows="4" placeholder="Core persona prompt injected into the system message"></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-time-awareness" />
+                  <span>Time Awareness</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-emotion-enabled" />
+                  <span>Emotion System</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Emotion Decay / Hour</label>
+                <input type="number" id="persona-emotion-decay" class="form-input" min="0" max="100" step="0.1" />
+              </div>
+              <div class="form-group">
+                <label>Emotion Recovery / Reply</label>
+                <input type="number" id="persona-emotion-recovery" class="form-input" min="0" max="100" step="0.1" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Emotion Injection Style</label>
+              <input type="text" id="persona-emotion-injection-style" class="form-input" placeholder="e.g. suffix" />
+            </div>
+            <div class="form-group">
+              <label>Emotion Decay Cron</label>
+              <input type="text" id="persona-emotion-decay-cron" class="form-input" placeholder="cron expression" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-memory-enabled" />
+                  <span>Memory</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Memory Max Turns</label>
+                <input type="number" id="persona-memory-max-turns" class="form-input" min="0" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-reflection-enabled" />
+                  <span>Reflection</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Reflection Trigger Turns</label>
+                <input type="number" id="persona-reflection-trigger-turns" class="form-input" min="0" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Reflection History Turns</label>
+                <input type="number" id="persona-reflection-history-turns" class="form-input" min="0" />
+              </div>
+              <div class="form-group">
+                <label>Reflection Periodic Cron</label>
+                <input type="text" id="persona-reflection-periodic-cron" class="form-input" placeholder="cron expression" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-profile-enabled" />
+                  <span>Profile</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-profile-building" />
+                  <span>Profile Building</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Profile Building Trigger Turns</label>
+              <input type="number" id="persona-profile-building-trigger-turns" class="form-input" min="0" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-rest-enabled" />
+                  <span>Rest / Sleep</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-proactive-nudge" />
+                  <span>Proactive Nudge</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Rest Sleep Hour (0-23)</label>
+                <input type="number" id="persona-rest-sleep-hour" class="form-input" min="0" max="23" />
+              </div>
+              <div class="form-group">
+                <label>Rest Wake Hour (0-23)</label>
+                <input type="number" id="persona-rest-wake-hour" class="form-input" min="0" max="23" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Proactive Nudge Cron</label>
+              <input type="text" id="persona-proactive-nudge-cron" class="form-input" placeholder="cron expression" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-greeting-first-chat" />
+                  <span>Greeting On First Chat</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-goodnight-hint" />
+                  <span>Goodnight Hint</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-ignore-group-chat" />
+                  <span>Ignore Group Chat</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="persona-debug-log" />
+                  <span>Debug Log</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Admin IDs (comma-separated)</label>
+              <input type="text" id="persona-admin-ids" class="form-input" placeholder="user1, user2" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Extensions tab (Skill Learner + ShareLink) -->
+        <div class="config-content" id="settings-tab-extensions">
+          <div class="form-section">
+            <h3 class="form-section-title">Skill Learner</h3>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="skilllearner-enabled" />
+                <span>Enable Skill Learner</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label>Auto Trigger Keywords (comma-separated)</label>
+              <input type="text" id="skilllearner-auto-trigger-keywords" class="form-input" placeholder="learn, skill" />
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Max Learning Turns</label>
+                <input type="number" id="skilllearner-max-learning-turns" class="form-input" min="0" />
+              </div>
+              <div class="form-group">
+                <label>Proactive Threshold (0-1)</label>
+                <input type="number" id="skilllearner-proactive-threshold" class="form-input" min="0" max="1" step="0.01" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="skilllearner-auto-learn" />
+                  <span>Enable Auto Learn</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="skilllearner-proactive-suggest" />
+                  <span>Enable Proactive Suggest</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="skilllearner-auto-deploy" />
+                <span>Auto Deploy To Skills</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-section" style="margin-top:1.5rem;">
+            <h3 class="form-section-title">ShareLink</h3>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="sharelink-enabled" />
+                <span>Enable ShareLink</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Response Mode</label>
+                <select id="sharelink-response-mode" class="form-input">
+                  <option value="simple">simple</option>
+                  <option value="detailed">detailed</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Description Max Length</label>
+                <input type="number" id="sharelink-description-max-length" class="form-input" min="0" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="sharelink-include-description" />
+                  <span>Include Description</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="sharelink-include-cover" />
+                  <span>Include Cover</span>
+                </label>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="sharelink-auto-detect" />
+                  <span>Auto Detect</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>Audio Download Timeout (ms)</label>
+                <input type="number" id="sharelink-audio-timeout" class="form-input" min="0" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Subtitle Max Length</label>
+                <input type="number" id="sharelink-subtitle-max-length" class="form-input" min="0" />
+              </div>
+              <div class="form-group">
+                <label>LLM Short Content Threshold</label>
+                <input type="number" id="sharelink-llm-short-threshold" class="form-input" min="0" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>LLM Chunk Size</label>
+              <input type="number" id="sharelink-llm-chunk-size" class="form-input" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Bilibili Cookie (leave blank to keep existing)</label>
+              <input type="text" id="sharelink-bili-sessdata" class="form-input" placeholder="SESSDATA" />
+              <input type="text" id="sharelink-bili-jct" class="form-input" placeholder="bili_jct" style="margin-top:0.5rem;" />
+              <p class="form-hint" id="sharelink-cookie-status">No cookie configured</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skills tab -->
+        <div class="config-content" id="settings-tab-skills">
+          <div class="form-section">
+            <h3 class="form-section-title">Skills</h3>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="settings-skills-enabled" />
+                <span>Enable Skills</span>
+              </label>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>User Directory</label>
+                <input type="text" id="settings-skills-user-dir" class="form-input" placeholder="~/.vex/skills" />
+              </div>
+              <div class="form-group">
+                <label>Workspace Directory</label>
+                <input type="text" id="settings-skills-workspace-dir" class="form-input" placeholder="./.vex/skills" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Disabled Skills (comma-separated)</label>
+              <input type="text" id="settings-skills-disabled" class="form-input" placeholder="skill-a, skill-b" />
+            </div>
+            <div class="form-group">
+              <label>Only Skills (comma-separated, overrides disabled)</label>
+              <input type="text" id="settings-skills-only" class="form-input" placeholder="skill-c" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Sessions tab -->
+        <div class="config-content" id="settings-tab-sessions">
+          <div class="form-section">
+            <h3 class="form-section-title">Sessions Store</h3>
+            <div class="form-group">
+              <label>Store Type</label>
+              <select id="sessions-type" class="form-input">
+                <option value="memory">memory</option>
+                <option value="file">file</option>
+              </select>
+              <p class="form-hint">Changing the store type requires a restart to take effect</p>
+            </div>
+            <div class="form-group">
+              <label>Directory (file store)</label>
+              <input type="text" id="sessions-directory" class="form-input" placeholder="~/.vex/sessions" />
+            </div>
+            <div class="form-group">
+              <label>Session TTL (ms)</label>
+              <input type="number" id="sessions-ttl-ms" class="form-input" min="0" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Geek / Raw JSON tab -->
+        <div class="config-content" id="settings-tab-geek">
+          <div class="form-section">
+            <h3 class="form-section-title">Raw JSON5 Editor</h3>
+            <p class="form-hint">Edit arbitrary config as JSON5. On save, this patch is merged last and overrides form fields above. Top-level must be an object.</p>
+            <div class="form-group">
+              <label>JSON5 Patch</label>
+              <textarea id="settings-raw-json5" class="form-input raw-json-editor" rows="18" spellcheck="false" placeholder="{
+  // arbitrary config keys
+  persona: { persona_name: 'Geek' }
+}"></textarea>
+              <p id="settings-raw-error" class="form-hint" style="color: var(--error);"></p>
+            </div>
+            <button class="btn btn-secondary" onclick="validateRawJson5()">Validate JSON5</button>
+          </div>
+        </div>
+
+        <!-- Settings save result -->
+        <div id="settings-save-result" class="save-result"></div>
       </div>
 
       <!-- Logs view -->

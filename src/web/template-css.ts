@@ -703,4 +703,13 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       display: grid;
       gap: 1rem;
     }
+    .raw-json-editor {
+      font-family: "SF Mono", Monaco, Consolas, monospace;
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre;
+      tab-size: 2;
+      min-height: 300px;
+      resize: vertical;
+    }
 `;
