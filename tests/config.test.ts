@@ -42,6 +42,7 @@ describe("config", () => {
         key.includes("MODELSCOPE") ||
         key.includes("DASHSCOPE") ||
         key.includes("ZHIPU") ||
+        key.includes("LONGCAT") ||
         key.includes("OPENAI") ||
         key.includes("OLLAMA") ||
         key.includes("OPENROUTER") ||
@@ -237,12 +238,14 @@ providers:
       process.env.DEEPSEEK_API_KEY = "deepseek-key";
       process.env.KIMI_API_KEY = "kimi-key";
       process.env.ZHIPU_API_KEY = "zhipu-key";
+      process.env.LONGCAT_API_KEY = "longcat-key";
 
       const config = loadConfig({ configPath: path.join(testDir, "none.json") });
 
       expect(config.providers.deepseek?.apiKey).toBe("deepseek-key");
       expect(config.providers.kimi?.apiKey).toBe("kimi-key");
       expect(config.providers.zhipu?.apiKey).toBe("zhipu-key");
+      expect(config.providers.longcat?.apiKey).toBe("longcat-key");
     });
 
     it("should load weixin channel from env", () => {

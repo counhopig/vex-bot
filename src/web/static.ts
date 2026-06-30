@@ -334,6 +334,7 @@ ${COMMON_CSS}${CONTROL_CSS}
                 <option value="modelscope">ModelScope</option>
                 <option value="dashscope">DashScope (Qwen)</option>
                 <option value="zhipu">Zhipu AI</option>
+                <option value="longcat">LongCat</option>
                 <option value="openai">OpenAI</option>
                 <option value="ollama">Ollama</option>
                 <option value="openrouter">OpenRouter</option>
@@ -864,6 +865,7 @@ ${COMMON_CSS}${CONTROL_CSS}
           <option value="modelscope">ModelScope</option>
           <option value="dashscope">DashScope (Qwen)</option>
           <option value="zhipu">Zhipu AI</option>
+          <option value="longcat">LongCat</option>
           <option value="openai">OpenAI</option>
           <option value="ollama">Ollama</option>
           <option value="openrouter">OpenRouter</option>

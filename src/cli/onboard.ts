@@ -56,7 +56,7 @@ export async function runOnboardWizard(): Promise<void> {
 
 	// Step 1: Choose provider type
 	console.log("\n[Step 1/5] Choose Provider Type\n");
-	console.log("  1. Chinese Models (DeepSeek, Doubao, Zhipu AI, DashScope, Kimi, StepFun, MiniMax, ModelScope)");
+	console.log("  1. Chinese Models (DeepSeek, Doubao, Zhipu AI, LongCat, DashScope, Kimi, StepFun, MiniMax, ModelScope)");
 	console.log("  2. Custom OpenAI-compatible (supports any OpenAI API format)");
 	console.log("  3. Custom Anthropic-compatible (supports any Claude API format)");
 	console.log("");
@@ -93,6 +93,15 @@ export async function runOnboardWizard(): Promise<void> {
 			if (!defaultProvider) {
 				defaultProvider = "zhipu";
 				defaultModel = "glm-z1-flash";
+			}
+		}
+
+		const longcatKey = await question("LongCat API Key: ");
+		if (longcatKey.trim()) {
+			config.providers["longcat"] = { apiKey: longcatKey.trim() };
+			if (!defaultProvider) {
+				defaultProvider = "longcat";
+				defaultModel = "LongCat-2.0";
 			}
 		}
 

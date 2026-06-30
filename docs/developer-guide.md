@@ -542,7 +542,7 @@ const PRESET_PROVIDER_CONFIGS: Record<string, { baseUrl: string; headers?: Recor
 **ProviderId type** (`src/types/index.ts`):
 ```typescript
 type ProviderId =
-  | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun" | "modelscope" | "dashscope" | "zhipu"
+  | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun" | "modelscope" | "dashscope" | "zhipu" | "longcat"
   | "openai" | "ollama" | "openrouter" | "together" | "groq"
   | "azure-openai" | "vllm"
   | "custom-openai" | "custom-anthropic";
@@ -581,7 +581,7 @@ type ProviderId =
 - **ENTRYPOINT**: CLI binary
 - **Artifacts**: `dist/`, `skills/`, `package*.json` only
 - **Health check**: depends on Express `/health` endpoint (returns `{"status":"ok","timestamp":"..."}`)
-- **docker-compose**: Two variants — default (`--web-only`, 512M memory limit) + `.env.yml` (env-driven, mounts config)
+- **docker compose**: default and `.env.yml` variants pull the published GHCR image; `docker-compose.dev.yml` builds from the local Dockerfile
 
 ### Test Conventions
 
@@ -610,10 +610,57 @@ type ProviderId =
 | Stage | Detail |
 |-------|--------|
 | **Build** | `tsc` (NodeNext module, ES2022 target) → `dist/` |
-| **CI trigger** | GitHub Release `created` event → `npm ci` → `npm run build` → `npm publish` |
+| **CI trigger** | GitHub Release `created` event → verify gates → npm publish → GHCR image publish |
 | **CI runner** | ubuntu-latest, Node 20 |
-| **Tests in CI** | ❌ NOT run — `release.yml` has no test step |
-| **Lint in CI** | ❌ NOT run — eslint not installed, `lint` script broken |
+| **Tests in CI** | `npm test -- --run` |
+| **Type gate in CI** | `npm run lint` (`tsc --noEmit`) |
+| **Package smoke** | `npm run pack:smoke` |
+| **Docker smoke** | Docker build, CLI `--version`/`--help`, and `/health` smoke |
+
+### Release Runbook
+
+Release artifacts:
+
+- npm package: `vex-bot`
+- CLI command: `vex`
+- GHCR image: `ghcr.io/<owner>/vex-bot`
+- Image tags: full semver, major/minor, major, git SHA, and `latest`
+
+Repository/package setup:
+
+1. Configure npm Trusted Publishing for the package and this GitHub repository. Keep `NPM_TOKEN` only as a fallback if Trusted Publishing is not available.
+2. Ensure GitHub Actions has package write permission for GHCR.
+3. Keep the release workflow permissions limited to `contents: read`, `id-token: write` for npm provenance, and `packages: write` for GHCR publishing.
+
+Release checklist:
+
+```bash
+npm ci
+npm run lint
+npm test -- --run
+npm run build
+npm run pack:smoke
+docker build -t vex-bot:release-check .
+docker run --rm vex-bot:release-check --version
+docker run --rm vex-bot:release-check --help
+```
+
+Then update `CHANGELOG.md`, tag the release, and create a GitHub Release from that tag. The release workflow publishes npm and GHCR only after verification passes.
+
+Post-publish checks:
+
+```bash
+npm view vex-bot version
+npm view vex-bot dist.integrity
+docker pull ghcr.io/<owner>/vex-bot:<version>
+docker run --rm ghcr.io/<owner>/vex-bot:<version> --version
+```
+
+Rollback guidance:
+
+- npm: prefer publishing a fixed patch release. Use `npm deprecate vex-bot@<version> "message"` for a bad release; unpublish only when npm policy allows it and the release is truly unsafe.
+- GHCR: delete or retag bad image versions from GitHub Packages, then publish a fixed patch release. Avoid moving immutable semver tags silently once users may have pulled them.
+- Docs: update `CHANGELOG.md` with the issue and the replacement version.
 
 ---
 

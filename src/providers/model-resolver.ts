@@ -31,6 +31,7 @@ const CHINA_PROVIDER_BASE_URLS: Record<string, string> = {
   modelscope: "https://api-inference.modelscope.cn/v1",
   dashscope: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   zhipu: "https://open.bigmodel.cn/api/paas/v4",
+  longcat: "https://api.longcat.chat/openai/v1",
 };
 
 /** Chinese provider default model definitions */
@@ -78,6 +79,9 @@ const CHINA_PROVIDER_MODELS: Record<string, ModelDefinition[]> = {
     { id: "glm-4-plus", name: "GLM-4 Plus", provider: "zhipu", api: "openai-compatible", contextWindow: 128000, maxTokens: 4096, supportsVision: false, supportsReasoning: false },
     { id: "glm-4-flash", name: "GLM-4 Flash (Free)", provider: "zhipu", api: "openai-compatible", contextWindow: 128000, maxTokens: 4096, supportsVision: false, supportsReasoning: false },
     { id: "glm-4v-plus", name: "GLM-4V Plus", provider: "zhipu", api: "openai-compatible", contextWindow: 8192, maxTokens: 1024, supportsVision: true, supportsReasoning: false },
+  ],
+  longcat: [
+    { id: "LongCat-2.0", name: "LongCat 2.0", provider: "longcat", api: "openai-compatible", contextWindow: 1000000, maxTokens: 131072, supportsVision: false, supportsReasoning: true },
   ],
 };
 
@@ -262,7 +266,7 @@ export function initModelResolver(config: VexConfig): void {
   modelRegistry.clear();
   providerConfigs = config.providers as Record<string, SimpleProviderConfig>;
 
-  const chinaProviders = ["deepseek", "doubao", "kimi", "stepfun", "minimax", "modelscope", "dashscope", "zhipu"];
+  const chinaProviders = ["deepseek", "doubao", "kimi", "stepfun", "minimax", "modelscope", "dashscope", "zhipu", "longcat"];
 
   for (const [id, providerConfig] of Object.entries(providerConfigs)) {
     if (!providerConfig) continue;

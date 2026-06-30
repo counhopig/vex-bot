@@ -1,0 +1,55 @@
+# Deny by default so local state and unrelated repository files never enter
+# the Docker build context.
+**
+
+# Docker build inputs.
+!Dockerfile
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!skills/
+!skills/**
+
+# Explicit hygiene exclusions. These are already denied by **, but kept here
+# to document the image contract for local state and generated artifacts.
+.git
+.git/**
+.omo
+.omo/**
+.vex
+.vex/**
+node_modules
+node_modules/**
+dist
+dist/**
+coverage
+coverage/**
+playwright-report
+playwright-report/**
+test-results
+test-results/**
+logs
+logs/**
+*.log
+npm-debug.log*
+.env
+.env.*
+config.local.json5
+config.local.json5.*
+*.tgz
+tmp
+tmp/**
+temp
+temp/**
+.cache
+.cache/**
+.codegraph
+.codegraph/**
+.claude
+.claude/**
+.codex
+.codex/**
+.opencode
+.opencode/**

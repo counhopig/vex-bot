@@ -14,7 +14,7 @@ export type ModelApi =
 
 /** Model provider ID */
 export type ProviderId =
-  | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun" | "modelscope" | "dashscope" | "zhipu"
+  | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun" | "modelscope" | "dashscope" | "zhipu" | "longcat"
   | "openai" | "ollama" | "openrouter" | "together" | "groq"
   | "azure-openai" | "vllm"
   | "custom-openai" | "custom-anthropic";

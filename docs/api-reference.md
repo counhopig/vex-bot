@@ -428,7 +428,7 @@ type ChatType = "direct" | "group";
 ```typescript
 type ProviderId =
   | "deepseek" | "doubao" | "minimax" | "kimi" | "stepfun"
-  | "modelscope" | "dashscope" | "zhipu"
+  | "modelscope" | "dashscope" | "zhipu" | "longcat"
   | "openai" | "ollama" | "openrouter" | "together" | "groq"
   | "azure-openai" | "vllm"
   | "custom-openai" | "custom-anthropic";

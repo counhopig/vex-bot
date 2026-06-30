@@ -32,6 +32,7 @@ export const PROVIDERS: readonly ProviderMeta[] = [
 	{ id: "modelscope", name: "ModelScope", tier: "china", defaultModel: "Qwen/Qwen2.5-72B-Instruct", requiresApiKey: true },
 	{ id: "dashscope", name: "DashScope", tier: "china", defaultModel: "qwen3-235b-a22b", requiresApiKey: true },
 	{ id: "zhipu", name: "Zhipu AI", tier: "china", defaultModel: "glm-z1-flash", requiresApiKey: true },
+	{ id: "longcat", name: "LongCat", tier: "china", defaultModel: "LongCat-2.0", requiresApiKey: true },
 	// Overseas / bring-your-own providers
 	{ id: "openai", name: "OpenAI", tier: "overseas", defaultModel: "gpt-4o-mini", requiresApiKey: true },
 	{ id: "openrouter", name: "OpenRouter", tier: "overseas", defaultModel: "openai/gpt-4o-mini", requiresApiKey: true },

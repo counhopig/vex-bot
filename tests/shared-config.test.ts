@@ -50,8 +50,8 @@ describe("config/json5-writer", () => {
 });
 
 describe("providers/metadata", () => {
-	it("exposes a stable list of 16 provider ids", () => {
-		expect(PROVIDER_IDS.length).toBe(16);
+	it("exposes a stable list of 17 provider ids", () => {
+		expect(PROVIDER_IDS.length).toBe(17);
 		expect(new Set(PROVIDER_IDS).size).toBe(PROVIDER_IDS.length);
 	});
 
@@ -65,6 +65,7 @@ describe("providers/metadata", () => {
 			"modelscope",
 			"dashscope",
 			"zhipu",
+			"longcat",
 			"openai",
 			"ollama",
 			"openrouter",
@@ -81,12 +82,14 @@ describe("providers/metadata", () => {
 	it("returns the human-readable name for known ids and falls back to the id", () => {
 		expect(getProviderName("deepseek")).toBe("DeepSeek");
 		expect(getProviderName("zhipu")).toBe("Zhipu AI");
+		expect(getProviderName("longcat")).toBe("LongCat");
 		expect(getProviderName("custom-openai")).toBe("Custom OpenAI");
 		expect(getProviderName("unknown-vendor")).toBe("unknown-vendor");
 	});
 
 	it("classifies providers by tier", () => {
 		expect(CHINA_PROVIDER_IDS).toContain("deepseek");
+		expect(CHINA_PROVIDER_IDS).toContain("longcat");
 		expect(CHINA_PROVIDER_IDS).not.toContain("openai");
 		expect(OVERSEAS_PROVIDER_IDS).toContain("openai");
 		expect(OVERSEAS_PROVIDER_IDS).toContain("ollama");

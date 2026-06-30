@@ -1,13 +1,22 @@
-name: Release & Publish to NPM
+name: Release
 
 on:
   release:
     types: [created]
 
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/vex-bot
+
 jobs:
-  publish:
-    name: Build and Publish to NPM
+  verify:
+    name: Verify package and image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout code
@@ -16,16 +25,113 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test -- --run
+
       - name: Build project
         run: npm run build
 
-      - name: Publish to NPM
-        run: npm publish
+      - name: Smoke test npm package contents
+        run: npm run pack:smoke
+
+      - name: Build Docker image
+        run: docker build -t vex-bot:release-smoke .
+
+      - name: Smoke test Docker CLI
+        run: |
+          docker run --rm vex-bot:release-smoke --version
+          docker run --rm vex-bot:release-smoke --help
+
+      - name: Smoke test Docker health endpoint
+        run: |
+          docker run -d --rm --name vex-release-smoke -p 3000:3000 -e DEEPSEEK_API_KEY=dummy-release-smoke-key vex-bot:release-smoke start --web-only
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/health; then
+              docker stop vex-release-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs vex-release-smoke
+          docker stop vex-release-smoke || true
+          exit 1
+
+  publish-npm:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish to npm with provenance
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-image:
+    name: Publish GHCR image
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+            type=raw,value=latest
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

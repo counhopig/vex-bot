@@ -6,7 +6,7 @@ Vex is a lightweight AI chatbot framework built for personal use. It connects to
 
 What you can do with Vex:
 
-- Talk to DeepSeek, Kimi (Moonshot), MiniMax, Doubao (ByteDance), Zhipu AI, StepFun, Qwen (Alibaba ModelStudio / DashScope), and more
+- Talk to DeepSeek, Kimi (Moonshot), MiniMax, Doubao (ByteDance), Zhipu AI, LongCat, StepFun, Qwen (Alibaba ModelStudio / DashScope), and more
 - Connect to custom OpenAI-compatible endpoints (Ollama, vLLM, OpenAI, Azure, etc.)
 - Connect to custom Anthropic-compatible endpoints (Claude, Bedrock, etc.)
 - Reply to WeChat messages automatically via the iLink OC API
@@ -42,7 +42,13 @@ npm install -g vex-bot
 After installation, the `vex` command is available globally:
 
 ```bash
-vex version
+vex --version
+```
+
+You can also run the CLI without a global install:
+
+```bash
+npx vex-bot --help
 ```
 
 ### 2.3 Install from source
@@ -54,7 +60,7 @@ npm install
 npm run build
 ```
 
-When installed from source, run commands with `npx vex` or `node dist/cli/index.js`. For development, use `npm run dev` (auto-restart via tsx watch).
+When installed from source, run commands with `node dist/cli/index.js` or the package scripts. For development, use `npm run dev` (auto-restart via tsx watch).
 
 ### 2.4 Docker
 
@@ -75,7 +81,7 @@ The wizard walks you through 5 steps.
 ### Step 1: Choose provider type
 
 ```
-1. Chinese models (DeepSeek, Doubao, Zhipu AI, DashScope, Kimi, StepFun, MiniMax, ModelScope)
+1. Chinese models (DeepSeek, Doubao, Zhipu AI, LongCat, DashScope, Kimi, StepFun, MiniMax, ModelScope)
 2. Custom OpenAI-compatible endpoint (OpenAI, vLLM, Ollama, etc.)
 3. Custom Anthropic-compatible endpoint (Claude, Bedrock, etc.)
 ```
@@ -244,6 +250,7 @@ export STEPFUN_API_KEY="xxx"
 export MODELSCOPE_API_KEY="xxx"
 export DASHSCOPE_API_KEY="sk-xxx"
 export ZHIPU_API_KEY="xxx"
+export LONGCAT_API_KEY="xxx"
 export OPENAI_API_KEY="sk-xxx"
 export OPENROUTER_API_KEY="sk-xxx"
 export TOGETHER_API_KEY="xxx"
@@ -461,10 +468,10 @@ vex restart -c new-config.json5 -p 8080
 vex restart --web-only
 ```
 
-### `vex version` — Show version
+### `vex --version` — Show version
 
 ```bash
-vex version
+vex --version
 ```
 
 ---
@@ -583,6 +590,7 @@ Vex ships with preset configurations for these Chinese providers. You only need 
 | MiniMax | `minimax` | `MiniMax-M2.1` | `MINIMAX_API_KEY` |
 | Doubao (ByteDance) | `doubao` | `doubao-seed-1-8-251228` | config file only |
 | Zhipu AI | `zhipu` | `glm-z1-flash` | `ZHIPU_API_KEY` |
+| LongCat | `longcat` | `LongCat-2.0` | `LONGCAT_API_KEY` |
 | DashScope (Alibaba) | `dashscope` | `qwen3-235b-a22b` | `DASHSCOPE_API_KEY` |
 | StepFun | `stepfun` | `step-2-mini` | `STEPFUN_API_KEY` |
 | ModelScope (Alibaba) | `modelscope` | `Qwen/Qwen2.5-72B-Instruct` | `MODELSCOPE_API_KEY` |
@@ -676,10 +684,10 @@ Restart Vex for the change to take effect. You can also test a new model tempora
 ### Option 1: Default Compose (web-only mode)
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-This uses `docker-compose.yml` and starts in `--web-only` mode (WebChat only, no WeChat). Good for quick testing or web-interface-only use.
+This uses `docker-compose.yml`, pulls `ghcr.io/counhopig/vex-bot:latest`, and starts in `--web-only` mode (WebChat only, no WeChat). Good for quick testing or web-interface-only use. You do not need to clone the repository for this path; download the compose file or copy its contents to your server.
 
 Port mapping:
 - Host `3000` → Container `3000`
@@ -691,7 +699,7 @@ Resource limits:
 ### Option 2: Environment-variable Compose (full config mode)
 
 ```bash
-docker-compose -f docker-compose.env.yml up -d
+docker compose -f docker-compose.env.yml up -d
 ```
 
 This uses `docker-compose.env.yml`, which supports `.env` files and config file mounting. Suitable for production or when you need the WeChat channel.
@@ -715,11 +723,33 @@ volumes:
   - ./config.local.json5:/app/config.local.json5:ro
 ```
 
+To pin or override the image:
+
+```bash
+VEX_IMAGE=ghcr.io/counhopig/vex-bot:1.12.0 docker compose up -d
+```
+
+To upgrade:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+### Option 3: Local Docker build for contributors
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
+
+This path builds from the local `Dockerfile` and is intended for contributors testing repository changes.
+
 ### Docker details
 
 - **Non-root user**: the container runs as `vex:vex` (UID/GID 1001).
 - **Persistent data**: the `vex-data` named volume persists logs, memory, sessions, and cron job data at `/home/vex/.vex/`.
 - **Health check**: `GET /health` is checked every 30 seconds; returns `{"status":"ok","timestamp":"..."}`.
+- **Browser automation**: Vex uses `playwright-core`; browser automation tools require Chromium binaries in the runtime environment. Install Chromium in custom images when you need browser tools.
 
 ### Enabling WeChat in Docker
 
@@ -732,16 +762,16 @@ volumes:
 
 ```bash
 # Check running status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Restart
-docker-compose restart
+docker compose restart
 
 # Stop and remove
-docker-compose down
+docker compose down
 ```
 
 ---
@@ -899,7 +929,7 @@ cp ~/.vex/config.local.json5 ./config.local.json5
 echo "DEEPSEEK_API_KEY=sk-xxx" > .env
 
 # 3. Start
-docker-compose -f docker-compose.env.yml up -d
+docker compose -f docker-compose.env.yml up -d
 ```
 
 The Docker environment variable names use the short form (`DEEPSEEK_API_KEY`, `KIMI_API_KEY`, etc.), matching the code's `loadConfigFromEnv` function.

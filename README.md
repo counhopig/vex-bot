@@ -12,7 +12,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 
 ## Features
 
-- **Chinese model coverage** — DeepSeek, MiniMax, Kimi (Moonshot), Doubao (ByteDance), Zhipu, StepFun, ModelScope, DashScope, plus custom OpenAI/Anthropic-compatible providers and Western backends (OpenAI, Ollama, OpenRouter, Together, Groq, Azure OpenAI, vLLM)
+- **Chinese model coverage** — DeepSeek, MiniMax, Kimi (Moonshot), Doubao (ByteDance), Zhipu, LongCat, StepFun, ModelScope, DashScope, plus custom OpenAI/Anthropic-compatible providers and Western backends (OpenAI, Ollama, OpenRouter, Together, Groq, Azure OpenAI, vLLM)
 - **Personal WeChat** — connects to personal WeChat accounts via the iLink OC API long-polling channel for sending/receiving messages and files
 - **WebChat UI** — built-in WebSocket-driven browser chat interface, server-rendered with no frontend build step
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
@@ -22,7 +22,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **Playwright browser automation** — screenshots, form filling, and web interaction via headless Chromium
 - **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected into the agent system prompt at runtime
 - **Event hook system** — 12 event types with `on`/`once`/`off` registration for extending agent behavior
-- **Docker support** — multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001), `docker-compose.yml` included
+- **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001), Compose files included
 - **JSON5 config** — configuration files support comments and trailing commas; environment variable overrides take highest priority
 
 ## Architecture
@@ -48,7 +48,7 @@ flowchart TD
         OB[Outbound<br/>message delivery]
     end
 
-    AG --> PR[LLM Providers<br/>DeepSeek · Kimi · MiniMax<br/>Doubao · Zhipu · StepFun · etc.<br/>pi-ai abstraction]
+    AG --> PR[LLM Providers<br/>DeepSeek · Kimi · MiniMax<br/>Doubao · Zhipu · LongCat · etc.<br/>pi-ai abstraction]
 ```
 
 | Subsystem | Location | Role |
@@ -65,11 +65,11 @@ flowchart TD
 
 ## Quick Start
 
-### Install
+### Install locally with npm
 
 ```bash
-npm install
-npm run build
+npm install -g vex-bot
+vex --version
 ```
 
 ### Configure
@@ -93,6 +93,24 @@ vex start --web-only
 ```
 
 Once running, open `http://localhost:PORT` in a browser to access the WebChat interface. Health check: `GET /health`.
+
+### Deploy with Docker
+
+```bash
+docker compose up -d
+```
+
+The default Compose file pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only mode, and persists state in the `vex-data` volume. For production configuration with `.env` and a mounted `config.local.json5`, use:
+
+```bash
+docker compose -f docker-compose.env.yml up -d
+```
+
+For contributor builds from the local Dockerfile, use:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
 
 ## CLI Commands
 
@@ -184,6 +202,10 @@ Config loading priority: environment variables > `config.local.json5` > defaults
 ## Development
 
 ```bash
+# Install from source for development
+npm install
+npm run build
+
 # Development mode (TSX with auto-restart)
 npm run dev
 

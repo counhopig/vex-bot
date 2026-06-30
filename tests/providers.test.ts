@@ -106,6 +106,19 @@ describe("providers (model-resolver)", () => {
       expect(model).toBeDefined();
       expect(model!.baseUrl).toBe("https://custom.api.com/v1");
     });
+
+    it("should resolve LongCat through its OpenAI-compatible endpoint", () => {
+      initializeProviders(makeConfig({
+        longcat: { apiKey: "sk-test" },
+      }));
+
+      const model = resolveModel("longcat", "LongCat-2.0");
+      expect(model).toBeDefined();
+      expect(model!.id).toBe("LongCat-2.0");
+      expect(model!.api).toBe("openai-completions");
+      expect(model!.baseUrl).toBe("https://api.longcat.chat/openai/v1");
+      expect(model!.reasoning).toBe(true);
+    });
   });
 
   describe("getApiKeyForProvider", () => {

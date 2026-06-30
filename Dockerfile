@@ -19,6 +19,11 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+LABEL org.opencontainers.image.title="vex-bot" \
+      org.opencontainers.image.description="Lightweight AI chatbot framework for WeChat and WebChat" \
+      org.opencontainers.image.source="https://github.com/King-Chau/vex" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
 # Create non-root user
 RUN addgroup -g 1001 -S vex && \
     adduser -S -u 1001 -G vex vex
@@ -29,7 +34,7 @@ COPY --from=builder --chown=vex:vex /app/dist ./dist
 COPY --from=builder --chown=vex:vex /app/skills ./skills
 
 # Install production dependencies only
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Create data directories for persistent storage
 RUN mkdir -p /home/vex/.vex/logs \
@@ -47,8 +52,11 @@ EXPOSE 3000
 
 # Set environment variables
 ENV NODE_ENV=production \
+    HOME=/home/vex \
     PORT=3000 \
     LOG_LEVEL=info
+
+VOLUME ["/home/vex/.vex"]
 
 # Use ENTRYPOINT for CLI, CMD provides default arguments
 # Config should be provided via volume mount or environment variables

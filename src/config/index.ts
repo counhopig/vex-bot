@@ -193,6 +193,11 @@ function loadConfigFromEnv(): Partial<VexConfig> {
     providers.zhipu = { apiKey: zhipuKey };
   }
 
+  const longcatKey = getEnvVar("LONGCAT_API_KEY");
+  if (longcatKey) {
+    providers.longcat = { apiKey: longcatKey };
+  }
+
   // OpenAI
   const openaiKey = getEnvVar("OPENAI_API_KEY");
   if (openaiKey) {
