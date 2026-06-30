@@ -135,6 +135,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **Fixtures**: temp dirs under `os.tmpdir()` created in `beforeEach`, cleaned in `afterEach`. No fixture files
 - **Coverage excludes**: `src/cli/**`, `src/web/**`
 - **Untested**: CLI, WebChat UI, gateway Express server, WeChat channel adapter, chat commands
+- **Frontend QA**: Do not run browser/UI/visual frontend tests unless the user explicitly asks for them. Use TypeScript, unit tests, build, and backend/CLI smoke checks for default verification.
 - **No** snapshots, `.only`, `.skip`, custom matchers
 
 ## CROSS-CUTTING CONCERNS
