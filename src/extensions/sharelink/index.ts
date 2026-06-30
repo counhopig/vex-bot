@@ -12,6 +12,7 @@ import { setShareLinkConfig } from "./config.js";
 import { PlatformRegistry } from "./platforms/registry.js";
 import { BilibiliAdapter } from "./platforms/bilibili.js";
 import { YouTubeAdapter } from "./platforms/youtube.js";
+import { BasePlatformAdapter } from "./platforms/base.js";
 
 const logger = getChildLogger("sharelink");
 
@@ -226,7 +227,7 @@ async function fetchContentWithFallback(
 
   // 3. STT transcription — not available in vex-bot core; return a hint
   logger.info({ videoId, audioPath }, "Audio downloaded; STT not available in vex-bot");
-  adapter.constructor.prototype.cleanupAudio(audioPath);
+  (adapter.constructor as typeof BasePlatformAdapter).cleanupAudio(audioPath);
   return undefined;
 }
 
