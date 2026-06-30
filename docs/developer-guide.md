@@ -749,7 +749,7 @@ The following issues come from project structure analysis. Developers should be 
 |---|-------|---------------|------|
 | 1 | **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Shared type has `tool_calls` field, web type has `id`/`timestamp` fields. The two `ChatMessage` shapes are incompatible. Mixing them causes type errors. |
 | 2 | **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places. Adding a new provider requires editing all 3 files. |
-| 3 | **No centralized config writer** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` | CLI onboard wizard and WebSocket `saveConfig` both independently write `~/.vex/config.local.yaml`. Race condition risk with no file locking. |
+| 3 | **No file locking for config writes** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` + `src/channels/weixin/adapter.ts:persistToken` | Concurrent writes to the same runtime-selected config file can race. |
 | 4 | **`require()` in ESM modules** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js. |
 | 5 | **Plugin auto-discovery not wired** | `src/plugins/service.ts` → `Gateway` | PluginService is implemented but Gateway never calls it. Bundled/global/workspace plugins are not auto-loaded on `vex start`. |
 | 6 | **Unused utility functions** | `src/utils/index.ts` | Exported utility functions such as `retry`, `delay`, `truncate`, `safeJsonParse`, and `deepMerge` are rarely imported internally. |
@@ -762,7 +762,7 @@ The following issues come from project structure analysis. Developers should be 
 - **Playwright browser binaries**: Must run `npx playwright install chromium` before using browser features
 - **`src/cli/fetch-patch.ts`**: Monkey-patches `globalThis.fetch` at CLI startup for non-ASCII header support (MiniMax/Zhipu)
 - **Docker production**: Uses `npm ci --omit=dev` — never rely on devDependencies versions in production
-- **Config writes** from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.yaml` — no file locking
+- **Config writes** from CLI onboard, WebSocket saveConfig, and Weixin token persistence have no file locking
 - **No Makefile** in the project
 
 ---

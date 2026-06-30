@@ -255,5 +255,23 @@ describe("control-settings config-handlers", () => {
       expect(result.success).toBe(true);
       expect(result.requiresRestart).toBe(true);
     });
+
+    it("writes to the runtime config path when one is attached", () => {
+      const configDir = path.join(homeDir, "custom-config");
+      fs.mkdirSync(configDir, { recursive: true });
+      const configPath = path.join(configDir, "vex.yaml");
+      const current = baseConfig();
+      Object.defineProperty(current, "__configPath", {
+        value: configPath,
+        enumerable: false,
+      });
+
+      const result = saveConfig(current, { server: { port: 3456, host: "127.0.0.1" } });
+
+      expect(result.success).toBe(true);
+      expect(fs.existsSync(path.join(tmpHome, ".vex", "config.local.yaml"))).toBe(false);
+      const written = yaml.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(written.server).toEqual({ port: 3456, host: "127.0.0.1" });
+    });
   });
 });

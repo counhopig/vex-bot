@@ -17,7 +17,7 @@ vi.mock("../src/utils/logger.js", () => ({
   }),
 }));
 
-import { loadConfig, validateRequiredConfig, VexConfigSchema } from "../src/config/index.js";
+import { getConfigWritePath, loadConfig, validateRequiredConfig, VexConfigSchema } from "../src/config/index.js";
 
 describe("config", () => {
   let testDir: string;
@@ -281,6 +281,22 @@ logging:
       expect(config.agent.temperature).toBe(0.2);
       expect(config.server.port).toBe(3001);
       expect(config.logging.level).toBe("debug");
+      expect(getConfigWritePath(config)).toBe(path.join(vexDir, "config.local.yaml"));
+      expect(Object.keys(config)).not.toContain("__configPath");
+    });
+
+    it("should use explicit config path as the write target", () => {
+      const configPath = path.join(testDir, "custom.yaml");
+      fs.writeFileSync(configPath, `
+providers:
+  deepseek:
+    apiKey: file-key
+`);
+
+      const config = loadConfig({ configPath });
+
+      expect(getConfigWritePath(config)).toBe(configPath);
+      expect(Object.keys(config)).not.toContain("__configPath");
     });
   });
 

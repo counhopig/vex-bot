@@ -283,6 +283,7 @@ export interface PersonaConfig {
 
 /** Main config */
 export interface VexConfig {
+  readonly __configPath?: string;
   providers: Record<string, SimpleProviderConfig | Record<string, unknown>>;
   channels: {
     weixin?: WeixinConfig;

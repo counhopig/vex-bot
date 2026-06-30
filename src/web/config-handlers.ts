@@ -6,10 +6,10 @@
  * the CLI onboard wizard and tested without a running WebSocket server.
  */
 
-import { homedir } from "os";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
-import { join } from "path";
+import { dirname } from "path";
 import yaml from "yaml";
+import { getConfigWritePath } from "../config/index.js";
 import { getProviderName, PROVIDER_IDS } from "../providers/metadata.js";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig, ProviderId, WeixinConfig, SimpleProviderConfig } from "../types/index.js";
@@ -298,8 +298,8 @@ export function saveConfig(
   currentConfig: VexConfig,
   params: ConfigSaveParams,
 ): { success: boolean; message: string; requiresRestart?: boolean } {
-  const vexDir = join(homedir(), ".vex");
-  const configPath = join(vexDir, "config.local.yaml");
+  const configPath = getConfigWritePath(currentConfig);
+  const vexDir = dirname(configPath);
 
   // Validate config
   const validation = validateConfig(params);

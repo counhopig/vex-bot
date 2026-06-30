@@ -4,7 +4,7 @@
 
 import { z } from "zod";
 import { readFileSync, existsSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { homedir } from "os";
 import yaml from "yaml";
 import type { VexConfig, ProviderId } from "../types/index.js";
@@ -12,6 +12,8 @@ import { getChildLogger } from "../utils/logger.js";
 import { PROVIDER_IDS } from "../providers/metadata.js";
 
 const logger = getChildLogger("config");
+
+const RUNTIME_CONFIG_PATH_KEY = "__configPath";
 
 // ============== Zod Schema ==============
 
@@ -203,11 +205,13 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
 export function loadConfig(options?: { configPath?: string; configDir?: string; cwd?: string }): VexConfig {
   const vexDir = options?.configDir ?? join(homedir(), ".vex");
   const cwd = options?.cwd ?? process.cwd();
-  const configPaths = options?.configPath
-    ? [options.configPath]
+  const defaultUserConfigPath = join(vexDir, "config.local.yaml");
+  const explicitConfigPath = options?.configPath ? resolve(options.configPath) : undefined;
+  const configPaths = explicitConfigPath !== undefined
+    ? [explicitConfigPath]
     : [
         join(cwd, "config.local.yaml"),
-        join(vexDir, "config.local.yaml"),
+        defaultUserConfigPath,
       ];
 
   let fileConfig: Partial<VexConfig> = {};
@@ -242,10 +246,18 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
     logger.error({ issues: result.error.issues }, "Config validation failed");
     throw new Error(`Invalid configuration: ${result.error.message}`);
   }
+  const configWritePath = explicitConfigPath ?? loadedConfigPaths.at(-1) ?? defaultUserConfigPath;
+  Object.defineProperty(result.data, RUNTIME_CONFIG_PATH_KEY, {
+    value: configWritePath,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
 
   logger.info(
     {
       loadedConfigPaths,
+      configWritePath,
       providerIds: Object.keys(result.data.providers),
       defaultProvider: result.data.agent.defaultProvider,
       defaultModel: result.data.agent.defaultModel,
@@ -261,6 +273,10 @@ export function loadConfig(options?: { configPath?: string; configDir?: string; 
   );
 
   return result.data as VexConfig;
+}
+
+export function getConfigWritePath(config: VexConfig): string {
+  return config.__configPath ?? join(homedir(), ".vex", "config.local.yaml");
 }
 
 /** Validate required configuration */

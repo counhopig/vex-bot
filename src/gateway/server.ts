@@ -15,6 +15,7 @@ import { WsServer } from "../web/websocket.js";
 import { handleStaticRequest } from "../web/static.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { PluginService } from "../plugins/service.js";
+import { getConfigWritePath } from "../config/index.js";
 
 const logger = getChildLogger("gateway");
 
@@ -63,7 +64,9 @@ export class Gateway {
     });
 
     if (this.config.channels.weixin) {
-      this.weixinChannel = createWeixinChannel(this.config.channels.weixin);
+      this.weixinChannel = createWeixinChannel(this.config.channels.weixin, {
+        configPath: getConfigWritePath(this.config),
+      });
       this.weixinChannel.setMessageHandler(this.handleMessage.bind(this));
       registerChannel(this.weixinChannel);
       logger.info("Weixin (Personal WeChat) channel enabled");

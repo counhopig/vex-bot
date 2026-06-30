@@ -144,7 +144,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 |-------|---------------|------|
 | **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Incompatible shapes — shared has `tool_calls`, web has `id`/`timestamp` |
 | **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places — adding a provider requires 3-file edit |
-| **No centralized config writer** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` | Both write `~/.vex/config.local.yaml` independently — race condition risk |
+| **No file locking for config writes** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` + `src/channels/weixin/adapter.ts:persistToken` | Concurrent writes to the same runtime-selected config file can race |
 | **`require()` in ESM module** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js |
 | **Plugin auto-discovery not wired** | `src/plugins/service.ts` exists but never called from `Gateway` | Bundled/global/workspace plugins not auto-loaded on `vex start` |
 | **Unused utils** | `src/utils/index.ts` — 10/13 functions never imported internally | Dead code: `retry`, `delay`, `truncate`, `safeJsonParse`, `deepMerge`, etc. exist only in public barrel |
@@ -187,5 +187,5 @@ vex logs -f           # Tail follow logs
 - The `lint` script is a TypeScript type gate (`tsc --noEmit`); no formatter is configured
 - `src/cli/fetch-patch.ts` monkey-patches `globalThis.fetch` at CLI startup for non-ASCII headers (MiniMax/Zhipu)
 - `src/cli/index.ts:chat` bypasses Agent entirely — constructs `@mariozechner/pi-ai` messages directly
-- Config writes from CLI onboard and WebSocket saveConfig race on `~/.vex/config.local.yaml`
+- Config writes from CLI onboard, WebSocket saveConfig, and Weixin token persistence have no file locking
 - `src/web/static.ts` is 2303 lines — two inline SPAs with no separation of concerns

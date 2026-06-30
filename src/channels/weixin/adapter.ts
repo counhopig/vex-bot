@@ -1,6 +1,6 @@
 import yaml from "yaml";
-import { readFileSync, writeFileSync, existsSync } from "fs";
-import { join } from "path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { dirname } from "path";
 import type {
   WeixinConfig,
   ChannelMeta,
@@ -71,14 +71,16 @@ export class WeixinChannel extends BaseChannelAdapter {
 
   private config: WeixinConfig;
   private client: WeixinClient;
+  private readonly configPath?: string;
   private pollingActive = false;
   private pollingTimer: ReturnType<typeof setTimeout> | null = null;
   private loginResult: LoginResult | null = null;
   private contextTokens: Map<string, string> = new Map();
 
-  constructor(config: WeixinConfig) {
+  constructor(config: WeixinConfig, options?: { configPath?: string }) {
     super();
     this.config = config;
+    this.configPath = options?.configPath;
     this.logger = getChildLogger("weixin");
 
     const baseUrl = config.baseUrl ?? DEFAULT_WEIXIN_OC_BASE_URL;
@@ -338,7 +340,11 @@ export class WeixinChannel extends BaseChannelAdapter {
 
   private persistToken(): void {
     try {
-      const configPath = join(process.cwd(), "config.local.yaml");
+      const configPath = this.configPath;
+      if (!configPath) {
+        this.logger.warn("No config path available, skipping Weixin token persistence");
+        return;
+      }
       let existing: Record<string, unknown> = {};
       if (existsSync(configPath)) {
         existing = (yaml.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown> | null) ?? {};
@@ -351,6 +357,7 @@ export class WeixinChannel extends BaseChannelAdapter {
         enabled: true,
       };
       existing.channels = channels;
+      mkdirSync(dirname(configPath), { recursive: true });
       writeFileSync(configPath, yaml.stringify(existing), "utf-8");
       this.logger.info({ configPath }, "Weixin token persisted to config");
     } catch (error) {
@@ -384,11 +391,12 @@ export class WeixinChannel extends BaseChannelAdapter {
       if (result.accountId) {
         this.config.accountId = result.accountId;
       }
+      this.persistToken();
     }
     return result;
   }
 }
 
-export function createWeixinChannel(config: WeixinConfig): WeixinChannel {
-  return new WeixinChannel(config);
+export function createWeixinChannel(config: WeixinConfig, options?: { configPath?: string }): WeixinChannel {
+  return new WeixinChannel(config, options);
 }

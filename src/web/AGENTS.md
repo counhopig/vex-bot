@@ -20,7 +20,7 @@ web/
 | Add a WS method | `websocket.ts` | Add case in `handleRequest()`, Zod schema, private handler |
 | Chat streaming | `websocket.ts:handleChatSend()` | `agent.processMessageStream()` → `chat.delta` events → client accumulates → `marked.js` render |
 | Cancel in-flight chat | `websocket.ts:handleChatCancel()` | `AbortController.abort()` → `chat.delta` with `cancelled:true` |
-| Config CRUD via WS | `websocket.ts:getConfigInfo/validateConfig/saveConfig()` | Reads existing YAML, merges 7 sections, writes `~/.vex/config.local.yaml` |
+| Config CRUD via WS | `websocket.ts:getConfigInfo/validateConfig/saveConfig()` | Reads existing YAML, merges 7 sections, writes to the runtime-selected config path |
 | QR login flow | `websocket.ts:handleWeixinQR/handleWeixinQRStatus()` | Generates QR; client polls status every 2s |
 | Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`, explicit restore loads transcript into agent |
 | WebChat SPA | `static.ts:getEmbeddedHtml()` | Inline CSS/JS, `marked.js` via CDN, sidebar sessions, message list |
@@ -56,7 +56,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 
 - **Streaming**: `handleChatSend` runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
-- **Config merge**: `saveConfig()` reads existing `config.local.yaml`, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
+- **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.
 - **No filesystem for HTML**: Both SPAs are giant inline template strings with embedded CSS/JS. `handleStaticRequest` sets `Content-Length` via `Buffer.byteLength()`. `marked.js` loaded from CDN.
 
@@ -67,4 +67,4 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 - **NEVER add a third inline SPA to static.ts** — 2303 lines already. New UIs go in separate modules or serve external static files.
 - **NEVER copy WebSocket client code between SPAs** — `getEmbeddedHtml()` and `getControlHtml()` duplicate WS connect/send/receive logic. Extract shared client before adding a third consumer.
 - **NEVER change `validProviders` in only one place** — hardcoded list of 15 provider IDs appears in `validateConfig()`, `cli/index.ts:onboard`, and `static.ts:getControlHtml()`. All three must stay in sync.
-- Config writes from WebSocket `saveConfig` race with CLI `onboard` on `~/.vex/config.local.yaml` — no file locking exists.
+- Config writes from WebSocket `saveConfig` and CLI `onboard` have no file locking; concurrent writes to the same selected config file can race.
