@@ -225,6 +225,31 @@ export class AgentRuntime {
     });
   }
 
+  private logApiQuery(session: AgentSession, userContent: string, sessionKey: string): void {
+    const baseSystemPrompt = (session as unknown as Record<string, unknown>)._baseSystemPrompt as string | undefined;
+    const tools = this.customTools.map((tool) => ({
+      name: tool.name,
+      label: tool.label ?? tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    }));
+
+    logger.debug(
+      {
+        sessionKey,
+        provider: this.config.provider,
+        model: this.config.model,
+        messages: [
+          { role: "system", content: baseSystemPrompt ?? "" },
+          { role: "user", content: userContent },
+        ],
+        toolCount: tools.length,
+        tools,
+      },
+      "Complete LLM API query"
+    );
+  }
+
   /** Sanitize session key to be usable as filename */
   private sanitizeSessionKey(key: string): string {
     return key.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -285,6 +310,8 @@ export class AgentRuntime {
     const session = await this.getOrCreateSession(sessionKey);
     const restorePrompt = await this.applyPromptInjections(session, context);
 
+    this.logApiQuery(session, context.content, sessionKey);
+
     try {
       await session.prompt(context.content);
       await session.agent.waitForIdle();
@@ -330,6 +357,8 @@ export class AgentRuntime {
 
     const session = await this.getOrCreateSession(sessionKey);
     const restorePrompt = await this.applyPromptInjections(session, context);
+
+    this.logApiQuery(session, context.content, sessionKey);
 
     // Event queue
     const eventQueue: StreamEvent[] = [];
