@@ -10,6 +10,7 @@ import { homedir } from "os";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 let globalLogger: PinoLogger | null = null;
+const childLoggers: PinoLogger[] = [];
 
 /** Get the log directory */
 export function getLogDir(): string {
@@ -111,11 +112,16 @@ export function getLogger(): PinoLogger {
 /** Set the global logger */
 export function setLogger(logger: PinoLogger): void {
   globalLogger = logger;
+  for (const child of childLoggers) {
+    child.level = logger.level;
+  }
 }
 
 /** Create a child logger */
 export function getChildLogger(name: string): PinoLogger {
-  return getLogger().child({ module: name });
+  const child = getLogger().child({ module: name });
+  childLoggers.push(child);
+  return child;
 }
 
 export { type PinoLogger as Logger };
