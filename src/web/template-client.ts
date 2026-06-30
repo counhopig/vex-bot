@@ -431,6 +431,10 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         if (item.dataset.view === 'config' && ws?.readyState === WebSocket.OPEN) {
           loadConfig();
         }
+        // Auto-load settings when switching to settings page
+        if (item.dataset.view === 'settings' && ws?.readyState === WebSocket.OPEN) {
+          loadSettings();
+        }
       });
     });
 
@@ -1028,6 +1032,299 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           console.error('QR poll error:', e);
         }
       }, 2000);
+    }
+
+    // ===== Settings (Persona / Extensions / Skills / Sessions / Geek) =====
+    let currentSettings = null;
+
+    document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        document.querySelectorAll('#view-settings .config-content').forEach(c => c.classList.remove('active'));
+        document.getElementById('settings-tab-' + tab.dataset.settingsTab).classList.add('active');
+      });
+    });
+
+    async function loadSettings() {
+      try {
+        if (ws?.readyState !== WebSocket.OPEN) {
+          const { promise, resolve } = Promise.withResolvers();
+          const check = () => {
+            if (ws?.readyState === WebSocket.OPEN) resolve();
+            else setTimeout(check, 500);
+          };
+          check();
+          await promise;
+        }
+        currentSettings = await request('config.get');
+        populateSettingsForm(currentSettings);
+        hideSettingsSaveResult();
+        addLog('info', 'Settings loaded');
+      } catch (e) {
+        addLog('error', 'Failed to load settings: ' + e.message);
+        showSettingsSaveResult('error', 'Failed to load settings: ' + e.message);
+      }
+    }
+
+    function populateSettingsForm(config) {
+      const p = config.persona || {};
+      setChecked('persona-enabled', p.enabled);
+      setValue('persona-name', p.persona_name);
+      setValue('persona-reply-style', p.persona_reply_style);
+      setValue('persona-base-prompt', p.persona_base_prompt);
+      setChecked('persona-time-awareness', p.time_awareness_enabled);
+      setChecked('persona-emotion-enabled', p.emotion_enabled);
+      setValue('persona-emotion-decay', p.emotion_decay_per_hour);
+      setValue('persona-emotion-recovery', p.emotion_recovery_per_reply);
+      setValue('persona-emotion-injection-style', p.emotion_injection_style);
+      setValue('persona-emotion-decay-cron', p.emotion_decay_cron);
+      setChecked('persona-memory-enabled', p.memory_enabled);
+      setValue('persona-memory-max-turns', p.memory_max_turns);
+      setChecked('persona-reflection-enabled', p.reflection_enabled);
+      setValue('persona-reflection-trigger-turns', p.reflection_trigger_turns);
+      setValue('persona-reflection-history-turns', p.reflection_history_turns);
+      setValue('persona-reflection-periodic-cron', p.reflection_periodic_cron);
+      setChecked('persona-profile-enabled', p.profile_enabled);
+      setChecked('persona-profile-building', p.profile_building_enabled);
+      setValue('persona-profile-building-trigger-turns', p.profile_building_trigger_turns);
+      setChecked('persona-rest-enabled', p.rest_enabled);
+      setChecked('persona-proactive-nudge', p.proactive_nudge_enabled);
+      setValue('persona-rest-sleep-hour', p.rest_sleep_hour);
+      setValue('persona-rest-wake-hour', p.rest_wake_hour);
+      setValue('persona-proactive-nudge-cron', p.proactive_nudge_cron);
+      setChecked('persona-greeting-first-chat', p.greeting_on_first_chat);
+      setChecked('persona-goodnight-hint', p.goodnight_hint_enabled);
+      setChecked('persona-ignore-group-chat', p.ignore_group_chat);
+      setChecked('persona-debug-log', p.debug_log_enabled);
+      setValue('persona-admin-ids', Array.isArray(p.admin_ids) ? p.admin_ids.join(', ') : '');
+
+      const sl = config.skillLearner || {};
+      setChecked('skilllearner-enabled', sl.enabled);
+      setValue('skilllearner-auto-trigger-keywords', Array.isArray(sl.autoTriggerKeywords) ? sl.autoTriggerKeywords.join(', ') : '');
+      setValue('skilllearner-max-learning-turns', sl.maxLearningTurns);
+      setValue('skilllearner-proactive-threshold', sl.proactiveThreshold);
+      setChecked('skilllearner-auto-learn', sl.enableAutoLearn);
+      setChecked('skilllearner-proactive-suggest', sl.enableProactiveSuggest);
+      setChecked('skilllearner-auto-deploy', sl.autoDeployToSkills);
+
+      const sh = config.sharelink || {};
+      setChecked('sharelink-enabled', sh.enabled);
+      setValue('sharelink-response-mode', sh.responseMode || 'simple');
+      setValue('sharelink-description-max-length', sh.descriptionMaxLength);
+      setChecked('sharelink-include-description', sh.includeDescription);
+      setChecked('sharelink-include-cover', sh.includeCover);
+      setChecked('sharelink-auto-detect', sh.autoDetect);
+      setValue('sharelink-audio-timeout', sh.audioDownloadTimeout);
+      setValue('sharelink-subtitle-max-length', sh.subtitleMaxLength);
+      setValue('sharelink-llm-short-threshold', sh.llmShortContentThreshold);
+      setValue('sharelink-llm-chunk-size', sh.llmChunkSize);
+      setValue('sharelink-bili-sessdata', '');
+      setValue('sharelink-bili-jct', '');
+      const cookieStatus = document.getElementById('sharelink-cookie-status');
+      if (cookieStatus) {
+        cookieStatus.textContent = sh.hasBilibiliCookie ? 'Cookie configured (leave blank to keep)' : 'No cookie configured';
+      }
+
+      const sk = config.skills || {};
+      setChecked('settings-skills-enabled', sk.enabled);
+      setValue('settings-skills-user-dir', sk.userDir);
+      setValue('settings-skills-workspace-dir', sk.workspaceDir);
+      setValue('settings-skills-disabled', Array.isArray(sk.disabled) ? sk.disabled.join(', ') : '');
+      setValue('settings-skills-only', Array.isArray(sk.only) ? sk.only.join(', ') : '');
+
+      const se = config.sessions || {};
+      setValue('sessions-type', se.type || 'memory');
+      setValue('sessions-directory', se.directory);
+      setValue('sessions-ttl-ms', se.ttlMs);
+
+      setValue('settings-raw-json5', '');
+      setRawError('');
+    }
+
+    function setValue(id, value) {
+      const el = document.getElementById(id);
+      if (el !== null) el.value = value === undefined || value === null ? '' : String(value);
+    }
+
+    function setChecked(id, value) {
+      const el = document.getElementById(id);
+      if (el !== null) el.checked = Boolean(value);
+    }
+
+    function getValue(id) {
+      const el = document.getElementById(id);
+      return el ? el.value : '';
+    }
+
+    function getChecked(id) {
+      const el = document.getElementById(id);
+      return el ? el.checked : false;
+    }
+
+    function csvToArray(str) {
+      if (!str) return undefined;
+      const arr = str.split(',').map(s => s.trim()).filter(Boolean);
+      return arr.length > 0 ? arr : undefined;
+    }
+
+    function numOrUndef(id) {
+      const v = getValue(id);
+      if (v === '') return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    }
+
+    function collectSettings() {
+      const payload = {};
+
+      const persona = {
+        enabled: getChecked('persona-enabled'),
+        persona_name: getValue('persona-name') || undefined,
+        persona_reply_style: getValue('persona-reply-style') || undefined,
+        persona_base_prompt: getValue('persona-base-prompt') || undefined,
+        time_awareness_enabled: getChecked('persona-time-awareness'),
+        emotion_enabled: getChecked('persona-emotion-enabled'),
+        emotion_decay_per_hour: numOrUndef('persona-emotion-decay'),
+        emotion_recovery_per_reply: numOrUndef('persona-emotion-recovery'),
+        emotion_injection_style: getValue('persona-emotion-injection-style') || undefined,
+        emotion_decay_cron: getValue('persona-emotion-decay-cron') || undefined,
+        memory_enabled: getChecked('persona-memory-enabled'),
+        memory_max_turns: numOrUndef('persona-memory-max-turns'),
+        reflection_enabled: getChecked('persona-reflection-enabled'),
+        reflection_trigger_turns: numOrUndef('persona-reflection-trigger-turns'),
+        reflection_history_turns: numOrUndef('persona-reflection-history-turns'),
+        reflection_periodic_cron: getValue('persona-reflection-periodic-cron') || undefined,
+        profile_enabled: getChecked('persona-profile-enabled'),
+        profile_building_enabled: getChecked('persona-profile-building'),
+        profile_building_trigger_turns: numOrUndef('persona-profile-building-trigger-turns'),
+        rest_enabled: getChecked('persona-rest-enabled'),
+        proactive_nudge_enabled: getChecked('persona-proactive-nudge'),
+        rest_sleep_hour: numOrUndef('persona-rest-sleep-hour'),
+        rest_wake_hour: numOrUndef('persona-rest-wake-hour'),
+        proactive_nudge_cron: getValue('persona-proactive-nudge-cron') || undefined,
+        greeting_on_first_chat: getChecked('persona-greeting-first-chat'),
+        goodnight_hint_enabled: getChecked('persona-goodnight-hint'),
+        ignore_group_chat: getChecked('persona-ignore-group-chat'),
+        debug_log_enabled: getChecked('persona-debug-log'),
+        admin_ids: csvToArray(getValue('persona-admin-ids')),
+      };
+      payload.persona = persona;
+
+      const skillLearner = {
+        enabled: getChecked('skilllearner-enabled'),
+        autoTriggerKeywords: csvToArray(getValue('skilllearner-auto-trigger-keywords')),
+        maxLearningTurns: numOrUndef('skilllearner-max-learning-turns'),
+        enableAutoLearn: getChecked('skilllearner-auto-learn'),
+        enableProactiveSuggest: getChecked('skilllearner-proactive-suggest'),
+        proactiveThreshold: numOrUndef('skilllearner-proactive-threshold'),
+        autoDeployToSkills: getChecked('skilllearner-auto-deploy'),
+      };
+      payload.skillLearner = skillLearner;
+
+      const sharelink = {
+        enabled: getChecked('sharelink-enabled'),
+        responseMode: getValue('sharelink-response-mode') || undefined,
+        descriptionMaxLength: numOrUndef('sharelink-description-max-length'),
+        includeDescription: getChecked('sharelink-include-description'),
+        includeCover: getChecked('sharelink-include-cover'),
+        autoDetect: getChecked('sharelink-auto-detect'),
+        audioDownloadTimeout: numOrUndef('sharelink-audio-timeout'),
+        subtitleMaxLength: numOrUndef('sharelink-subtitle-max-length'),
+        llmShortContentThreshold: numOrUndef('sharelink-llm-short-threshold'),
+        llmChunkSize: numOrUndef('sharelink-llm-chunk-size'),
+      };
+      const sessdata = getValue('sharelink-bili-sessdata').trim();
+      const biliJct = getValue('sharelink-bili-jct').trim();
+      if (sessdata || biliJct) {
+        sharelink.bilibiliCookie = {
+          ...(sessdata ? { sessdata } : {}),
+          ...(biliJct ? { biliJct } : {}),
+        };
+      }
+      payload.sharelink = sharelink;
+
+      const skills = {
+        enabled: getChecked('settings-skills-enabled'),
+        userDir: getValue('settings-skills-user-dir') || undefined,
+        workspaceDir: getValue('settings-skills-workspace-dir') || undefined,
+        disabled: csvToArray(getValue('settings-skills-disabled')),
+        only: csvToArray(getValue('settings-skills-only')),
+      };
+      payload.skills = skills;
+
+      const sessions = {
+        type: getValue('sessions-type') || undefined,
+        directory: getValue('sessions-directory') || undefined,
+        ttlMs: numOrUndef('sessions-ttl-ms'),
+      };
+      payload.sessions = sessions;
+
+      const raw = getValue('settings-raw-json5').trim();
+      if (raw) {
+        payload.rawJson5 = raw;
+      }
+
+      return payload;
+    }
+
+    async function saveAllSettings() {
+      try {
+        hideSettingsSaveResult();
+        const payload = collectSettings();
+        const result = await request('config.save', payload);
+        if (result.success) {
+          showSettingsSaveResult(result.requiresRestart ? 'warning' : 'success', result.message);
+          await loadSettings();
+          addLog('info', result.message);
+        } else {
+          showSettingsSaveResult('error', result.message || 'Save failed');
+          addLog('error', result.message || 'Save failed');
+        }
+      } catch (e) {
+        addLog('error', 'Failed to save settings: ' + e.message);
+        showSettingsSaveResult('error', 'Failed to save settings: ' + e.message);
+      }
+    }
+
+    function validateRawJson5() {
+      const raw = getValue('settings-raw-json5');
+      if (!raw.trim()) {
+        setRawError('');
+        alert('Raw JSON5 editor is empty — nothing to validate.');
+        return;
+      }
+      try {
+        JSON.parse(raw);
+        setRawError('');
+        alert('Valid JSON.');
+      } catch (jsonErr) {
+        try {
+          const fixed = raw.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, '"');
+          JSON.parse(fixed);
+          setRawError('Note: editor accepts JSON5 (unquoted keys, single quotes, comments). Backend parses as JSON5.');
+        } catch {
+          setRawError('Parse error: ' + jsonErr.message);
+        }
+      }
+    }
+
+    function setRawError(msg) {
+      const el = document.getElementById('settings-raw-error');
+      if (el) el.textContent = msg || '';
+    }
+
+    function showSettingsSaveResult(type, message) {
+      const el = document.getElementById('settings-save-result');
+      el.textContent = message;
+      el.className = 'save-result show ' + type;
+      setTimeout(hideSettingsSaveResult, 5000);
+    }
+
+    function hideSettingsSaveResult() {
+      const el = document.getElementById('settings-save-result');
+      el.className = 'save-result';
+      el.textContent = '';
     }
 
     connect();
