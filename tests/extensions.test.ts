@@ -3,6 +3,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { InboundMessageContext, VexConfig } from "../src/types/index.js";
+import type { Agent } from "../src/agents/agent.js";
 
 vi.mock("../src/utils/logger.js", () => ({
   getChildLogger: () => ({
@@ -147,6 +148,38 @@ describe("Persona", () => {
 
     expect(prompt.join("\n")).toContain("私人 Persona");
     expect(summary).toContain("状态");
+    cleanupPersona();
+  });
+});
+
+describe("Default extension config", () => {
+  it("initializes persona when persona config is absent", async () => {
+    const { initExtensions } = await import("../src/extensions/index.js");
+    const { gatherPromptInjections } = await import("../src/pipeline/index.js");
+    const { cleanupPersona } = await import("../src/extensions/persona/index.js");
+
+    const minimalConfig: VexConfig = {
+      providers: {},
+      channels: {},
+      agent: {
+        defaultModel: "deepseek-chat",
+        defaultProvider: "deepseek",
+      },
+      server: {
+        port: 3000,
+      },
+      logging: {
+        level: "info",
+      },
+      // persona, sharelink, skillLearner intentionally omitted
+    };
+
+    const mockAgent = { registerTool: vi.fn() } as unknown as Agent;
+    await initExtensions(minimalConfig, mockAgent);
+
+    const prompt = await gatherPromptInjections(context("你好"));
+    expect(prompt.join("\n")).toContain("私人 Persona");
+
     cleanupPersona();
   });
 });
