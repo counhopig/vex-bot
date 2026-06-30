@@ -118,6 +118,10 @@ export interface ConfigInfo {
   logging: LoggingConfigInfo;
   memory: MemoryConfigInfo;
   skills: SkillsConfigInfo;
+  persona?: PersonaConfigInfo;
+  skillLearner?: SkillLearnerConfigInfo;
+  sharelink?: ShareLinkConfigInfo;
+  sessions?: SessionsConfigInfo;
 }
 
 /** Provider config info (redacted) */
@@ -177,6 +181,80 @@ export interface SkillsConfigInfo {
   only?: string[];
 }
 
+/** Persona (bot personality) config info */
+export interface PersonaConfigInfo {
+  enabled?: boolean;
+  persona_name?: string;
+  persona_base_prompt?: string;
+  persona_reply_style?: string;
+  time_awareness_enabled?: boolean;
+  emotion_enabled?: boolean;
+  emotion_decay_per_hour?: number;
+  emotion_recovery_per_reply?: number;
+  emotion_injection_style?: string;
+  emotion_decay_cron?: string;
+  effect_enabled?: boolean;
+  effect_auto_trigger?: boolean;
+  todo_enabled?: boolean;
+  todo_auto_trigger?: boolean;
+  consolidation_enabled?: boolean;
+  memory_enabled?: boolean;
+  memory_max_turns?: number;
+  profile_enabled?: boolean;
+  reflection_enabled?: boolean;
+  reflection_trigger_turns?: number;
+  reflection_history_turns?: number;
+  reflection_periodic_cron?: string;
+  profile_building_enabled?: boolean;
+  profile_building_trigger_turns?: number;
+  ignore_group_chat?: boolean;
+  greeting_on_first_chat?: boolean;
+  goodnight_hint_enabled?: boolean;
+  proactive_nudge_enabled?: boolean;
+  proactive_nudge_cron?: string;
+  rest_enabled?: boolean;
+  rest_sleep_hour?: number;
+  rest_wake_hour?: number;
+  storage_cache_max?: number;
+  debug_log_enabled?: boolean;
+  admin_ids?: string[];
+}
+
+/** Skill Learner config info */
+export interface SkillLearnerConfigInfo {
+  enabled?: boolean;
+  autoTriggerKeywords?: string[];
+  maxLearningTurns?: number;
+  enableAutoLearn?: boolean;
+  enableProactiveSuggest?: boolean;
+  proactiveThreshold?: number;
+  autoDeployToSkills?: boolean;
+}
+
+/** ShareLink config info (sensitive cookie fields redacted) */
+export interface ShareLinkConfigInfo {
+  enabled?: boolean;
+  responseMode?: "simple" | "detailed";
+  includeDescription?: boolean;
+  includeCover?: boolean;
+  descriptionMaxLength?: number;
+  hasBilibiliCookie?: boolean;
+  summarizeProviderId?: string;
+  sttProviderId?: string;
+  audioDownloadTimeout?: number;
+  subtitleMaxLength?: number;
+  llmShortContentThreshold?: number;
+  llmChunkSize?: number;
+  autoDetect?: boolean;
+}
+
+/** Sessions store config info */
+export interface SessionsConfigInfo {
+  type?: "memory" | "file";
+  directory?: string;
+  ttlMs?: number;
+}
+
 /** Save config request params */
 export interface ConfigSaveParams {
   providers?: Record<string, ProviderConfigInfo>;
@@ -189,6 +267,15 @@ export interface ConfigSaveParams {
   logging?: LoggingConfigInfo;
   memory?: MemoryConfigInfo;
   skills?: SkillsConfigInfo;
+  persona?: PersonaConfigInfo;
+  skillLearner?: SkillLearnerConfigInfo;
+  sharelink?: ShareLinkConfigInfo & {
+    /** Raw bilibili cookie, only sent when user explicitly edits it */
+    bilibiliCookie?: { sessdata?: string; biliJct?: string };
+  };
+  sessions?: SessionsConfigInfo;
+  /** Raw JSON5 patch from the Geek tab; merged last, overrides form fields */
+  rawJson5?: string;
 }
 
 /** Config validation result */

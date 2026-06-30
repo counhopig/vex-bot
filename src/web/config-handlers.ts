@@ -95,6 +95,39 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
     only: config.skills?.only,
   };
 
+  // Persona configuration (pass-through mirror of PersonaConfig)
+  const persona = config.persona ? { ...config.persona } : undefined;
+
+  // Skill Learner configuration
+  const skillLearner = config.skillLearner ? { ...config.skillLearner } : undefined;
+
+  // ShareLink configuration (redact bilibili cookie values, expose hasBilibiliCookie flag)
+  let sharelink: ConfigInfo["sharelink"];
+  if (config.sharelink) {
+    const sl = config.sharelink;
+    const hasBilibiliCookie = Boolean(
+      sl.bilibiliCookie && (sl.bilibiliCookie.sessdata || sl.bilibiliCookie.biliJct),
+    );
+    sharelink = {
+      enabled: sl.enabled,
+      responseMode: sl.responseMode,
+      includeDescription: sl.includeDescription,
+      includeCover: sl.includeCover,
+      descriptionMaxLength: sl.descriptionMaxLength,
+      hasBilibiliCookie,
+      summarizeProviderId: sl.summarizeProviderId,
+      sttProviderId: sl.sttProviderId,
+      audioDownloadTimeout: sl.audioDownloadTimeout,
+      subtitleMaxLength: sl.subtitleMaxLength,
+      llmShortContentThreshold: sl.llmShortContentThreshold,
+      llmChunkSize: sl.llmChunkSize,
+      autoDetect: sl.autoDetect,
+    };
+  }
+
+  // Sessions store configuration
+  const sessions = config.sessions ? { ...config.sessions } : undefined;
+
   return {
     providers,
     channels,
@@ -103,6 +136,10 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
     logging,
     memory: memory as ConfigInfo["memory"],
     skills: skills as ConfigInfo["skills"],
+    persona,
+    skillLearner,
+    sharelink,
+    sessions,
   };
 }
 
@@ -165,6 +202,82 @@ export function validateConfig(params: ConfigSaveParams): ConfigValidateResult {
     const validLevels = ["debug", "info", "warn", "error"];
     if (params.logging.level && !validLevels.includes(params.logging.level)) {
       errors.push(`Invalid log level: ${params.logging.level}`);
+    }
+  }
+
+  // Validate Persona configuration
+  if (params.persona) {
+    const p = params.persona;
+    if (p.emotion_decay_per_hour !== undefined && (p.emotion_decay_per_hour < 0 || p.emotion_decay_per_hour > 100)) {
+      errors.push("persona.emotion_decay_per_hour must be between 0 and 100");
+    }
+    if (p.emotion_recovery_per_reply !== undefined && (p.emotion_recovery_per_reply < 0 || p.emotion_recovery_per_reply > 100)) {
+      errors.push("persona.emotion_recovery_per_reply must be between 0 and 100");
+    }
+    if (p.memory_max_turns !== undefined && p.memory_max_turns < 0) {
+      errors.push("persona.memory_max_turns must be >= 0");
+    }
+    if (p.reflection_trigger_turns !== undefined && p.reflection_trigger_turns < 0) {
+      errors.push("persona.reflection_trigger_turns must be >= 0");
+    }
+    if (p.reflection_history_turns !== undefined && p.reflection_history_turns < 0) {
+      errors.push("persona.reflection_history_turns must be >= 0");
+    }
+    if (p.profile_building_trigger_turns !== undefined && p.profile_building_trigger_turns < 0) {
+      errors.push("persona.profile_building_trigger_turns must be >= 0");
+    }
+    if (p.rest_sleep_hour !== undefined && (p.rest_sleep_hour < 0 || p.rest_sleep_hour > 23)) {
+      errors.push("persona.rest_sleep_hour must be between 0 and 23");
+    }
+    if (p.rest_wake_hour !== undefined && (p.rest_wake_hour < 0 || p.rest_wake_hour > 23)) {
+      errors.push("persona.rest_wake_hour must be between 0 and 23");
+    }
+    if (p.storage_cache_max !== undefined && p.storage_cache_max < 0) {
+      errors.push("persona.storage_cache_max must be >= 0");
+    }
+  }
+
+  // Validate Skill Learner configuration
+  if (params.skillLearner) {
+    const sl = params.skillLearner;
+    if (sl.maxLearningTurns !== undefined && sl.maxLearningTurns < 0) {
+      errors.push("skillLearner.maxLearningTurns must be >= 0");
+    }
+    if (sl.proactiveThreshold !== undefined && (sl.proactiveThreshold < 0 || sl.proactiveThreshold > 1)) {
+      errors.push("skillLearner.proactiveThreshold must be between 0 and 1");
+    }
+  }
+
+  // Validate ShareLink configuration
+  if (params.sharelink) {
+    const sl = params.sharelink;
+    if (sl.responseMode !== undefined && !["simple", "detailed"].includes(sl.responseMode)) {
+      errors.push(`sharelink.responseMode must be 'simple' or 'detailed', got: ${sl.responseMode}`);
+    }
+    if (sl.descriptionMaxLength !== undefined && sl.descriptionMaxLength < 0) {
+      errors.push("sharelink.descriptionMaxLength must be >= 0");
+    }
+    if (sl.audioDownloadTimeout !== undefined && sl.audioDownloadTimeout < 0) {
+      errors.push("sharelink.audioDownloadTimeout must be >= 0");
+    }
+    if (sl.subtitleMaxLength !== undefined && sl.subtitleMaxLength < 0) {
+      errors.push("sharelink.subtitleMaxLength must be >= 0");
+    }
+    if (sl.llmShortContentThreshold !== undefined && sl.llmShortContentThreshold < 0) {
+      errors.push("sharelink.llmShortContentThreshold must be >= 0");
+    }
+    if (sl.llmChunkSize !== undefined && sl.llmChunkSize < 0) {
+      errors.push("sharelink.llmChunkSize must be >= 0");
+    }
+  }
+
+  // Validate Sessions configuration
+  if (params.sessions) {
+    if (params.sessions.type !== undefined && !["memory", "file"].includes(params.sessions.type)) {
+      errors.push(`sessions.type must be 'memory' or 'file', got: ${params.sessions.type}`);
+    }
+    if (params.sessions.ttlMs !== undefined && params.sessions.ttlMs < 0) {
+      errors.push("sessions.ttlMs must be >= 0");
     }
   }
 
@@ -323,6 +436,77 @@ export function saveConfig(
     };
   }
 
+  // Update Persona configuration
+  if (params.persona) {
+    configToSave.persona = {
+      ...existingConfig.persona,
+      ...params.persona,
+    };
+  }
+
+  // Update Skill Learner configuration
+  if (params.skillLearner) {
+    configToSave.skillLearner = {
+      ...existingConfig.skillLearner,
+      ...params.skillLearner,
+    };
+  }
+
+  // Update ShareLink configuration
+  if (params.sharelink) {
+    const existingSharelink = (existingConfig.sharelink ?? {}) as Record<string, unknown>;
+    const incoming = params.sharelink as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...existingSharelink };
+    for (const [k, v] of Object.entries(incoming)) {
+      if (k === "bilibiliCookie") {
+        // Only overwrite cookie when the user actually sent values
+        const incomingCookie = v as { sessdata?: string; biliJct?: string } | undefined;
+        if (incomingCookie && (incomingCookie.sessdata || incomingCookie.biliJct)) {
+          merged.bilibiliCookie = {
+            ...((existingSharelink.bilibiliCookie as Record<string, unknown> | undefined) ?? {}),
+            ...incomingCookie,
+          };
+        }
+      } else if (k !== "hasBilibiliCookie" && v !== undefined) {
+        merged[k] = v;
+      }
+    }
+    configToSave.sharelink = merged as VexConfig["sharelink"];
+  }
+
+  // Update Sessions store configuration
+  if (params.sessions) {
+    const mergedSessions = {
+      ...existingConfig.sessions,
+      ...params.sessions,
+    };
+    configToSave.sessions = mergedSessions as VexConfig["sessions"];
+  }
+
+  // Apply raw JSON5 patch from the Geek tab (merged last, overrides form fields)
+  if (params.rawJson5 && params.rawJson5.trim()) {
+    let patch: unknown;
+    try {
+      patch = json5.parse(params.rawJson5);
+    } catch (e) {
+      return {
+        success: false,
+        message: "Raw JSON5 parse error: " + (e instanceof Error ? e.message : String(e)),
+      };
+    }
+    if (patch === null || typeof patch !== "object" || Array.isArray(patch)) {
+      return {
+        success: false,
+        message: "Raw JSON5 must be an object at the top level",
+      };
+    }
+    const patchRecord = patch as Record<string, unknown>;
+    for (const [k, v] of Object.entries(patchRecord)) {
+      if (v === undefined) continue;
+      (configToSave as Record<string, unknown>)[k] = v;
+    }
+  }
+
   // Ensure directory exists
   if (!existsSync(vexDir)) {
     mkdirSync(vexDir, { recursive: true });
@@ -352,6 +536,9 @@ export function saveConfig(
         break;
       }
     }
+  }
+  if (params.sessions?.type && params.sessions.type !== existingConfig.sessions?.type) {
+    requiresRestart = true;
   }
 
   return {
