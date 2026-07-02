@@ -41,7 +41,7 @@ vi.mock("../src/plugins/loader.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/plugins/loader.js")>();
   return {
     ...actual,
-    loadPlugins: vi.fn(async (config: VexConfig) => {
+    loadPlugins: vi.fn(async (config: VexConfig, _enableConfig: unknown, options?: { memoryManager?: unknown }) => {
       const { registerPlugin } = await import("../src/plugins/index.js");
       await registerPlugin(
         {
@@ -50,7 +50,7 @@ vi.mock("../src/plugins/loader.js", async (importOriginal) => {
             name: "Test Startup Plugin",
             version: "1.0.0",
           },
-          register: (api) => {
+          register: async (api) => {
             api.registerTool({
               name: "plugin_startup_test_tool",
               label: "Plugin Startup Test Tool",
@@ -58,10 +58,15 @@ vi.mock("../src/plugins/loader.js", async (importOriginal) => {
               parameters: Type.Object({}),
               execute: async () => createToolResult("ok"),
             });
+            await api.remember?.("Plugin startup memory", {
+              type: "note",
+              source: "plugin-startup-test",
+              tags: ["plugin", "startup"],
+            });
           },
         },
         config,
-        { origin: "bundled" },
+        { origin: "bundled", memoryManager: options?.memoryManager as never },
       );
       return { loaded: ["test-startup-plugin"], skipped: [], failed: [] };
     }),
@@ -82,6 +87,10 @@ function createConfig(): VexConfig {
     },
     logging: {
       level: "info",
+    },
+    memory: {
+      enabled: true,
+      directory: join(testHome, "memory"),
     },
   };
 }
@@ -111,6 +120,21 @@ describe("plugin startup wiring", () => {
     const tools = getAllTools();
     expect(tools.some((tool) => tool.name === "plugin_startup_test_tool")).toBe(true);
 
+    await gateway.shutdown();
+  });
+
+  it("passes shared memory to plugin registration", async () => {
+    const { createGateway } = await import("../src/gateway/server.js");
+    const { MemoryManager } = await import("../src/memory/index.js");
+    const config = createConfig();
+
+    const gateway = await createGateway(config);
+    const memory = new MemoryManager({ directory: config.memory?.directory, enabled: true });
+    const entries = await memory.list({ tags: ["plugin", "startup"] });
+
+    expect(entries.some((entry) => entry.content === "Plugin startup memory")).toBe(true);
+
+    await memory.close();
     await gateway.shutdown();
   });
 

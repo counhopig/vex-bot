@@ -242,6 +242,17 @@ export interface ShareLinkConfig {
   autoDetect?: boolean;
 }
 
+/** Weather tool config */
+export interface WeatherConfig {
+  weather_provider?: "wttr" | "caiyun";
+  caiyun_api_key?: string;
+  caiyun_api_version?: "v2.6" | "v3";
+  wttr_base_url?: string;
+  default_location?: string;
+  request_timeout_ms?: number;
+  cache_ttl_ms?: number;
+}
+
 /** Persona config */
 export interface PersonaConfig {
   enabled?: boolean;
@@ -314,6 +325,8 @@ export interface VexConfig {
   sharelink?: ShareLinkConfig;
   /** Persona config */
   persona?: PersonaConfig;
+  /** Weather tool config */
+  weather?: WeatherConfig;
 }
 
 // ============== Event-related Types ==============

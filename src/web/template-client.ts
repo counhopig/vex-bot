@@ -18,6 +18,24 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
     let allSessions = [];
 
     const STORAGE_KEY = 'vex_session_key';
+    const i18n = window.VexI18n;
+    const t = (key, vars) => i18n.t(key, vars);
+    const applyI18n = (root) => i18n.apply(root);
+
+    function mountLanguageSwitcher(target) {
+      if (!target || document.getElementById('languageSelect')) return;
+      const select = document.createElement('select');
+      select.id = 'languageSelect';
+      select.style.cssText = 'border:1px solid var(--border);border-radius:6px;padding:4px 6px;background:var(--surface);color:var(--text);font-size:0.75rem;';
+      select.innerHTML = '<option value="en">EN</option><option value="zh">中文</option>';
+      select.value = i18n.getLang();
+      select.addEventListener('change', () => {
+        i18n.setLang(select.value);
+        renderSessionList();
+        applyI18n();
+      });
+      target.prepend(select);
+    }
 
     const sidebar = document.getElementById('sidebar');
     const sidebarOverlay = document.getElementById('sidebarOverlay');
@@ -50,14 +68,14 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
 
       ws.onopen = () => {
         statusDot.classList.remove('disconnected');
-        statusText.textContent = 'Connected';
+        statusText.textContent = t('Connected');
         sessionRestored = false;
         // Note: don't load data here; wait for the connected event from the server
       };
 
       ws.onclose = () => {
         statusDot.classList.add('disconnected');
-        statusText.textContent = 'Disconnected';
+        statusText.textContent = t('Disconnected');
         reconnectTimer = setTimeout(connect, 3000);
       };
 
@@ -101,12 +119,12 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
       const sessionsWithMessages = allSessions.filter(s => (s.messageCount || 0) > 0);
 
       if (sessionsWithMessages.length === 0) {
-        sessionList.innerHTML = '<div class="empty-sessions">No recent sessions</div>';
-        sessionCount.textContent = '0 sessions';
+        sessionList.innerHTML = '<div class="empty-sessions">' + t('No recent sessions') + '</div>';
+        sessionCount.textContent = t('0 sessions');
         return;
       }
 
-      sessionCount.textContent = sessionsWithMessages.length + ' sessions';
+      sessionCount.textContent = sessionsWithMessages.length + ' ' + t('sessions');
       const currentKey = getSavedSessionKey();
 
       sessionList.innerHTML = sessionsWithMessages.map(s => {
@@ -119,9 +137,9 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
             <span class="session-icon">💬</span>
             <div class="session-info">
               <div class="session-title">\${escapeHtml(title)}</div>
-              <div class="session-meta"><span>\${msgCount} messages</span><span>\${time}</span></div>
+              <div class="session-meta"><span>\${msgCount} \${t('messages')}</span><span>\${time}</span></div>
             </div>
-            <button class="session-delete" data-key="\${s.sessionKey}" title="Delete">🗑️</button>
+            <button class="session-delete" data-key="\${s.sessionKey}" title="\${t('Delete')}">🗑️</button>
           </div>
         \`;
       }).join('');
@@ -165,7 +183,7 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
     }
 
     async function deleteSession(sessionKey) {
-      if (!confirm('Are you sure you want to delete this session?')) return;
+      if (!confirm(t('Are you sure you want to delete this session?'))) return;
       try {
         await request('sessions.delete', { sessionKey });
         if (getSavedSessionKey() === sessionKey) {
@@ -411,13 +429,36 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
       if (e.key === 'Escape' && isStreaming) { e.preventDefault(); cancelRequest(); }
     });
 
+    mountLanguageSwitcher(document.querySelector('.sidebar-footer'));
+    applyI18n();
     connect();
-`;
+  `;
 
 export const CONTROL_CLIENT_JS: string = `    let ws = null;
     let pendingRequests = new Map();
     let requestId = 0;
     let systemStatus = null;
+    const i18n = window.VexI18n;
+    const t = (key, vars) => i18n.t(key, vars);
+    const applyI18n = (root) => i18n.apply(root);
+
+    function mountLanguageSwitcher() {
+      if (document.getElementById('controlLanguageSelect')) return;
+      const sidebar = document.querySelector('.sidebar');
+      const select = document.createElement('select');
+      select.id = 'controlLanguageSelect';
+      select.style.cssText = 'margin:0.75rem 1rem;border:1px solid var(--border);border-radius:6px;padding:6px;background:var(--bg);color:var(--text-primary);font-size:0.8125rem;';
+      select.innerHTML = '<option value="en">English</option><option value="zh">中文</option>';
+      select.value = i18n.getLang();
+      select.addEventListener('change', () => {
+        i18n.setLang(select.value);
+        applyI18n();
+        refreshStatus();
+        if (currentConfig) populateConfigForm(currentConfig);
+        if (currentSettings) populateSettingsForm(currentSettings);
+      });
+      sidebar?.appendChild(select);
+    }
 
     // Navigation
     document.querySelectorAll('.nav-item[data-view]').forEach(item => {
@@ -435,6 +476,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         if (item.dataset.view === 'settings' && ws?.readyState === WebSocket.OPEN) {
           loadSettings();
         }
+        if (item.dataset.view === 'sessions' && ws?.readyState === WebSocket.OPEN) {
+          refreshSessions();
+        }
+        if ((item.dataset.view === 'providers' || item.dataset.view === 'channels') && ws?.readyState === WebSocket.OPEN) {
+          refreshStatus();
+        }
       });
     });
 
@@ -445,14 +492,14 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
 
       ws.onopen = () => {
         document.getElementById('connection-status').innerHTML =
-          '<span class="status-badge online"><span class="status-dot"></span>Connected</span>';
+          '<span class="status-badge online"><span class="status-dot"></span>' + t('Connected') + '</span>';
         addLog('info', 'Connected to server');
         refreshStatus();
       };
 
       ws.onclose = () => {
         document.getElementById('connection-status').innerHTML =
-          '<span class="status-badge offline"><span class="status-dot"></span>Disconnected</span>';
+          '<span class="status-badge offline"><span class="status-dot"></span>' + t('Disconnected') + '</span>';
         addLog('warn', 'Connection lost, reconnecting...');
         setTimeout(connect, 3000);
       };
@@ -496,6 +543,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         updateOverview(systemStatus);
         updateProviders(systemStatus);
         updateChannels(systemStatus);
+        refreshSessions();
         addLog('info', 'Status refreshed');
       } catch (e) {
         addLog('error', 'Failed to get status: ' + e.message);
@@ -505,8 +553,8 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     function updateOverview(status) {
       document.getElementById('version').textContent = status.version || '--';
       document.getElementById('session-count').textContent = status.sessions || 0;
-      document.getElementById('provider-count').textContent = (status.providers || []).length + ' providers';
-      document.getElementById('channel-count').textContent = (status.channels || []).length + ' channels';
+      document.getElementById('provider-count').textContent = (status.providers || []).length + ' ' + t('providers');
+      document.getElementById('channel-count').textContent = (status.channels || []).length + ' ' + t('channels');
 
       const uptime = status.uptime || 0;
       const hours = Math.floor(uptime / 3600000);
@@ -519,7 +567,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const container = document.getElementById('providers-list');
 
       if (providers.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p>No providers configured</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p>' + t('No providers configured') + '</p></div>';
         return;
       }
 
@@ -528,7 +576,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           <div class="card-header">
             <span class="card-title">\${p.name || p.id}</span>
             <span class="status-badge \${p.available ? 'online' : 'offline'}">
-              <span class="status-dot"></span>\${p.available ? 'Available' : 'Unavailable'}
+              <span class="status-dot"></span>\${p.available ? t('Available') : t('Unavailable')}
             </span>
           </div>
           <div class="card-label">ID: \${p.id}</div>
@@ -551,7 +599,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           <td>\${c.name || c.id}</td>
           <td>
             <span class="status-badge \${c.connected ? 'online' : 'offline'}">
-              <span class="status-dot"></span>\${c.connected ? 'Connected' : 'Disconnected'}
+              <span class="status-dot"></span>\${c.connected ? t('Connected') : t('Disconnected')}
             </span>
           </td>
           <td>\${c.id}</td>
@@ -559,9 +607,64 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       \`).join('');
     }
 
-    function refreshSessions() {
-      // Session data retrieved via status
-      addLog('info', 'Session list refreshed');
+    async function refreshSessions() {
+      const tbody = document.getElementById('sessions-list');
+      try {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('Loading sessions...') + '</td></tr>';
+        const result = await request('sessions.list', { limit: 100 });
+        const sessions = result.sessions || [];
+        if (sessions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('No stored sessions') + '</td></tr>';
+          return;
+        }
+        tbody.innerHTML = sessions.map(s => {
+          const channel = s.sessionKey && s.sessionKey.includes(':') ? s.sessionKey.split(':')[0] : 'unknown';
+          const lastActive = s.updatedAt ? new Date(s.updatedAt).toLocaleString() : '--';
+          return \`
+            <tr>
+              <td title="\${escapeControlHtml(s.sessionKey || '')}">\${escapeControlHtml(s.label || s.sessionKey || s.sessionId || '--')}</td>
+              <td>\${escapeControlHtml(channel)}</td>
+              <td>\${s.messageCount || 0}</td>
+              <td>\${escapeControlHtml(lastActive)}</td>
+              <td>
+                <button class="btn btn-danger" data-session-key="\${escapeControlAttr(s.sessionKey || '')}">\${t('Delete')}</button>
+              </td>
+            </tr>
+          \`;
+        }).join('');
+        tbody.querySelectorAll('[data-session-key]').forEach(btn => {
+          btn.addEventListener('click', () => deleteControlSession(btn.dataset.sessionKey || ''));
+        });
+        addLog('info', 'Loaded ' + sessions.length + ' stored sessions');
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('Failed to load sessions') + '</td></tr>';
+        addLog('error', 'Failed to load sessions: ' + e.message);
+      }
+    }
+
+    async function deleteControlSession(sessionKey) {
+      if (!sessionKey || !confirm(t('Delete this session?'))) return;
+      try {
+        await request('sessions.delete', { sessionKey });
+        await refreshSessions();
+        addLog('info', 'Session deleted');
+      } catch (e) {
+        addLog('error', 'Failed to delete session: ' + e.message);
+      }
+    }
+
+    function escapeControlHtml(text) {
+      return String(text ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;'
+      }[c]));
+    }
+
+    function escapeControlAttr(text) {
+      return escapeControlHtml(text);
     }
 
     function addLog(level, message) {
@@ -584,12 +687,13 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     let pendingProviders = {};  // Temporary provider data storage
 
     // Config tab switching
-    document.querySelectorAll('.config-tab').forEach(tab => {
+    document.querySelectorAll('#config-tabs .config-tab').forEach(tab => {
       tab.addEventListener('click', () => {
-        document.querySelectorAll('.config-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('#config-tabs .config-tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        document.querySelectorAll('.config-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+        document.querySelectorAll('#view-config .config-content').forEach(c => c.classList.remove('active'));
+        const content = document.getElementById('tab-' + tab.dataset.tab);
+        if (content) content.classList.add('active');
       });
     });
 
@@ -620,7 +724,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       } catch (e) {
         console.error('Failed to load config:', e);
         addLog('error', 'Failed to load config: ' + e.message);
-        showSaveResult('error', 'Failed to load config: ' + e.message);
+        showSaveResult('error', t('Failed to load config') + ': ' + e.message);
       }
     }
 
@@ -671,7 +775,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     function populateProvidersForm(providers) {
       const container = document.getElementById('providers-list-form');
       if (!providers || Object.keys(providers).length === 0) {
-        container.innerHTML = '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:var(--text-muted);">No providers configured</div>';
+        container.innerHTML = '<div style="grid-column:1/-1;padding:2rem;text-align:center;color:var(--text-muted);">' + t('No providers configured') + '</div>';
         return;
       }
 
@@ -680,12 +784,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           <div class="provider-form-header">
             <h4>\${p.name || id}</h4>
             <span class="provider-status-badge \${p.hasApiKey ? 'configured' : ''}">
-              \${p.hasApiKey ? 'Configured' : 'Not configured'}
+              \${p.hasApiKey ? t('Configured') : t('Not configured')}
             </span>
           </div>
           <div class="provider-actions">
-            <button onclick="editProvider('\${id}')">Edit</button>
-            <button class="danger" onclick="removeProvider('\${id}')">Delete</button>
+            <button onclick="editProvider('\${id}')">\${t('Edit')}</button>
+            <button class="danger" onclick="removeProvider('\${id}')">\${t('Delete')}</button>
           </div>
         </div>
       \`).join('');
@@ -696,7 +800,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       document.getElementById('weixin-enabled').checked = false;
       document.getElementById('weixin-bot-type').value = '';
       document.getElementById('weixin-base-url').value = '';
-      document.getElementById('weixin-status').textContent = 'Status: Not logged in';
+      document.getElementById('weixin-status').textContent = t('Status: Not logged in');
 
       const weixin = channels.weixin;
       if (weixin) {
@@ -705,8 +809,8 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         document.getElementById('weixin-bot-type').value = weixin.botType || '';
         document.getElementById('weixin-base-url').value = weixin.baseUrl || '';
         document.getElementById('weixin-status').textContent = weixin.hasToken
-          ? 'Status: Logged in (Token valid)'
-          : 'Status: Not logged in (scan QR in terminal or restart to auto-login)';
+          ? t('Status: Logged in (Token valid)')
+          : t('Status: Not logged in (scan QR in terminal or restart to auto-login)');
         if (weixin.hasToken) {
           document.getElementById('weixin-status').style.color = '#10b981';
         } else {
@@ -752,12 +856,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const groupId = document.getElementById('new-provider-group-id').value.trim();
 
       if (!apiKey) {
-        alert('Please enter API Key');
+        alert(t('Please enter API Key'));
         return;
       }
 
       if ((type === 'custom-openai' || type === 'custom-anthropic') && !baseUrl) {
-        alert('Please enter Base URL');
+        alert(t('Please enter Base URL'));
         return;
       }
 
@@ -778,7 +882,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         populateProvidersForm(mergedProviders);
       }
 
-      showSaveResult('success', 'Provider added (click Save to apply changes)');
+      showSaveResult('success', t('Provider added (click Save to apply changes)'));
     }
 
     // Edit provider
@@ -795,20 +899,20 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           hasApiKey: true,
           apiKey: apiKey  // Save new apiKey
         };
-        showSaveResult('success', 'Provider updated (click Save to apply changes)');
+        showSaveResult('success', t('Provider updated (click Save to apply changes)'));
       }
     }
 
     // Remove provider
     function removeProvider(id) {
-      if (!confirm('Are you sure you want to remove this provider?')) return;
+      if (!confirm(t('Are you sure you want to remove this provider?'))) return;
 
       pendingProviders[id] = { id: id, hasApiKey: false };
       const mergedProviders = { ...currentConfig.providers };
       delete mergedProviders[id];
       populateProvidersForm(mergedProviders);
 
-      showSaveResult('success', 'Provider removed (click Save to apply changes)');
+      showSaveResult('success', t('Provider removed (click Save to apply changes)'));
     }
 
     // Save all config
@@ -859,9 +963,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         const weixinEnabled = document.getElementById('weixin-enabled').checked;
         const weixinBotType = document.getElementById('weixin-bot-type').value.trim();
         const weixinBaseUrl = document.getElementById('weixin-base-url').value.trim();
-        const weixinHasConfig = weixinEnabled || weixinBotType || weixinBaseUrl;
+        const currentWeixin = currentConfig && currentConfig.channels ? currentConfig.channels.weixin : null;
+        const weixinHasConfig = Boolean(currentWeixin?.hasConfig || currentWeixin?.hasToken || weixinEnabled || weixinBotType || weixinBaseUrl);
         if (weixinHasConfig) {
           channels.weixin = {
+            id: 'weixin',
+            name: 'Personal WeChat',
             hasConfig: true,
             enabled: weixinEnabled,
             ...(weixinBotType && { botType: weixinBotType }),
@@ -932,7 +1039,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
 
       } catch (e) {
         addLog('error', 'Failed to save config: ' + e.message);
-        showSaveResult('error', 'Failed to save config: ' + e.message);
+        showSaveResult('error', t('Failed to save config') + ': ' + e.message);
       }
     }
 
@@ -964,13 +1071,13 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const img = document.getElementById('weixin-qr-img');
       const statusEl = document.getElementById('weixin-qr-status');
 
-      btn.textContent = 'Getting QR code...';
+      btn.textContent = t('Getting QR code...');
       btn.disabled = true;
 
       try {
         const result = await request('weixin.qr', {});
         if (result.error) {
-          btn.textContent = 'Scan QR Login';
+          btn.textContent = t('Scan QR Login');
           btn.disabled = false;
           alert(result.error);
           return;
@@ -979,16 +1086,16 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         currentQRCode = result.qrcode;
         img.src = result.qrcode_url;
         area.style.display = 'block';
-        statusEl.textContent = 'Waiting for scan...';
+        statusEl.textContent = t('Waiting for scan...');
         statusEl.style.color = '#f59e0b';
-        btn.textContent = 'Refresh QR';
+        btn.textContent = t('Refresh QR');
         btn.disabled = false;
 
         startQRPolling();
       } catch (e) {
-        btn.textContent = 'Scan QR Login';
+        btn.textContent = t('Scan QR Login');
         btn.disabled = false;
-        alert('Failed to get QR code: ' + e.message);
+        alert(t('Failed to get QR code') + ': ' + e.message);
       }
     }
 
@@ -1007,19 +1114,19 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
             qrPollTimer = null;
             currentQRCode = null;
             const btn = document.getElementById('weixin-qr-btn');
-            btn.textContent = 'Logged in ✓';
+            btn.textContent = t('Logged in ✓');
             btn.disabled = true;
-            document.getElementById('weixin-status').textContent = 'Status: Logged in (Token valid)';
+            document.getElementById('weixin-status').textContent = t('Status: Logged in (Token valid)');
             document.getElementById('weixin-status').style.color = '#10b981';
-            alert('WeChat login successful! Click "Save All Changes" and restart the service.');
+            alert(t('WeChat login successful! Click "Save All Changes" and restart the service.'));
           } else if (result.status === 'expired') {
-            statusEl.textContent = 'QR code expired, please refresh';
+            statusEl.textContent = t('QR code expired, please refresh');
             statusEl.style.color = '#ef4444';
             clearInterval(qrPollTimer);
             qrPollTimer = null;
             currentQRCode = null;
             const btn = document.getElementById('weixin-qr-btn');
-            btn.textContent = 'Refresh QR';
+            btn.textContent = t('Refresh QR');
             btn.disabled = false;
           } else if (result.status === 'canceled' || result.status === 'denied') {
             statusEl.textContent = result.message;
@@ -1037,12 +1144,13 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     // ===== Settings (Persona / Extensions / Skills / Sessions / Geek) =====
     let currentSettings = null;
 
-    document.querySelectorAll('[data-settings-tab]').forEach(tab => {
+    document.querySelectorAll('#settings-tabs [data-settings-tab]').forEach(tab => {
       tab.addEventListener('click', () => {
-        document.querySelectorAll('[data-settings-tab]').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('#settings-tabs [data-settings-tab]').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         document.querySelectorAll('#view-settings .config-content').forEach(c => c.classList.remove('active'));
-        document.getElementById('settings-tab-' + tab.dataset.settingsTab).classList.add('active');
+        const content = document.getElementById('settings-tab-' + tab.dataset.settingsTab);
+        if (content) content.classList.add('active');
       });
     });
 
@@ -1063,7 +1171,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         addLog('info', 'Settings loaded');
       } catch (e) {
         addLog('error', 'Failed to load settings: ' + e.message);
-        showSettingsSaveResult('error', 'Failed to load settings: ' + e.message);
+        showSettingsSaveResult('error', t('Failed to load settings') + ': ' + e.message);
       }
     }
 
@@ -1124,6 +1232,19 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const cookieStatus = document.getElementById('sharelink-cookie-status');
       if (cookieStatus) {
         cookieStatus.textContent = sh.hasBilibiliCookie ? 'Cookie configured (leave blank to keep)' : 'No cookie configured';
+      }
+
+      const weather = config.weather || {};
+      setValue('weather-provider', weather.weather_provider || 'wttr');
+      setValue('weather-caiyun-api-version', weather.caiyun_api_version || 'v2.6');
+      setValue('weather-caiyun-api-key', '');
+      setValue('weather-default-location', weather.default_location);
+      setValue('weather-wttr-base-url', weather.wttr_base_url || 'https://wttr.in');
+      setValue('weather-request-timeout-ms', weather.request_timeout_ms);
+      setValue('weather-cache-ttl-ms', weather.cache_ttl_ms);
+      const caiyunKeyStatus = document.getElementById('weather-caiyun-key-status');
+      if (caiyunKeyStatus) {
+        caiyunKeyStatus.textContent = weather.hasCaiyunApiKey ? t('Caiyun API key configured (leave blank to keep)') : t('No Caiyun API key configured');
       }
 
       const sk = config.skills || {};
@@ -1244,6 +1365,20 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       }
       payload.sharelink = sharelink;
 
+      const weather = {
+        weather_provider: getValue('weather-provider') || undefined,
+        caiyun_api_version: getValue('weather-caiyun-api-version') || undefined,
+        wttr_base_url: getValue('weather-wttr-base-url') || undefined,
+        default_location: getValue('weather-default-location') || undefined,
+        request_timeout_ms: numOrUndef('weather-request-timeout-ms'),
+        cache_ttl_ms: numOrUndef('weather-cache-ttl-ms'),
+      };
+      const caiyunApiKey = getValue('weather-caiyun-api-key').trim();
+      if (caiyunApiKey) {
+        weather.caiyun_api_key = caiyunApiKey;
+      }
+      payload.weather = weather;
+
       const skills = {
         enabled: getChecked('settings-skills-enabled'),
         userDir: getValue('settings-skills-user-dir') || undefined,
@@ -1283,7 +1418,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         }
       } catch (e) {
         addLog('error', 'Failed to save settings: ' + e.message);
-        showSettingsSaveResult('error', 'Failed to save settings: ' + e.message);
+        showSettingsSaveResult('error', t('Failed to save settings') + ': ' + e.message);
       }
     }
 
@@ -1291,10 +1426,10 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const raw = getValue('settings-raw-yaml');
       if (!raw.trim()) {
         setRawError('');
-        alert('Raw YAML editor is empty — nothing to validate.');
+        alert(t('Raw YAML editor is empty — nothing to validate.'));
         return;
       }
-      setRawError('YAML will be validated by the server when you save.');
+      setRawError(t('YAML will be validated by the server when you save.'));
     }
 
     function setRawError(msg) {
@@ -1315,5 +1450,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       el.textContent = '';
     }
 
+    mountLanguageSwitcher();
+    applyI18n();
     connect();
 `;

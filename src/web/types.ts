@@ -121,6 +121,7 @@ export interface ConfigInfo {
   persona?: PersonaConfigInfo;
   skillLearner?: SkillLearnerConfigInfo;
   sharelink?: ShareLinkConfigInfo;
+  weather?: WeatherConfigInfo;
   sessions?: SessionsConfigInfo;
 }
 
@@ -248,6 +249,17 @@ export interface ShareLinkConfigInfo {
   autoDetect?: boolean;
 }
 
+/** Weather tool config info (sensitive API key redacted) */
+export interface WeatherConfigInfo {
+  weather_provider?: "wttr" | "caiyun";
+  caiyun_api_version?: "v2.6" | "v3";
+  wttr_base_url?: string;
+  default_location?: string;
+  request_timeout_ms?: number;
+  cache_ttl_ms?: number;
+  hasCaiyunApiKey?: boolean;
+}
+
 /** Sessions store config info */
 export interface SessionsConfigInfo {
   type?: "memory" | "file";
@@ -258,9 +270,11 @@ export interface SessionsConfigInfo {
 /** Save config request params */
 export interface ConfigSaveParams {
   providers?: Record<string, ProviderConfigInfo>;
-  channels?: Record<string, ChannelConfigInfo & {
+  channels?: Record<string, Partial<ChannelConfigInfo> & {
+    hasConfig: boolean;
     baseUrl?: string;
     botType?: string;
+    accountId?: string;
   }>;
   agent?: AgentConfigInfo;
   server?: ServerConfigInfo;
@@ -272,6 +286,10 @@ export interface ConfigSaveParams {
   sharelink?: ShareLinkConfigInfo & {
     /** Raw bilibili cookie, only sent when user explicitly edits it */
     bilibiliCookie?: { sessdata?: string; biliJct?: string };
+  };
+  weather?: WeatherConfigInfo & {
+    /** Raw Caiyun API key, only sent when user explicitly edits it */
+    caiyun_api_key?: string;
   };
   sessions?: SessionsConfigInfo;
   rawYaml?: string;

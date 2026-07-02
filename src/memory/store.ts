@@ -8,6 +8,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { getChildLogger } from "../utils/logger.js";
+import { expandHomePath } from "../utils/path.js";
 import type {
   MemoryEntry,
   MemoryStore,
@@ -51,7 +52,7 @@ export class JsonMemoryStore implements MemoryStore {
     directory?: string;
     maxCacheEntries?: number;
   } = {}) {
-    this.directory = options.directory ?? path.join(os.homedir(), ".vex", "memory");
+    this.directory = options.directory ? expandHomePath(options.directory) : path.join(os.homedir(), ".vex", "memory");
     this.indexFile = path.join(this.directory, "index.json");
     this.maxCacheEntries = options.maxCacheEntries ?? 1000;
     this.entries = new Map();

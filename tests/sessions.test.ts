@@ -62,6 +62,22 @@ describe("sessions/store", () => {
         const newStore = new FileSessionStore(newDir);
         expect(fs.existsSync(newDir)).toBe(true);
       });
+
+      it("should expand home directory shorthand in custom path", () => {
+        const dirName = `.vex-session-expand-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const expandedDir = path.join(os.homedir(), dirName);
+        const literalDir = path.join(process.cwd(), "~", dirName);
+
+        try {
+          new FileSessionStore(`~/${dirName}`);
+
+          expect(fs.existsSync(expandedDir)).toBe(true);
+          expect(fs.existsSync(literalDir)).toBe(false);
+        } finally {
+          fs.rmSync(expandedDir, { recursive: true, force: true });
+          fs.rmSync(literalDir, { recursive: true, force: true });
+        }
+      });
     });
 
     describe("getOrCreate", () => {
@@ -205,6 +221,198 @@ describe("sessions/store", () => {
 
         // Most recently updated should be first
         expect(list[0]?.sessionKey).toBe("sort-3");
+      });
+
+      it("should recover sessions from transcript files when index is missing", async () => {
+        const transcriptPath = path.join(testDir, "session-id-1.jsonl");
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({
+              type: "session",
+              version: 1,
+              sessionId: "session-id-1",
+              sessionKey: "webchat:restored",
+              timestamp: "2026-07-02T00:00:00.000Z",
+            }),
+            JSON.stringify({
+              role: "user",
+              content: "Hello",
+              timestamp: Date.now(),
+            }),
+            JSON.stringify({
+              role: "assistant",
+              content: "Hi",
+              timestamp: Date.now(),
+              usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+              model: "test-model",
+              provider: "test-provider",
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const restoredStore = new FileSessionStore(testDir);
+        const list = await restoredStore.list();
+
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({
+          sessionKey: "webchat:restored",
+          sessionId: "session-id-1",
+          messageCount: 2,
+          totalTokens: 3,
+          model: "test-model",
+        });
+        expect(fs.existsSync(path.join(testDir, "sessions.json"))).toBe(true);
+      });
+
+      it("should recover nested AgentRuntime session event logs", async () => {
+        const sessionDir = path.join(testDir, "weixin_sender.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl"),
+          [
+            JSON.stringify({
+              type: "session",
+              version: 3,
+              id: "runtime-session",
+              timestamp: "2026-07-02T08:50:43.724Z",
+              cwd: "/workspace",
+            }),
+            JSON.stringify({
+              type: "model_change",
+              provider: "longcat",
+              modelId: "LongCat-2.0",
+              timestamp: "2026-07-02T08:50:43.727Z",
+            }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "你好" }],
+              },
+            }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-assistant",
+              timestamp: "2026-07-02T08:50:46.264Z",
+              message: {
+                role: "assistant",
+                content: [{ type: "thinking", thinking: "hidden" }, { type: "text", text: "你好！" }],
+                provider: "longcat",
+                model: "LongCat-2.0",
+                usage: { input: 10, output: 20, totalTokens: 30 },
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const restoredStore = new FileSessionStore(testDir);
+        const list = await restoredStore.list();
+
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({
+          sessionKey: "weixin_sender:runtime-session",
+          sessionId: "runtime-session",
+          messageCount: 2,
+          totalTokens: 30,
+          model: "LongCat-2.0",
+        });
+
+        const messages = await restoredStore.loadTranscript("runtime-session");
+        expect(messages).toHaveLength(2);
+        expect(messages[0]).toMatchObject({ role: "user", content: "你好" });
+        expect(messages[1]).toMatchObject({
+          role: "assistant",
+          content: "你好！",
+          usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+        });
+      });
+
+      it("should delete recovered nested transcript files so they do not reappear", async () => {
+        const sessionDir = path.join(testDir, "weixin_sender.jsonl");
+        const transcriptPath = path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({
+              type: "session",
+              version: 3,
+              id: "runtime-session",
+              timestamp: "2026-07-02T08:50:43.724Z",
+              cwd: "/workspace",
+            }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "你好" }],
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const restoredStore = new FileSessionStore(testDir);
+        expect(await restoredStore.list()).toHaveLength(1);
+
+        await restoredStore.delete("weixin_sender:runtime-session");
+
+        expect(fs.existsSync(transcriptPath)).toBe(false);
+        expect(fs.readdirSync(sessionDir).some((name) => name.includes(".deleted."))).toBe(true);
+
+        const freshStore = new FileSessionStore(testDir);
+        expect(await freshStore.list()).toHaveLength(0);
+      });
+
+      it("should delete nested transcript files when an old index lacks transcriptFile", async () => {
+        const sessionDir = path.join(testDir, "weixin_sender.jsonl");
+        const transcriptPath = path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          transcriptPath,
+          [
+            JSON.stringify({
+              type: "session",
+              version: 3,
+              id: "runtime-session",
+              timestamp: "2026-07-02T08:50:43.724Z",
+              cwd: "/workspace",
+            }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "你好" }],
+              },
+            }),
+          ].join("\n") + "\n",
+        );
+        fs.writeFileSync(
+          path.join(testDir, "sessions.json"),
+          JSON.stringify({
+            "weixin_sender:runtime-session": {
+              sessionId: "runtime-session",
+              sessionKey: "weixin_sender:runtime-session",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messageCount: 1,
+            },
+          }, null, 2),
+        );
+
+        const indexedStore = new FileSessionStore(testDir);
+        await indexedStore.delete("weixin_sender:runtime-session");
+
+        expect(fs.existsSync(transcriptPath)).toBe(false);
+
+        const freshStore = new FileSessionStore(testDir);
+        expect(await freshStore.list()).toHaveLength(0);
       });
     });
 

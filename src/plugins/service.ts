@@ -5,6 +5,7 @@
  */
 
 import type { VexConfig } from "../types/index.js";
+import type { MemoryManager } from "../memory/index.js";
 import type { PluginEnableConfig, LoadedPlugin, PluginMeta } from "./index.js";
 import {
   getLoadedPlugins,
@@ -26,11 +27,13 @@ const logger = getChildLogger("plugins:service");
 export class PluginService {
   private config: VexConfig;
   private enableConfig: PluginEnableConfig;
+  private memoryManager?: MemoryManager;
   private initialized: boolean = false;
 
-  constructor(config: VexConfig, enableConfig?: PluginEnableConfig) {
+  constructor(config: VexConfig, enableConfig?: PluginEnableConfig, options?: { memoryManager?: MemoryManager }) {
     this.config = config;
     this.enableConfig = enableConfig ?? {};
+    this.memoryManager = options?.memoryManager;
   }
 
   /**
@@ -50,7 +53,7 @@ export class PluginService {
     logger.info("Initializing plugin service");
 
     // Load plugins
-    const loadResult = await loadPlugins(this.config, this.enableConfig);
+    const loadResult = await loadPlugins(this.config, this.enableConfig, { memoryManager: this.memoryManager });
 
     // Activate plugins
     const activateResult = await activateAllPlugins();
@@ -145,9 +148,9 @@ let defaultService: PluginService | null = null;
 /**
  * Get the default plugin service
  */
-export function getPluginService(config?: VexConfig, enableConfig?: PluginEnableConfig): PluginService {
+export function getPluginService(config?: VexConfig, enableConfig?: PluginEnableConfig, options?: { memoryManager?: MemoryManager }): PluginService {
   if (!defaultService && config) {
-    defaultService = new PluginService(config, enableConfig);
+    defaultService = new PluginService(config, enableConfig, options);
   }
   if (!defaultService) {
     throw new Error("Plugin service not initialized. Provide config on first call.");

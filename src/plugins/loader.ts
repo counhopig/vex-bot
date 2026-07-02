@@ -15,6 +15,7 @@ import type {
 import { registerPlugin, activatePlugin, getLoadedPlugins } from "./index.js";
 import { discoverPlugins } from "./discovery.js";
 import type { VexConfig } from "../types/index.js";
+import type { MemoryManager } from "../memory/index.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("plugins:loader");
@@ -133,7 +134,8 @@ function moduleToDefinition(
  */
 export async function loadPlugins(
   config: VexConfig,
-  enableConfig?: PluginEnableConfig
+  enableConfig?: PluginEnableConfig,
+  options?: { memoryManager?: MemoryManager },
 ): Promise<{
   loaded: string[];
   skipped: Array<{ id: string; reason: string }>;
@@ -185,6 +187,7 @@ export async function loadPlugins(
       await registerPlugin(definition, config, {
         origin: candidate.origin,
         pluginConfig,
+        memoryManager: options?.memoryManager,
       });
       result.loaded.push(candidate.id);
     } catch (error) {

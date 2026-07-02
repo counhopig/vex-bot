@@ -9,6 +9,7 @@ import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig } from "../types/index.js";
 import { COMMON_CSS, WEBCHAT_CSS, CONTROL_CSS } from "./template-css.js";
 import { WEBCHAT_CLIENT_JS, CONTROL_CLIENT_JS } from "./template-client.js";
+import { I18N_CLIENT_JS } from "./i18n.js";
 
 const logger = getChildLogger("static");
 
@@ -111,6 +112,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
   </div>
 
   <script>
+${I18N_CLIENT_JS}
 ${WEBCHAT_CLIENT_JS.replace("${MASCOT_SVG_SMALL}", MASCOT_SVG_SMALL)}
   </script>
 </body>
@@ -207,11 +209,11 @@ ${COMMON_CSS}${CONTROL_CSS}
           </div>
           <div class="card">
             <div class="card-header">
-              <span class="card-title">Active Sessions</span>
+              <span class="card-title">WebSocket Connections</span>
               <span class="card-icon">👥</span>
             </div>
             <div class="card-value" id="session-count">0</div>
-            <div class="card-label">Current connections</div>
+            <div class="card-label">Current browser clients</div>
           </div>
           <div class="card">
             <div class="card-header">
@@ -245,7 +247,7 @@ ${COMMON_CSS}${CONTROL_CSS}
         </div>
         <div class="table-container">
           <div class="table-header">
-            <span class="table-title">Active Sessions</span>
+            <span class="table-title">Stored Sessions</span>
             <button class="btn btn-secondary" onclick="refreshSessions()">Refresh</button>
           </div>
           <table>
@@ -458,7 +460,7 @@ ${COMMON_CSS}${CONTROL_CSS}
       <div class="view" id="view-settings">
         <div class="page-header">
           <h1 class="page-title">Settings</h1>
-          <p class="page-desc">Edit bot persona, extensions, skills, sessions, and raw config</p>
+          <p class="page-desc">Edit bot persona, extensions, weather, skills, sessions, and raw config</p>
         </div>
         <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
           <button class="btn btn-primary" onclick="loadSettings()">Refresh Settings</button>
@@ -467,6 +469,7 @@ ${COMMON_CSS}${CONTROL_CSS}
         <div id="settings-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
           <button class="config-tab active" data-settings-tab="persona">Bot / Persona</button>
           <button class="config-tab" data-settings-tab="extensions">Extensions</button>
+          <button class="config-tab" data-settings-tab="weather">Weather</button>
           <button class="config-tab" data-settings-tab="skills">Skills</button>
           <button class="config-tab" data-settings-tab="sessions">Sessions</button>
           <button class="config-tab" data-settings-tab="geek">Geek (Raw JSON)</button>
@@ -759,6 +762,55 @@ ${COMMON_CSS}${CONTROL_CSS}
           </div>
         </div>
 
+        <!-- Weather tab -->
+        <div class="config-content" id="settings-tab-weather">
+          <div class="form-section">
+            <h3 class="form-section-title">Weather</h3>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Weather Provider</label>
+                <select id="weather-provider" class="form-input">
+                  <option value="wttr">wttr</option>
+                  <option value="caiyun">caiyun</option>
+                </select>
+                <p class="form-hint">wttr is free and needs no API key; Caiyun is more precise and requires an API key</p>
+              </div>
+              <div class="form-group">
+                <label>Caiyun API Version</label>
+                <select id="weather-caiyun-api-version" class="form-input">
+                  <option value="v2.6">v2.6</option>
+                  <option value="v3">v3</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Caiyun API Key / Token (leave blank to keep existing)</label>
+              <input type="password" id="weather-caiyun-api-key" class="form-input" placeholder="Caiyun API key" autocomplete="new-password" />
+              <p class="form-hint" id="weather-caiyun-key-status">No Caiyun API key configured</p>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Default Location</label>
+                <input type="text" id="weather-default-location" class="form-input" placeholder="深圳" />
+              </div>
+              <div class="form-group">
+                <label>wttr Base URL</label>
+                <input type="text" id="weather-wttr-base-url" class="form-input" placeholder="https://wttr.in" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Request Timeout (ms)</label>
+                <input type="number" id="weather-request-timeout-ms" class="form-input" min="1" />
+              </div>
+              <div class="form-group">
+                <label>Cache TTL (ms)</label>
+                <input type="number" id="weather-cache-ttl-ms" class="form-input" min="0" />
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Skills tab -->
         <div class="config-content" id="settings-tab-skills">
           <div class="form-section">
@@ -897,6 +949,7 @@ ${COMMON_CSS}${CONTROL_CSS}
   </div>
 
   <script>
+${I18N_CLIENT_JS}
 ${CONTROL_CLIENT_JS}
   </script>
 </body>

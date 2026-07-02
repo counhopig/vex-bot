@@ -124,7 +124,9 @@ describe("Skill Learner", () => {
   it("captures messages and saves a deployed SKILL.md", async () => {
     const { initSkillLearner, cleanupSkillLearner } = await import("../src/extensions/skilllearner/index.js");
     const { runMessageInterceptors } = await import("../src/pipeline/index.js");
-    initSkillLearner(config());
+    const { MemoryManager } = await import("../src/memory/index.js");
+    const memoryManager = new MemoryManager({ directory: join(testHome, "skill-memory"), enabled: true });
+    initSkillLearner(config(), { memoryManager });
 
     await expect(runMessageInterceptors(context("/skill_learn"))).resolves.toContain("技能学习模式");
     await expect(runMessageInterceptors(context("第一条知识"))).resolves.toContain("已记录 1 条");
@@ -132,7 +134,10 @@ describe("Skill Learner", () => {
 
     expect(saved).toContain("技能已保存并部署");
     await expect(runMessageInterceptors(context("/skill_list"))).resolves.toContain("测试技能");
+    const memories = await memoryManager.list({ tags: ["skill", "skill:测试技能"] });
+    expect(memories.some((memory) => memory.content.includes("第一条知识"))).toBe(true);
     cleanupSkillLearner();
+    await memoryManager.close();
   });
 });
 
@@ -149,6 +154,26 @@ describe("Persona", () => {
     expect(prompt.join("\n")).toContain("私人 Persona");
     expect(summary).toContain("状态");
     cleanupPersona();
+  });
+
+  it("bridges explicit persona notes into long-term memory context", async () => {
+    const { initPersona, cleanupPersona } = await import("../src/extensions/persona/index.js");
+    const { gatherPromptInjections, runMessageInterceptors } = await import("../src/pipeline/index.js");
+    const { MemoryManager } = await import("../src/memory/index.js");
+    const memoryManager = new MemoryManager({ directory: join(testHome, "memory"), enabled: true });
+
+    initPersona(config(), { memoryManager });
+
+    await expect(runMessageInterceptors(context("/persona_note 用户喜欢咖啡"))).resolves.toBe("已记录备注。");
+    const memories = await memoryManager.list({ tags: ["persona", "user:webchat:user-1"] });
+    expect(memories.some((memory) => memory.content.includes("咖啡"))).toBe(true);
+
+    const prompt = await gatherPromptInjections(context("咖啡相关的偏好是什么？"));
+    expect(prompt.join("\n")).toContain("长期记忆");
+    expect(prompt.join("\n")).toContain("咖啡");
+
+    cleanupPersona();
+    await memoryManager.close();
   });
 });
 

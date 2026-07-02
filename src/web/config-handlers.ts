@@ -127,6 +127,17 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
   // Sessions store configuration
   const sessions = config.sessions ? { ...config.sessions } : undefined;
 
+  // Weather configuration (redact Caiyun API key value)
+  const weather = config.weather ? {
+    weather_provider: config.weather.weather_provider,
+    caiyun_api_version: config.weather.caiyun_api_version,
+    wttr_base_url: config.weather.wttr_base_url,
+    default_location: config.weather.default_location,
+    request_timeout_ms: config.weather.request_timeout_ms,
+    cache_ttl_ms: config.weather.cache_ttl_ms,
+    hasCaiyunApiKey: Boolean(config.weather.caiyun_api_key),
+  } : undefined;
+
   return {
     providers,
     channels,
@@ -138,6 +149,7 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
     persona,
     skillLearner,
     sharelink,
+    weather,
     sessions,
   };
 }
@@ -277,6 +289,23 @@ export function validateConfig(params: ConfigSaveParams): ConfigValidateResult {
     }
     if (params.sessions.ttlMs !== undefined && params.sessions.ttlMs < 0) {
       errors.push("sessions.ttlMs must be >= 0");
+    }
+  }
+
+  // Validate Weather configuration
+  if (params.weather) {
+    const weather = params.weather;
+    if (weather.weather_provider !== undefined && !["wttr", "caiyun"].includes(weather.weather_provider)) {
+      errors.push(`weather.weather_provider must be 'wttr' or 'caiyun', got: ${weather.weather_provider}`);
+    }
+    if (weather.caiyun_api_version !== undefined && !["v2.6", "v3"].includes(weather.caiyun_api_version)) {
+      errors.push(`weather.caiyun_api_version must be 'v2.6' or 'v3', got: ${weather.caiyun_api_version}`);
+    }
+    if (weather.request_timeout_ms !== undefined && weather.request_timeout_ms <= 0) {
+      errors.push("weather.request_timeout_ms must be > 0");
+    }
+    if (weather.cache_ttl_ms !== undefined && weather.cache_ttl_ms < 0) {
+      errors.push("weather.cache_ttl_ms must be >= 0");
     }
   }
 
@@ -482,6 +511,26 @@ export function saveConfig(
     configToSave.sessions = mergedSessions as VexConfig["sessions"];
   }
 
+  // Update Weather configuration
+  if (params.weather) {
+    const existingWeather = (existingConfig.weather ?? {}) as Record<string, unknown>;
+    const incoming = params.weather as Record<string, unknown>;
+    const merged: Record<string, unknown> = { ...existingWeather };
+    for (const [k, v] of Object.entries(incoming)) {
+      if (k === "hasCaiyunApiKey") {
+        continue;
+      }
+      if (k === "caiyun_api_key") {
+        if (typeof v === "string" && v.trim()) {
+          merged.caiyun_api_key = v.trim();
+        }
+      } else if (v !== undefined) {
+        merged[k] = v;
+      }
+    }
+    configToSave.weather = merged as VexConfig["weather"];
+  }
+
   if (params.rawYaml && params.rawYaml.trim()) {
     let patch: unknown;
     try {
@@ -512,6 +561,7 @@ export function saveConfig(
 
   const yamlContent = yaml.stringify(configToSave);
   writeFileSync(configPath, yamlContent, "utf-8");
+  Object.assign(currentConfig, configToSave);
 
   logger.info({ configPath }, "Configuration saved");
 

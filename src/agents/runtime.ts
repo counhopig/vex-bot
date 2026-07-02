@@ -18,6 +18,7 @@ import type { AgentTool, AgentToolResult, ThinkingLevel } from "@mariozechner/pi
 import type { VexConfig, ProviderId, InboundMessageContext } from "../types/index.js";
 import { resolveModel, initModelResolver, getApiKeyForProvider } from "../providers/model-resolver.js";
 import { getChildLogger } from "../utils/logger.js";
+import { expandHomePath } from "../utils/path.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
@@ -99,7 +100,7 @@ export class AgentRuntime {
 
   constructor(config: RuntimeConfig) {
     this.config = config;
-    this.sessionDir = config.sessionDir ?? join(os.homedir(), ".vex", "sessions");
+    this.sessionDir = config.sessionDir ? expandHomePath(config.sessionDir) : join(os.homedir(), ".vex", "sessions");
 
     logger.info({ sessionDir: this.sessionDir }, "AgentRuntime initialized");
   }
@@ -220,6 +221,7 @@ export class AgentRuntime {
       includeEnvironment: true,
       includeDateTime: true,
       includeToolRules: false,
+      tools: this.customTools,
       skillsPrompt: this.skillsRegistry?.buildPrompt(),
       enableMemory: !!this.config.memoryManager,
     });

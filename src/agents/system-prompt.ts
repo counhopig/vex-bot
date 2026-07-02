@@ -107,6 +107,25 @@ function buildEnvironmentSection(options: SystemPromptOptions): string {
   return sections.join("\n");
 }
 
+function buildUnifiedContextSection(options: SystemPromptOptions): string {
+  const hasSkills = Boolean(options.skillsPrompt);
+  const hasTools = Boolean(options.tools && options.tools.length > 0);
+  const hasMemory = Boolean(options.enableMemory || options.tools?.some((t) => t.name === "memory_search"));
+  const lines = ["## Unified Capability Context", ""];
+  lines.push("- Skills describe durable behavior, domain knowledge, and operating procedures that should guide your responses.");
+  if (hasTools) {
+    lines.push("- Tools are executable capabilities. Use them when you need current data, local state, file/process access, or a concrete action.");
+  }
+  if (hasMemory) {
+    lines.push("- Memory is shared long-term state across persona, skills, tools, and extensions. Search it before answering personal, historical, preference, or previously-recorded questions; store only durable facts the user explicitly wants remembered.");
+  }
+  lines.push("- Persona context, retrieved memories, and skill instructions should be reconciled into one coherent answer. If they conflict, prefer the newest explicit user instruction and mention uncertainty when needed.");
+  if (!hasSkills && !hasTools && !hasMemory) {
+    lines.push("- No extra skills, tools, or long-term memory are currently available.");
+  }
+  return lines.join("\n");
+}
+
 /** Build complete system prompt */
 export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
@@ -122,6 +141,9 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     sections.push("");
     sections.push(buildEnvironmentSection(options));
   }
+
+  sections.push("");
+  sections.push(buildUnifiedContextSection(options));
 
   // Tool usage rules
   if (options.includeToolRules !== false && options.tools && options.tools.length > 0) {

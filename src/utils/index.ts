@@ -4,6 +4,8 @@
 
 import crypto from "crypto";
 
+export * from "./path.js";
+
 /** Generate a unique ID */
 export function generateId(prefix?: string): string {
   const id = crypto.randomBytes(8).toString("hex");

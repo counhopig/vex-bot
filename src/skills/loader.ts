@@ -9,6 +9,7 @@ import { homedir } from 'os';
 import { glob } from 'glob';
 import type { SkillEntry, SkillSource, SkillsConfig } from './types.js';
 import { parseSkillFile } from './parser.js';
+import { expandHomePath } from '../utils/path.js';
 
 /**
  * Check if a directory exists
@@ -146,12 +147,12 @@ export async function loadAllSkills(
   allSkills.push(...bundledSkills);
 
   // 2. Load user skills
-  const userDir = config?.userDir || dirs.user;
+  const userDir = config?.userDir ? expandHomePath(config.userDir) : dirs.user;
   const userSkills = await loadSkillsFromDirectory(userDir, 'user');
   allSkills.push(...userSkills);
 
   // 3. Load workspace skills
-  const workspaceDir = config?.workspaceDir || dirs.workspace;
+  const workspaceDir = config?.workspaceDir ? expandHomePath(config.workspaceDir) : dirs.workspace;
   const workspaceSkills = await loadSkillsFromDirectory(workspaceDir, 'workspace');
   allSkills.push(...workspaceSkills);
 

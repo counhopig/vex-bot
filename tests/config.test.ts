@@ -177,6 +177,25 @@ describe("config", () => {
 
       expect(result.success).toBe(true);
     });
+
+    it("should validate weather config", () => {
+      const result = VexConfigSchema.safeParse({
+        weather: {
+          weather_provider: "caiyun",
+          caiyun_api_key: "weather-key",
+          caiyun_api_version: "v2.6",
+          default_location: "深圳",
+          request_timeout_ms: 5000,
+          cache_ttl_ms: 300000,
+        },
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.weather?.weather_provider).toBe("caiyun");
+        expect(result.data.weather?.caiyun_api_key).toBe("weather-key");
+      }
+    });
   });
 
   describe("loadConfig", () => {
@@ -186,12 +205,17 @@ describe("config", () => {
 providers:
   deepseek:
     apiKey: file-key
+weather:
+  weather_provider: caiyun
+  caiyun_api_key: weather-key
 `;
 
       fs.writeFileSync(configPath, configContent);
 
       const config = loadConfig({ configPath });
       expect(config.providers.deepseek?.apiKey).toBe("file-key");
+      expect(config.weather?.weather_provider).toBe("caiyun");
+      expect(config.weather?.caiyun_api_key).toBe("weather-key");
     });
 
     it("should reject JSON config files", () => {

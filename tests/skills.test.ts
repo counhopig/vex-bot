@@ -3,7 +3,11 @@
  */
 
 import { describe, it, expect } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { parseSkillContent } from "../src/skills/parser.js";
+import { loadAllSkills } from "../src/skills/loader.js";
 
 describe("skills/parser", () => {
   describe("parseSkillContent", () => {
@@ -194,5 +198,33 @@ const x = 1;
       expect(result!.content).toContain("- Item 1");
       expect(result!.content).toContain("```javascript");
     });
+  });
+});
+
+describe("skills/loader", () => {
+  it("expands home directory shorthand for configured skill directories", async () => {
+    const dirName = `.vex-skill-expand-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const skillDir = path.join(os.homedir(), dirName, "home-skill");
+    const literalDir = path.join(process.cwd(), "~", dirName);
+
+    try {
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, "SKILL.md"),
+        "---\nname: home-skill\n---\n\nLoaded from home shorthand.\n",
+      );
+
+      const skills = await loadAllSkills({
+        userDir: `~/${dirName}`,
+        workspaceDir: path.join(os.tmpdir(), "vex-no-workspace-skills"),
+        only: ["home-skill"],
+      });
+
+      expect(skills.some((skill) => skill.frontmatter.name === "home-skill")).toBe(true);
+      expect(fs.existsSync(literalDir)).toBe(false);
+    } finally {
+      fs.rmSync(path.join(os.homedir(), dirName), { recursive: true, force: true });
+      fs.rmSync(literalDir, { recursive: true, force: true });
+    }
   });
 });

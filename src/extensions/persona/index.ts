@@ -1,6 +1,7 @@
 import type { VexConfig, InboundMessageContext } from "../../types/index.js";
 import { registerMessageInterceptor, registerPromptInjector, registerResponseObserver } from "../../pipeline/index.js";
 import { getChildLogger } from "../../utils/logger.js";
+import type { MemoryManager } from "../../memory/index.js";
 import { InteractionMode, InteractionOutcome, TodoType } from "./models.js";
 import { createPersonaConfig, isSleeping } from "./config.js";
 import { PersonaStorage } from "./storage.js";
@@ -9,6 +10,7 @@ const logger = getChildLogger("persona");
 
 const cleanupFns: Array<() => void> = [];
 let storage: PersonaStorage | null = null;
+let longTermMemory: MemoryManager | null = null;
 
 function userKey(ctx: InboundMessageContext): string {
   return `${ctx.channelId}:${ctx.senderId}`;
@@ -26,7 +28,52 @@ function isAdmin(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMes
   return !config.adminIds || config.adminIds.length === 0 || config.adminIds.includes(ctx.senderId);
 }
 
-function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): string {
+function memoryTags(ctx: InboundMessageContext): string[] {
+  return [
+    "persona",
+    `user:${ctx.channelId}:${ctx.senderId}`,
+    `channel:${ctx.channelId}`,
+  ];
+}
+
+async function rememberPersonaFact(
+  config: ReturnType<typeof createPersonaConfig>,
+  ctx: InboundMessageContext,
+  content: string,
+  type: "fact" | "note" = "fact",
+): Promise<void> {
+  if (!config.memoryEnabled || !longTermMemory || !content.trim()) return;
+  await longTermMemory.remember(content.trim(), {
+    type,
+    source: `persona:${userKey(ctx)}`,
+    tags: memoryTags(ctx),
+  });
+}
+
+async function recallPersonaMemories(
+  config: ReturnType<typeof createPersonaConfig>,
+  ctx: InboundMessageContext,
+): Promise<string> {
+  if (!config.memoryEnabled || !longTermMemory || !ctx.content.trim()) return "";
+  const userTag = `user:${ctx.channelId}:${ctx.senderId}`;
+  const belongsToUser = (entry: Awaited<ReturnType<MemoryManager["list"]>>[number]): boolean => {
+    const tags = entry.metadata.tags ?? [];
+    return tags.includes("persona") && tags.includes(userTag);
+  };
+
+  const entries = await longTermMemory.recall(`${ctx.content} ${ctx.senderName ?? ""}`, 5);
+  let filtered = entries.filter(belongsToUser);
+  if (filtered.length === 0) {
+    filtered = (await longTermMemory.list({ tags: ["persona", userTag] }))
+      .filter(belongsToUser)
+      .sort((a, b) => b.metadata.timestamp - a.metadata.timestamp)
+      .slice(0, 5);
+  }
+  if (filtered.length === 0) return "";
+  return longTermMemory.formatForContext(filtered);
+}
+
+async function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): Promise<string> {
   const currentStorage = storage;
   if (!currentStorage || isIgnoredGroup(ctx, config.ignoreGroupChat)) {
     logger.debug(
@@ -79,6 +126,30 @@ function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: Inboun
     blocks.push(`【近期对话】\n${history}`);
   }
 
+  const relevantMemories = await recallPersonaMemories(config, ctx);
+  if (relevantMemories) {
+    blocks.push(`【长期记忆】\n${relevantMemories}`);
+  }
+
+  const profileFacts = config.profileEnabled ? currentStorage.formatProfileFactsForPrompt(uid) : "";
+  if (profileFacts) {
+    blocks.push(`【用户画像】\n${profileFacts}`);
+  }
+
+  if (config.reflectionEnabled) {
+    const reflection = currentStorage.getUnconsumedReflection(uid);
+    if (reflection) {
+      const reflectionLines = [
+        reflection.note ? `反思：${reflection.note}` : "",
+        reflection.bias ? `偏差提醒：${reflection.bias}` : "",
+        ...reflection.explicitFacts().map((fact) => `事实：${fact}`),
+      ].filter(Boolean);
+      if (reflectionLines.length > 0) {
+        blocks.push(`【最近反思】\n${reflectionLines.join("\n")}`);
+      }
+    }
+  }
+
   if (config.goodnightHintEnabled) {
     blocks.push("【注意】如果用户道晚安或准备睡觉，要温柔收束，不要强行延长聊天。");
   }
@@ -120,7 +191,7 @@ function parseNumber(raw: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function handlePersonaCommand(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): string | null {
+async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): Promise<string | null> {
   const currentStorage = storage;
   if (!currentStorage) {
     return null;
@@ -197,6 +268,7 @@ function handlePersonaCommand(config: ReturnType<typeof createPersonaConfig>, ct
       const profile = currentStorage.getProfile(uid);
       profile.nickname = arg;
       currentStorage.saveProfile(uid, profile);
+      await rememberPersonaFact(config, ctx, `用户昵称是：${arg || "(空)"}`, "fact");
       logger.info({ userId: uid, hasNickname: arg.length > 0 }, "Persona nickname updated");
       return `昵称已设置为：${arg || "(空)"}`;
     }
@@ -217,6 +289,7 @@ function handlePersonaCommand(config: ReturnType<typeof createPersonaConfig>, ct
       const profile = currentStorage.getProfile(uid);
       profile.notes = arg;
       currentStorage.saveProfile(uid, profile);
+      await rememberPersonaFact(config, ctx, `关于用户的备注：${arg}`, "note");
       return "已记录备注。";
     }
     case "/persona_history":
@@ -253,9 +326,10 @@ function observeResponse(config: ReturnType<typeof createPersonaConfig>, ctx: In
   logger.debug({ userId: uid, replyLength: replyText.length, recovery: config.emotionRecoveryPerReply }, "Persona response observed");
 }
 
-export function initPersona(config: VexConfig): void {
+export function initPersona(config: VexConfig, options?: { memoryManager?: MemoryManager }): void {
   const personaConfig = createPersonaConfig(config.persona);
   storage = new PersonaStorage(personaConfig.storageCacheMax);
+  longTermMemory = options?.memoryManager ?? null;
   logger.debug(
     {
       personaName: personaConfig.personaName,
@@ -264,6 +338,7 @@ export function initPersona(config: VexConfig): void {
       effectEnabled: personaConfig.effectEnabled,
       todoEnabled: personaConfig.todoEnabled,
       memoryEnabled: personaConfig.memoryEnabled,
+      hasLongTermMemory: Boolean(longTermMemory),
       storageCacheMax: personaConfig.storageCacheMax,
     },
     "Persona config resolved"
@@ -282,4 +357,5 @@ export function cleanupPersona(): void {
   }
   cleanupFns.length = 0;
   storage = null;
+  longTermMemory = null;
 }

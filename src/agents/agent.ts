@@ -7,11 +7,13 @@ import type {
   InboundMessageContext,
   ProviderId,
   VexConfig,
+  WeatherConfig,
 } from "../types/index.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { AgentRuntime, createAgentRuntime, type ChatResponse, type StreamEvent } from "./runtime.js";
 import { getChildLogger } from "../utils/logger.js";
 import { createBuiltinTools, type BuiltinToolsOptions } from "../tools/builtin/index.js";
+import { getAllTools } from "../tools/registry.js";
 import { initSkills, type SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
 import { getCronService } from "../cron/service.js";
@@ -40,6 +42,7 @@ export interface AgentOptions {
   workingDirectory?: string;
   enableFunctionCalling?: boolean;
   memoryManager?: MemoryManager;
+  weatherConfig?: WeatherConfig;
 }
 
 /** Agent response */
@@ -92,9 +95,18 @@ export class Agent {
       enableMemory: !!this.options.memoryManager,
       memoryManager: this.options.memoryManager,
       enableCron: false,
+      weather: { config: this.options.weatherConfig },
     };
 
-    this.tools = createBuiltinTools(builtinOptions);
+    const builtinTools = createBuiltinTools(builtinOptions);
+    const toolsByName = new Map<string, AgentTool>();
+    for (const tool of builtinTools) {
+      toolsByName.set(tool.name, tool);
+    }
+    for (const tool of getAllTools()) {
+      toolsByName.set(tool.name, tool);
+    }
+    this.tools = Array.from(toolsByName.values());
 
     // Register tools to runtime
     for (const tool of this.tools) {
@@ -183,9 +195,9 @@ export class Agent {
 }
 
 /** Create Agent */
-export async function createAgent(config: VexConfig): Promise<Agent> {
-  let memoryManager: MemoryManager | undefined;
-  if (config.memory?.enabled !== false && config.memory) {
+export async function createAgent(config: VexConfig, options?: { memoryManager?: MemoryManager }): Promise<Agent> {
+  let memoryManager: MemoryManager | undefined = options?.memoryManager;
+  if (!memoryManager && config.memory?.enabled !== false && config.memory) {
     const { createMemoryManager } = await import("../memory/index.js");
     memoryManager = createMemoryManager({
       enabled: config.memory.enabled ?? true,
@@ -239,6 +251,7 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
     workingDirectory: config.agent.workingDirectory ?? process.cwd(),
     enableFunctionCalling: config.agent.enableFunctionCalling ?? true,
     memoryManager,
+    weatherConfig: config.weather,
     enableTools: true,
   });
 
@@ -254,7 +267,7 @@ export async function createAgent(config: VexConfig): Promise<Agent> {
     }
   }
 
-  await initExtensions(config, agent);
+  await initExtensions(config, agent, { memoryManager });
 
   return agent;
 }

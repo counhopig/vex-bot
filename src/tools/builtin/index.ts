@@ -15,6 +15,7 @@ export * from "./subagent.js";
 export * from "./memory.js";
 export * from "./cron.js";
 export * from "./sharelink.js";
+export * from "./weather.js";
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { createWebSearchTool, createWebFetchTool } from "./web.js";
@@ -28,6 +29,7 @@ import { createApplyPatchTool } from "./apply-patch.js";
 import { createMemoryTools, type MemoryToolsOptions } from "./memory.js";
 import { createCronTools, type CronToolsOptions } from "./cron.js";
 import { createShareLinkTool } from "./sharelink.js";
+import { createWeatherTool, type WeatherToolOptions } from "./weather.js";
 import type { MemoryManager } from "../../memory/index.js";
 import type { CronService } from "../../cron/service.js";
 
@@ -37,6 +39,7 @@ export interface BuiltinToolsOptions {
   filesystem?: FilesystemToolsOptions;
   bash?: BashToolOptions;
   memory?: MemoryToolsOptions;
+  weather?: WeatherToolOptions;
   enableBrowser?: boolean;
   enableFilesystem?: boolean;
   enableBash?: boolean;
@@ -59,6 +62,7 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     createImageAnalyzeTool(options?.image),
     createDelayTool(),
     createShareLinkTool(),
+    createWeatherTool(options?.weather),
   ];
 
   // File system tools (enabled by default)

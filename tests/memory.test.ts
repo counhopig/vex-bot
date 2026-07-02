@@ -43,6 +43,22 @@ describe("memory/index", () => {
   });
 
   describe("JsonMemoryStore", () => {
+    it("should expand home directory shorthand in custom path", () => {
+      const dirName = `.vex-memory-expand-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const expandedDir = path.join(os.homedir(), dirName);
+      const literalDir = path.join(process.cwd(), "~", dirName);
+
+      try {
+        new JsonMemoryStore({ directory: `~/${dirName}` });
+
+        expect(fs.existsSync(expandedDir)).toBe(true);
+        expect(fs.existsSync(literalDir)).toBe(false);
+      } finally {
+        fs.rmSync(expandedDir, { recursive: true, force: true });
+        fs.rmSync(literalDir, { recursive: true, force: true });
+      }
+    });
+
     it("should create store and add entries", async () => {
       const testDir = getTestDir();
       fs.mkdirSync(testDir, { recursive: true });

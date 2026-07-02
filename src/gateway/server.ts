@@ -9,6 +9,7 @@ import type { VexConfig, InboundMessageContext } from "../types/index.js";
 import { createWeixinChannel, type WeixinChannel } from "../channels/weixin/index.js";
 import { registerChannel, getChannel } from "../channels/common/index.js";
 import { createAgent, type Agent } from "../agents/agent.js";
+import { createMemoryManager, type MemoryManager } from "../memory/index.js";
 import { initializeProviders } from "../providers/index.js";
 import { getChildLogger, setLogger, createLogger } from "../utils/logger.js";
 import { WsServer } from "../web/websocket.js";
@@ -16,6 +17,7 @@ import { handleStaticRequest } from "../web/static.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { PluginService } from "../plugins/service.js";
 import { getConfigWritePath } from "../config/index.js";
+import { initSessionStore } from "../sessions/index.js";
 
 const logger = getChildLogger("gateway");
 
@@ -27,6 +29,7 @@ export class Gateway {
   private weixinChannel?: WeixinChannel;
   private wsServer?: WsServer;
   private pluginService?: PluginService;
+  private memoryManager?: MemoryManager;
   private processedMessages: NodeCache;
   private readonly MESSAGE_CACHE_TTL_SEC = 300;
   private readonly MESSAGE_CACHE_MAX_KEYS = 10000;
@@ -45,8 +48,12 @@ export class Gateway {
     this.setupRoutes();
   }
 
+  setMemoryManager(memoryManager: MemoryManager | undefined): void {
+    this.memoryManager = memoryManager;
+  }
+
   async initAgent(): Promise<void> {
-    this.agent = await createAgent(this.config);
+    this.agent = await createAgent(this.config, { memoryManager: this.memoryManager });
   }
 
   private setupMiddleware(): void {
@@ -202,6 +209,7 @@ export class Gateway {
   async initialize(): Promise<void> {
     logger.info("Initializing gateway...");
     initializeProviders(this.config);
+    initSessionStore(this.config.sessions?.directory);
 
     this.wsServer = new WsServer({
       server: this.httpServer,
@@ -255,12 +263,19 @@ export class Gateway {
 
 export async function createGateway(config: VexConfig): Promise<Gateway> {
   const gateway = new Gateway(config);
+  const memoryManager = config.memory?.enabled !== false && config.memory
+    ? createMemoryManager({
+        enabled: config.memory.enabled ?? true,
+        directory: config.memory.directory,
+      })
+    : undefined;
+  gateway.setMemoryManager(memoryManager);
 
   // Initialize plugin service before agent/tools so plugin-registered tools,
   // hooks, and services are available to the agent on first message.
   // Per-plugin failures are isolated inside PluginService; an outer catch
   // guarantees plugin misconfiguration never blocks gateway startup.
-  const pluginService = new PluginService(config, undefined);
+  const pluginService = new PluginService(config, undefined, { memoryManager });
   try {
     const result = await pluginService.initialize();
     if (result.failed.length > 0 || result.loaded.length > 0 || result.activated.length > 0) {

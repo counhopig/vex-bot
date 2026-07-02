@@ -106,6 +106,16 @@ const ShareLinkConfigSchema = z.object({
   autoDetect: z.boolean().optional().default(false),
 });
 
+const WeatherConfigSchema = z.object({
+  weather_provider: z.enum(["wttr", "caiyun"]).optional().default("wttr"),
+  caiyun_api_key: z.string().optional(),
+  caiyun_api_version: z.enum(["v2.6", "v3"]).optional().default("v2.6"),
+  wttr_base_url: z.string().optional().default("https://wttr.in"),
+  default_location: z.string().optional(),
+  request_timeout_ms: z.number().int().positive().optional().default(10000),
+  cache_ttl_ms: z.number().int().nonnegative().optional().default(600000),
+});
+
 const PersonaConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
 }).passthrough();
@@ -124,6 +134,7 @@ const VexConfigSchema = z.object({
   skillLearner: SkillLearnerConfigSchema.optional(),
   sharelink: ShareLinkConfigSchema.optional(),
   persona: PersonaConfigSchema.optional(),
+  weather: WeatherConfigSchema.optional(),
 });
 
 // ============== Configuration Loading ==============
@@ -195,6 +206,9 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
     }
     if (config.persona) {
       result.persona = { ...result.persona, ...config.persona };
+    }
+    if (config.weather) {
+      result.weather = { ...result.weather, ...config.weather };
     }
   }
 

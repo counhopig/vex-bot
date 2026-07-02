@@ -7,6 +7,7 @@
 
 import type { Tool } from "../tools/types.js";
 import type { VexConfig, ProviderId } from "../types/index.js";
+import type { MemoryManager } from "../memory/index.js";
 import { registerTool, registerTools } from "../tools/registry.js";
 import { registerHook, type HookEventType, type HookHandler } from "../hooks/index.js";
 import { getChildLogger } from "../utils/logger.js";
@@ -70,6 +71,12 @@ export interface PluginApi {
   config: VexConfig;
   /** Plugin-specific config */
   pluginConfig?: Record<string, unknown>;
+  /** Shared long-term memory manager */
+  memoryManager?: MemoryManager;
+  /** Store shared long-term memory */
+  remember?: MemoryManager["remember"];
+  /** Recall shared long-term memories */
+  recall?: MemoryManager["recall"];
   /** Register a tool */
   registerTool: (tool: Tool) => void;
   /** Register tools in bulk */
@@ -154,6 +161,8 @@ export interface LoadedPlugin {
   services: PluginService[];
   /** Whether activated */
   activated: boolean;
+  /** Shared long-term memory manager */
+  memoryManager?: MemoryManager;
   /** Load timestamp */
   loadedAt: number;
 }
@@ -197,6 +206,7 @@ export async function registerPlugin(
   options?: {
     origin?: PluginOrigin;
     pluginConfig?: Record<string, unknown>;
+    memoryManager?: MemoryManager;
   }
 ): Promise<void> {
   const { meta } = definition;
@@ -219,6 +229,9 @@ export async function registerPlugin(
     meta,
     config,
     pluginConfig: options?.pluginConfig,
+    memoryManager: options?.memoryManager,
+    remember: options?.memoryManager?.remember.bind(options.memoryManager),
+    recall: options?.memoryManager?.recall.bind(options.memoryManager),
     registerTool: (tool) => {
       registerTool(tool);
       logger.debug({ pluginId: meta.id, toolName: tool.name }, "Plugin registered tool");
@@ -255,6 +268,7 @@ export async function registerPlugin(
       hookUnsubscribers,
       services,
       activated: false,
+      memoryManager: options?.memoryManager,
       loadedAt: Date.now(),
     };
 
@@ -286,6 +300,9 @@ export async function activatePlugin(pluginId: string): Promise<void> {
     meta: plugin.definition.meta,
     config: {} as VexConfig,  // Needs to be passed in externally
     pluginConfig: plugin.pluginConfig,
+    memoryManager: plugin.memoryManager,
+    remember: plugin.memoryManager?.remember.bind(plugin.memoryManager),
+    recall: plugin.memoryManager?.recall.bind(plugin.memoryManager),
     registerTool: (tool) => registerTool(tool),
     registerTools: (tools) => registerTools(tools),
     registerHook: (eventType, handler) => {

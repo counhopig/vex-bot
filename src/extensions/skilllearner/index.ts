@@ -2,6 +2,7 @@ import type { VexConfig, InboundMessageContext } from "../../types/index.js";
 import { registerMessageInterceptor } from "../../pipeline/index.js";
 import { getChildLogger } from "../../utils/logger.js";
 import { llmComplete } from "../../providers/llm.js";
+import type { MemoryManager } from "../../memory/index.js";
 import type { LearnedSkill, LearningConfig, LearningSession, SkillType } from "./models.js";
 import { SkillStorage } from "./storage.js";
 
@@ -9,6 +10,7 @@ const logger = getChildLogger("skilllearner");
 
 const storage = new SkillStorage();
 const cleanupFns: Array<() => void> = [];
+let longTermMemory: MemoryManager | null = null;
 
 function getUserKey(ctx: InboundMessageContext): string {
   return `${ctx.channelId}:${ctx.senderId}`;
@@ -125,6 +127,20 @@ async function handleCommand(config: VexConfig, ctx: InboundMessageContext): Pro
       const skill = createSkill(name, session, markdown);
       storage.saveSkill(skill);
       const deployed = config.skillLearner?.autoDeployToSkills !== false ? storage.deployToSkills(skill) : null;
+      if (longTermMemory) {
+        await longTermMemory.remember(
+          [
+            `保存的技能：${skill.name}`,
+            skill.description,
+            ...session.messages.map((message) => `- ${message.content}`),
+          ].join("\n"),
+          {
+            type: "note",
+            source: `skilllearner:${userId}`,
+            tags: ["skill", `skill:${skill.name}`, `user:${userId}`],
+          },
+        );
+      }
       storage.endSession(userId, groupId);
       logger.info(
         {
@@ -219,8 +235,9 @@ function shouldAutoTrigger(config: LearningConfig, content: string): boolean {
   return config.enableAutoLearn && config.autoTriggerKeywords.some((keyword) => content.includes(keyword));
 }
 
-export function initSkillLearner(config: VexConfig): void {
+export function initSkillLearner(config: VexConfig, options?: { memoryManager?: MemoryManager }): void {
   const learningConfig = configFromVex(config);
+  longTermMemory = options?.memoryManager ?? null;
   logger.debug(
     {
       autoTriggerKeywordCount: learningConfig.autoTriggerKeywords.length,
@@ -229,6 +246,7 @@ export function initSkillLearner(config: VexConfig): void {
       enableProactiveSuggest: learningConfig.enableProactiveSuggest,
       proactiveThreshold: learningConfig.proactiveThreshold,
       autoDeployToSkills: config.skillLearner?.autoDeployToSkills !== false,
+      hasLongTermMemory: Boolean(longTermMemory),
     },
     "Skill Learner config resolved"
   );
@@ -263,6 +281,7 @@ export function cleanupSkillLearner(): void {
     fn();
   }
   cleanupFns.length = 0;
+  longTermMemory = null;
 }
 
 export { sanitizeSkillName };

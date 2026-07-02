@@ -9,6 +9,7 @@ import * as os from "os";
 import { randomUUID } from "crypto";
 import { getChildLogger } from "../utils/logger.js";
 import { generateId } from "../utils/index.js";
+import { expandHomePath, isPathInside } from "../utils/path.js";
 import type {
   SessionEntry,
   SessionListItem,
@@ -62,7 +63,7 @@ export class FileSessionStore {
   private writeLock = new WriteLock();
 
   constructor(storePath?: string) {
-    this.storePath = storePath ?? getDefaultStorePath();
+    this.storePath = storePath ? expandHomePath(storePath) : getDefaultStorePath();
     this.indexFile = path.join(this.storePath, "sessions.json");
     this.ensureDirectory();
   }
@@ -83,19 +84,217 @@ export class FileSessionStore {
     }
 
     if (!fs.existsSync(this.indexFile)) {
-      return new Map();
+      const recovered = await this.recoverIndexFromTranscripts();
+      if (recovered.size > 0) {
+        await this.saveIndex(recovered);
+      }
+      return recovered;
     }
 
     try {
       const content = await fs.promises.readFile(this.indexFile, "utf-8");
       const data = JSON.parse(content) as Record<string, SessionEntry>;
       this.cache = new Map(Object.entries(data));
+      const recovered = await this.recoverIndexFromTranscripts();
+      let changed = false;
+      for (const [sessionKey, entry] of recovered) {
+        for (const [existingKey, existingEntry] of this.cache) {
+          if (existingKey !== sessionKey && existingEntry.sessionId === entry.sessionId) {
+            this.cache.delete(existingKey);
+            changed = true;
+          }
+        }
+        const currentEntry = this.cache.get(sessionKey);
+        if (!currentEntry) {
+          this.cache.set(sessionKey, entry);
+          changed = true;
+        } else if (!currentEntry.transcriptFile && entry.transcriptFile) {
+          this.cache.set(sessionKey, {
+            ...entry,
+            ...currentEntry,
+            transcriptFile: entry.transcriptFile,
+          });
+          changed = true;
+        }
+      }
+      if (changed) {
+        await this.saveIndex(this.cache);
+      }
       this.cacheTime = Date.now();
       return this.cache;
     } catch (error) {
       logger.error({ error }, "Failed to load session index");
-      return new Map();
+      return this.recoverIndexFromTranscripts();
     }
+  }
+
+  /** Rebuild index from transcript headers when sessions.json is absent/corrupt */
+  private async recoverIndexFromTranscripts(): Promise<Map<string, SessionEntry>> {
+    const index = new Map<string, SessionEntry>();
+    const files = await this.findTranscriptFiles();
+
+    for (const file of files) {
+      const transcriptPath = path.isAbsolute(file) ? file : path.join(this.storePath, file);
+      try {
+        const content = await fs.promises.readFile(transcriptPath, "utf-8");
+        const lines = content.split("\n").filter((line) => line.trim());
+        if (lines.length === 0) continue;
+
+        const header = JSON.parse(lines[0]!) as Partial<TranscriptHeader> & { id?: string };
+        if (header.type !== "session") continue;
+
+        const relativePath = path.relative(this.storePath, transcriptPath);
+        const pathSessionKey = relativePath.split(path.sep)[0]?.replace(/\.jsonl$/, "");
+        const sessionId = header.sessionId ?? header.id;
+        const sessionKey = header.sessionKey ?? (pathSessionKey && sessionId ? `${pathSessionKey}:${sessionId}` : undefined);
+        if (!sessionId || !sessionKey) continue;
+
+        let messageCount = 0;
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let totalTokens = 0;
+        let model: string | undefined;
+        let provider: string | undefined;
+
+        for (const line of lines.slice(1)) {
+          try {
+            const entry = JSON.parse(line) as Record<string, unknown>;
+            if (entry.type === "model_change") {
+              provider = typeof entry.provider === "string" ? entry.provider : provider;
+              model = typeof entry.modelId === "string" ? entry.modelId : model;
+              continue;
+            }
+            const message = this.toTranscriptMessage(entry);
+            if (!message.role) continue;
+            messageCount++;
+            inputTokens += message.usage?.promptTokens ?? 0;
+            outputTokens += message.usage?.completionTokens ?? 0;
+            totalTokens += message.usage?.totalTokens ?? 0;
+            if (message.model) model = message.model;
+            if (message.provider) provider = message.provider;
+          } catch {
+            // Ignore malformed transcript lines during best-effort recovery.
+          }
+        }
+
+        const stat = await fs.promises.stat(transcriptPath);
+        const createdAt = Date.parse(header.timestamp ?? "") || stat.birthtimeMs || stat.ctimeMs;
+        index.set(sessionKey, {
+          sessionId,
+          sessionKey,
+          createdAt,
+          updatedAt: stat.mtimeMs,
+          transcriptFile: transcriptPath,
+          channel: sessionKey.includes(":") ? sessionKey.split(":")[0] : sessionKey.split("_")[0],
+          messageCount,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          model,
+          provider,
+        });
+      } catch (error) {
+        logger.warn({ error, transcriptPath }, "Failed to recover session transcript");
+      }
+    }
+
+    if (index.size > 0) {
+      logger.info({ count: index.size, path: this.storePath }, "Recovered session index from transcripts");
+    }
+    return index;
+  }
+
+  /** Find JSONL transcript files recursively because AgentRuntime stores each session in a directory. */
+  private async findTranscriptFiles(): Promise<string[]> {
+    const files: string[] = [];
+    const visit = async (dir: string): Promise<void> => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch (error) {
+        logger.error({ error, path: dir }, "Failed to scan session transcripts");
+        return;
+      }
+
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await visit(fullPath);
+        } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+          files.push(fullPath);
+        }
+      }
+    };
+
+    await visit(this.storePath);
+    return files;
+  }
+
+  private async findTranscriptPathBySessionId(sessionId: string): Promise<string | undefined> {
+    const files = await this.findTranscriptFiles();
+    for (const file of files) {
+      try {
+        const firstLine = (await fs.promises.readFile(file, "utf-8")).split("\n")[0];
+        if (!firstLine?.trim()) continue;
+        const header = JSON.parse(firstLine) as Partial<TranscriptHeader> & { id?: string };
+        if (header.type === "session" && (header.sessionId ?? header.id) === sessionId) {
+          return file;
+        }
+      } catch {
+        // Ignore malformed transcript headers while searching for a delete target.
+      }
+    }
+    return undefined;
+  }
+
+  /** Convert Vex transcript rows or pi-coding-agent event rows into displayable transcript messages. */
+  private toTranscriptMessage(entry: Record<string, unknown>): TranscriptMessage {
+    if (typeof entry.role === "string") {
+      return entry as unknown as TranscriptMessage;
+    }
+
+    if (entry.type === "message" && typeof entry.message === "object" && entry.message !== null) {
+      const message = entry.message as Record<string, unknown>;
+      const role = message.role === "toolResult" ? "tool" : message.role;
+      const usage = message.usage as Record<string, unknown> | undefined;
+      return {
+        id: typeof entry.id === "string" ? entry.id : undefined,
+        role: role === "user" || role === "assistant" || role === "system" || role === "tool" ? role : "system",
+        content: this.extractMessageText(message.content),
+        timestamp: Date.parse(typeof entry.timestamp === "string" ? entry.timestamp : "") || Date.now(),
+        usage: usage
+          ? {
+              promptTokens: typeof usage.input === "number" ? usage.input : undefined,
+              completionTokens: typeof usage.output === "number" ? usage.output : undefined,
+              totalTokens: typeof usage.totalTokens === "number" ? usage.totalTokens : undefined,
+            }
+          : undefined,
+        model: typeof message.model === "string" ? message.model : undefined,
+        provider: typeof message.provider === "string" ? message.provider : undefined,
+      };
+    }
+
+    return {
+      role: "system",
+      content: "",
+      timestamp: Date.now(),
+    };
+  }
+
+  private extractMessageText(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (!Array.isArray(content)) return "";
+    return content
+      .map((item) => {
+        if (!item || typeof item !== "object") return "";
+        const part = item as Record<string, unknown>;
+        if (typeof part.text === "string") return part.text;
+        if (typeof part.thinking === "string") return "";
+        if (typeof part.name === "string" && part.type === "toolCall") return `[tool call: ${part.name}]`;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
   }
 
   /** Save the index */
@@ -176,12 +375,21 @@ export class FileSessionStore {
     const entry = index.get(sessionKey);
 
     if (entry) {
-      // Delete transcript file
-      const transcriptPath = this.getTranscriptPath(entry.sessionId);
-      if (fs.existsSync(transcriptPath)) {
-        // Archive instead of deleting
-        const archivePath = `${transcriptPath}.deleted.${Date.now()}`;
-        await fs.promises.rename(transcriptPath, archivePath);
+      const transcriptPaths = new Set<string>();
+      if (entry.transcriptFile && isPathInside(this.storePath, entry.transcriptFile)) {
+        transcriptPaths.add(entry.transcriptFile);
+      }
+      transcriptPaths.add(this.getTranscriptPath(entry.sessionId));
+      const recoveredTranscriptPath = await this.findTranscriptPathBySessionId(entry.sessionId);
+      if (recoveredTranscriptPath) {
+        transcriptPaths.add(recoveredTranscriptPath);
+      }
+
+      for (const transcriptPath of transcriptPaths) {
+        if (fs.existsSync(transcriptPath)) {
+          const archivePath = `${transcriptPath}.deleted.${Date.now()}`;
+          await fs.promises.rename(transcriptPath, archivePath);
+        }
       }
 
       index.delete(sessionKey);
@@ -254,7 +462,7 @@ export class FileSessionStore {
 
   /** Load transcript records */
   async loadTranscript(sessionId: string): Promise<TranscriptMessage[]> {
-    const transcriptPath = this.getTranscriptPath(sessionId);
+    const transcriptPath = await this.resolveTranscriptPath(sessionId);
     if (!fs.existsSync(transcriptPath)) {
       return [];
     }
@@ -270,7 +478,10 @@ export class FileSessionStore {
           const entry = JSON.parse(line);
           // Skip header lines
           if (entry.type === "session") continue;
-          messages.push(entry as TranscriptMessage);
+          const message = this.toTranscriptMessage(entry as Record<string, unknown>);
+          if (message.content !== "" || message.role !== "system") {
+            messages.push(message);
+          }
         } catch {
           // Ignore parse errors
         }
@@ -281,6 +492,20 @@ export class FileSessionStore {
       logger.error({ error, sessionId }, "Failed to load transcript");
       return [];
     }
+  }
+
+  private async resolveTranscriptPath(sessionId: string): Promise<string> {
+    const directPath = this.getTranscriptPath(sessionId);
+    if (fs.existsSync(directPath)) return directPath;
+
+    const index = await this.loadIndex();
+    for (const entry of index.values()) {
+      if (entry.sessionId === sessionId && entry.transcriptFile && fs.existsSync(entry.transcriptFile)) {
+        return entry.transcriptFile;
+      }
+    }
+
+    return directPath;
   }
 
   /** Append a transcript message */

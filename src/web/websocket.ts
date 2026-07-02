@@ -52,13 +52,14 @@ const ProviderConfigInfoSchema = z.object({
   groupId: z.string().optional(),
 }).passthrough();
 const ChannelConfigInfoSchema = z.object({
-  id: z.string().min(1),
-  name: z.string(),
+  id: z.string().min(1).optional(),
+  name: z.string().optional(),
   hasConfig: z.boolean(),
   enabled: z.boolean().optional(),
   baseUrl: z.string().optional(),
   botType: z.string().optional(),
   hasToken: z.boolean().optional(),
+  accountId: z.string().optional(),
 }).passthrough();
 const PersonaConfigSchema = z.object({
   enabled: z.boolean().optional(),
@@ -129,6 +130,16 @@ const SessionsConfigSchema = z.object({
   directory: z.string().optional(),
   ttlMs: z.number().int().optional(),
 }).passthrough();
+const WeatherConfigSchema = z.object({
+  weather_provider: z.enum(["wttr", "caiyun"]).optional(),
+  caiyun_api_key: z.string().optional(),
+  caiyun_api_version: z.enum(["v2.6", "v3"]).optional(),
+  wttr_base_url: z.string().optional(),
+  default_location: z.string().optional(),
+  request_timeout_ms: z.number().int().optional(),
+  cache_ttl_ms: z.number().int().optional(),
+  hasCaiyunApiKey: z.boolean().optional(),
+}).passthrough();
 const ConfigSaveParamsSchema = z.object({
   providers: z.record(ProviderConfigInfoSchema).optional(),
   channels: z.record(ChannelConfigInfoSchema).optional(),
@@ -162,6 +173,7 @@ const ConfigSaveParamsSchema = z.object({
   persona: PersonaConfigSchema.optional(),
   skillLearner: SkillLearnerConfigSchema.optional(),
   sharelink: ShareLinkConfigSchema.optional(),
+  weather: WeatherConfigSchema.optional(),
   sessions: SessionsConfigSchema.optional(),
   rawYaml: z.string().optional(),
 }).default({});

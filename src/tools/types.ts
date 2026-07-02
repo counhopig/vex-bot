@@ -48,7 +48,7 @@ export interface ToolPolicy {
 
 /** Tool group definition */
 export const TOOL_GROUPS: Record<string, string[]> = {
-  "group:web": ["web_search", "web_fetch"],
+  "group:web": ["web_search", "web_fetch", "weather"],
   "group:memory": ["memory_search", "memory_store"],
   "group:media": ["image_analyze"],
   "group:system": ["current_time", "calculator"],

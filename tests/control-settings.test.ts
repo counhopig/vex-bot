@@ -54,7 +54,7 @@ describe("control-settings config-handlers", () => {
   });
 
   describe("getConfigInfo serializes new sections", () => {
-    it("returns persona/skillLearner/sharelink/sessions when present", () => {
+    it("returns persona/skillLearner/sharelink/weather/sessions when present", () => {
       const config: VexConfig = {
         ...baseConfig(),
         persona: {
@@ -75,6 +75,14 @@ describe("control-settings config-handlers", () => {
           bilibiliCookie: { sessdata: "secret-sess", biliJct: "secret-jct" },
           descriptionMaxLength: 500,
         },
+        weather: {
+          weather_provider: "caiyun",
+          caiyun_api_key: "secret-weather-key",
+          caiyun_api_version: "v2.6",
+          default_location: "深圳",
+          request_timeout_ms: 10000,
+          cache_ttl_ms: 600000,
+        },
         sessions: { type: "file", directory: "/tmp/vex-sessions", ttlMs: 3600000 },
       };
 
@@ -90,6 +98,15 @@ describe("control-settings config-handlers", () => {
       });
       // Cookie values must NOT be serialized into ConfigInfo
       expect((info.sharelink as unknown as Record<string, unknown>)?.bilibiliCookie).toBeUndefined();
+      expect(info.weather).toMatchObject({
+        weather_provider: "caiyun",
+        caiyun_api_version: "v2.6",
+        default_location: "深圳",
+        request_timeout_ms: 10000,
+        cache_ttl_ms: 600000,
+        hasCaiyunApiKey: true,
+      });
+      expect((info.weather as unknown as Record<string, unknown>)?.caiyun_api_key).toBeUndefined();
       expect(info.sessions).toEqual(config.sessions);
     });
 
@@ -98,6 +115,7 @@ describe("control-settings config-handlers", () => {
       expect(info.persona).toBeUndefined();
       expect(info.skillLearner).toBeUndefined();
       expect(info.sharelink).toBeUndefined();
+      expect(info.weather).toBeUndefined();
       expect(info.sessions).toBeUndefined();
     });
   });
@@ -143,25 +161,66 @@ describe("control-settings config-handlers", () => {
       expect(result.errors.some((e) => e.includes("sessions.type"))).toBe(true);
     });
 
+    it("rejects invalid weather provider values", () => {
+      const result = validateConfig({
+        weather: { weather_provider: "accuweather" as unknown as "wttr" | "caiyun" },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("weather_provider"))).toBe(true);
+    });
+
+    it("rejects invalid weather timeouts", () => {
+      const result = validateConfig({
+        weather: { request_timeout_ms: 0, cache_ttl_ms: -1 },
+      });
+      expect(result.valid).toBe(false);
+      expect(result.errors.some((e) => e.includes("request_timeout_ms"))).toBe(true);
+      expect(result.errors.some((e) => e.includes("cache_ttl_ms"))).toBe(true);
+    });
+
     it("accepts valid new-section values", () => {
       const result = validateConfig({
         persona: { enabled: true, rest_sleep_hour: 23, rest_wake_hour: 7 },
         skillLearner: { enabled: true, proactiveThreshold: 0.5 },
         sharelink: { responseMode: "simple", descriptionMaxLength: 100 },
+        weather: { weather_provider: "caiyun", caiyun_api_version: "v2.6", request_timeout_ms: 10000 },
         sessions: { type: "memory", ttlMs: 60000 },
       });
+      expect(result.valid).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it("accepts partial channel save payloads from the control form", () => {
+      const result = validateConfig({
+        channels: {
+          weixin: {
+            hasConfig: true,
+            enabled: true,
+            botType: "3",
+          },
+        },
+      });
+
       expect(result.valid).toBe(true);
       expect(result.errors).toEqual([]);
     });
   });
 
   describe("saveConfig round-trips new sections through config.local.yaml", () => {
-    it("writes and re-reads persona/skillLearner/sharelink/sessions", () => {
+    it("writes and re-reads persona/skillLearner/sharelink/weather/sessions", () => {
       const current = baseConfig();
       const params: ConfigSaveParams = {
         persona: { enabled: true, persona_name: "Vex", persona_base_prompt: "hi" },
         skillLearner: { enabled: true, maxLearningTurns: 3 },
         sharelink: { enabled: true, responseMode: "detailed", descriptionMaxLength: 200 },
+        weather: {
+          weather_provider: "caiyun",
+          caiyun_api_key: "weather-key",
+          caiyun_api_version: "v2.6",
+          default_location: "深圳",
+          request_timeout_ms: 5000,
+          cache_ttl_ms: 300000,
+        },
         sessions: { type: "file", directory: "/tmp/s", ttlMs: 1000 },
       };
 
@@ -180,6 +239,7 @@ describe("control-settings config-handlers", () => {
         responseMode: "detailed",
         descriptionMaxLength: 200,
       });
+      expect(parsed.weather).toEqual(params.weather);
       expect(parsed.sessions).toEqual(params.sessions);
     });
 
@@ -210,6 +270,31 @@ describe("control-settings config-handlers", () => {
         biliJct: "old-jct",
       });
       expect(written.sharelink.enabled).toBe(false);
+    });
+
+    it("merges weather.caiyun_api_key only when a value is sent", () => {
+      const vexDir = path.join(tmpHome, ".vex");
+      fs.mkdirSync(vexDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(vexDir, "config.local.yaml"),
+        yaml.stringify({
+          weather: {
+            weather_provider: "caiyun",
+            caiyun_api_key: "old-weather-key",
+            caiyun_api_version: "v2.6",
+          },
+        }),
+      );
+
+      saveConfig(baseConfig(), {
+        weather: { weather_provider: "wttr", caiyun_api_key: "" },
+      });
+
+      const written = yaml.parse(
+        fs.readFileSync(path.join(vexDir, "config.local.yaml"), "utf-8"),
+      );
+      expect(written.weather.caiyun_api_key).toBe("old-weather-key");
+      expect(written.weather.weather_provider).toBe("wttr");
     });
 
     it("rawYaml patch overrides form fields and merges arbitrary keys", () => {
@@ -254,6 +339,19 @@ describe("control-settings config-handlers", () => {
       const result = saveConfig(current, { sessions: { type: "file" } });
       expect(result.success).toBe(true);
       expect(result.requiresRestart).toBe(true);
+    });
+
+    it("updates the live config object after saving", () => {
+      const current = baseConfig();
+
+      const result = saveConfig(current, {
+        persona: { persona_name: "LiveName" },
+        weather: { weather_provider: "caiyun", caiyun_api_version: "v2.6" },
+      });
+
+      expect(result.success).toBe(true);
+      expect(current.persona?.persona_name).toBe("LiveName");
+      expect(current.weather?.weather_provider).toBe("caiyun");
     });
 
     it("writes to the runtime config path when one is attached", () => {
