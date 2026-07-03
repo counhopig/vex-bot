@@ -370,6 +370,8 @@ interface VexConfig {
 }
 ```
 
+The Web auth database does not create a fixed default password. The first registered Web user is assigned role `admin`; admins can list, promote/demote, and delete other Web users.
+
 ### Sub-Config Interfaces
 
 #### `AgentConfig`

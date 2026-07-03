@@ -19,6 +19,7 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 export interface WebUser {
   id: string;
   username: string;
+  role: "admin" | "user";
   passwordHash: string;
   passwordSalt: string;
   createdAt: number;
@@ -41,6 +42,7 @@ export interface WebAuthSession {
 export interface PublicWebUser {
   id: string;
   username: string;
+  role: "admin" | "user";
   createdAt: number;
   hasWeixin: boolean;
   weixinAccountId?: string;
@@ -63,10 +65,12 @@ function openAuthDatabase(config: VexConfig): Database.Database {
   mkdirSync(dirname(file), { recursive: true });
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
   db.exec(`
     CREATE TABLE IF NOT EXISTS web_users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL DEFAULT 'user',
       password_hash TEXT NOT NULL,
       password_salt TEXT NOT NULL,
       created_at INTEGER NOT NULL
@@ -88,6 +92,10 @@ function openAuthDatabase(config: VexConfig): Database.Database {
       updated_at INTEGER NOT NULL
     );
   `);
+  const userColumns = db.prepare("PRAGMA table_info(web_users)").all() as Array<{ name: string }>;
+  if (!userColumns.some((column) => column.name === "role")) {
+    db.exec("ALTER TABLE web_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+  }
   return db;
 }
 
@@ -130,6 +138,7 @@ function toPublicUser(user: WebUser): PublicWebUser {
   return {
     id: user.id,
     username: user.username,
+    role: user.role,
     createdAt: user.createdAt,
     hasWeixin: Boolean(user.weixin?.token),
     weixinAccountId: user.weixin?.accountId,
@@ -139,6 +148,7 @@ function toPublicUser(user: WebUser): PublicWebUser {
 interface WebUserRow {
   id: string;
   username: string;
+  role: "admin" | "user";
   password_hash: string;
   password_salt: string;
   created_at: number;
@@ -160,6 +170,7 @@ function rowToUser(row: WebUserRow): WebUser {
   return {
     id: row.id,
     username: row.username,
+    role: row.role,
     passwordHash: row.password_hash,
     passwordSalt: row.password_salt,
     createdAt: row.created_at,
@@ -186,7 +197,7 @@ function rowToSession(row: WebSessionRow): WebAuthSession {
 
 function getUserByUsername(db: Database.Database, username: string): WebUser | null {
   const row = db.prepare(`
-    SELECT u.id, u.username, u.password_hash, u.password_salt, u.created_at,
+    SELECT u.id, u.username, u.role, u.password_hash, u.password_salt, u.created_at,
            w.token, w.account_id, w.base_url, w.ilink_user_id, w.updated_at
       FROM web_users u
       LEFT JOIN web_user_weixin w ON w.user_id = u.id
@@ -197,13 +208,21 @@ function getUserByUsername(db: Database.Database, username: string): WebUser | n
 
 function getUserById(db: Database.Database, userId: string): WebUser | null {
   const row = db.prepare(`
-    SELECT u.id, u.username, u.password_hash, u.password_salt, u.created_at,
+    SELECT u.id, u.username, u.role, u.password_hash, u.password_salt, u.created_at,
            w.token, w.account_id, w.base_url, w.ilink_user_id, w.updated_at
       FROM web_users u
       LEFT JOIN web_user_weixin w ON w.user_id = u.id
      WHERE u.id = ?
   `).get(userId) as WebUserRow | undefined;
   return row ? rowToUser(row) : null;
+}
+
+function requireAdmin(db: Database.Database, actorId: string): WebUser {
+  const actor = getUserById(db, actorId);
+  if (!actor || actor.role !== "admin") {
+    throw new Error("Admin privileges required");
+  }
+  return actor;
 }
 
 export function isWebAuthEnabled(config: VexConfig): boolean {
@@ -247,22 +266,88 @@ export function createWebUser(config: VexConfig, username: string, password: str
   const user: WebUser = {
     id: `user_${randomBytes(12).toString("hex")}`,
     username: normalizedUsername,
+    role: "user",
     passwordHash: passwordData.hash,
     passwordSalt: passwordData.salt,
     createdAt: Date.now(),
   };
   try {
-    db.prepare(`
-      INSERT INTO web_users (id, username, password_hash, password_salt, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(user.id, user.username, user.passwordHash, user.passwordSalt, user.createdAt);
-    return toPublicUser(user);
+    const inserted = db.transaction(() => {
+      const userCount = db.prepare("SELECT COUNT(*) AS count FROM web_users").get() as { count: number };
+      const role: WebUser["role"] = userCount.count === 0 ? "admin" : "user";
+      db.prepare(`
+        INSERT INTO web_users (id, username, role, password_hash, password_salt, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(user.id, user.username, role, user.passwordHash, user.passwordSalt, user.createdAt);
+      return { ...user, role };
+    })();
+    return toPublicUser(inserted);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("UNIQUE")) {
       throw new Error("Username already exists");
     }
     throw error;
+  } finally {
+    db.close();
+  }
+}
+
+export function listWebUsers(config: VexConfig, actorId: string): PublicWebUser[] {
+  const db = openAuthDatabase(config);
+  try {
+    requireAdmin(db, actorId);
+    const rows = db.prepare(`
+      SELECT u.id, u.username, u.role, u.password_hash, u.password_salt, u.created_at,
+             w.token, w.account_id, w.base_url, w.ilink_user_id, w.updated_at
+        FROM web_users u
+        LEFT JOIN web_user_weixin w ON w.user_id = u.id
+       ORDER BY u.created_at ASC
+    `).all() as WebUserRow[];
+    return rows.map((row) => toPublicUser(rowToUser(row)));
+  } finally {
+    db.close();
+  }
+}
+
+export function updateWebUserRole(
+  config: VexConfig,
+  actorId: string,
+  targetUserId: string,
+  role: WebUser["role"],
+): PublicWebUser {
+  if (role !== "admin" && role !== "user") {
+    throw new Error("Invalid role");
+  }
+  if (actorId === targetUserId) {
+    throw new Error("Admins cannot change their own role");
+  }
+
+  const db = openAuthDatabase(config);
+  try {
+    requireAdmin(db, actorId);
+    const target = getUserById(db, targetUserId);
+    if (!target) throw new Error("User not found");
+    db.prepare("UPDATE web_users SET role = ? WHERE id = ?").run(role, targetUserId);
+    const updated = getUserById(db, targetUserId);
+    if (!updated) throw new Error("User not found");
+    return toPublicUser(updated);
+  } finally {
+    db.close();
+  }
+}
+
+export function deleteWebUser(config: VexConfig, actorId: string, targetUserId: string): void {
+  if (actorId === targetUserId) {
+    throw new Error("Admins cannot delete their own account");
+  }
+
+  const db = openAuthDatabase(config);
+  try {
+    requireAdmin(db, actorId);
+    const target = getUserById(db, targetUserId);
+    if (!target) throw new Error("User not found");
+    db.prepare("DELETE FROM web_users WHERE id = ?").run(targetUserId);
   } finally {
     db.close();
   }
@@ -379,6 +464,14 @@ function getCredentials(body: unknown): { username: string; password: string } {
 }
 
 export function installWebAuthRoutes(config: VexConfig) {
+  function requireAdminRequest(req: Request): PublicWebUser {
+    const user = getRequestUser(config, req);
+    if (!user || user.role !== "admin") {
+      throw new Error("Admin privileges required");
+    }
+    return user;
+  }
+
   return {
     register(req: Request, res: Response): void {
       try {
@@ -410,6 +503,49 @@ export function installWebAuthRoutes(config: VexConfig) {
     me(req: Request, res: Response): void {
       const user = getRequestUser(config, req);
       res.json({ user });
+    },
+    listUsers(req: Request, res: Response): void {
+      try {
+        const actor = requireAdminRequest(req);
+        res.json({ users: listWebUsers(config, actor.id) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(403).json({ error: message });
+      }
+    },
+    updateUser(req: Request, res: Response): void {
+      try {
+        const actor = requireAdminRequest(req);
+        const targetUserId = req.params.id;
+        const body = req.body as Record<string, unknown>;
+        const role = body.role;
+        if (typeof targetUserId !== "string" || !targetUserId) {
+          throw new Error("User id is required");
+        }
+        if (role !== "admin" && role !== "user") {
+          throw new Error("Invalid role");
+        }
+        res.json({ user: updateWebUserRole(config, actor.id, targetUserId, role) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const status = message.includes("required") || message.includes("Invalid") ? 400 : 403;
+        res.status(status).json({ error: message });
+      }
+    },
+    deleteUser(req: Request, res: Response): void {
+      try {
+        const actor = requireAdminRequest(req);
+        const targetUserId = req.params.id;
+        if (typeof targetUserId !== "string" || !targetUserId) {
+          throw new Error("User id is required");
+        }
+        deleteWebUser(config, actor.id, targetUserId);
+        res.json({ ok: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const status = message.includes("required") ? 400 : 403;
+        res.status(status).json({ error: message });
+      }
     },
     requireAuth(req: Request, res: Response, next: NextFunction): void {
       if (!isWebAuthEnabled(config) || getRequestUser(config, req)) {

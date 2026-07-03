@@ -319,6 +319,10 @@ ${COMMON_CSS}${CONTROL_CSS}
         <span class="nav-item-icon">💬</span>
         <span>Sessions</span>
       </div>
+      <div class="nav-item" data-view="users">
+        <span class="nav-item-icon">👥</span>
+        <span>Users</span>
+      </div>
       <div class="nav-section">Configuration</div>
       <div class="nav-item" data-view="config">
         <span class="nav-item-icon">⚙️</span>
@@ -464,6 +468,34 @@ ${COMMON_CSS}${CONTROL_CSS}
             </thead>
             <tbody id="channels-list">
               <tr><td colspan="3" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Users view -->
+      <div class="view" id="view-users">
+        <div class="page-header">
+          <h1 class="page-title">User Management</h1>
+          <p class="page-desc">Admin-only account management for Web UI users</p>
+        </div>
+        <div class="table-container">
+          <div class="table-header">
+            <span class="table-title">Web Users</span>
+            <button class="btn btn-secondary" id="users-refresh-btn" onclick="runWithLoading('users-refresh-btn', refreshUsers)">Refresh</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Weixin</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="users-list">
+              <tr><td colspan="5" class="empty-state">Loading users...</td></tr>
             </tbody>
           </table>
         </div>

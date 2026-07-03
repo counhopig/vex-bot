@@ -77,6 +77,9 @@ export class Gateway {
     this.app.post("/api/auth/register", auth.register);
     this.app.post("/api/auth/login", auth.login);
     this.app.post("/api/auth/logout", auth.logout);
+    this.app.get("/api/admin/users", auth.listUsers);
+    this.app.patch("/api/admin/users/:id", auth.updateUser);
+    this.app.delete("/api/admin/users/:id", auth.deleteUser);
 
     if (this.config.channels.weixin) {
       this.weixinChannel = createWeixinChannel(this.config.channels.weixin, {

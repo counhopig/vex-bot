@@ -6,6 +6,13 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+## [1.13.4] - 2026-07-03
+
+### Added
+
+- Made the first registered Web UI user an `admin`.
+- Added admin-only user management APIs and Control Panel Users view for managing other Web accounts.
+
 ## [1.13.3] - 2026-07-03
 
 ### Added

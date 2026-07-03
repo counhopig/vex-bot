@@ -5,10 +5,13 @@ import { describe, expect, it, afterEach } from "vitest";
 import type { IncomingMessage, ServerResponse } from "http";
 import {
   createWebUser,
+  deleteWebUser,
   getRequestUser,
+  listWebUsers,
   loginWebUser,
   saveUserWeixinLogin,
   setLoginCookie,
+  updateWebUserRole,
 } from "../src/web/auth.js";
 import type { VexConfig } from "../src/types/index.js";
 
@@ -56,7 +59,41 @@ describe("web auth", () => {
     const user = getRequestUser(cfg, { headers: { cookie } } as IncomingMessage);
 
     expect(user?.username).toBe("alice");
+    expect(user?.role).toBe("admin");
     expect(user?.hasWeixin).toBe(false);
+  });
+
+  it("makes only the first registered user an admin", () => {
+    const cfg = config();
+    const first = createWebUser(cfg, "admin-user", "password123");
+    const second = createWebUser(cfg, "normal-user", "password123");
+
+    expect(first.role).toBe("admin");
+    expect(second.role).toBe("user");
+  });
+
+  it("lets admins manage other accounts", () => {
+    const cfg = config();
+    const admin = createWebUser(cfg, "admin-user", "password123");
+    const user = createWebUser(cfg, "normal-user", "password123");
+
+    expect(listWebUsers(cfg, admin.id).map((item) => item.username)).toEqual(["admin-user", "normal-user"]);
+
+    const promoted = updateWebUserRole(cfg, admin.id, user.id, "admin");
+    expect(promoted.role).toBe("admin");
+
+    deleteWebUser(cfg, admin.id, user.id);
+    expect(listWebUsers(cfg, admin.id).map((item) => item.username)).toEqual(["admin-user"]);
+  });
+
+  it("does not let regular users manage accounts or admins delete themselves", () => {
+    const cfg = config();
+    const admin = createWebUser(cfg, "admin-user", "password123");
+    const user = createWebUser(cfg, "normal-user", "password123");
+
+    expect(() => listWebUsers(cfg, user.id)).toThrow("Admin privileges required");
+    expect(() => deleteWebUser(cfg, admin.id, admin.id)).toThrow("Admins cannot delete their own account");
+    expect(() => updateWebUserRole(cfg, admin.id, admin.id, "user")).toThrow("Admins cannot change their own role");
   });
 
   it("stores per-user Weixin login state", () => {

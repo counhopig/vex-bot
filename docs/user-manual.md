@@ -211,6 +211,7 @@ persona:
 | `logging.pretty` | `true` enables colorized human-readable console logs; daily log files stay JSON |
 | `webAuth.enabled` | Protects the browser UI and WebSocket with local login/registration; default `true` |
 | `webAuth.database` | SQLite database path for Web users, sessions, and per-user Weixin login records; default `~/.vex/web-auth.sqlite` |
+| First Web user | There is no fixed default admin password. The first registered Web user gets role `admin`; admins can manage all other accounts in the Control Panel Users view. |
 | `memory.enabled` | Whether the agent remembers cross-session information |
 | `memory.directory` | Where memory files are stored |
 | `sessions.directory` | Where session transcripts (JSONL format) are stored |

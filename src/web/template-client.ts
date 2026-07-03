@@ -438,6 +438,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     let pendingRequests = new Map();
     let requestId = 0;
     let systemStatus = null;
+    let currentUser = null;
     const i18n = window.VexI18n;
     const t = (key, vars) => i18n.t(key, vars);
     const applyI18n = (root) => i18n.apply(root);
@@ -631,6 +632,9 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         if (item.dataset.view === 'sessions' && ws?.readyState === WebSocket.OPEN) {
           refreshSessions();
         }
+        if (item.dataset.view === 'users') {
+          refreshUsers();
+        }
         if ((item.dataset.view === 'providers' || item.dataset.view === 'channels') && ws?.readyState === WebSocket.OPEN) {
           refreshStatus();
         }
@@ -687,6 +691,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
               console.warn('No pending request found:', frame.id);
             }
           } else if (frame.type === 'event') {
+            if (frame.event === 'connected' && frame.payload) {
+              currentUser = frame.payload.user || null;
+              if (document.getElementById('view-users')?.classList.contains('active')) {
+                refreshUsers();
+              }
+            }
             if (frame.event === 'log.entry' && frame.payload) {
               onBackendLog(frame.payload);
             }
@@ -828,6 +838,95 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         showToast('error', t('Failed to delete session') + ': ' + e.message);
       }
     }
+
+    async function adminFetch(path, options) {
+      const response = await fetch(path, {
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...(options?.headers || {}) },
+        ...(options || {}),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Request failed');
+      return result;
+    }
+
+    async function refreshUsers() {
+      const tbody = document.getElementById('users-list');
+      if (!tbody) return;
+      if (currentUser && currentUser.role !== 'admin') {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Admin privileges required</td></tr>';
+        return;
+      }
+      try {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading users...</td></tr>';
+        const result = await adminFetch('/api/admin/users');
+        const users = result.users || [];
+        if (users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No users</td></tr>';
+          return;
+        }
+        tbody.innerHTML = users.map(user => {
+          const isSelf = currentUser && user.id === currentUser.id;
+          const created = user.createdAt ? new Date(user.createdAt).toLocaleString() : '--';
+          const roleAction = user.role === 'admin' ? 'Make user' : 'Make admin';
+          const nextRole = user.role === 'admin' ? 'user' : 'admin';
+          return \`
+            <tr>
+              <td>\${escapeControlHtml(user.username)}</td>
+              <td><span class="status-badge \${user.role === 'admin' ? 'online' : 'offline'}">\${escapeControlHtml(user.role)}</span></td>
+              <td>\${user.hasWeixin ? escapeControlHtml(user.weixinAccountId || 'Connected') : '--'}</td>
+              <td>\${escapeControlHtml(created)}</td>
+              <td>
+                <button class="btn btn-secondary" data-user-role-id="\${escapeControlAttr(user.id)}" data-next-role="\${escapeControlAttr(nextRole)}" \${isSelf ? 'disabled' : ''}>\${roleAction}</button>
+                <button class="btn btn-danger" data-user-delete-id="\${escapeControlAttr(user.id)}" \${isSelf ? 'disabled' : ''}>Delete</button>
+              </td>
+            </tr>
+          \`;
+        }).join('');
+        tbody.querySelectorAll('[data-user-role-id]').forEach(btn => {
+          btn.addEventListener('click', () => updateUserRole(btn.dataset.userRoleId || '', btn.dataset.nextRole || 'user'));
+        });
+        tbody.querySelectorAll('[data-user-delete-id]').forEach(btn => {
+          btn.addEventListener('click', () => deleteUser(btn.dataset.userDeleteId || ''));
+        });
+      } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + escapeControlHtml(e.message) + '</td></tr>';
+        addLog('error', 'Failed to load users: ' + e.message);
+      }
+    }
+
+    async function updateUserRole(userId, role) {
+      if (!userId) return;
+      try {
+        await adminFetch('/api/admin/users/' + encodeURIComponent(userId), {
+          method: 'PATCH',
+          body: JSON.stringify({ role }),
+        });
+        await refreshUsers();
+        showToast('success', 'User role updated');
+      } catch (e) {
+        showToast('error', e.message);
+      }
+    }
+
+    async function deleteUser(userId) {
+      if (!userId) return;
+      const ok = await confirmDialog({
+        title: 'Delete user',
+        message: 'Delete this user and their login sessions?',
+        confirmText: 'Delete',
+      });
+      if (!ok) return;
+      try {
+        await adminFetch('/api/admin/users/' + encodeURIComponent(userId), { method: 'DELETE' });
+        await refreshUsers();
+        showToast('success', 'User deleted');
+      } catch (e) {
+        showToast('error', e.message);
+      }
+    }
+
+    window.refreshUsers = refreshUsers;
 
     function escapeControlHtml(text) {
       return String(text ?? '').replace(/[&<>"']/g, c => ({

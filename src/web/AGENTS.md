@@ -19,7 +19,7 @@ web/
 | Task | Location | Notes |
 |------|----------|-------|
 | WebSocket frame protocol | `types.ts` | `WsFrame = WsRequestFrame \| WsResponseFrame \| WsEventFrame` |
-| Web UI auth | `auth.ts` | Local register/login sessions in SQLite; default DB `~/.vex/web-auth.sqlite` |
+| Web UI auth | `auth.ts` | Local register/login sessions in SQLite; first registered user becomes admin; default DB `~/.vex/web-auth.sqlite` |
 | Add a WS method | `websocket.ts` | Add case in `handleRequest()`, Zod schema, private handler |
 | Chat streaming | `websocket.ts:handleChatSend()` | `agent.processMessageStream()` → `chat.delta` events → client accumulates → `marked.js` render |
 | Cancel in-flight chat | `websocket.ts:handleChatCancel()` | `AbortController.abort()` → `chat.delta` with `cancelled:true` |
@@ -63,6 +63,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
 - **Web session scope**: `sessions.list` filters the shared store to `webchat:` session keys before returning data to the browser UI, so Personal WeChat transcripts remain stored but do not appear on the webpage.
 - **Authenticated session scope**: when `webAuth.enabled` is true, WebChat session keys include the web user id (`webchat:{userId}:{clientId}`) and session list/history/delete/restore reject other users' keys.
+- **Admin bootstrap**: Vex does not create a fixed default admin password. The first registered Web user gets role `admin`; admins can manage all other accounts from the Control Panel Users view and `/api/admin/users`.
 - **Weixin login state**: QR login for authenticated users stores the confirmed token/account id under the current web user in SQLite and asks the Gateway to activate a user-scoped `WeixinChannel`. Startup restores stored user Weixin channels from SQLite.
 - **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
 - **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.

@@ -58,7 +58,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 | Persona auto profile | `src/extensions/persona/index.ts` | Background user-profile extraction every N observed replies |
 | Type definitions | `src/types/index.ts` | All shared interfaces: VexConfig, channels, messages |
 | WebChat UI | `src/web/static.ts` | Login page plus inline HTML/CSS/JS template strings |
-| Web UI auth | `src/web/auth.ts` | SQLite-backed browser users, login sessions, per-user Weixin login records |
+| Web UI auth | `src/web/auth.ts` | SQLite-backed browser users, admin roles, login sessions, per-user Weixin login records |
 | Session persistence | `src/sessions/store.ts` | MemoryStore and FileStore (JSONL) |
 | Memory system | `src/memory/manager.ts` | MemoryManager: store/query/list, TF-IDF |
 | Cron scheduling | `src/cron/service.ts` | CronService: scheduling loop, job execution |
@@ -95,7 +95,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **Logger via pino**: `getChildLogger("moduleName")` pattern, child loggers named after module; `logging.pretty` colorizes console output while file logs stay JSON
 - **Node >= 18**: Uses `homedir()` from `os`, `readFileSync` from `fs`, ESM top-level await
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
-- **Web UI auth storage**: Browser login/registration uses SQLite via `better-sqlite3`, defaulting to `~/.vex/web-auth.sqlite`
+- **Web UI auth storage**: Browser login/registration uses SQLite via `better-sqlite3`, defaulting to `~/.vex/web-auth.sqlite`; first registered user becomes `admin`
 - **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
 
 ## CHANGE HYGIENE
