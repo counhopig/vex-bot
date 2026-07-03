@@ -66,8 +66,23 @@ function getAuthStorePath(config: VexConfig): string {
   return config.webAuth?.database ?? join(homedir(), ".vex", "web-auth.sqlite");
 }
 
+// A better-sqlite3 connection is synchronous and meant to be long-lived. Cache
+// one per database file so every request reuses it instead of opening a new
+// connection and re-running the full schema DDL on every HTTP call.
+let cachedAuthDb: { file: string; db: Database.Database } | null = null;
+
 function openAuthDatabase(config: VexConfig): Database.Database {
   const file = getAuthStorePath(config);
+  if (cachedAuthDb) {
+    if (cachedAuthDb.file === file) return cachedAuthDb.db;
+    // The target file changed (config reload / tests): drop the old connection.
+    try {
+      cachedAuthDb.db.close();
+    } catch {
+      // Already closed or underlying file removed — nothing to do.
+    }
+    cachedAuthDb = null;
+  }
   mkdirSync(dirname(file), { recursive: true });
   const db = new Database(file);
   db.pragma("journal_mode = WAL");
@@ -107,7 +122,20 @@ function openAuthDatabase(config: VexConfig): Database.Database {
   if (!userColumns.some((column) => column.name === "role")) {
     db.exec("ALTER TABLE web_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
   }
+  cachedAuthDb = { file, db };
   return db;
+}
+
+// Expired sessions are already excluded by every lookup's `expires_at > now`
+// filter, so pruning is pure housekeeping — throttle it instead of issuing a
+// DELETE write on every single request.
+let lastSessionPrune = 0;
+const SESSION_PRUNE_INTERVAL_MS = 60_000;
+
+function pruneExpiredSessions(db: Database.Database, now: number): void {
+  if (now - lastSessionPrune < SESSION_PRUNE_INTERVAL_MS) return;
+  lastSessionPrune = now;
+  db.prepare("DELETE FROM web_sessions WHERE expires_at <= ?").run(now);
 }
 
 function hashPassword(password: string, salt = randomBytes(16).toString("hex")): { hash: string; salt: string } {
@@ -135,14 +163,32 @@ function parseCookieHeader(header: string | string[] | undefined): Record<string
   return cookies;
 }
 
-function serializeSessionCookie(sessionId: string, maxAgeSeconds: number): string {
-  return [
+function serializeSessionCookie(sessionId: string, maxAgeSeconds: number, secure: boolean): string {
+  const attributes = [
     `${SESSION_COOKIE}=${encodeURIComponent(sessionId)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${maxAgeSeconds}`,
-  ].join("; ");
+  ];
+  // Mark the session cookie Secure over HTTPS so it is never sent in cleartext.
+  if (secure) attributes.push("Secure");
+  return attributes.join("; ");
+}
+
+/**
+ * Decide whether the session cookie should carry the Secure attribute.
+ * `webAuth.secureCookies` forces the answer when set; otherwise auto-detect
+ * from the request so HTTPS deployments get Secure while plain-HTTP/localhost
+ * development still works.
+ */
+function shouldUseSecureCookie(config: VexConfig, req: Request): boolean {
+  const configured = config.webAuth?.secureCookies;
+  if (typeof configured === "boolean") return configured;
+  if (req.secure) return true;
+  const forwardedProto = req.headers["x-forwarded-proto"];
+  const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
+  return (proto ?? "").split(",")[0]?.trim() === "https";
 }
 
 function toPublicUser(user: WebUser): PublicWebUser {
@@ -251,16 +297,12 @@ export function getRequestUser(config: VexConfig, req: IncomingMessage): PublicW
 
   const now = Date.now();
   const db = openAuthDatabase(config);
-  try {
-    db.prepare("DELETE FROM web_sessions WHERE expires_at <= ?").run(now);
-    const sessionRow = db.prepare("SELECT id, user_id, created_at, expires_at FROM web_sessions WHERE id = ? AND expires_at > ?")
-      .get(sessionId, now) as WebSessionRow | undefined;
-    if (!sessionRow) return null;
-    const user = getUserById(db, sessionRow.user_id);
-    return user ? toPublicUser(user) : null;
-  } finally {
-    db.close();
-  }
+  pruneExpiredSessions(db, now);
+  const sessionRow = db.prepare("SELECT id, user_id, created_at, expires_at FROM web_sessions WHERE id = ? AND expires_at > ?")
+    .get(sessionId, now) as WebSessionRow | undefined;
+  if (!sessionRow) return null;
+  const user = getUserById(db, sessionRow.user_id);
+  return user ? toPublicUser(user) : null;
 }
 
 export function createWebUser(config: VexConfig, username: string, password: string): PublicWebUser {
@@ -299,26 +341,20 @@ export function createWebUser(config: VexConfig, username: string, password: str
       throw new Error("Username already exists");
     }
     throw error;
-  } finally {
-    db.close();
   }
 }
 
 export function listWebUsers(config: VexConfig, actorId: string): PublicWebUser[] {
   const db = openAuthDatabase(config);
-  try {
-    requireAdmin(db, actorId);
-    const rows = db.prepare(`
-      SELECT u.id, u.username, u.role, u.password_hash, u.password_salt, u.created_at,
-             w.token, w.account_id, w.base_url, w.ilink_user_id, w.updated_at
-        FROM web_users u
-        LEFT JOIN web_user_weixin w ON w.user_id = u.id
-       ORDER BY u.created_at ASC
-    `).all() as WebUserRow[];
-    return rows.map((row) => toPublicUser(rowToUser(row)));
-  } finally {
-    db.close();
-  }
+  requireAdmin(db, actorId);
+  const rows = db.prepare(`
+    SELECT u.id, u.username, u.role, u.password_hash, u.password_salt, u.created_at,
+           w.token, w.account_id, w.base_url, w.ilink_user_id, w.updated_at
+      FROM web_users u
+      LEFT JOIN web_user_weixin w ON w.user_id = u.id
+     ORDER BY u.created_at ASC
+  `).all() as WebUserRow[];
+  return rows.map((row) => toPublicUser(rowToUser(row)));
 }
 
 export function updateWebUserRole(
@@ -335,17 +371,13 @@ export function updateWebUserRole(
   }
 
   const db = openAuthDatabase(config);
-  try {
-    requireAdmin(db, actorId);
-    const target = getUserById(db, targetUserId);
-    if (!target) throw new Error("User not found");
-    db.prepare("UPDATE web_users SET role = ? WHERE id = ?").run(role, targetUserId);
-    const updated = getUserById(db, targetUserId);
-    if (!updated) throw new Error("User not found");
-    return toPublicUser(updated);
-  } finally {
-    db.close();
-  }
+  requireAdmin(db, actorId);
+  const target = getUserById(db, targetUserId);
+  if (!target) throw new Error("User not found");
+  db.prepare("UPDATE web_users SET role = ? WHERE id = ?").run(role, targetUserId);
+  const updated = getUserById(db, targetUserId);
+  if (!updated) throw new Error("User not found");
+  return toPublicUser(updated);
 }
 
 export function deleteWebUser(config: VexConfig, actorId: string, targetUserId: string): void {
@@ -354,111 +386,91 @@ export function deleteWebUser(config: VexConfig, actorId: string, targetUserId: 
   }
 
   const db = openAuthDatabase(config);
-  try {
-    requireAdmin(db, actorId);
-    const target = getUserById(db, targetUserId);
-    if (!target) throw new Error("User not found");
-    db.prepare("DELETE FROM web_users WHERE id = ?").run(targetUserId);
-  } finally {
-    db.close();
-  }
+  requireAdmin(db, actorId);
+  const target = getUserById(db, targetUserId);
+  if (!target) throw new Error("User not found");
+  db.prepare("DELETE FROM web_users WHERE id = ?").run(targetUserId);
 }
 
 export function loginWebUser(config: VexConfig, username: string, password: string): { user: PublicWebUser; session: WebAuthSession } {
   const normalizedUsername = username.trim().toLowerCase();
   const db = openAuthDatabase(config);
-  try {
-    const user = getUserByUsername(db, normalizedUsername);
-    if (!user || !verifyPassword(password, user)) {
-      throw new Error("Invalid username or password");
-    }
-
-    const now = Date.now();
-    db.prepare("DELETE FROM web_sessions WHERE expires_at <= ?").run(now);
-    const session: WebAuthSession = {
-      id: `sess_${randomBytes(24).toString("hex")}`,
-      userId: user.id,
-      createdAt: now,
-      expiresAt: now + SESSION_TTL_MS,
-    };
-    db.prepare(`
-      INSERT INTO web_sessions (id, user_id, created_at, expires_at)
-      VALUES (?, ?, ?, ?)
-    `).run(session.id, session.userId, session.createdAt, session.expiresAt);
-    return { user: toPublicUser(user), session };
-  } finally {
-    db.close();
+  const user = getUserByUsername(db, normalizedUsername);
+  if (!user || !verifyPassword(password, user)) {
+    throw new Error("Invalid username or password");
   }
+
+  const now = Date.now();
+  pruneExpiredSessions(db, now);
+  const session: WebAuthSession = {
+    id: `sess_${randomBytes(24).toString("hex")}`,
+    userId: user.id,
+    createdAt: now,
+    expiresAt: now + SESSION_TTL_MS,
+  };
+  db.prepare(`
+    INSERT INTO web_sessions (id, user_id, created_at, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run(session.id, session.userId, session.createdAt, session.expiresAt);
+  return { user: toPublicUser(user), session };
 }
 
 export function logoutWebUser(config: VexConfig, req: IncomingMessage): void {
   const sessionId = parseCookieHeader(req.headers.cookie)[SESSION_COOKIE];
   if (!sessionId) return;
   const db = openAuthDatabase(config);
-  try {
-    db.prepare("DELETE FROM web_sessions WHERE id = ?").run(sessionId);
-  } finally {
-    db.close();
-  }
+  db.prepare("DELETE FROM web_sessions WHERE id = ?").run(sessionId);
 }
 
-export function setLoginCookie(res: ServerResponse, session: WebAuthSession): void {
+export function setLoginCookie(res: ServerResponse, session: WebAuthSession, secure = false): void {
   const maxAgeSeconds = Math.max(0, Math.floor((session.expiresAt - Date.now()) / 1000));
-  res.setHeader("Set-Cookie", serializeSessionCookie(session.id, maxAgeSeconds));
+  res.setHeader("Set-Cookie", serializeSessionCookie(session.id, maxAgeSeconds, secure));
 }
 
-export function clearLoginCookie(res: ServerResponse): void {
-  res.setHeader("Set-Cookie", serializeSessionCookie("", 0));
+export function clearLoginCookie(res: ServerResponse, secure = false): void {
+  res.setHeader("Set-Cookie", serializeSessionCookie("", 0, secure));
 }
 
 export function saveUserWeixinLogin(config: VexConfig, userId: string, login: LoginResult): PublicWebUser {
   const db = openAuthDatabase(config);
-  try {
-    const user = getUserById(db, userId);
-    if (!user) throw new Error("User not found");
-    db.prepare(`
-      INSERT INTO web_user_weixin (user_id, token, account_id, base_url, ilink_user_id, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        token = excluded.token,
-        account_id = excluded.account_id,
-        base_url = excluded.base_url,
-        ilink_user_id = excluded.ilink_user_id,
-        updated_at = excluded.updated_at
-    `).run(userId, login.token, login.accountId, login.baseUrl, login.userId, Date.now());
-    const updatedUser = getUserById(db, userId);
-    if (!updatedUser) throw new Error("User not found");
-    return toPublicUser(updatedUser);
-  } finally {
-    db.close();
-  }
+  const user = getUserById(db, userId);
+  if (!user) throw new Error("User not found");
+  db.prepare(`
+    INSERT INTO web_user_weixin (user_id, token, account_id, base_url, ilink_user_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      token = excluded.token,
+      account_id = excluded.account_id,
+      base_url = excluded.base_url,
+      ilink_user_id = excluded.ilink_user_id,
+      updated_at = excluded.updated_at
+  `).run(userId, login.token, login.accountId, login.baseUrl, login.userId, Date.now());
+  const updatedUser = getUserById(db, userId);
+  if (!updatedUser) throw new Error("User not found");
+  return toPublicUser(updatedUser);
 }
 
 export function listUserWeixinLogins(config: VexConfig): StoredUserWeixinLogin[] {
   if (!isWebAuthEnabled(config)) return [];
   const db = openAuthDatabase(config);
-  try {
-    const rows = db.prepare(`
-      SELECT user_id, token, account_id, base_url, ilink_user_id
-        FROM web_user_weixin
-       WHERE token <> ''
-    `).all() as Array<{
-      user_id: string;
-      token: string;
-      account_id: string;
-      base_url?: string;
-      ilink_user_id?: string;
-    }>;
-    return rows.map((row) => ({
-      userId: row.user_id,
-      token: row.token,
-      accountId: row.account_id,
-      baseUrl: row.base_url,
-      ilinkUserId: row.ilink_user_id,
-    }));
-  } finally {
-    db.close();
-  }
+  const rows = db.prepare(`
+    SELECT user_id, token, account_id, base_url, ilink_user_id
+      FROM web_user_weixin
+     WHERE token <> ''
+  `).all() as Array<{
+    user_id: string;
+    token: string;
+    account_id: string;
+    base_url?: string;
+    ilink_user_id?: string;
+  }>;
+  return rows.map((row) => ({
+    userId: row.user_id,
+    token: row.token,
+    accountId: row.account_id,
+    baseUrl: row.base_url,
+    ilinkUserId: row.ilink_user_id,
+  }));
 }
 
 export function getUserConfigSettings(config: VexConfig, userId: string): UserConfigSettings {
@@ -472,8 +484,6 @@ export function getUserConfigSettings(config: VexConfig, userId: string): UserCo
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch (error) {
     throw new Error(`Failed to load user settings: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    db.close();
   }
 }
 
@@ -497,8 +507,6 @@ export function saveUserConfigSettings(config: VexConfig, userId: string, patch:
     return next;
   } catch (error) {
     throw new Error(`Failed to save user settings: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    db.close();
   }
 }
 
@@ -565,7 +573,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         const credentials = getCredentials(req.body);
         createWebUser(config, credentials.username, credentials.password);
         const login = loginWebUser(config, credentials.username, credentials.password);
-        setLoginCookie(res, login.session);
+        setLoginCookie(res, login.session, shouldUseSecureCookie(config, req));
         res.json({ user: login.user });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -576,7 +584,7 @@ export function installWebAuthRoutes(config: VexConfig) {
       try {
         const credentials = getCredentials(req.body);
         const login = loginWebUser(config, credentials.username, credentials.password);
-        setLoginCookie(res, login.session);
+        setLoginCookie(res, login.session, shouldUseSecureCookie(config, req));
         res.json({ user: login.user });
       } catch {
         res.status(401).json({ error: "Invalid username or password" });
@@ -584,7 +592,7 @@ export function installWebAuthRoutes(config: VexConfig) {
     },
     logout(req: Request, res: Response): void {
       logoutWebUser(config, req);
-      clearLoginCookie(res);
+      clearLoginCookie(res, shouldUseSecureCookie(config, req));
       res.json({ ok: true });
     },
     me(req: Request, res: Response): void {

@@ -65,6 +65,23 @@ describe("web auth", () => {
     expect(user?.hasWeixin).toBe(false);
   });
 
+  it("adds the Secure attribute to the session cookie only when requested", () => {
+    const cfg = config();
+    createWebUser(cfg, "alice", "password123");
+    const login = loginWebUser(cfg, "alice", "password123");
+
+    const plainRes = createResponse();
+    setLoginCookie(plainRes, login.session);
+    expect(String(plainRes.headers?.["Set-Cookie"])).not.toContain("Secure");
+
+    const secureRes = createResponse();
+    setLoginCookie(secureRes, login.session, true);
+    const secureCookie = String(secureRes.headers?.["Set-Cookie"]);
+    expect(secureCookie).toContain("Secure");
+    expect(secureCookie).toContain("HttpOnly");
+    expect(secureCookie).toContain("SameSite=Lax");
+  });
+
   it("makes only the first registered user an admin", () => {
     const cfg = config();
     const first = createWebUser(cfg, "admin-user", "password123");

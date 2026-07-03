@@ -296,6 +296,12 @@ export interface WebAuthConfig {
   enabled?: boolean;
   /** SQLite database path for Web users, sessions, and per-user Weixin login state */
   database?: string;
+  /**
+   * Force the `Secure` attribute on the session cookie on/off. When omitted it
+   * is auto-detected per request (HTTPS -> Secure, plain HTTP -> not), which is
+   * the right default behind a TLS-terminating proxy or for local development.
+   */
+  secureCookies?: boolean;
 }
 
 /** Main config */

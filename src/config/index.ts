@@ -125,6 +125,7 @@ const PersonaConfigSchema = z.object({
 const WebAuthConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   database: z.string().optional(),
+  secureCookies: z.boolean().optional(),
 });
 
 const VexConfigSchema = z.object({
