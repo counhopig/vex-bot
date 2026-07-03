@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.13.0-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-1.13.1-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 

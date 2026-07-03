@@ -38,7 +38,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 | `chat.send` | req → stream | `{message, sessionKey?}` | `chat.delta` events + final `{messageId}` |
 | `chat.cancel` | req | `{}` | `{cancelled}` |
 | `chat.clear` | req | `{}` | `{success, sessionKey, sessionId}` |
-| `sessions.list` | req | `{limit?, activeMinutes?, search?}` | `{sessions}` |
+| `sessions.list` | req | `{limit?, activeMinutes?, search?}` | `{sessions}` (WebChat sessions only; Weixin sessions are not exposed to the webpage) |
 | `sessions.history` | req | `{sessionKey}` | `{sessionKey, sessionId, messages}` |
 | `sessions.delete` | req | `{sessionKey}` | `{success}` |
 | `sessions.reset` | req | `{sessionKey}` | `{success, sessionKey, sessionId}` |
@@ -58,6 +58,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 
 - **Streaming**: `handleChatSend` runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
+- **Web session scope**: `sessions.list` filters the shared store to `webchat:` session keys before returning data to the browser UI, so Personal WeChat transcripts remain stored but do not appear on the webpage.
 - **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
 - **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.

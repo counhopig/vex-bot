@@ -6,6 +6,13 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-07-03
+
+### Fixed
+
+- Hid Personal WeChat sessions from the WebChat and control-panel session lists.
+- Synced package lockfile metadata with the package version.
+
 ## [1.13.0] - 2026-07-03
 
 ### Added

@@ -26,11 +26,21 @@ import type { VexConfig } from "../types/index.js";
 import type { WeixinChannel } from "../channels/weixin/index.js";
 import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
-import { getSessionStore, type TranscriptMessage } from "../sessions/index.js";
+import { getSessionStore, type SessionListItem, type TranscriptMessage } from "../sessions/index.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { getConfigInfo, validateConfig, saveConfig } from "./config-handlers.js";
 import { LogStreamer } from "./log-stream.js";
 const logger = getChildLogger("websocket");
+const WEBCHAT_SESSION_PREFIX = "webchat:";
+
+/** Keep the browser UI scoped to sessions created by WebChat itself. */
+export function filterWebChatSessions(
+  sessions: readonly SessionListItem[],
+  limit?: number
+): SessionListItem[] {
+  const webchatSessions = sessions.filter((session) => session.sessionKey.startsWith(WEBCHAT_SESSION_PREFIX));
+  return limit ? webchatSessions.slice(0, limit) : webchatSessions;
+}
 
 const EmptyParamsSchema = z.object({}).passthrough().default({});
 const ChatSendParamsSchema = z.object({
@@ -713,11 +723,10 @@ export class WsServer {
   private async handleSessionsList(params?: SessionsListParams): Promise<unknown> {
     const store = getSessionStore();
     const sessions = await store.list({
-      limit: params?.limit,
       activeMinutes: params?.activeMinutes,
       search: params?.search,
     });
-    return { sessions };
+    return { sessions: filterWebChatSessions(sessions, params?.limit) };
   }
 
   /** Handle get session history */
