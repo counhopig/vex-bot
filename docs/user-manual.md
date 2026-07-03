@@ -174,6 +174,7 @@ server:
   host: 0.0.0.0
 logging:
   level: info
+  pretty: true
 memory:
   enabled: true
   directory: /path/to/memory
@@ -183,6 +184,10 @@ skills:
   enabled: true
   disabled: []
   only: []
+persona:
+  enabled: true
+  profile_building_enabled: true
+  profile_building_trigger_turns: 5
 ```
 
 ### Field reference
@@ -199,11 +204,14 @@ skills:
 | `agent.workingDirectory` | Working directory the agent uses for file operations |
 | `server.port` | Port for HTTP / WebSocket, default 3000 |
 | `server.host` | Listen address; `0.0.0.0` allows remote access |
-| `logging.level` | Log verbosity; set to `debug` or `trace` when troubleshooting |
+| `logging.level` | Log verbosity; set to `debug` when troubleshooting |
+| `logging.pretty` | `true` enables colorized human-readable console logs; daily log files stay JSON |
 | `memory.enabled` | Whether the agent remembers cross-session information |
 | `memory.directory` | Where memory files are stored |
 | `sessions.directory` | Where session transcripts (JSONL format) are stored |
 | `skills` | Controls SKILL.md injection; `disabled` and `only` take skill name arrays |
+| `persona.profile_building_enabled` | Enables background user-profile extraction from recent chat history |
+| `persona.profile_building_trigger_turns` | Runs profile extraction every N observed assistant replies; default 5 |
 
 export WEIXIN_OC_ACCOUNT_ID="xxx"
 export WEIXIN_OC_BASE_URL="https://ilinkai.weixin.qq.com"
@@ -431,6 +439,7 @@ Vex WebChat contains two server-rendered single-page applications:
 - View Vex service status
 - Edit your `config.local.yaml` file online
 - Manage WeChat QR code login
+- View live backend logs from the current daily log file
 - Restart the service
 
 ### Basic operations
@@ -439,6 +448,14 @@ Vex WebChat contains two server-rendered single-page applications:
 2. **Clear session**: click the "Clear Session" button to reset the conversation context.
 3. **Streaming responses**: AI replies appear character by character; no need to wait for full generation.
 4. **Session isolation**: each WeChat contact and the WebChat UI each have their own independent agent session.
+
+### Control panel logs
+
+The control panel can subscribe to backend logs in real time. It shows a recent backlog first, then appends new log entries as Vex writes them. Console output is colorized when `logging.pretty` is `true`, but files under `~/.vex/logs/` remain structured JSON so `vex logs` and the control panel can parse them reliably.
+
+### Persona auto profile
+
+When `persona.enabled` and `persona.profile_building_enabled` are true, Vex observes normal chat replies and runs a background profile extraction every `persona.profile_building_trigger_turns` turns. The task uses the configured default agent provider/model, writes deduplicated profile facts into Persona storage, and also mirrors accepted facts into long-term memory with Persona tags. Extraction failures are logged and do not block the user-facing reply.
 
 ### WeChat QR login
 
@@ -686,7 +703,6 @@ From most verbose to least:
 
 | Level | Description | Typical use |
 |---|---|---|
-| `trace` | Maximum detail | Full function call chains |
 | `debug` | Debug information | Variable values, intermediate states |
 | `info` | Normal events | Service startup, connection established |
 | `warn` | Warnings | Recoverable issues, degraded performance |

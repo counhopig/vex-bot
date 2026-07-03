@@ -1,12 +1,12 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-25
-**Commit:** b7bf46a
+**Generated:** 2026-07-03
+**Commit:** 3d0a4fb
 **Branch:** main
 
 ## OVERVIEW
 
-Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~24k lines / 85 .ts source files. TypeScript ESM only. npm package + CLI binary.
+Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~23k lines / 99 .ts source files. TypeScript ESM only. npm package + CLI binary.
 
 Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
 
@@ -21,6 +21,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 │   ├── tools/         # Tool registration, validation, execution engine + 25 built-in tools
 │   ├── skills/        # SKILL.md injection system (YAML frontmatter + Markdown)
 │   ├── plugins/       # Auto-discovery plugin system (3-tier: bundled/global/workspace)
+│   ├── extensions/    # Built-in pipeline extensions: Persona, ShareLink, Skill Learner
 │   ├── memory/        # Long-term memory with TF-IDF embedding
 │   ├── cron/          # Scheduling: at/every/cron, agentTurn + systemEvent types
 │   ├── outbound/      # Unified cross-channel message delivery
@@ -35,7 +36,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 │   ├── types/         # Shared TypeScript types
 │   └── utils/         # Logger, crypto helpers
 ├── skills/            # Built-in skills (greeting, clawhub)
-├── tests/             # Vitest tests (15 files)
+├── tests/             # Vitest tests (26 files)
 ├── docs/              # Documentation
 └── .github/           # CI: npm publish on release
 ```
@@ -53,6 +54,8 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 | Model providers | `src/providers/model-resolver.ts` | Provider presets, model mapping |
 | System prompt | `src/agents/system-prompt.ts` | Prompt assembly with skills/memory injection |
 | Plugin API | `src/plugins/index.ts` | definePlugin, PluginApi, 3-tier loading |
+| Built-in extensions | `src/extensions/` | Persona, ShareLink, Skill Learner pipeline integrations |
+| Persona auto profile | `src/extensions/persona/index.ts` | Background user-profile extraction every N observed replies |
 | Type definitions | `src/types/index.ts` | All shared interfaces: VexConfig, channels, messages |
 | WebChat UI | `src/web/static.ts` | Inline HTML/CSS/JS template string |
 | Session persistence | `src/sessions/store.ts` | MemoryStore and FileStore (JSONL) |
@@ -88,10 +91,14 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **Zod for config validation**: All config schemas defined as Zod objects in `src/config/index.ts`
 - **YAML config format**: Application config is YAML-only (`config.local.yaml`)
 - **Config hierarchy**: CWD `config.local.yaml`, then `~/.vex/config.local.yaml`; later files override earlier fields
-- **Logger via pino**: `getChildLogger("moduleName")` pattern, child loggers named after module
+- **Logger via pino**: `getChildLogger("moduleName")` pattern, child loggers named after module; `logging.pretty` colorizes console output while file logs stay JSON
 - **Node >= 18**: Uses `homedir()` from `os`, `readFileSync` from `fs`, ESM top-level await
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
 - **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
+
+## CHANGE HYGIENE
+
+- **Every code/config/behavior change must include a documentation/version review**: before finishing any modification, addition, or removal, check whether README, `docs/`, relevant `AGENTS.md`, `CHANGELOG.md`, package version metadata, and visible examples/config snippets need updates. Update them in the same change when affected; if no update is needed, be ready to state why.
 
 ## ANTI-PATTERNS
 
@@ -128,10 +135,10 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 ## TEST INFRASTRUCTURE
 
 - **Framework**: Vitest 2.x, `globals: true`, `environment: "node"`
-- **Location**: `tests/` directory (flat, 15 files). NOT colocated with source. Zero `__tests__/` dirs in `src/`
+- **Location**: `tests/` directory (flat, 26 files). NOT colocated with source. Zero `__tests__/` dirs in `src/`
 - **Naming**: `<module>.test.ts` (e.g., `config.test.ts`, `hooks.test.ts`)
 - **Mock pattern**: `vi.mock()` hoisted at top, `.js` extension in paths, NO shared mock helpers — every file self-contained
-- **Logger mock** (appears in 11/15 files): always the same shape, copy-pasted per file
+- **Logger mock** (appears in many files): same shape, copy-pasted per file
 - **Fixtures**: temp dirs under `os.tmpdir()` created in `beforeEach`, cleaned in `afterEach`. No fixture files
 - **Coverage excludes**: `src/cli/**`, `src/web/**`
 - **Untested**: CLI, WebChat UI, gateway Express server, WeChat channel adapter, chat commands

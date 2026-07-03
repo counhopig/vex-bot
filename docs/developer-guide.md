@@ -110,7 +110,7 @@ vex-bot/
 │   │
 │   ├── web/                # Server-rendered WebChat SPA (inline HTML/CSS/JS, no frontend build)
 │   │   ├── types.ts        #   WsFrame union, ChatMessage, session info (⚠ incompatible with src/types ChatMessage)
-│   │   ├── websocket.ts    #   WsServer: connection management, 16 method handlers, heartbeat, YAML config save
+│   │   ├── websocket.ts    #   WsServer: connection management, 18 method handlers, heartbeat, YAML config save, log stream
 │   │   ├── static.ts       #   Two inline SPAs (WebChat UI + Control Panel UI)
 │   │   └── index.ts        #   Barrel export
 │   │
@@ -146,7 +146,7 @@ vex-bot/
 │       └── index.ts        #   Barrel export (significant dead code)
 │
 ├── skills/                 # Built-in skills (greeting, clawhub, etc.)
-├── tests/                  # Vitest tests (15 files, flat structure)
+├── tests/                  # Vitest tests (26 files, flat structure)
 ├── docs/                   # Documentation (you are here)
 └── .github/                # CI: GitHub Release triggers npm publish
 ```
@@ -230,7 +230,7 @@ WeixinChannel.replyToContext() → iLink API → WeChat client
 Browser WebChat UI
      │ WebSocket ws://host/ws
      ▼
-WsServer (websocket.ts) — 16 methods
+WsServer (websocket.ts) — 18 methods
      │ handleChatSend()
      ▼
 Agent.processMessageStream(ctx)
@@ -246,11 +246,12 @@ Transcript persisted to session JSONL file
 
 **Key details**:
 - WebSocket frame format: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}`
-- 16 WS methods cover: chat, sessions, config, weixin.qr, status, ping
+- 18 WS methods cover: chat, sessions, config, weixin.qr, logs, status, ping
 - `Agent.processMessageStream()` is an `AsyncGenerator` that yields `text_delta` / `tool_start` / `tool_end` events
 - Stream event loop: subscribes to `AgentSessionEvent`, queues them, polls every 50ms while draining, abortable via `AbortSignal`
 - `chat.cancel` method signals `AbortController.abort()` → session stops mid-generation
 - Client accumulates text deltas in a buffer; when `done:true` arrives, it calls `marked.parse()` to render the final Markdown
+- Control panel log streaming uses `logs.subscribe` / `logs.unsubscribe`; `LogStreamer` tails the current daily JSON log file and emits `log.entry` events with normalized `{time, level, module?, msg}` payloads.
 
 ### 2.3 Session Management
 
@@ -589,7 +590,7 @@ type ProviderId =
 - **Directory**: `tests/` flat structure, not colocated in `src/`
 - **Naming**: `<module>.test.ts` (e.g., `config.test.ts`, `hooks.test.ts`)
 - **Mock pattern**: `vi.mock()` hoisted at top of file, `.js` extension in paths, no shared mock helpers — every file self-contained
-- **Logger mock** (appears in 11/15 files): always the same shape, copy-pasted per file:
+- **Logger mock** (appears in many files): same shape, copy-pasted per file:
   ```typescript
   vi.mock("../src/utils/logger.js", () => ({
     getChildLogger: () => ({
@@ -733,6 +734,11 @@ Before modifying `src/agents/runtime.ts`, understand the pi-coding-agent API fir
 | `node-cache` | Message deduplication | — |
 | `yaml` | YAML parsing (config and skills) | `src/config/index.ts`, `src/skills/parser.ts` |
 | `marked` | Markdown rendering (frontend CDN) | WebChat UI (not an npm dependency) |
+
+**Logging details**:
+- `logging.pretty` defaults to `true` for gateway startup and enables colorized `pino-pretty` console output.
+- File logs always remain newline-delimited JSON under `~/.vex/logs/vex-YYYY-MM-DD.log`.
+- The control panel log stream tails the file output rather than intercepting pino transports, because pino transport targets run in worker threads.
 
 ### Node.js Requirements
 

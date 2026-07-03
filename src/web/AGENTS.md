@@ -1,6 +1,6 @@
 # Web Module
 
-WebChat browser UI + WebSocket protocol layer. Server-rendered inline HTML SPAs (no frontend build). WebSocket server implements 16 methods for chat, sessions, config, and WeChat QR.
+WebChat browser UI + WebSocket protocol layer. Server-rendered inline HTML SPAs (no frontend build). WebSocket server implements 18 methods for chat, sessions, config, live logs, and WeChat QR.
 
 ## STRUCTURE
 
@@ -49,6 +49,8 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 | `config.validate` | req | `ConfigSaveParams` | `{valid, errors[], warnings[]}` |
 | `config.save` | req | `ConfigSaveParams` | `{success, message, requiresRestart?}` |
 | `ping` | req | `{}` | `{pong: timestamp}` |
+| `logs.subscribe` | req | `{}` | `{entries: BackendLogEntry[]}` + `log.entry` events |
+| `logs.unsubscribe` | req | `{}` | `{ok: true}` |
 | `weixin.qr` | req | `{}` | `{qrcode_url, qrcode}` or `{error}` |
 | `weixin.qr.status` | req | `{qrcode}` | `{status, message, accountId?}` |
 
@@ -57,6 +59,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 - **Streaming**: `handleChatSend` runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
 - **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
+- **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.
 - **No filesystem for HTML**: Both SPAs are giant inline template strings with embedded CSS/JS. `handleStaticRequest` sets `Content-Length` via `Buffer.byteLength()`. `marked.js` loaded from CDN.
 

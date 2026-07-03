@@ -282,6 +282,21 @@ class Gateway {
 - WebChat frontend hosted at root path, control panel at `/control`
 - WeChat channel (iLink OC API) routes registered automatically via `setupRoutes`
 
+**WebSocket endpoint:** `GET /ws`
+
+Frames use `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}`.
+
+| Method | Purpose |
+|---|---|
+| `chat.send`, `chat.cancel`, `chat.clear` | Streaming chat, cancellation, and session clearing |
+| `sessions.list`, `sessions.history`, `sessions.delete`, `sessions.reset`, `sessions.restore` | Session management |
+| `status.get`, `session.info`, `ping` | Runtime status and health checks |
+| `config.get`, `config.validate`, `config.save` | Control-panel config editing |
+| `logs.subscribe`, `logs.unsubscribe` | Subscribe to live backend logs; initial response includes recent `entries` |
+| `weixin.qr`, `weixin.qr.status` | Control-panel WeChat QR login |
+
+`logs.subscribe` emits `log.entry` events with `{time, level, module?, msg}` payloads.
+
 ### Factory Functions
 
 #### `createGateway(config: VexConfig): Promise<Gateway>`
@@ -326,6 +341,7 @@ interface VexConfig {
   // Logging configuration
   logging: {
     level: "debug" | "info" | "warn" | "error";
+    pretty?: boolean;   // Colorized console output; log files stay JSON
   };
 
   // Session storage configuration
@@ -342,6 +358,9 @@ interface VexConfig {
     disabled?: string[];
     only?: string[];
   };
+
+  // Built-in Persona extension configuration
+  persona?: PersonaConfig;
 }
 ```
 
@@ -408,6 +427,23 @@ interface SessionStoreConfig {
   ttlMs?: number;
 }
 ```
+
+#### `PersonaConfig`
+
+```typescript
+interface PersonaConfig {
+  enabled?: boolean;
+  persona_name?: string;
+  persona_base_prompt?: string;
+  persona_reply_style?: string;
+  memory_max_turns?: number;
+  profile_building_enabled?: boolean;       // Default: true
+  profile_building_trigger_turns?: number;  // Default: 5
+  debug_log_enabled?: boolean;
+}
+```
+
+The runtime accepts additional Persona keys via passthrough validation. Profile building runs out of band after observed assistant replies and uses the default agent provider/model.
 
 ### Message-Related Types
 

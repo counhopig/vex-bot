@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.12.0-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-1.13.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
@@ -15,6 +15,8 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **Chinese model coverage** — DeepSeek, MiniMax, Kimi (Moonshot), Doubao (ByteDance), Zhipu, LongCat, StepFun, ModelScope, DashScope, plus custom OpenAI/Anthropic-compatible providers and Western backends (OpenAI, Ollama, OpenRouter, Together, Groq, Azure OpenAI, vLLM)
 - **Personal WeChat** — connects to personal WeChat accounts via the iLink OC API long-polling channel for sending/receiving messages and files
 - **WebChat UI** — built-in WebSocket-driven browser chat interface, server-rendered with no frontend build step
+- **Control panel** — browser control surface for config editing, WeChat QR login, service status, and live backend logs
+- **Persona extension** — private persona state, emotion/effects/todos, and background user-profile extraction from chat history
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
 - **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, cron job management, memory access, sub-agent delegation, and system utilities
 - **TF-IDF long-term memory** — automatic memory storage with TF-IDF retrieval injected into the agent context
@@ -46,9 +48,11 @@ flowchart TD
         ME[Memory<br/>TF-IDF]
         CR[Cron<br/>at / every / cron]
         OB[Outbound<br/>message delivery]
+        EX[Extensions<br/>persona · sharelink · skill learner]
     end
 
     AG --> PR[LLM Providers<br/>DeepSeek · Kimi · MiniMax<br/>Doubao · Zhipu · LongCat · etc.<br/>pi-ai abstraction]
+    AG --> EX
 ```
 
 | Subsystem | Location | Role |
@@ -58,6 +62,7 @@ flowchart TD
 | Memory | `src/memory/` | TF-IDF vectorized long-term memory |
 | Cron | `src/cron/` | at/every/cron schedule dispatching |
 | Outbound | `src/outbound/` | Cross-channel unified message delivery |
+| Extensions | `src/extensions/` | Built-in pipeline extensions: Persona, ShareLink, Skill Learner |
 | Plugins | `src/plugins/` | 3-tier auto-discovery + lifecycle management |
 | Browser | `src/browser/` | Playwright headless browser automation |
 | Hooks | `src/hooks/` | 12 event type hook system |
@@ -160,9 +165,14 @@ server:
   host: 0.0.0.0
 logging:
   level: info
+  pretty: true
 memory:
   enabled: true
   embeddingProvider: deepseek
+persona:
+  enabled: true
+  profile_building_enabled: true
+  profile_building_trigger_turns: 5
 ```
 
 Config loading is YAML-only: Vex loads `config.local.yaml` from the current directory, then `~/.vex/config.local.yaml`, and falls back to built-in defaults for missing fields.
@@ -178,6 +188,7 @@ Config loading is YAML-only: Vex loads `config.local.yaml` from the current dire
 │   ├── tools/           # Tool registration, validation, execution engine (25 built-in tools)
 │   ├── skills/          # SKILL.md injection system (YAML frontmatter + Markdown)
 │   ├── plugins/         # 3-tier plugin auto-discovery (bundled/global/workspace)
+│   ├── extensions/      # Built-in pipeline extensions (Persona, ShareLink, Skill Learner)
 │   ├── memory/          # TF-IDF long-term memory with embedding
 │   ├── cron/            # Scheduling: at/every/cron expressions
 │   ├── outbound/        # Cross-channel unified message delivery
