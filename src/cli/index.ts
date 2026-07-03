@@ -18,7 +18,7 @@ import { initializeProviders, getAllModels, resolveModel, getApiKeyForProvider }
 import { createLogger, setLogger, getLogDir, getLogFile } from "../utils/logger.js";
 import { CHINA_PROVIDER_IDS, OVERSEAS_PROVIDER_IDS, getProviderMeta } from "../providers/metadata.js";
 import { runOnboardWizard } from "./onboard.js";
-import { spawn } from "child_process";
+import { spawn, execSync } from "child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -34,6 +34,42 @@ program
   .name("vex")
   .description("Vex - AI assistant supporting Chinese LLMs and communication platforms")
   .version(packageJson.version);
+
+/**
+ * Find PIDs of running Vex service processes.
+ *
+ * Uses `pgrep` only to *list* candidate PIDs; it never kills by pattern.
+ * The current process is excluded so `restart`/`stop` cannot signal
+ * themselves, and callers always send signals to explicit numeric PIDs
+ * (via process.kill) rather than a broad `pkill -f`, which would match and
+ * kill unrelated processes elsewhere on the machine.
+ */
+function findVexPids(): number[] {
+  const raw = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
+  return raw
+    .trim()
+    .split("\n")
+    .map((line) => parseInt(line.trim(), 10))
+    .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+}
+
+/** Send a signal to each PID individually; returns PIDs that were still alive to signal. */
+function signalPids(pids: number[], signal: NodeJS.Signals): number[] {
+  const signalled: number[] = [];
+  for (const pid of pids) {
+    try {
+      process.kill(pid, signal);
+      signalled.push(pid);
+    } catch (err) {
+      // ESRCH: process already gone — nothing to do.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "ESRCH") {
+        console.error(`Cannot signal process ${pid}:`, err instanceof Error ? err.message : err);
+      }
+    }
+  }
+  return signalled;
+}
 
 // Start command
 program
@@ -296,12 +332,8 @@ program
   .alias("stop")
   .description("Stop running Vex service")
   .action(async () => {
-    const { execSync } = await import("child_process");
-
     try {
-      // Find vex processes
-      const result = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
-      const pids = result.trim().split("\n").filter(Boolean);
+      const pids = findVexPids();
 
       if (pids.length === 0) {
         console.log("No running Vex service found");
@@ -310,24 +342,19 @@ program
 
       console.log(`Found ${pids.length} Vex process(es): ${pids.join(", ")}`);
 
-      // Kill processes
-      for (const pid of pids) {
-        try {
-          process.kill(parseInt(pid, 10), "SIGTERM");
-          console.log(`Termination signal sent to process ${pid}`);
-        } catch (err) {
-          console.error(`Cannot terminate process ${pid}:`, err instanceof Error ? err.message : err);
-        }
+      // Graceful stop: SIGTERM each PID individually.
+      for (const pid of signalPids(pids, "SIGTERM")) {
+        console.log(`Termination signal sent to process ${pid}`);
       }
 
       // Wait for process exit
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      // Check if any processes still running
-      const remaining = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" }).trim();
-      if (remaining) {
-        console.log("Some processes still running, attempting force kill...");
-        execSync(`pkill -9 -f "node.*dist/cli.*start" 2>/dev/null || true`);
+      // Force-kill only the PIDs we targeted that are still alive — never pkill by pattern.
+      const stillAlive = findVexPids().filter((pid) => pids.includes(pid));
+      if (stillAlive.length > 0) {
+        console.log(`Some processes still running (${stillAlive.join(", ")}), forcing kill...`);
+        signalPids(stillAlive, "SIGKILL");
       }
 
       console.log("Vex service stopped");
@@ -345,19 +372,21 @@ program
   .option("-p, --port <port>", "Server port")
   .option("--web-only", "WebChat only")
   .action(async (options) => {
-    const { execSync, spawn: spawnProcess } = await import("child_process");
-
     console.log("Restarting Vex service...\n");
 
-    // 1. Stop existing service
+    // 1. Stop existing service — signal explicit PIDs, never pkill by pattern.
     try {
-      const result = execSync('pgrep -f "node.*dist/cli.*start" 2>/dev/null || echo ""', { encoding: "utf-8" });
-      const pids = result.trim().split("\n").filter(Boolean);
+      const pids = findVexPids();
 
       if (pids.length > 0) {
         console.log(`Stopping existing service (PID: ${pids.join(", ")})...`);
-        execSync(`pkill -f "node.*dist/cli.*start" 2>/dev/null || true`);
+        signalPids(pids, "SIGTERM");
         await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const stillAlive = findVexPids().filter((pid) => pids.includes(pid));
+        if (stillAlive.length > 0) {
+          signalPids(stillAlive, "SIGKILL");
+        }
       }
     } catch {
       // Ignore errors
