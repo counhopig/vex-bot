@@ -2,6 +2,7 @@ import { join } from "path";
 import type { Agent } from "./agent.js";
 import { createAgent } from "./agent.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
+import { disposeExtensions } from "../extensions/index.js";
 import type { VexConfig } from "../types/index.js";
 import { getUserConfigSettings, isWebAuthEnabled } from "../web/auth.js";
 import { buildUserEffectiveConfig } from "../web/config-handlers.js";
@@ -15,20 +16,40 @@ export interface UserRuntime {
   readonly memoryManager?: MemoryManager;
 }
 
+interface RuntimeEntry {
+  // In-flight creation Promise, not the resolved runtime, so concurrent
+  // getOrCreate() calls for the same user share one build instead of racing to
+  // spin up duplicate Agents/MemoryManagers on the same directory.
+  readonly runtime: Promise<UserRuntime>;
+  lastAccess: number;
+}
+
+// Bound the runtime cache so a long-lived multi-user process does not hold an
+// Agent + SQLite handle + MemoryManager open for every user who ever logged in.
+const DEFAULT_MAX_RUNTIMES = 128;
+const DEFAULT_IDLE_TTL_MS = 30 * 60 * 1000;
+
 export class UserRuntimeManager {
   private readonly config: VexConfig;
   private readonly globalAgent: Agent;
   private readonly globalMemoryManager?: MemoryManager;
-  private readonly runtimes = new Map<string, UserRuntime>();
+  private readonly runtimes = new Map<string, RuntimeEntry>();
+  private readonly maxRuntimes: number;
+  private readonly idleTtlMs: number;
 
   constructor(options: {
     readonly config: VexConfig;
     readonly globalAgent: Agent;
     readonly globalMemoryManager?: MemoryManager;
+    // <= 0 disables the respective bound (mainly for tests).
+    readonly maxRuntimes?: number;
+    readonly idleTtlMs?: number;
   }) {
     this.config = options.config;
     this.globalAgent = options.globalAgent;
     this.globalMemoryManager = options.globalMemoryManager;
+    this.maxRuntimes = options.maxRuntimes ?? DEFAULT_MAX_RUNTIMES;
+    this.idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
   }
 
   async getAgent(userId?: string): Promise<Agent> {
@@ -38,33 +59,102 @@ export class UserRuntimeManager {
     return (await this.getOrCreate(userId)).agent;
   }
 
-  async getOrCreate(userId: string): Promise<UserRuntime> {
+  getOrCreate(userId: string): Promise<UserRuntime> {
+    this.evictIdle();
     const existing = this.runtimes.get(userId);
-    if (existing) return existing;
+    if (existing) {
+      existing.lastAccess = Date.now();
+      return existing.runtime;
+    }
 
-    const effectiveConfig = this.buildUserConfig(userId);
-    const memoryManager = this.createUserMemoryManager(effectiveConfig, userId);
-    const agent = await createAgent(effectiveConfig, { memoryManager });
-    const runtime: UserRuntime = { userId, agent, memoryManager };
-    this.runtimes.set(userId, runtime);
-    logger.info({ userId }, "User runtime created");
+    const runtime = this.buildRuntime(userId);
+    const entry: RuntimeEntry = { runtime, lastAccess: Date.now() };
+    this.runtimes.set(userId, entry);
+    // If construction rejects, evict the cached rejection so a later call
+    // retries a fresh build instead of permanently serving the failure.
+    runtime.catch(() => {
+      if (this.runtimes.get(userId) === entry) {
+        this.runtimes.delete(userId);
+      }
+    });
+    this.evictOverflow();
     return runtime;
   }
 
-  async shutdown(): Promise<void> {
-    for (const runtime of this.runtimes.values()) {
-      await runtime.agent.shutdown();
-      await runtime.memoryManager?.close();
+  /** Drop runtimes that have been idle past the TTL and tear them down. */
+  private evictIdle(): void {
+    if (this.idleTtlMs <= 0) return;
+    const cutoff = Date.now() - this.idleTtlMs;
+    for (const [userId, entry] of this.runtimes) {
+      if (entry.lastAccess < cutoff) {
+        this.runtimes.delete(userId);
+        void this.disposeRuntime(entry.runtime, userId, "idle");
+      }
     }
+  }
+
+  /** Evict least-recently-accessed runtimes until back under the cap. */
+  private evictOverflow(): void {
+    if (this.maxRuntimes <= 0) return;
+    while (this.runtimes.size > this.maxRuntimes) {
+      let oldestKey: string | undefined;
+      let oldestAccess = Infinity;
+      for (const [userId, entry] of this.runtimes) {
+        if (entry.lastAccess < oldestAccess) {
+          oldestAccess = entry.lastAccess;
+          oldestKey = userId;
+        }
+      }
+      if (oldestKey === undefined) break;
+      const entry = this.runtimes.get(oldestKey)!;
+      this.runtimes.delete(oldestKey);
+      void this.disposeRuntime(entry.runtime, oldestKey, "overflow");
+    }
+  }
+
+  private async buildRuntime(userId: string): Promise<UserRuntime> {
+    const effectiveConfig = this.buildUserConfig(userId);
+    const memoryManager = this.createUserMemoryManager(effectiveConfig, userId);
+    const agent = await createAgent(effectiveConfig, { memoryManager, ownerId: userId });
+    logger.info({ userId }, "User runtime created");
+    return { userId, agent, memoryManager };
+  }
+
+  async shutdown(): Promise<void> {
+    const entries = [...this.runtimes.entries()];
     this.runtimes.clear();
+    for (const [userId, entry] of entries) {
+      await this.disposeRuntime(entry.runtime, userId, "shutdown");
+    }
   }
 
   async reset(userId: string): Promise<void> {
-    const runtime = this.runtimes.get(userId);
-    if (!runtime) return;
-    await runtime.agent.shutdown();
-    await runtime.memoryManager?.close();
+    const entry = this.runtimes.get(userId);
+    if (!entry) return;
     this.runtimes.delete(userId);
+    await this.disposeRuntime(entry.runtime, userId, "reset");
+  }
+
+  private async disposeRuntime(
+    runtimePromise: Promise<UserRuntime>,
+    userId: string,
+    reason: "shutdown" | "reset" | "idle" | "overflow",
+  ): Promise<void> {
+    let runtime: UserRuntime;
+    try {
+      runtime = await runtimePromise;
+    } catch {
+      // Build failed; nothing was constructed to tear down.
+      return;
+    }
+    try {
+      await runtime.agent.shutdown();
+      await runtime.memoryManager?.close();
+      await disposeExtensions(userId);
+      logger.info({ userId, reason }, "User runtime disposed");
+    } catch (error) {
+      logger.warn({ userId, reason, error }, "Failed to dispose user runtime");
+    }
   }
 
   private buildUserConfig(userId: string): VexConfig {

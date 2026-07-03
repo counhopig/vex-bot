@@ -10,7 +10,11 @@ import { getChildLogger } from "../utils/logger.js";
 const logger = getChildLogger("extensions");
 
 /** Initialize all built-in extensions */
-export async function initExtensions(config: VexConfig, agent: Agent, options?: { memoryManager?: MemoryManager }): Promise<void> {
+export async function initExtensions(
+  config: VexConfig,
+  agent: Agent,
+  options?: { memoryManager?: MemoryManager; ownerId?: string },
+): Promise<void> {
   logger.debug(
     {
       sharelinkEnabled: config.sharelink?.enabled !== false,
@@ -36,7 +40,7 @@ export async function initExtensions(config: VexConfig, agent: Agent, options?: 
   if (config.skillLearner?.enabled !== false) {
     try {
       const { initSkillLearner } = await import("./skilllearner/index.js");
-      await initSkillLearner(config, { memoryManager: options?.memoryManager });
+      await initSkillLearner(config, { memoryManager: options?.memoryManager, ownerId: options?.ownerId });
       logger.info("Skill Learner extension initialized");
     } catch (error) {
       logger.error({ error }, "Failed to initialize Skill Learner extension");
@@ -49,12 +53,28 @@ export async function initExtensions(config: VexConfig, agent: Agent, options?: 
   if (config.persona?.enabled !== false) {
     try {
       const { initPersona } = await import("./persona/index.js");
-      await initPersona(config, { memoryManager: options?.memoryManager });
+      await initPersona(config, { memoryManager: options?.memoryManager, ownerId: options?.ownerId });
       logger.info("Private Persona extension initialized");
     } catch (error) {
       logger.error({ error }, "Failed to initialize Private Persona extension");
     }
   } else {
     logger.debug("Private Persona extension disabled");
+  }
+}
+
+/** Release a single owner's per-user extension state when their runtime is torn down. */
+export async function disposeExtensions(ownerId: string): Promise<void> {
+  try {
+    const { disposePersonaOwner } = await import("./persona/index.js");
+    disposePersonaOwner(ownerId);
+  } catch (error) {
+    logger.warn({ error, ownerId }, "Failed to dispose persona owner state");
+  }
+  try {
+    const { disposeSkillLearnerOwner } = await import("./skilllearner/index.js");
+    disposeSkillLearnerOwner(ownerId);
+  } catch (error) {
+    logger.warn({ error, ownerId }, "Failed to dispose skill-learner owner state");
   }
 }

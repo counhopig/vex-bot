@@ -199,7 +199,7 @@ export class Agent {
 }
 
 /** Create Agent */
-export async function createAgent(config: VexConfig, options?: { memoryManager?: MemoryManager }): Promise<Agent> {
+export async function createAgent(config: VexConfig, options?: { memoryManager?: MemoryManager; ownerId?: string }): Promise<Agent> {
   let memoryManager: MemoryManager | undefined = options?.memoryManager;
   if (!memoryManager && config.memory?.enabled !== false && config.memory) {
     const { createMemoryManager } = await import("../memory/index.js");
@@ -271,7 +271,7 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
     }
   }
 
-  await initExtensions(config, agent, { memoryManager });
+  await initExtensions(config, agent, { memoryManager, ownerId: options?.ownerId });
 
   return agent;
 }

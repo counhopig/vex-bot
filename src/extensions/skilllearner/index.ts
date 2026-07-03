@@ -8,16 +8,45 @@ import { SkillStorage } from "./storage.js";
 
 const logger = getChildLogger("skilllearner");
 
+/** Per-owner skill-learner state. One entry per Web user; "" is single-user/legacy. */
+interface SkillLearnerRuntime {
+  config: VexConfig;
+  learningConfig: LearningConfig;
+  longTermMemory: MemoryManager | null;
+}
+
+// Skill *storage* (learning sessions + deployed SKILL.md files) is process-wide;
+// its keys are namespaced per owner below so sessions never collide across users.
 const storage = new SkillStorage();
+const runtimes = new Map<string, SkillLearnerRuntime>();
 const cleanupFns: Array<() => void> = [];
-let longTermMemory: MemoryManager | null = null;
+let pipelineRegistered = false;
+
+const OWNER_SENTINEL = "";
+function ownerKey(ownerId: string | undefined): string {
+  return ownerId ?? OWNER_SENTINEL;
+}
+function getWebOwnerId(ctx: InboundMessageContext): string | undefined {
+  const raw = ctx.raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw) || !("__webUserId" in raw)) {
+    return undefined;
+  }
+  const ownerId = raw.__webUserId;
+  return typeof ownerId === "string" ? ownerId : undefined;
+}
+function runtimeForCtx(ctx: InboundMessageContext): SkillLearnerRuntime | undefined {
+  return runtimes.get(ownerKey(getWebOwnerId(ctx)));
+}
 
 function getUserKey(ctx: InboundMessageContext): string {
-  return `${ctx.channelId}:${ctx.senderId}`;
+  const owner = getWebOwnerId(ctx);
+  return owner ? `${owner}:${ctx.channelId}:${ctx.senderId}` : `${ctx.channelId}:${ctx.senderId}`;
 }
 
 function getGroupKey(ctx: InboundMessageContext): string {
-  return ctx.chatType === "group" ? `${ctx.channelId}:${ctx.chatId}` : "";
+  if (ctx.chatType !== "group") return "";
+  const owner = getWebOwnerId(ctx);
+  return owner ? `${owner}:${ctx.channelId}:${ctx.chatId}` : `${ctx.channelId}:${ctx.chatId}`;
 }
 
 function sanitizeSkillName(raw: string): string {
@@ -93,7 +122,9 @@ function statusText(session: LearningSession | null): string {
   return `正在学习中：已记录 ${session.messages.length} 条消息。使用 /skill_save [名称] 保存，或 /skill_cancel 取消。`;
 }
 
-async function handleCommand(config: VexConfig, ctx: InboundMessageContext): Promise<string | null> {
+async function handleCommand(rt: SkillLearnerRuntime, ctx: InboundMessageContext): Promise<string | null> {
+  const config = rt.config;
+  const longTermMemory = rt.longTermMemory;
   const [command = "", ...rest] = ctx.content.trim().split(/\s+/);
   const arg = rest.join(" ").trim();
   const userId = getUserKey(ctx);
@@ -235,33 +266,56 @@ function shouldAutoTrigger(config: LearningConfig, content: string): boolean {
   return config.enableAutoLearn && config.autoTriggerKeywords.some((keyword) => content.includes(keyword));
 }
 
-export function initSkillLearner(config: VexConfig, options?: { memoryManager?: MemoryManager }): void {
+export function initSkillLearner(
+  config: VexConfig,
+  options?: { memoryManager?: MemoryManager; ownerId?: string },
+): void {
   const learningConfig = configFromVex(config);
-  longTermMemory = options?.memoryManager ?? null;
+  runtimes.set(ownerKey(options?.ownerId), {
+    config,
+    learningConfig,
+    longTermMemory: options?.memoryManager ?? null,
+  });
   logger.debug(
     {
+      owner: ownerKey(options?.ownerId),
       autoTriggerKeywordCount: learningConfig.autoTriggerKeywords.length,
       maxLearningTurns: learningConfig.maxLearningTurns,
       enableAutoLearn: learningConfig.enableAutoLearn,
       enableProactiveSuggest: learningConfig.enableProactiveSuggest,
       proactiveThreshold: learningConfig.proactiveThreshold,
       autoDeployToSkills: config.skillLearner?.autoDeployToSkills !== false,
-      hasLongTermMemory: Boolean(longTermMemory),
+      hasLongTermMemory: Boolean(options?.memoryManager),
     },
     "Skill Learner config resolved"
   );
+  registerSkillLearnerPipeline();
+  logger.info("Skill Learner interceptor registered");
+}
+
+/**
+ * One process-global interceptor (registry is keyed by name); it resolves the
+ * owning user's runtime from the message context so per-user config and memory
+ * never bleed across accounts.
+ */
+function registerSkillLearnerPipeline(): void {
+  if (pipelineRegistered) return;
+  pipelineRegistered = true;
   const unregister = registerMessageInterceptor("skilllearner", async (ctx) => {
-    const commandResult = await handleCommand(config, ctx);
+    const rt = runtimeForCtx(ctx);
+    if (!rt) return null;
+
+    const commandResult = await handleCommand(rt, ctx);
     if (commandResult !== null) {
       return commandResult;
     }
 
-    const captured = await handleLearningCapture(learningConfig, ctx);
+    const captured = await handleLearningCapture(rt.learningConfig, ctx);
     if (captured !== null) {
       return captured;
     }
 
-    if (shouldAutoTrigger(learningConfig, ctx.content)) {
+    if (shouldAutoTrigger(rt.learningConfig, ctx.content)) {
       storage.createSession(getUserKey(ctx), getGroupKey(ctx));
       logger.info(
         { userId: getUserKey(ctx), groupId: getGroupKey(ctx), contentLength: ctx.content.length },
@@ -273,7 +327,11 @@ export function initSkillLearner(config: VexConfig, options?: { memoryManager?: 
     return null;
   });
   cleanupFns.push(unregister);
-  logger.info("Skill Learner interceptor registered");
+}
+
+/** Drop a single owner's skill-learner state (e.g. when their runtime is evicted). */
+export function disposeSkillLearnerOwner(ownerId: string | undefined): void {
+  runtimes.delete(ownerKey(ownerId));
 }
 
 export function cleanupSkillLearner(): void {
@@ -281,7 +339,8 @@ export function cleanupSkillLearner(): void {
     fn();
   }
   cleanupFns.length = 0;
-  longTermMemory = null;
+  pipelineRegistered = false;
+  runtimes.clear();
 }
 
 export { sanitizeSkillName };

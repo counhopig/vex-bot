@@ -226,7 +226,13 @@ describe("persona auto-profile-building", () => {
         ]),
       });
 
-    const { cleanup } = await initPersonaOnce(baseConfig({ triggerTurns: 1 }));
+    // Each web user gets its own registered persona runtime; the shared Weixin
+    // openid must not let one owner's turns drive the other's state.
+    const { initPersona, cleanupPersona } = await import("../src/extensions/persona/index.js");
+    const { MemoryManager } = await import("../src/memory/index.js");
+    const memoryManager = new MemoryManager({ directory: join(testHome, "memory"), enabled: true });
+    initPersona(baseConfig({ triggerTurns: 1 }), { memoryManager, ownerId: "owner-a" });
+    initPersona(baseConfig({ triggerTurns: 1 }), { memoryManager, ownerId: "owner-b" });
     try {
       const { PersonaStorage } = await import("../src/extensions/persona/storage.js");
       const first = fireResponse(weixinContext("owner-a", "same-openid", "m1"));
@@ -241,7 +247,26 @@ describe("persona auto-profile-building", () => {
       expect(store.getProfileFacts("weixin:owner-b:same-openid")).toHaveLength(1);
       expect(store.getProfileFacts("weixin:same-openid")).toHaveLength(0);
     } finally {
-      await cleanup();
+      cleanupPersona();
+      await memoryManager.close();
+    }
+  });
+
+  it("ignores messages from owners without a registered persona runtime", async () => {
+    // Only owner-a is initialized; a message tagged owner-x must be a no-op
+    // (no cross-owner fallback to some other user's runtime).
+    const { initPersona, cleanupPersona } = await import("../src/extensions/persona/index.js");
+    const { MemoryManager } = await import("../src/memory/index.js");
+    const memoryManager = new MemoryManager({ directory: join(testHome, "memory"), enabled: true });
+    initPersona(baseConfig({ triggerTurns: 1 }), { memoryManager, ownerId: "owner-a" });
+    try {
+      await fireResponse(weixinContext("owner-x", "some-openid", "m1"));
+      // No runtime for owner-x -> observer short-circuits -> no extraction.
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(mockedLlmComplete.mock.calls.length).toBe(0);
+    } finally {
+      cleanupPersona();
+      await memoryManager.close();
     }
   });
 

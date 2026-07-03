@@ -701,6 +701,9 @@ export class WsServer {
       content: message,
       chatType: "direct" as const,
       timestamp: Date.now(),
+      // Tag the owning Web user so per-user extensions (persona, skill learner)
+      // resolve to the same runtime as getAgentForClient(client) below.
+      raw: client.user ? { __webUserId: client.user.id } : undefined,
     };
 
     // Run message interceptors (commands, auto-detect, skill capture)

@@ -9,15 +9,30 @@ import { PersonaStorage } from "./storage.js";
 
 const logger = getChildLogger("persona");
 
+/** Per-owner persona state. One entry per Web user; "" is the single-user/legacy owner. */
+interface PersonaRuntime {
+  config: PersonaConfig;
+  storage: PersonaStorage;
+  longTermMemory: MemoryManager | null;
+  /** Captured from VexConfig at init so background tasks can resolve the LLM. */
+  agentProvider?: ProviderId;
+  agentModel?: string;
+}
+
+const runtimes = new Map<string, PersonaRuntime>();
 const cleanupFns: Array<() => void> = [];
-let storage: PersonaStorage | null = null;
-let longTermMemory: MemoryManager | null = null;
+let pipelineRegistered = false;
 
 /** Uids with an in-flight profile extraction; concurrent triggers are skipped. */
 const inFlightProfileExtraction = new Set<string>();
-/** Captured from VexConfig at init so background tasks can resolve the LLM. */
-let agentProvider: ProviderId | undefined;
-let agentModel: string | undefined;
+
+const OWNER_SENTINEL = "";
+function ownerKey(ownerId: string | undefined): string {
+  return ownerId ?? OWNER_SENTINEL;
+}
+function runtimeForCtx(ctx: InboundMessageContext): PersonaRuntime | undefined {
+  return runtimes.get(ownerKey(getWebOwnerId(ctx)));
+}
 
 function getWebOwnerId(ctx: InboundMessageContext): string | undefined {
   const raw = ctx.raw;
@@ -46,13 +61,13 @@ function memoryTags(ctx: InboundMessageContext): string[] {
 }
 
 async function rememberPersonaFact(
-  config: ReturnType<typeof createPersonaConfig>,
+  rt: PersonaRuntime,
   ctx: InboundMessageContext,
   content: string,
   type: "fact" | "note" = "fact",
 ): Promise<void> {
-  if (!config.memoryEnabled || !longTermMemory || !content.trim()) return;
-  await longTermMemory.remember(content.trim(), {
+  if (!rt.config.memoryEnabled || !rt.longTermMemory || !content.trim()) return;
+  await rt.longTermMemory.remember(content.trim(), {
     type,
     source: `persona:${userKey(ctx)}`,
     tags: memoryTags(ctx),
@@ -60,10 +75,11 @@ async function rememberPersonaFact(
 }
 
 async function recallPersonaMemories(
-  config: ReturnType<typeof createPersonaConfig>,
+  rt: PersonaRuntime,
   ctx: InboundMessageContext,
 ): Promise<string> {
-  if (!config.memoryEnabled || !longTermMemory || !ctx.content.trim()) return "";
+  const longTermMemory = rt.longTermMemory;
+  if (!rt.config.memoryEnabled || !longTermMemory || !ctx.content.trim()) return "";
   const userTag = `user:${userKey(ctx)}`;
   const belongsToUser = (entry: Awaited<ReturnType<MemoryManager["list"]>>[number]): boolean => {
     const tags = entry.metadata.tags ?? [];
@@ -82,8 +98,9 @@ async function recallPersonaMemories(
   return longTermMemory.formatForContext(filtered);
 }
 
-async function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): Promise<string> {
-  const currentStorage = storage;
+async function buildPrompt(rt: PersonaRuntime, ctx: InboundMessageContext): Promise<string> {
+  const config = rt.config;
+  const currentStorage = rt.storage;
   if (!currentStorage) {
     logger.debug(
       { channelId: ctx.channelId, chatId: ctx.chatId, senderId: ctx.senderId, hasStorage: Boolean(currentStorage), chatType: ctx.chatType },
@@ -135,7 +152,7 @@ async function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: 
     blocks.push(`【近期对话】\n${history}`);
   }
 
-  const relevantMemories = await recallPersonaMemories(config, ctx);
+  const relevantMemories = await recallPersonaMemories(rt, ctx);
   if (relevantMemories) {
     blocks.push(`【长期记忆】\n${relevantMemories}`);
   }
@@ -179,11 +196,9 @@ async function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: 
   return prompt;
 }
 
-function personaSummary(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): string {
-  const currentStorage = storage;
-  if (!currentStorage) {
-    return "Persona 未初始化。";
-  }
+function personaSummary(rt: PersonaRuntime, ctx: InboundMessageContext): string {
+  const config = rt.config;
+  const currentStorage = rt.storage;
   const uid = userKey(ctx);
   const snapshot = currentStorage.getPersonaSnapshot(uid);
   return [
@@ -255,13 +270,16 @@ function buildExistingFactsContext(facts: ProfileFact[]): string {
 }
 
 async function extractProfileFacts(
-  config: PersonaConfig,
+  rt: PersonaRuntime,
   ctx: InboundMessageContext,
   uid: string,
 ): Promise<void> {
   if (inFlightProfileExtraction.has(uid)) return;
-  const currentStorage = storage;
-  if (!currentStorage || !agentProvider || !agentModel) return;
+  const config = rt.config;
+  const currentStorage = rt.storage;
+  const agentProvider = rt.agentProvider;
+  const agentModel = rt.agentModel;
+  if (!agentProvider || !agentModel) return;
   inFlightProfileExtraction.add(uid);
   try {
     const history = currentStorage.formatHistoryForPrompt(uid, config.memoryMaxTurns);
@@ -304,7 +322,7 @@ async function extractProfileFacts(
       }
       written++;
       await rememberPersonaFact(
-        config,
+        rt,
         ctx,
         `[${fact.category}] ${fact.content}`,
         "fact",
@@ -330,11 +348,9 @@ function parseNumber(raw: string, fallback: number): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): Promise<string | null> {
-  const currentStorage = storage;
-  if (!currentStorage) {
-    return null;
-  }
+async function handlePersonaCommand(rt: PersonaRuntime, ctx: InboundMessageContext): Promise<string | null> {
+  const config = rt.config;
+  const currentStorage = rt.storage;
   const [command = "", ...rest] = ctx.content.trim().split(/\s+/);
   const arg = rest.join(" ").trim();
   const uid = userKey(ctx);
@@ -345,7 +361,7 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
   switch (command) {
     case "/persona":
     case "/人格":
-      return personaSummary(config, ctx);
+      return personaSummary(rt, ctx);
     case "/persona_help":
     case "/人格帮助":
       return [
@@ -404,7 +420,7 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
       const profile = currentStorage.getProfile(uid);
       profile.nickname = arg;
       currentStorage.saveProfile(uid, profile);
-      await rememberPersonaFact(config, ctx, `用户昵称是：${arg || "(空)"}`, "fact");
+      await rememberPersonaFact(rt, ctx, `用户昵称是：${arg || "(空)"}`, "fact");
       logger.info({ userId: uid, hasNickname: arg.length > 0 }, "Persona nickname updated");
       return `昵称已设置为：${arg || "(空)"}`;
     }
@@ -425,7 +441,7 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
       const profile = currentStorage.getProfile(uid);
       profile.notes = arg;
       currentStorage.saveProfile(uid, profile);
-      await rememberPersonaFact(config, ctx, `关于用户的备注：${arg}`, "note");
+      await rememberPersonaFact(rt, ctx, `关于用户的备注：${arg}`, "note");
       return "已记录备注。";
     }
     case "/persona_history":
@@ -451,11 +467,9 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
   }
 }
 
-function observeResponse(config: PersonaConfig, ctx: InboundMessageContext, replyText: string): void {
-  const currentStorage = storage;
-  if (!currentStorage) {
-    return;
-  }
+function observeResponse(rt: PersonaRuntime, ctx: InboundMessageContext, replyText: string): void {
+  const config = rt.config;
+  const currentStorage = rt.storage;
   const uid = userKey(ctx);
   currentStorage.appendHistoryAndRecoverEmotion(uid, "assistant", replyText, config.emotionRecoveryPerReply);
   currentStorage.recordInteraction(uid, InteractionMode.PASSIVE, InteractionOutcome.CONNECTED);
@@ -464,24 +478,32 @@ function observeResponse(config: PersonaConfig, ctx: InboundMessageContext, repl
   // Background profile building: fire-and-forget every N turns.
   // Per-turn counter is bumped only when we actually consider extraction (gated + has LLM),
   // so disabled/misconfigured setups do not advance state.
-  if (!config.profileBuildingEnabled || !agentProvider || !agentModel) return;
+  if (!config.profileBuildingEnabled || !rt.agentProvider || !rt.agentModel) return;
   const triggerTurns = Math.max(1, config.profileBuildingTriggerTurns);
   const turn = currentStorage.incrementTurnCounter(uid, "profile_building");
   if (turn % triggerTurns !== 0) return;
   // Detached: error contract is owned by extractProfileFacts (try/catch + logger.warn).
-  void extractProfileFacts(config, ctx, uid).catch(() => {
+  void extractProfileFacts(rt, ctx, uid).catch(() => {
     /* defensive belt; extractProfileFacts already swallows errors */
   });
 }
 
-export function initPersona(config: VexConfig, options?: { memoryManager?: MemoryManager }): void {
+export function initPersona(
+  config: VexConfig,
+  options?: { memoryManager?: MemoryManager; ownerId?: string },
+): void {
   const personaConfig = createPersonaConfig(config.persona);
-  storage = new PersonaStorage(personaConfig.storageCacheMax);
-  longTermMemory = options?.memoryManager ?? null;
-  agentProvider = config.agent?.defaultProvider;
-  agentModel = config.agent?.defaultModel;
+  const rt: PersonaRuntime = {
+    config: personaConfig,
+    storage: new PersonaStorage(personaConfig.storageCacheMax),
+    longTermMemory: options?.memoryManager ?? null,
+    agentProvider: config.agent?.defaultProvider,
+    agentModel: config.agent?.defaultModel,
+  };
+  runtimes.set(ownerKey(options?.ownerId), rt);
   logger.debug(
     {
+      owner: ownerKey(options?.ownerId),
       personaName: personaConfig.personaName,
       emotionEnabled: personaConfig.emotionEnabled,
       effectEnabled: personaConfig.effectEnabled,
@@ -489,19 +511,44 @@ export function initPersona(config: VexConfig, options?: { memoryManager?: Memor
       memoryEnabled: personaConfig.memoryEnabled,
       profileBuildingEnabled: personaConfig.profileBuildingEnabled,
       profileBuildingTriggerTurns: personaConfig.profileBuildingTriggerTurns,
-      hasAgentProvider: Boolean(agentProvider),
-      hasAgentModel: Boolean(agentModel),
-      hasLongTermMemory: Boolean(longTermMemory),
+      hasAgentProvider: Boolean(rt.agentProvider),
+      hasAgentModel: Boolean(rt.agentModel),
+      hasLongTermMemory: Boolean(rt.longTermMemory),
       storageCacheMax: personaConfig.storageCacheMax,
     },
     "Persona config resolved"
   );
 
-  cleanupFns.push(registerPromptInjector("persona", async (ctx) => buildPrompt(personaConfig, ctx)));
-  cleanupFns.push(registerMessageInterceptor("persona", async (ctx) => handlePersonaCommand(personaConfig, ctx)));
-  cleanupFns.push(registerResponseObserver("persona", async (ctx, replyText) => observeResponse(personaConfig, ctx, replyText)));
-
+  registerPersonaPipeline();
   logger.info({ personaName: personaConfig.personaName }, "Persona extension registered");
+}
+
+/**
+ * The pipeline callbacks are process-global (one registry, keyed by name), so
+ * register them exactly once and resolve the owning user's PersonaRuntime from
+ * the message context at call time. Re-registering per user would just leave
+ * the last user's closure active for everyone.
+ */
+function registerPersonaPipeline(): void {
+  if (pipelineRegistered) return;
+  pipelineRegistered = true;
+  cleanupFns.push(registerPromptInjector("persona", async (ctx) => {
+    const rt = runtimeForCtx(ctx);
+    return rt ? buildPrompt(rt, ctx) : "";
+  }));
+  cleanupFns.push(registerMessageInterceptor("persona", async (ctx) => {
+    const rt = runtimeForCtx(ctx);
+    return rt ? handlePersonaCommand(rt, ctx) : null;
+  }));
+  cleanupFns.push(registerResponseObserver("persona", async (ctx, replyText) => {
+    const rt = runtimeForCtx(ctx);
+    if (rt) observeResponse(rt, ctx, replyText);
+  }));
+}
+
+/** Drop a single owner's persona state (e.g. when their runtime is evicted). */
+export function disposePersonaOwner(ownerId: string | undefined): void {
+  runtimes.delete(ownerKey(ownerId));
 }
 
 export function cleanupPersona(): void {
@@ -509,9 +556,7 @@ export function cleanupPersona(): void {
     fn();
   }
   cleanupFns.length = 0;
-  storage = null;
-  longTermMemory = null;
-  agentProvider = undefined;
-  agentModel = undefined;
+  pipelineRegistered = false;
+  runtimes.clear();
   inFlightProfileExtraction.clear();
 }
