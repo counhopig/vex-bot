@@ -16,7 +16,7 @@ import {
   DEFAULT_WEIXIN_OC_BOT_TYPE,
   DEFAULT_WEIXIN_OC_API_TIMEOUT_MS,
 } from "./client.js";
-import { startQRLogin } from "./login.js";
+import { startQRLogin, LoginAbortedError } from "./login.js";
 import type { LoginResult } from "./login.js";
 import { getChildLogger } from "../../utils/logger.js";
 
@@ -103,22 +103,38 @@ export class WeixinChannel extends BaseChannelAdapter {
 
     if (this.config.token) {
       this.logger.info("Weixin channel using existing token from config");
-    } else {
-      this.logger.info("No token configured, starting QR code login");
-      const botType = this.config.botType ?? DEFAULT_WEIXIN_OC_BOT_TYPE;
-      try {
-        this.loginResult = await startQRLogin(this.client, botType);
-        this.config.token = this.loginResult.token;
-        this.client.setToken(this.loginResult.token);
-        this.persistToken();
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.logger.error({ error: errorMessage }, "Weixin QR login failed");
-        throw new Error("Weixin QR login failed: " + errorMessage);
-      }
+      this.ensurePolling();
+      return;
     }
 
+    this.logger.info("No token configured, starting QR code login");
+    const botType = this.config.botType ?? DEFAULT_WEIXIN_OC_BOT_TYPE;
+    try {
+      // Abort this terminal-QR login if another flow (e.g. the Control Panel
+      // "Scan QR Login") completes first and activates the channel.
+      this.loginResult = await startQRLogin(this.client, botType, () => this.pollingActive);
+      this.config.token = this.loginResult.token;
+      this.client.setToken(this.loginResult.token);
+      this.persistToken();
+    } catch (error) {
+      if (error instanceof LoginAbortedError || this.pollingActive) {
+        // The Control Panel logged in first; the channel is already active.
+        this.logger.info("Terminal QR login superseded by another login flow");
+        return;
+      }
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error({ error: errorMessage }, "Weixin QR login failed");
+      throw new Error("Weixin QR login failed: " + errorMessage);
+    }
+
+    this.ensurePolling();
+  }
+
+  /** Start the inbound message polling loop once, idempotently. */
+  private ensurePolling(): void {
+    if (this.pollingActive) return;
     this.pollingActive = true;
+    this.logger.info("Weixin channel active, listening for messages");
     this.startPollingLoop();
   }
 
@@ -392,6 +408,9 @@ export class WeixinChannel extends BaseChannelAdapter {
         this.config.accountId = result.accountId;
       }
       this.persistToken();
+      // Activate the channel immediately so the bot starts receiving messages
+      // without a restart. This also preempts any in-flight terminal QR login.
+      this.ensurePolling();
     }
     return result;
   }

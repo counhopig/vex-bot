@@ -85,9 +85,18 @@ async function pollOnce(
   return mapQRStatus(statusResp, defaultBaseUrl);
 }
 
+/** Raised when a competing login flow (e.g. the Control Panel) completes first. */
+export class LoginAbortedError extends Error {
+  constructor() {
+    super("QR login aborted: logged in via another flow");
+    this.name = "LoginAbortedError";
+  }
+}
+
 export async function startQRLogin(
   client: WeixinClient,
   botType: string = DEFAULT_BOT_TYPE,
+  shouldAbort?: () => boolean,
 ): Promise<LoginResult> {
   logger.info("Starting personal WeChat QR code login flow");
 
@@ -95,12 +104,14 @@ export async function startQRLogin(
   const defaultBaseUrl = DEFAULT_WEIXIN_OC_BASE_URL;
 
   while (refreshCount < MAX_QR_REFRESHES) {
+    if (shouldAbort?.()) throw new LoginAbortedError();
     logger.info(`Getting QR code (attempt ${refreshCount + 1}/${MAX_QR_REFRESHES})`);
     const { qrcode, qrcodeImgContent } = await client.getQRCode(botType);
 
     displayQRCode(qrcodeImgContent);
 
     for (;;) {
+      if (shouldAbort?.()) throw new LoginAbortedError();
       let action: QRPollAction;
       try {
         action = await pollOnce(
