@@ -6,6 +6,12 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+## [1.13.5] - 2026-07-03
+
+### Added
+
+- Added visible logout actions to the WebChat sidebar and Control Panel sidebar.
+
 ## [1.13.4] - 2026-07-03
 
 ### Added

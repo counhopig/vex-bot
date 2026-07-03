@@ -49,6 +49,7 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
     const sendBtn = document.getElementById('sendBtn');
     const cancelBtn = document.getElementById('cancelBtn');
     const clearBtn = document.getElementById('clearBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
 
@@ -61,6 +62,16 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
 
     menuBtn.addEventListener('click', toggleSidebar);
     sidebarOverlay.addEventListener('click', toggleSidebar);
+    logoutBtn?.addEventListener('click', logout);
+
+    async function logout() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      } finally {
+        localStorage.removeItem(STORAGE_KEY);
+        location.href = '/login';
+      }
+    }
 
     function connect() {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -593,6 +604,15 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       initMobileNav();
       initPasswordToggles();
       initDialogDismissal();
+      document.getElementById('control-logout-btn')?.addEventListener('click', logout);
+    }
+
+    async function logout() {
+      try {
+        await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      } finally {
+        location.href = '/login';
+      }
     }
 
     function mountLanguageSwitcher() {

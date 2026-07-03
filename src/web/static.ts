@@ -69,6 +69,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
     <div class="sidebar-footer">
       <span id="sessionCount">0 sessions</span>
       <a href="/control" style="color: var(--primary); text-decoration: none;">Console</a>
+      <button id="logoutBtn" type="button" style="border:0;background:transparent;color:var(--error);cursor:pointer;padding:0;font:inherit;">Logout</button>
     </div>
   </aside>
   <div class="sidebar-overlay" id="sidebarOverlay"></div>
@@ -350,6 +351,10 @@ ${COMMON_CSS}${CONTROL_CSS}
         <span class="nav-item-icon">💬</span>
         <span>Back to Chat</span>
       </a>
+      <button class="nav-item" id="control-logout-btn" type="button" style="border:0;width:100%;background:transparent;text-align:left;">
+        <span class="nav-item-icon">⏻</span>
+        <span>Logout</span>
+      </button>
     </aside>
 
     <main class="main-content">
