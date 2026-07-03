@@ -482,6 +482,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         if ((item.dataset.view === 'providers' || item.dataset.view === 'channels') && ws?.readyState === WebSocket.OPEN) {
           refreshStatus();
         }
+        // Stream backend logs only while the Logs view is open.
+        if (item.dataset.view === 'logs') {
+          subscribeLogs();
+        } else {
+          unsubscribeLogs();
+        }
       });
     });
 
@@ -495,12 +501,18 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           '<span class="status-badge online"><span class="status-dot"></span>' + t('Connected') + '</span>';
         addLog('info', 'Connected to server');
         refreshStatus();
+        // Re-subscribe to backend logs if the Logs view is currently open.
+        if (document.getElementById('view-logs')?.classList.contains('active')) {
+          logsSubscribed = false;
+          subscribeLogs();
+        }
       };
 
       ws.onclose = () => {
         document.getElementById('connection-status').innerHTML =
           '<span class="status-badge offline"><span class="status-dot"></span>' + t('Disconnected') + '</span>';
         addLog('warn', 'Connection lost, reconnecting...');
+        logsSubscribed = false;
         setTimeout(connect, 3000);
       };
 
@@ -521,6 +533,10 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
               }
             } else {
               console.warn('No pending request found:', frame.id);
+            }
+          } else if (frame.type === 'event') {
+            if (frame.event === 'log.entry' && frame.payload) {
+              onBackendLog(frame.payload);
             }
           }
         } catch (e) {
@@ -681,6 +697,98 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         container.removeChild(container.firstChild);
       }
     }
+
+    // ===== Backend log streaming =====
+    let backendLogs = [];       // rolling buffer of received backend entries
+    let logPaused = false;
+    let logsSubscribed = false;
+    const LOG_LEVEL_ORDER = { debug: 0, info: 1, warn: 2, error: 3 };
+
+    function logPasses(entry) {
+      const minLevel = document.getElementById('log-level-filter')?.value || 'info';
+      if ((LOG_LEVEL_ORDER[entry.level] ?? 1) < (LOG_LEVEL_ORDER[minLevel] ?? 1)) return false;
+      const needle = (document.getElementById('log-module-filter')?.value || '').trim().toLowerCase();
+      if (needle) {
+        const hay = ((entry.module || '') + ' ' + (entry.msg || '')).toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    }
+
+    function appendBackendLog(entry) {
+      const container = document.getElementById('log-container');
+      if (!container) return;
+      const el = document.createElement('div');
+      el.className = 'log-entry ' + entry.level;
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'time';
+      timeSpan.textContent = '[' + new Date(entry.time).toLocaleTimeString() + '] ';
+      el.appendChild(timeSpan);
+      if (entry.module) {
+        const modSpan = document.createElement('span');
+        modSpan.className = 'module';
+        modSpan.textContent = '[' + entry.module + '] ';
+        el.appendChild(modSpan);
+      }
+      // textContent keeps arbitrary log messages from being interpreted as HTML.
+      el.appendChild(document.createTextNode(entry.msg || ''));
+      container.appendChild(el);
+      container.scrollTop = container.scrollHeight;
+      while (container.children.length > 500) container.removeChild(container.firstChild);
+    }
+
+    function renderLogView() {
+      const container = document.getElementById('log-container');
+      if (!container) return;
+      container.innerHTML = '';
+      for (const entry of backendLogs) {
+        if (logPasses(entry)) appendBackendLog(entry);
+      }
+    }
+
+    function onBackendLog(entry) {
+      backendLogs.push(entry);
+      while (backendLogs.length > 1000) backendLogs.shift();
+      if (!logPaused && logPasses(entry)) appendBackendLog(entry);
+    }
+
+    function toggleLogPause() {
+      logPaused = !logPaused;
+      const btn = document.getElementById('log-pause-btn');
+      if (btn) btn.textContent = logPaused ? t('Resume') : t('Pause');
+      if (!logPaused) renderLogView();
+    }
+
+    function clearLogs() {
+      backendLogs = [];
+      const container = document.getElementById('log-container');
+      if (container) container.innerHTML = '';
+    }
+    window.toggleLogPause = toggleLogPause;
+    window.clearLogs = clearLogs;
+
+    async function subscribeLogs() {
+      if (logsSubscribed || ws?.readyState !== WebSocket.OPEN) return;
+      logsSubscribed = true;
+      try {
+        const res = await request('logs.subscribe');
+        backendLogs = (res && res.entries) || [];
+        renderLogView();
+      } catch (e) {
+        logsSubscribed = false;
+        addLog('error', 'Failed to subscribe logs: ' + e.message);
+      }
+    }
+
+    async function unsubscribeLogs() {
+      if (!logsSubscribed) return;
+      logsSubscribed = false;
+      try { await request('logs.unsubscribe'); } catch (e) { /* ignore */ }
+    }
+
+    // Re-render on filter changes.
+    document.getElementById('log-level-filter')?.addEventListener('change', renderLogView);
+    document.getElementById('log-module-filter')?.addEventListener('input', renderLogView);
 
     // ===== Configuration Management =====
     let currentConfig = null;

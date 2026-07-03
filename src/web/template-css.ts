@@ -439,11 +439,22 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       font-size: 0.8125rem;
       line-height: 1.6;
     }
-    .log-entry { color: #e2e8f0; }
+    .log-entry { color: #e2e8f0; white-space: pre-wrap; word-break: break-word; }
+    .log-entry.debug { color: #94a3b8; }
     .log-entry.info { color: #38bdf8; }
     .log-entry.warn { color: #fbbf24; }
     .log-entry.error { color: #f87171; }
     .log-entry .time { color: #64748b; }
+    .log-entry .module { color: #a78bfa; }
+    .log-toolbar {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .log-toolbar select.form-input { width: auto; }
+    .log-toolbar input.form-input { width: auto; flex: 1; min-width: 160px; }
     /* Form styles */
     .config-tabs button {
       padding: 0.5rem 1rem;

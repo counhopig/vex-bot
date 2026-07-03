@@ -29,6 +29,7 @@ import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type TranscriptMessage } from "../sessions/index.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { getConfigInfo, validateConfig, saveConfig } from "./config-handlers.js";
+import { LogStreamer } from "./log-stream.js";
 const logger = getChildLogger("websocket");
 
 const EmptyParamsSchema = z.object({}).passthrough().default({});
@@ -227,6 +228,8 @@ interface WsClient {
   lastPing: number;
   /** AbortController for current chat, used for cancellation */
   currentAbortController: AbortController | null;
+  /** Detaches this client from the backend log stream, if subscribed. */
+  logUnsubscribe: (() => void) | null;
 }
 
 /** WebSocket server options */
@@ -249,6 +252,7 @@ export class WsServer {
   private startTime = Date.now();
   private heartbeatInterval: number;
   private clientTimeout: number;
+  private logStreamer = new LogStreamer();
 
   constructor(options: WsServerOptions) {
     this.agent = options.agent;
@@ -284,6 +288,7 @@ export class WsServer {
       sessionId: null,
       lastPing: Date.now(),
       currentAbortController: null,
+      logUnsubscribe: null,
     };
 
     this.clients.set(clientId, client);
@@ -300,6 +305,8 @@ export class WsServer {
     });
 
     ws.on("close", () => {
+      client.logUnsubscribe?.();
+      client.logUnsubscribe = null;
       this.clients.delete(clientId);
       logger.info({ clientId }, "Client disconnected");
     });
@@ -390,6 +397,14 @@ export class WsServer {
           parseParams(EmptyParamsSchema, params);
           result = { pong: Date.now() };
           break;
+        case "logs.subscribe":
+          parseParams(EmptyParamsSchema, params);
+          result = this.handleLogsSubscribe(client);
+          break;
+        case "logs.unsubscribe":
+          parseParams(EmptyParamsSchema, params);
+          result = this.handleLogsUnsubscribe(client);
+          break;
         case "weixin.qr":
           parseParams(EmptyParamsSchema, params);
           result = await this.handleWeixinQR();
@@ -409,6 +424,22 @@ export class WsServer {
         message,
       });
     }
+  }
+
+  /** Subscribe a client to live backend logs and return the recent backlog. */
+  private handleLogsSubscribe(client: WsClient): { entries: ReturnType<LogStreamer["getBacklog"]> } {
+    if (!client.logUnsubscribe) {
+      client.logUnsubscribe = this.logStreamer.subscribe((entry) => {
+        this.sendEvent(client.ws, "log.entry", entry);
+      });
+    }
+    return { entries: this.logStreamer.getBacklog() };
+  }
+
+  private handleLogsUnsubscribe(client: WsClient): { ok: true } {
+    client.logUnsubscribe?.();
+    client.logUnsubscribe = null;
+    return { ok: true };
   }
 
   private async handleWeixinQR(): Promise<{ qrcode_url: string; qrcode: string } | { error: string }> {

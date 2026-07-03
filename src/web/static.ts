@@ -880,6 +880,17 @@ ${COMMON_CSS}${CONTROL_CSS}
           <h1 class="page-title">System Logs</h1>
           <p class="page-desc">View real-time system runtime logs</p>
         </div>
+        <div class="log-toolbar">
+          <select id="log-level-filter" class="form-input">
+            <option value="debug">Debug+</option>
+            <option value="info" selected>Info+</option>
+            <option value="warn">Warn+</option>
+            <option value="error">Error</option>
+          </select>
+          <input type="text" id="log-module-filter" class="form-input" placeholder="Filter by module" />
+          <button id="log-pause-btn" class="btn btn-secondary" onclick="toggleLogPause()">Pause</button>
+          <button id="log-clear-btn" class="btn btn-secondary" onclick="clearLogs()">Clear</button>
+        </div>
         <div class="log-container" id="log-container">
           <div class="log-entry info"><span class="time">[--:--:--]</span> Waiting for connection...</div>
         </div>
