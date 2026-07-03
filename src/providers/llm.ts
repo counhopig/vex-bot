@@ -95,6 +95,7 @@ export async function llmComplete(options: LlmCompleteOptions): Promise<LlmCompl
       {
         temperature,
         maxTokens,
+        apiKey,
       }
     );
 
@@ -103,7 +104,17 @@ export async function llmComplete(options: LlmCompleteOptions): Promise<LlmCompl
       usage: extractUsageFromAssistantMessage(message),
     };
   } catch (error) {
-    logger.error({ error, provider: resolvedProvider, model: resolvedModelId }, "LLM complete failed");
+    // Log the message/stack explicitly: pino JSON-stringifies the `error` key, and
+    // Error's message/stack are non-enumerable, so `{ error }` would serialize to `{}`.
+    logger.error(
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        provider: resolvedProvider,
+        model: resolvedModelId,
+      },
+      "LLM complete failed",
+    );
     throw error;
   }
 }

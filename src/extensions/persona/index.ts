@@ -1,9 +1,10 @@
-import type { VexConfig, InboundMessageContext } from "../../types/index.js";
+import type { VexConfig, InboundMessageContext, ProviderId } from "../../types/index.js";
 import { registerMessageInterceptor, registerPromptInjector, registerResponseObserver } from "../../pipeline/index.js";
 import { getChildLogger } from "../../utils/logger.js";
 import type { MemoryManager } from "../../memory/index.js";
-import { InteractionMode, InteractionOutcome, TodoType } from "./models.js";
-import { createPersonaConfig, isSleeping } from "./config.js";
+import { llmComplete } from "../../providers/llm.js";
+import { InteractionMode, InteractionOutcome, TodoType, type ProfileFact } from "./models.js";
+import { createPersonaConfig, isSleeping, type PersonaConfig } from "./config.js";
 import { PersonaStorage } from "./storage.js";
 
 const logger = getChildLogger("persona");
@@ -11,6 +12,12 @@ const logger = getChildLogger("persona");
 const cleanupFns: Array<() => void> = [];
 let storage: PersonaStorage | null = null;
 let longTermMemory: MemoryManager | null = null;
+
+/** Uids with an in-flight profile extraction; concurrent triggers are skipped. */
+const inFlightProfileExtraction = new Set<string>();
+/** Captured from VexConfig at init so background tasks can resolve the LLM. */
+let agentProvider: ProviderId | undefined;
+let agentModel: string | undefined;
 
 function userKey(ctx: InboundMessageContext): string {
   return `${ctx.channelId}:${ctx.senderId}`;
@@ -178,6 +185,136 @@ function personaSummary(config: ReturnType<typeof createPersonaConfig>, ctx: Inb
   ].join("\n");
 }
 
+interface ExtractedFact {
+  category: string;
+  content: string;
+  evidence: string;
+  confidence: number;
+}
+
+const EXTRACTION_PROMPT_HEADER = [
+  "你是一名用户画像抽取助手。请从下方【近期对话】中抽取关于该用户的**持久事实**（居住地、职业、偏好、关系、重要日期、习惯等）。",
+  "忽略一次性/临时内容（'今天天气'、'帮我查一下'等）。",
+  "",
+  "【输出要求】",
+  "- 只输出尚未在【已记录的事实】中出现过的新事实。",
+  "- 严格输出一个 JSON 数组，每个元素形如 {category, content, evidence, confidence}。",
+  "- confidence 为 0~1 的浮点；<0.6 的事实宁可丢弃也不要写。",
+  "- 没有任何新事实时，输出空数组 []。不要输出其它文字、不要解释、不要 Markdown 代码块包裹。",
+].join("\n");
+
+/** Strip ```json fences / leading prose that some models emit around JSON. */
+function extractJsonArray(raw: string): ExtractedFact[] | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1]!.trim() : trimmed;
+  // Find the first '[' that looks like an array start; ignore prose before it.
+  const bracketStart = candidate.indexOf("[");
+  const bracketEnd = candidate.lastIndexOf("]");
+  const json = bracketStart >= 0 && bracketEnd > bracketStart
+    ? candidate.slice(bracketStart, bracketEnd + 1)
+    : candidate;
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    const facts: ExtractedFact[] = [];
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const record = item as Record<string, unknown>;
+      const category = typeof record.category === "string" ? record.category.trim() : "";
+      const content = typeof record.content === "string" ? record.content.trim() : "";
+      const evidence = typeof record.evidence === "string" ? record.evidence.trim() : "";
+      const rawConfidence = record.confidence;
+      const confidence = typeof rawConfidence === "number"
+        ? rawConfidence
+        : Number(rawConfidence);
+      if (!category || !content) continue;
+      if (!Number.isFinite(confidence)) continue;
+      facts.push({ category, content, evidence, confidence });
+    }
+    return facts;
+  } catch {
+    return null;
+  }
+}
+
+function buildExistingFactsContext(facts: ProfileFact[]): string {
+  if (facts.length === 0) return "（暂无）";
+  return facts.map((f) => `- [${f.category}] ${f.content}`).join("\n");
+}
+
+async function extractProfileFacts(
+  config: PersonaConfig,
+  ctx: InboundMessageContext,
+  uid: string,
+): Promise<void> {
+  if (inFlightProfileExtraction.has(uid)) return;
+  const currentStorage = storage;
+  if (!currentStorage || !agentProvider || !agentModel) return;
+  inFlightProfileExtraction.add(uid);
+  try {
+    const history = currentStorage.formatHistoryForPrompt(uid, config.memoryMaxTurns);
+    const existing = currentStorage.getProfileFacts(uid);
+    const prompt = [
+      EXTRACTION_PROMPT_HEADER,
+      "",
+      "【已记录的事实】（请勿重复）",
+      buildExistingFactsContext(existing),
+      "",
+      "【近期对话】",
+      history || "（暂无）",
+    ].join("\n");
+    const result = await llmComplete({
+      providerId: agentProvider,
+      model: agentModel,
+      prompt,
+      temperature: 0.2,
+      maxTokens: 1024,
+    });
+    const facts = extractJsonArray(result.text);
+    if (!facts) {
+      logger.warn({ userId: uid }, "Profile extraction: invalid JSON, dropped");
+      return;
+    }
+    let written = 0;
+    let skippedConfidence = 0;
+    let skippedDuplicate = 0;
+    for (const fact of facts) {
+      if (fact.confidence < 0.6) {
+        skippedConfidence++;
+        continue;
+      }
+      const beforeCount = currentStorage.getProfileFacts(uid).length;
+      currentStorage.addProfileFact(uid, fact.category, fact.content, fact.evidence, fact.confidence);
+      const afterCount = currentStorage.getProfileFacts(uid).length;
+      if (afterCount === beforeCount) {
+        skippedDuplicate++;
+        continue;
+      }
+      written++;
+      await rememberPersonaFact(
+        config,
+        ctx,
+        `[${fact.category}] ${fact.content}`,
+        "fact",
+      );
+    }
+    logger.info(
+      { userId: uid, returned: facts.length, written, skippedConfidence, skippedDuplicate },
+      "Profile extraction finished",
+    );
+  } catch (error) {
+    // Serialize the message explicitly; pino renders a raw Error as `{}`.
+    logger.warn(
+      { error: error instanceof Error ? error.message : String(error), userId: uid },
+      "Profile extraction failed",
+    );
+  } finally {
+    inFlightProfileExtraction.delete(uid);
+  }
+}
+
 function parseNumber(raw: string, fallback: number): number {
   const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
@@ -304,7 +441,7 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
   }
 }
 
-function observeResponse(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext, replyText: string): void {
+function observeResponse(config: PersonaConfig, ctx: InboundMessageContext, replyText: string): void {
   const currentStorage = storage;
   if (!currentStorage) {
     return;
@@ -313,12 +450,26 @@ function observeResponse(config: ReturnType<typeof createPersonaConfig>, ctx: In
   currentStorage.appendHistoryAndRecoverEmotion(uid, "assistant", replyText, config.emotionRecoveryPerReply);
   currentStorage.recordInteraction(uid, InteractionMode.PASSIVE, InteractionOutcome.CONNECTED);
   logger.debug({ userId: uid, replyLength: replyText.length, recovery: config.emotionRecoveryPerReply }, "Persona response observed");
+
+  // Background profile building: fire-and-forget every N turns.
+  // Per-turn counter is bumped only when we actually consider extraction (gated + has LLM),
+  // so disabled/misconfigured setups do not advance state.
+  if (!config.profileBuildingEnabled || !agentProvider || !agentModel) return;
+  const triggerTurns = Math.max(1, config.profileBuildingTriggerTurns);
+  const turn = currentStorage.incrementTurnCounter(uid, "profile_building");
+  if (turn % triggerTurns !== 0) return;
+  // Detached: error contract is owned by extractProfileFacts (try/catch + logger.warn).
+  void extractProfileFacts(config, ctx, uid).catch(() => {
+    /* defensive belt; extractProfileFacts already swallows errors */
+  });
 }
 
 export function initPersona(config: VexConfig, options?: { memoryManager?: MemoryManager }): void {
   const personaConfig = createPersonaConfig(config.persona);
   storage = new PersonaStorage(personaConfig.storageCacheMax);
   longTermMemory = options?.memoryManager ?? null;
+  agentProvider = config.agent?.defaultProvider;
+  agentModel = config.agent?.defaultModel;
   logger.debug(
     {
       personaName: personaConfig.personaName,
@@ -326,6 +477,10 @@ export function initPersona(config: VexConfig, options?: { memoryManager?: Memor
       effectEnabled: personaConfig.effectEnabled,
       todoEnabled: personaConfig.todoEnabled,
       memoryEnabled: personaConfig.memoryEnabled,
+      profileBuildingEnabled: personaConfig.profileBuildingEnabled,
+      profileBuildingTriggerTurns: personaConfig.profileBuildingTriggerTurns,
+      hasAgentProvider: Boolean(agentProvider),
+      hasAgentModel: Boolean(agentModel),
       hasLongTermMemory: Boolean(longTermMemory),
       storageCacheMax: personaConfig.storageCacheMax,
     },
@@ -346,4 +501,8 @@ export function cleanupPersona(): void {
   cleanupFns.length = 0;
   storage = null;
   longTermMemory = null;
+  agentProvider = undefined;
+  agentModel = undefined;
+  inFlightProfileExtraction.clear();
 }
+
