@@ -3,7 +3,7 @@
  */
 
 import { WebSocketServer, WebSocket } from "ws";
-import type { Server as HttpServer } from "http";
+import type { Server as HttpServer, IncomingMessage } from "http";
 import { z } from "zod";
 import { getChildLogger } from "../utils/logger.js";
 import { generateId } from "../utils/index.js";
@@ -22,23 +22,33 @@ import type {
   SessionsRestoreParams,
 } from "./types.js";
 import type { Agent } from "../agents/agent.js";
-import type { VexConfig } from "../types/index.js";
+import type { VexConfig, WeixinConfig } from "../types/index.js";
 import type { WeixinChannel } from "../channels/weixin/index.js";
+import {
+  WeixinClient,
+  DEFAULT_WEIXIN_OC_API_TIMEOUT_MS,
+  DEFAULT_WEIXIN_OC_BASE_URL,
+  DEFAULT_WEIXIN_OC_BOT_TYPE,
+  DEFAULT_WEIXIN_OC_CDN_BASE_URL,
+} from "../channels/weixin/client.js";
 import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type SessionListItem, type TranscriptMessage } from "../sessions/index.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { getConfigInfo, validateConfig, saveConfig } from "./config-handlers.js";
 import { LogStreamer } from "./log-stream.js";
+import { getRequestUser, isWebAuthEnabled, saveUserWeixinLogin, type PublicWebUser } from "./auth.js";
 const logger = getChildLogger("websocket");
 const WEBCHAT_SESSION_PREFIX = "webchat:";
 
 /** Keep the browser UI scoped to sessions created by WebChat itself. */
 export function filterWebChatSessions(
   sessions: readonly SessionListItem[],
-  limit?: number
+  limit?: number,
+  userId?: string
 ): SessionListItem[] {
-  const webchatSessions = sessions.filter((session) => session.sessionKey.startsWith(WEBCHAT_SESSION_PREFIX));
+  const prefix = userId ? `${WEBCHAT_SESSION_PREFIX}${userId}:` : WEBCHAT_SESSION_PREFIX;
+  const webchatSessions = sessions.filter((session) => session.sessionKey.startsWith(prefix));
   return limit ? webchatSessions.slice(0, limit) : webchatSessions;
 }
 
@@ -235,6 +245,7 @@ interface WsClient {
   ws: WebSocket;
   sessionKey: string | null;  // null means session not yet bound
   sessionId: string | null;
+  user: PublicWebUser | null;
   lastPing: number;
   /** AbortController for current chat, used for cancellation */
   currentAbortController: AbortController | null;
@@ -248,8 +259,14 @@ export interface WsServerOptions {
   agent: Agent;
   config: VexConfig;
   weixinChannel?: WeixinChannel;
+  onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
   heartbeatInterval?: number;
   clientTimeout?: number;
+}
+
+interface PendingUserWeixinLogin {
+  userId: string;
+  client: WeixinClient;
 }
 
 /** WebSocket server class */
@@ -259,6 +276,8 @@ export class WsServer {
   private agent: Agent;
   private config: VexConfig;
   private weixinChannel?: WeixinChannel;
+  private onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
+  private pendingUserWeixinLogins = new Map<string, PendingUserWeixinLogin>();
   private startTime = Date.now();
   private heartbeatInterval: number;
   private clientTimeout: number;
@@ -268,6 +287,7 @@ export class WsServer {
     this.agent = options.agent;
     this.config = options.config;
     this.weixinChannel = options.weixinChannel;
+    this.onUserWeixinLogin = options.onUserWeixinLogin;
     this.heartbeatInterval = options.heartbeatInterval ?? 30000;
     this.clientTimeout = options.clientTimeout ?? 60000;
 
@@ -277,7 +297,7 @@ export class WsServer {
     });
 
     this.wss.on("connection", (ws, req) => {
-      this.handleConnection(ws);
+      this.handleConnection(ws, req);
     });
 
     // Heartbeat check
@@ -287,7 +307,13 @@ export class WsServer {
   }
 
   /** Handle new connection */
-  private async handleConnection(ws: WebSocket): Promise<void> {
+  private async handleConnection(ws: WebSocket, req: IncomingMessage): Promise<void> {
+    const user = getRequestUser(this.config, req);
+    if (isWebAuthEnabled(this.config) && !user) {
+      ws.close(1008, "Authentication required");
+      return;
+    }
+
     const clientId = generateId("client");
 
     // Don't create session immediately; wait for client to send sessions.restore or chat.send
@@ -296,18 +322,20 @@ export class WsServer {
       ws,
       sessionKey: null,
       sessionId: null,
+      user,
       lastPing: Date.now(),
       currentAbortController: null,
       logUnsubscribe: null,
     };
 
     this.clients.set(clientId, client);
-    logger.info({ clientId }, "Client connected");
+    logger.info({ clientId, userId: user?.id }, "Client connected");
 
     // Send welcome message - no session info, wait for client to decide
     this.sendEvent(ws, "connected", {
       clientId,
       version: "1.0.0",
+      user,
     });
 
     ws.on("message", (data) => {
@@ -318,7 +346,7 @@ export class WsServer {
       client.logUnsubscribe?.();
       client.logUnsubscribe = null;
       this.clients.delete(clientId);
-      logger.info({ clientId }, "Client disconnected");
+      logger.info({ clientId, userId: client.user?.id }, "Client disconnected");
     });
 
     ws.on("error", (error) => {
@@ -371,16 +399,16 @@ export class WsServer {
           result = await this.handleChatClear(client);
           break;
         case "sessions.list":
-          result = await this.handleSessionsList(parseParams(SessionsListParamsSchema, params));
+          result = await this.handleSessionsList(client, parseParams(SessionsListParamsSchema, params));
           break;
         case "sessions.history":
-          result = await this.handleSessionsHistory(parseParams(SessionKeyParamsSchema, params));
+          result = await this.handleSessionsHistory(client, parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.delete":
-          result = await this.handleSessionsDelete(parseParams(SessionKeyParamsSchema, params));
+          result = await this.handleSessionsDelete(client, parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.reset":
-          result = await this.handleSessionsReset(parseParams(SessionKeyParamsSchema, params));
+          result = await this.handleSessionsReset(client, parseParams(SessionKeyParamsSchema, params));
           break;
         case "sessions.restore":
           result = await this.handleSessionsRestore(client, parseParams(SessionKeyParamsSchema, params));
@@ -417,10 +445,10 @@ export class WsServer {
           break;
         case "weixin.qr":
           parseParams(EmptyParamsSchema, params);
-          result = await this.handleWeixinQR();
+          result = await this.handleWeixinQR(client);
           break;
         case "weixin.qr.status":
-          result = await this.handleWeixinQRStatus(parseParams(WeixinQrStatusParamsSchema, params));
+          result = await this.handleWeixinQRStatus(client, parseParams(WeixinQrStatusParamsSchema, params));
           break;
         default:
           throw new Error(`Unknown method: ${method}`);
@@ -452,7 +480,30 @@ export class WsServer {
     return { ok: true };
   }
 
-  private async handleWeixinQR(): Promise<{ qrcode_url: string; qrcode: string } | { error: string }> {
+  private createUserWeixinClient(): WeixinClient {
+    const config = this.config.channels.weixin ?? {};
+    return new WeixinClient(
+      "weixin",
+      config.baseUrl ?? DEFAULT_WEIXIN_OC_BASE_URL,
+      config.cdnBaseUrl ?? DEFAULT_WEIXIN_OC_CDN_BASE_URL,
+      config.apiTimeoutMs ?? DEFAULT_WEIXIN_OC_API_TIMEOUT_MS,
+      undefined,
+    );
+  }
+
+  private async handleWeixinQR(client: WsClient): Promise<{ qrcode_url: string; qrcode: string } | { error: string }> {
+    if (client.user) {
+      const weixinClient = this.createUserWeixinClient();
+      const botType = this.config.channels.weixin?.botType ?? DEFAULT_WEIXIN_OC_BOT_TYPE;
+      const result = await weixinClient.getQRCode(botType);
+      this.pendingUserWeixinLogins.set(result.qrcode, {
+        userId: client.user.id,
+        client: weixinClient,
+      });
+      const qrcode_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.qrcodeImgContent)}`;
+      return { qrcode_url, qrcode: result.qrcode };
+    }
+
     if (!this.weixinChannel) {
       return { error: "Personal WeChat channel not enabled" };
     }
@@ -464,15 +515,22 @@ export class WsServer {
     return { qrcode_url, qrcode: result.qrcode };
   }
 
-  private async handleWeixinQRStatus(params: { qrcode: string }): Promise<{
+  private async handleWeixinQRStatus(client: WsClient, params: { qrcode: string }): Promise<{
     status: string;
     message: string;
     accountId?: string;
+    user?: PublicWebUser;
   }> {
-    if (!this.weixinChannel) {
+    const pendingLogin = client.user ? this.pendingUserWeixinLogins.get(params.qrcode) : undefined;
+    if (pendingLogin && pendingLogin.userId !== client.user?.id) {
+      return { status: "error", message: "QR code belongs to another user" };
+    }
+    if (!pendingLogin && !this.weixinChannel) {
       return { status: "error", message: "Personal WeChat channel not enabled" };
     }
-    const result = await this.weixinChannel.checkQRStatus(params.qrcode);
+    const result = pendingLogin
+      ? await pendingLogin.client.pollQRStatus(params.qrcode, 15000)
+      : await this.weixinChannel!.checkQRStatus(params.qrcode);
     const statusMessages: Record<string, string> = {
       wait: "Waiting for scan...",
       confirmed: "Login successful!",
@@ -480,11 +538,39 @@ export class WsServer {
       canceled: "User cancelled login",
       denied: "User denied login",
     };
-    return {
+    const payload: {
+      status: string;
+      message: string;
+      accountId?: string;
+      user?: PublicWebUser;
+    } = {
       status: result.status,
       message: statusMessages[result.status] ?? result.status,
       accountId: result.accountId,
     };
+    if (result.status === "confirmed" && client.user && result.botToken) {
+      payload.user = saveUserWeixinLogin(this.config, client.user.id, {
+        token: result.botToken,
+        accountId: result.accountId ?? "",
+        baseUrl: result.baseUrl ?? this.config.channels.weixin?.baseUrl ?? "",
+        userId: result.userId,
+      });
+      client.user = payload.user;
+      this.pendingUserWeixinLogins.delete(params.qrcode);
+      await this.onUserWeixinLogin?.(client.user.id, {
+        token: result.botToken,
+        accountId: result.accountId,
+        baseUrl: result.baseUrl ?? this.config.channels.weixin?.baseUrl,
+        botType: this.config.channels.weixin?.botType,
+        cdnBaseUrl: this.config.channels.weixin?.cdnBaseUrl,
+        apiTimeoutMs: this.config.channels.weixin?.apiTimeoutMs,
+        longPollTimeoutMs: this.config.channels.weixin?.longPollTimeoutMs,
+        enabled: true,
+      });
+    } else if (["expired", "canceled", "cancel", "denied"].includes(result.status)) {
+      this.pendingUserWeixinLogins.delete(params.qrcode);
+    }
+    return payload;
   }
 
   /** Ensure client has a session; create if none */
@@ -494,7 +580,9 @@ export class WsServer {
     }
 
     const store = getSessionStore();
-    const sessionKey = `webchat:${client.id}`;
+    const sessionKey = client.user
+      ? `${WEBCHAT_SESSION_PREFIX}${client.user.id}:${client.id}`
+      : `${WEBCHAT_SESSION_PREFIX}${client.id}`;
     const session = await store.getOrCreate(sessionKey);
 
     client.sessionKey = sessionKey;
@@ -720,17 +808,28 @@ export class WsServer {
   }
 
   /** Handle session list */
-  private async handleSessionsList(params?: SessionsListParams): Promise<unknown> {
+  private sessionOwnerPrefix(client: WsClient): string {
+    return client.user ? `${WEBCHAT_SESSION_PREFIX}${client.user.id}:` : WEBCHAT_SESSION_PREFIX;
+  }
+
+  private assertSessionAccess(client: WsClient, sessionKey: string): void {
+    if (!sessionKey.startsWith(this.sessionOwnerPrefix(client))) {
+      throw new Error("Session not found");
+    }
+  }
+
+  private async handleSessionsList(client: WsClient, params?: SessionsListParams): Promise<unknown> {
     const store = getSessionStore();
     const sessions = await store.list({
       activeMinutes: params?.activeMinutes,
       search: params?.search,
     });
-    return { sessions: filterWebChatSessions(sessions, params?.limit) };
+    return { sessions: filterWebChatSessions(sessions, params?.limit, client.user?.id) };
   }
 
   /** Handle get session history */
-  private async handleSessionsHistory(params: SessionsHistoryParams): Promise<unknown> {
+  private async handleSessionsHistory(client: WsClient, params: SessionsHistoryParams): Promise<unknown> {
+    this.assertSessionAccess(client, params.sessionKey);
     const store = getSessionStore();
     const session = await store.get(params.sessionKey);
     if (!session) {
@@ -745,14 +844,16 @@ export class WsServer {
   }
 
   /** Handle delete session */
-  private async handleSessionsDelete(params: SessionsDeleteParams): Promise<{ success: boolean }> {
+  private async handleSessionsDelete(client: WsClient, params: SessionsDeleteParams): Promise<{ success: boolean }> {
+    this.assertSessionAccess(client, params.sessionKey);
     const store = getSessionStore();
     await store.delete(params.sessionKey);
     return { success: true };
   }
 
   /** Handle reset session */
-  private async handleSessionsReset(params: SessionsResetParams): Promise<unknown> {
+  private async handleSessionsReset(client: WsClient, params: SessionsResetParams): Promise<unknown> {
+    this.assertSessionAccess(client, params.sessionKey);
     const store = getSessionStore();
     const session = await store.reset(params.sessionKey);
     return {
@@ -764,6 +865,7 @@ export class WsServer {
 
   /** Handle restore session */
   private async handleSessionsRestore(client: WsClient, params: SessionsRestoreParams): Promise<unknown> {
+    this.assertSessionAccess(client, params.sessionKey);
     const store = getSessionStore();
     const session = await store.get(params.sessionKey);
     if (!session) {

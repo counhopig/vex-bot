@@ -11,6 +11,7 @@ import type { VexConfig } from "../types/index.js";
 import { COMMON_CSS, WEBCHAT_CSS, CONTROL_CSS } from "./template-css.js";
 import { WEBCHAT_CLIENT_JS, CONTROL_CLIENT_JS } from "./template-client.js";
 import { I18N_CLIENT_JS } from "./i18n.js";
+import { getRequestUser, isWebAuthEnabled } from "./auth.js";
 
 const logger = getChildLogger("static");
 const WEB_ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "assets");
@@ -113,6 +114,164 @@ ${COMMON_CSS}${WEBCHAT_CSS}
   <script>
 ${I18N_CLIENT_JS}
 ${WEBCHAT_CLIENT_JS.replace("${MASCOT_AVATAR_HTML}", MASCOT_IMG_SMALL)}
+  </script>
+</body>
+</html>`;
+}
+
+/** Get login/register page */
+function getLoginHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vex - Login</title>
+  <style>
+${COMMON_CSS}
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .auth-shell {
+      width: min(420px, 100%);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+    }
+    .auth-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .auth-brand h1 {
+      font-size: 1.25rem;
+      margin: 0;
+    }
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .auth-tab {
+      height: 38px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .auth-tab.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: white;
+    }
+    .auth-form {
+      display: grid;
+      gap: 14px;
+    }
+    .auth-form label {
+      display: grid;
+      gap: 6px;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .auth-form input {
+      height: 42px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 0 12px;
+      font-size: 1rem;
+    }
+    .auth-submit {
+      height: 42px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--primary);
+      color: white;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    .auth-error {
+      min-height: 20px;
+      color: var(--error);
+      font-size: 0.875rem;
+    }
+${WEBCHAT_CSS}
+  </style>
+</head>
+<body>
+  <main class="auth-shell">
+    <div class="auth-brand">
+      ${MASCOT_IMG_MEDIUM}
+      <h1>Vex</h1>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="login-tab" type="button">Login</button>
+      <button class="auth-tab" id="register-tab" type="button">Register</button>
+    </div>
+    <form class="auth-form" id="auth-form">
+      <label>
+        Username
+        <input id="username" name="username" autocomplete="username" minlength="3" maxlength="32" required />
+      </label>
+      <label>
+        Password
+        <input id="password" name="password" type="password" autocomplete="current-password" minlength="8" required />
+      </label>
+      <div class="auth-error" id="auth-error"></div>
+      <button class="auth-submit" id="auth-submit" type="submit">Login</button>
+    </form>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const next = params.get('next') || '/';
+    let mode = 'login';
+    const loginTab = document.getElementById('login-tab');
+    const registerTab = document.getElementById('register-tab');
+    const submit = document.getElementById('auth-submit');
+    const error = document.getElementById('auth-error');
+    function setMode(nextMode) {
+      mode = nextMode;
+      loginTab.classList.toggle('active', mode === 'login');
+      registerTab.classList.toggle('active', mode === 'register');
+      submit.textContent = mode === 'login' ? 'Login' : 'Register';
+      error.textContent = '';
+    }
+    loginTab.addEventListener('click', () => setMode('login'));
+    registerTab.addEventListener('click', () => setMode('register'));
+    document.getElementById('auth-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      error.textContent = '';
+      submit.disabled = true;
+      try {
+        const response = await fetch('/api/auth/' + mode, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || 'Authentication failed');
+        location.href = next.startsWith('/') ? next : '/';
+      } catch (e) {
+        error.textContent = e instanceof Error ? e.message : String(e);
+      } finally {
+        submit.disabled = false;
+      }
+    });
   </script>
 </body>
 </html>`;
@@ -1051,6 +1210,29 @@ export function handleStaticRequest(
   }
 
   if (sendAsset(pathname, res)) {
+    return true;
+  }
+
+  if (isWebAuthEnabled(options.config) && pathname === "/login") {
+    const currentUser = getRequestUser(options.config, req);
+    if (currentUser) {
+      res.writeHead(302, { Location: "/" });
+      res.end();
+      return true;
+    }
+    const html = getLoginHtml();
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": Buffer.byteLength(html),
+    });
+    res.end(html);
+    return true;
+  }
+
+  const protectedPage = pathname === "/" || pathname === "/index.html" || pathname === "/control" || pathname === "/control/";
+  if (isWebAuthEnabled(options.config) && protectedPage && !getRequestUser(options.config, req)) {
+    res.writeHead(302, { Location: `/login?next=${encodeURIComponent(pathname)}` });
+    res.end();
     return true;
   }
 

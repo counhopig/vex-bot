@@ -7,8 +7,9 @@ WebChat browser UI + WebSocket protocol layer. Server-rendered inline HTML SPAs 
 ```
 web/
 ├── types.ts       # WsFrame union, ChatMessage, ChatDeltaEvent, SessionInfo, SystemStatus, ConfigInfo + 7-section params
-├── websocket.ts   # WsServer class: connection mgmt, 16 method handlers, heartbeat, YAML config save
-├── static.ts      # Two inline SPAs (getEmbeddedHtml, getControlHtml), handleStaticRequest route dispatcher
+├── auth.ts        # SQLite-backed local Web UI users, login sessions, per-user Weixin login records
+├── websocket.ts   # WsServer class: auth, connection mgmt, 16 method handlers, heartbeat, YAML config save
+├── static.ts      # Login page + two inline SPAs, handleStaticRequest route dispatcher
 ├── assets/        # Runtime-served Web UI image assets copied to dist/web/assets during build
 └── index.ts       # Barrel re-export
 ```
@@ -18,6 +19,7 @@ web/
 | Task | Location | Notes |
 |------|----------|-------|
 | WebSocket frame protocol | `types.ts` | `WsFrame = WsRequestFrame \| WsResponseFrame \| WsEventFrame` |
+| Web UI auth | `auth.ts` | Local register/login sessions in SQLite; default DB `~/.vex/web-auth.sqlite` |
 | Add a WS method | `websocket.ts` | Add case in `handleRequest()`, Zod schema, private handler |
 | Chat streaming | `websocket.ts:handleChatSend()` | `agent.processMessageStream()` → `chat.delta` events → client accumulates → `marked.js` render |
 | Cancel in-flight chat | `websocket.ts:handleChatCancel()` | `AbortController.abort()` → `chat.delta` with `cancelled:true` |
@@ -26,7 +28,7 @@ web/
 | Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`, explicit restore loads transcript into agent |
 | WebChat SPA | `static.ts:getEmbeddedHtml()` | Inline CSS/JS, `marked.js` via CDN, sidebar sessions, message list |
 | Control UI | `static.ts:getControlHtml()` | Inline CSS/JS, config editor, QR scan, status panel |
-| Route dispatch | `static.ts:handleStaticRequest()` | `/` → WebChat, `/control` → Control UI, `/assets/*` → copied Web UI assets; skips `/ws`, `/api/*`, `/health` |
+| Route dispatch | `static.ts:handleStaticRequest()` | `/login` → auth page, `/` → WebChat, `/control` → Control UI, `/assets/*` → copied Web UI assets; skips `/ws`, `/api/*`, `/health` |
 | HTML sanitization | `static.ts:sanitizeHtml()` (inline JS) | Blocks 7 tag types, strips `on*` attrs, `javascript:` URIs |
 | Heartbeat | `websocket.ts:checkHeartbeat()` | 30s ping, 60s timeout → `ws.terminate()` |
 
@@ -60,6 +62,8 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 - **Streaming**: `handleChatSend` runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
 - **Web session scope**: `sessions.list` filters the shared store to `webchat:` session keys before returning data to the browser UI, so Personal WeChat transcripts remain stored but do not appear on the webpage.
+- **Authenticated session scope**: when `webAuth.enabled` is true, WebChat session keys include the web user id (`webchat:{userId}:{clientId}`) and session list/history/delete/restore reject other users' keys.
+- **Weixin login state**: QR login for authenticated users stores the confirmed token/account id under the current web user in SQLite and asks the Gateway to activate a user-scoped `WeixinChannel`. Startup restores stored user Weixin channels from SQLite.
 - **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
 - **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.

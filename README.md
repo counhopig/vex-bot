@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.13.2-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-1.13.3-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
@@ -16,6 +16,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **Personal WeChat** — connects to personal WeChat accounts via the iLink OC API long-polling channel for sending/receiving messages and files
 - **WebChat UI** — built-in WebSocket-driven browser chat interface, server-rendered with no frontend build step
 - **Control panel** — browser control surface for config editing, WeChat QR login, service status, and live backend logs
+- **Web login protection** — local username/password registration and login backed by SQLite, with WebChat sessions and Weixin connections scoped per web user
 - **Persona extension** — private persona state, emotion/effects/todos, and background user-profile extraction from chat history
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
 - **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, cron job management, memory access, sub-agent delegation, and system utilities
@@ -166,6 +167,9 @@ server:
 logging:
   level: info
   pretty: true
+webAuth:
+  enabled: true
+  database: ~/.vex/web-auth.sqlite
 memory:
   enabled: true
   embeddingProvider: deepseek

@@ -347,6 +347,12 @@ interface VexConfig {
   // Session storage configuration
   sessions?: SessionStoreConfig;
 
+  // Web UI auth configuration
+  webAuth?: {
+    enabled?: boolean;
+    database?: string;
+  };
+
   // Memory system configuration
   memory?: MemoryConfig;
 

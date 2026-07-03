@@ -6,6 +6,13 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+## [1.13.3] - 2026-07-03
+
+### Added
+
+- Added SQLite-backed Web UI registration/login protection for WebChat, Control Panel, and WebSocket connections.
+- Scoped WebChat sessions and Weixin QR login/channel activation to the authenticated web user.
+
 ## [1.13.2] - 2026-07-03
 
 ### Changed

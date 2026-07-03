@@ -109,9 +109,10 @@ vex-bot/
 │   │   └── index.ts        #   Barrel export
 │   │
 │   ├── web/                # Server-rendered WebChat SPA (inline HTML/CSS/JS, no frontend build)
+│   │   ├── auth.ts         #   SQLite-backed Web UI users, sessions, per-user Weixin login records
 │   │   ├── types.ts        #   WsFrame union, ChatMessage, session info (⚠ incompatible with src/types ChatMessage)
-│   │   ├── websocket.ts    #   WsServer: connection management, 18 method handlers, heartbeat, YAML config save, log stream
-│   │   ├── static.ts       #   Two inline SPAs (WebChat UI + Control Panel UI)
+│   │   ├── websocket.ts    #   WsServer: auth, connection management, 18 method handlers, heartbeat, YAML config save, log stream
+│   │   ├── static.ts       #   Login page + two inline SPAs (WebChat UI + Control Panel UI)
 │   │   └── index.ts        #   Barrel export
 │   │
 │   ├── browser/            # Playwright headless browser automation
@@ -729,6 +730,7 @@ Before modifying `src/agents/runtime.ts`, understand the pi-coding-agent API fir
 | `express` | HTTP server | `src/gateway/server.ts` |
 | `ws` | WebSocket server | `src/web/websocket.ts` |
 | `pino` | Structured logging | Global, `getChildLogger()` pattern |
+| `better-sqlite3` | Local Web UI user/session database | `src/web/auth.ts` |
 | `zod` | Config validation | `src/config/index.ts`, `src/web/websocket.ts` |
 | `commander` | CLI framework | `src/cli/index.ts` |
 | `playwright-core` | Browser automation | `src/browser/` module (requires `npx playwright install chromium`) |

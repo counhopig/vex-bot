@@ -290,6 +290,14 @@ export interface PersonaConfig {
   debug_log_enabled?: boolean;
 }
 
+/** Web UI login and registration config */
+export interface WebAuthConfig {
+  /** Whether Web UI login/register protection is enabled */
+  enabled?: boolean;
+  /** SQLite database path for Web users, sessions, and per-user Weixin login state */
+  database?: string;
+}
+
 /** Main config */
 export interface VexConfig {
   readonly __configPath?: string;
@@ -327,6 +335,8 @@ export interface VexConfig {
   persona?: PersonaConfig;
   /** Weather tool config */
   weather?: WeatherConfig;
+  /** Web UI auth config */
+  webAuth?: WebAuthConfig;
 }
 
 // ============== Event-related Types ==============

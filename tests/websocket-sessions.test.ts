@@ -54,4 +54,29 @@ describe("websocket sessions", () => {
 
     expect(filterWebChatSessions(sessions, 1)).toEqual([sessions[1]]);
   });
+
+  it("can scope WebChat sessions to one authenticated web user", () => {
+    const sessions: SessionListItem[] = [
+      {
+        sessionKey: "webchat:user-a:client-1",
+        sessionId: "web-1",
+        updatedAt: 300,
+      },
+      {
+        sessionKey: "webchat:user-b:client-1",
+        sessionId: "web-2",
+        updatedAt: 200,
+      },
+      {
+        sessionKey: "webchat:user-a:client-2",
+        sessionId: "web-3",
+        updatedAt: 100,
+      },
+    ];
+
+    expect(filterWebChatSessions(sessions, undefined, "user-a")).toEqual([
+      sessions[0],
+      sessions[2],
+    ]);
+  });
 });

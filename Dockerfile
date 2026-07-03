@@ -6,7 +6,9 @@ WORKDIR /app
 
 # Install all dependencies (including dev dependencies for build)
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
+    npm ci && \
+    apk del .build-deps
 
 # Copy source code
 COPY . .
@@ -34,7 +36,10 @@ COPY --from=builder --chown=vex:vex /app/dist ./dist
 COPY --from=builder --chown=vex:vex /app/skills ./skills
 
 # Install production dependencies only
-RUN npm ci --omit=dev && npm cache clean --force
+RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
+    npm ci --omit=dev && \
+    apk del .build-deps && \
+    npm cache clean --force
 
 # Create data directories for persistent storage
 RUN mkdir -p /home/vex/.vex/logs \

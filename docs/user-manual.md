@@ -10,7 +10,7 @@ What you can do with Vex:
 - Connect to custom OpenAI-compatible endpoints (Ollama, vLLM, OpenAI, Azure, etc.)
 - Connect to custom Anthropic-compatible endpoints (Claude, Bedrock, etc.)
 - Reply to WeChat messages automatically via the iLink OC API
-- Chat through a browser-based WebChat UI over WebSocket
+- Chat through a browser-based WebChat UI over WebSocket, protected by local registration/login, with each web user able to connect a separate WeChat account
 - Use long-term memory, scheduled tasks, browser automation, and plugins
 
 Vex runs on `@mariozechner/pi-coding-agent` (the agent runtime) and `@mariozechner/pi-ai` (the LLM abstraction layer). It was forked from [OpenMozi](https://github.com/oujingzhou/openmozi), stripped down to WeChat-only, and rebranded.
@@ -175,6 +175,9 @@ server:
 logging:
   level: info
   pretty: true
+webAuth:
+  enabled: true
+  database: /path/to/web-auth.sqlite
 memory:
   enabled: true
   directory: /path/to/memory
@@ -206,6 +209,8 @@ persona:
 | `server.host` | Listen address; `0.0.0.0` allows remote access |
 | `logging.level` | Log verbosity; set to `debug` when troubleshooting |
 | `logging.pretty` | `true` enables colorized human-readable console logs; daily log files stay JSON |
+| `webAuth.enabled` | Protects the browser UI and WebSocket with local login/registration; default `true` |
+| `webAuth.database` | SQLite database path for Web users, sessions, and per-user Weixin login records; default `~/.vex/web-auth.sqlite` |
 | `memory.enabled` | Whether the agent remembers cross-session information |
 | `memory.directory` | Where memory files are stored |
 | `sessions.directory` | Where session transcripts (JSONL format) are stored |

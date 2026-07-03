@@ -122,6 +122,11 @@ const PersonaConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
 }).passthrough();
 
+const WebAuthConfigSchema = z.object({
+  enabled: z.boolean().optional().default(true),
+  database: z.string().optional(),
+});
+
 const VexConfigSchema = z.object({
   providers: z.record(ProviderConfigSchema).optional().default({}),
   channels: z.object({
@@ -137,6 +142,7 @@ const VexConfigSchema = z.object({
   sharelink: ShareLinkConfigSchema.optional(),
   persona: PersonaConfigSchema.optional(),
   weather: WeatherConfigSchema.optional(),
+  webAuth: WebAuthConfigSchema.optional().default({}),
 });
 
 // ============== Configuration Loading ==============
@@ -211,6 +217,9 @@ function mergeConfigs(...configs: Partial<VexConfig>[]): Partial<VexConfig> {
     }
     if (config.weather) {
       result.weather = { ...result.weather, ...config.weather };
+    }
+    if (config.webAuth) {
+      result.webAuth = { ...result.webAuth, ...config.webAuth };
     }
   }
 
