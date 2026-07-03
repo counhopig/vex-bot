@@ -136,8 +136,16 @@ ${COMMON_CSS}${CONTROL_CSS}
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <button class="hamburger" id="control-menu-btn" aria-label="Menu" aria-controls="control-sidebar" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <span class="topbar-title">${assistantName} Console</span>
+  </div>
+  <div class="sidebar-overlay" id="control-sidebar-overlay"></div>
   <div class="layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="control-sidebar">
+      <button class="sidebar-close" id="control-sidebar-close" aria-label="Close menu">&times;</button>
       <div class="sidebar-header">
         <div class="sidebar-logo">
           <span>${MASCOT_SVG_MEDIUM}</span>
@@ -227,7 +235,7 @@ ${COMMON_CSS}${CONTROL_CSS}
         <div class="table-container">
           <div class="table-header">
             <span class="table-title">System Info</span>
-            <button class="btn btn-secondary" onclick="refreshStatus()">Refresh</button>
+            <button class="btn btn-secondary" id="overview-refresh-btn" onclick="runWithLoading('overview-refresh-btn', refreshStatus)">Refresh</button>
           </div>
           <table>
             <tbody id="system-info">
@@ -248,7 +256,7 @@ ${COMMON_CSS}${CONTROL_CSS}
         <div class="table-container">
           <div class="table-header">
             <span class="table-title">Stored Sessions</span>
-            <button class="btn btn-secondary" onclick="refreshSessions()">Refresh</button>
+            <button class="btn btn-secondary" id="sessions-refresh-btn" onclick="runWithLoading('sessions-refresh-btn', refreshSessions)">Refresh</button>
           </div>
           <table>
             <thead>
@@ -310,8 +318,8 @@ ${COMMON_CSS}${CONTROL_CSS}
           <p class="page-desc">Visually configure model providers, channels, and system settings</p>
         </div>
         <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="loadConfig()">Refresh Config</button>
-          <button class="btn btn-secondary" onclick="saveAllConfig()">Save All Changes</button>
+          <button class="btn btn-secondary" id="config-refresh-btn" onclick="runWithLoading('config-refresh-btn', loadConfig)">Refresh Config</button>
+          <button class="btn btn-primary" id="config-save-btn" onclick="runWithLoading('config-save-btn', saveAllConfig)">Save All Changes</button>
         </div>
         <div id="config-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;">
           <button class="config-tab active" data-tab="agent">Agent</button>
@@ -463,8 +471,8 @@ ${COMMON_CSS}${CONTROL_CSS}
           <p class="page-desc">Edit bot persona, extensions, weather, skills, sessions, and raw config</p>
         </div>
         <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="btn btn-primary" onclick="loadSettings()">Refresh Settings</button>
-          <button class="btn btn-secondary" onclick="saveAllSettings()">Save Settings</button>
+          <button class="btn btn-secondary" id="settings-refresh-btn" onclick="runWithLoading('settings-refresh-btn', loadSettings)">Refresh Settings</button>
+          <button class="btn btn-primary" id="settings-save-btn" onclick="runWithLoading('settings-save-btn', saveAllSettings)">Save Settings</button>
         </div>
         <div id="settings-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
           <button class="config-tab active" data-settings-tab="persona">Bot / Persona</button>
@@ -902,7 +910,7 @@ ${COMMON_CSS}${CONTROL_CSS}
   <div class="modal-overlay" id="add-provider-modal">
     <div class="modal">
       <div class="modal-header">
-        <h3>Add Provider</h3>
+        <h3 id="add-provider-title">Add Provider</h3>
         <button class="modal-close" onclick="hideAddProviderModal()">&times;</button>
       </div>
       <div class="form-group">
@@ -944,10 +952,28 @@ ${COMMON_CSS}${CONTROL_CSS}
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="hideAddProviderModal()">Cancel</button>
-        <button class="btn btn-primary" onclick="addProvider()">Add</button>
+        <button class="btn btn-primary" id="add-provider-submit-btn" onclick="addProvider()">Add</button>
       </div>
     </div>
   </div>
+
+  <!-- Confirm Dialog -->
+  <div class="modal-overlay" id="confirm-modal">
+    <div class="modal dialog">
+      <div class="modal-header">
+        <h3 id="confirm-title">Please confirm</h3>
+        <button class="modal-close" data-confirm-dismiss aria-label="Close">&times;</button>
+      </div>
+      <p class="dialog-message" id="confirm-message"></p>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="confirm-cancel-btn">Cancel</button>
+        <button class="btn btn-danger" id="confirm-ok-btn">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast notifications -->
+  <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
   <script>
 ${I18N_CLIENT_JS}

@@ -442,6 +442,158 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     const t = (key, vars) => i18n.t(key, vars);
     const applyI18n = (root) => i18n.apply(root);
 
+    // ===== UX helpers: toasts, confirm dialog, button loading, mobile nav =====
+    const TOAST_ICONS = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+    function showToast(type, message, opts) {
+      opts = opts || {};
+      const container = document.getElementById('toast-container');
+      if (!container) { return; }
+      const toast = document.createElement('div');
+      toast.className = 'toast ' + (type || 'info');
+      const icon = document.createElement('span');
+      icon.className = 'toast-icon';
+      icon.textContent = TOAST_ICONS[type] || TOAST_ICONS.info;
+      const body = document.createElement('span');
+      body.className = 'toast-body';
+      body.textContent = message;
+      const close = document.createElement('button');
+      close.className = 'toast-close';
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.textContent = '×';
+      let removed = false;
+      const dismiss = () => {
+        if (removed) return;
+        removed = true;
+        toast.classList.add('hide');
+        setTimeout(() => toast.remove(), 200);
+      };
+      close.addEventListener('click', dismiss);
+      toast.appendChild(icon);
+      toast.appendChild(body);
+      toast.appendChild(close);
+      container.appendChild(toast);
+      const ttl = opts.duration != null ? opts.duration : (type === 'error' ? 6000 : 3500);
+      if (ttl > 0) setTimeout(dismiss, ttl);
+      return toast;
+    }
+    window.showToast = showToast;
+
+    let confirmResolver = null;
+    function confirmDialog(opts) {
+      opts = opts || {};
+      const modal = document.getElementById('confirm-modal');
+      const titleEl = document.getElementById('confirm-title');
+      const msgEl = document.getElementById('confirm-message');
+      const okBtn = document.getElementById('confirm-ok-btn');
+      const cancelBtn = document.getElementById('confirm-cancel-btn');
+      if (!modal || !okBtn) { return Promise.resolve(window.confirm(opts.message || '')); }
+      titleEl.textContent = opts.title || t('Please confirm');
+      msgEl.textContent = opts.message || '';
+      okBtn.textContent = opts.confirmText || t('Confirm');
+      cancelBtn.textContent = opts.cancelText || t('Cancel');
+      okBtn.className = 'btn ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
+      modal.classList.add('show');
+      document.body.classList.add('no-scroll');
+      setTimeout(() => okBtn.focus(), 0);
+      const { promise, resolve } = Promise.withResolvers();
+      confirmResolver = resolve;
+      return promise;
+    }
+    function closeConfirm(result) {
+      const modal = document.getElementById('confirm-modal');
+      if (modal) modal.classList.remove('show');
+      document.body.classList.remove('no-scroll');
+      if (confirmResolver) { const r = confirmResolver; confirmResolver = null; r(result); }
+    }
+
+    async function runWithLoading(target, fn) {
+      const btn = typeof target === 'string' ? document.getElementById(target) : target;
+      if (btn) { btn.classList.add('is-loading'); btn.disabled = true; }
+      try {
+        return await fn();
+      } finally {
+        if (btn) { btn.classList.remove('is-loading'); btn.disabled = false; }
+      }
+    }
+    window.runWithLoading = runWithLoading;
+    window.confirmDialog = confirmDialog;
+
+    function initPasswordToggles() {
+      document.querySelectorAll('input[type="password"]').forEach(input => {
+        if (input.dataset.toggleWired) return;
+        input.dataset.toggleWired = '1';
+        const wrap = document.createElement('div');
+        wrap.className = 'input-with-toggle';
+        input.parentNode.insertBefore(wrap, input);
+        wrap.appendChild(input);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'input-toggle-btn';
+        btn.setAttribute('aria-label', 'Toggle visibility');
+        btn.textContent = '👁';
+        btn.addEventListener('click', () => {
+          const reveal = input.type === 'password';
+          input.type = reveal ? 'text' : 'password';
+          btn.textContent = reveal ? '🙈' : '👁';
+        });
+        wrap.appendChild(btn);
+      });
+    }
+
+    function initMobileNav() {
+      const sidebar = document.getElementById('control-sidebar');
+      const overlay = document.getElementById('control-sidebar-overlay');
+      const menuBtn = document.getElementById('control-menu-btn');
+      const closeBtn = document.getElementById('control-sidebar-close');
+      if (!sidebar) return;
+      const openNav = () => {
+        sidebar.classList.add('open');
+        overlay?.classList.add('show');
+        menuBtn?.setAttribute('aria-expanded', 'true');
+      };
+      const closeNav = () => {
+        sidebar.classList.remove('open');
+        overlay?.classList.remove('show');
+        menuBtn?.setAttribute('aria-expanded', 'false');
+      };
+      menuBtn?.addEventListener('click', openNav);
+      closeBtn?.addEventListener('click', closeNav);
+      overlay?.addEventListener('click', closeNav);
+      sidebar.querySelectorAll('.nav-item').forEach(item => item.addEventListener('click', closeNav));
+      window.__closeSidebar = closeNav;
+    }
+
+    function initDialogDismissal() {
+      // Confirm dialog buttons
+      document.getElementById('confirm-ok-btn')?.addEventListener('click', () => closeConfirm(true));
+      document.getElementById('confirm-cancel-btn')?.addEventListener('click', () => closeConfirm(false));
+      document.querySelectorAll('[data-confirm-dismiss]').forEach(el =>
+        el.addEventListener('click', () => closeConfirm(false)));
+      document.getElementById('confirm-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'confirm-modal') closeConfirm(false);
+      });
+      // Add/Edit provider modal: click backdrop to close
+      document.getElementById('add-provider-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'add-provider-modal') hideAddProviderModal();
+      });
+      // Global Escape handling (topmost layer first)
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const confirmModal = document.getElementById('confirm-modal');
+        if (confirmModal?.classList.contains('show')) { closeConfirm(false); return; }
+        const addModal = document.getElementById('add-provider-modal');
+        if (addModal?.classList.contains('show')) { hideAddProviderModal(); return; }
+        if (window.__closeSidebar) window.__closeSidebar();
+      });
+    }
+
+    function initControlUx() {
+      initMobileNav();
+      initPasswordToggles();
+      initDialogDismissal();
+    }
+
     function mountLanguageSwitcher() {
       if (document.getElementById('controlLanguageSelect')) return;
       const sidebar = document.querySelector('.sidebar');
@@ -659,13 +811,21 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     }
 
     async function deleteControlSession(sessionKey) {
-      if (!sessionKey || !confirm(t('Delete this session?'))) return;
+      if (!sessionKey) return;
+      const ok = await confirmDialog({
+        title: t('Delete session'),
+        message: t('Delete this session?'),
+        confirmText: t('Delete'),
+      });
+      if (!ok) return;
       try {
         await request('sessions.delete', { sessionKey });
         await refreshSessions();
         addLog('info', 'Session deleted');
+        showToast('success', t('Session deleted'));
       } catch (e) {
         addLog('error', 'Failed to delete session: ' + e.message);
+        showToast('error', t('Failed to delete session') + ': ' + e.message);
       }
     }
 
@@ -683,14 +843,21 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       return escapeControlHtml(text);
     }
 
+    // Only stick to the bottom when the user is already there, so scrolling up
+    // to read history is not interrupted by new entries.
+    function isNearBottom(container) {
+      return container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+    }
+
     function addLog(level, message) {
       const container = document.getElementById('log-container');
+      const stick = isNearBottom(container);
       const time = new Date().toLocaleTimeString();
       const entry = document.createElement('div');
       entry.className = 'log-entry ' + level;
       entry.innerHTML = '<span class="time">[' + time + ']</span> ' + message;
       container.appendChild(entry);
-      container.scrollTop = container.scrollHeight;
+      if (stick) container.scrollTop = container.scrollHeight;
 
       // Limit log entries
       while (container.children.length > 100) {
@@ -718,6 +885,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     function appendBackendLog(entry) {
       const container = document.getElementById('log-container');
       if (!container) return;
+      const stick = isNearBottom(container);
       const el = document.createElement('div');
       el.className = 'log-entry ' + entry.level;
       const timeSpan = document.createElement('span');
@@ -733,7 +901,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       // textContent keeps arbitrary log messages from being interpreted as HTML.
       el.appendChild(document.createTextNode(entry.msg || ''));
       container.appendChild(el);
-      container.scrollTop = container.scrollHeight;
+      if (stick) container.scrollTop = container.scrollHeight;
       while (container.children.length > 500) container.removeChild(container.firstChild);
     }
 
@@ -927,15 +1095,41 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       }
     }
 
-    // Show add provider modal
-    function showAddProviderModal() {
+    // Provider modal mode ('add' | 'edit')
+    let providerModalMode = 'add';
+    let editingProviderId = null;
+
+    function openProviderModal() {
       document.getElementById('add-provider-modal').classList.add('show');
-      updateProviderModalFields();
+      document.body.classList.add('no-scroll');
     }
 
-    // Hide add provider modal
+    // Show add provider modal (reset to add mode)
+    function showAddProviderModal() {
+      providerModalMode = 'add';
+      editingProviderId = null;
+      const typeSel = document.getElementById('new-provider-type');
+      typeSel.disabled = false;
+      typeSel.value = typeSel.options[0]?.value || 'deepseek';
+      document.getElementById('add-provider-title').textContent = t('Add Provider');
+      document.getElementById('add-provider-submit-btn').textContent = t('Add');
+      const keyInput = document.getElementById('new-provider-api-key');
+      keyInput.placeholder = t('Enter API Key');
+      keyInput.value = '';
+      document.getElementById('new-provider-base-url').value = '';
+      document.getElementById('new-provider-name').value = '';
+      document.getElementById('new-provider-group-id').value = '';
+      updateProviderModalFields();
+      openProviderModal();
+    }
+
+    // Hide add/edit provider modal
     function hideAddProviderModal() {
       document.getElementById('add-provider-modal').classList.remove('show');
+      document.body.classList.remove('no-scroll');
+      document.getElementById('new-provider-type').disabled = false;
+      providerModalMode = 'add';
+      editingProviderId = null;
       // Clear form
       document.getElementById('new-provider-api-key').value = '';
       document.getElementById('new-provider-base-url').value = '';
@@ -955,72 +1149,87 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       groupIdGroup.style.display = type === 'minimax' ? 'block' : 'none';
     }
 
-    // Add Provider
+    // Add or update a provider (shared submit handler for the modal)
     function addProvider() {
-      const type = document.getElementById('new-provider-type').value;
+      const isEdit = providerModalMode === 'edit';
+      const type = isEdit ? editingProviderId : document.getElementById('new-provider-type').value;
       const apiKey = document.getElementById('new-provider-api-key').value.trim();
       const baseUrl = document.getElementById('new-provider-base-url').value.trim();
       const name = document.getElementById('new-provider-name').value.trim();
       const groupId = document.getElementById('new-provider-group-id').value.trim();
 
-      if (!apiKey) {
-        alert(t('Please enter API Key'));
+      if (!isEdit && !apiKey) {
+        showToast('error', t('Please enter API Key'));
+        return;
+      }
+      if ((type === 'custom-openai' || type === 'custom-anthropic') && !baseUrl && !isEdit) {
+        showToast('error', t('Please enter Base URL'));
         return;
       }
 
-      if ((type === 'custom-openai' || type === 'custom-anthropic') && !baseUrl) {
-        alert(t('Please enter Base URL'));
-        return;
-      }
-
-      // Save to pendingProviders, including apiKey
-      pendingProviders[type] = {
+      const existing = (currentConfig && currentConfig.providers && currentConfig.providers[type]) || {};
+      const entry = {
         id: type,
-        name: name || undefined,
-        baseUrl: baseUrl || undefined,
-        groupId: groupId || undefined,
+        name: name || existing.name || undefined,
+        baseUrl: baseUrl || existing.baseUrl || undefined,
+        groupId: groupId || existing.groupId || undefined,
         hasApiKey: true,
-        apiKey: apiKey  // Save apiKey
       };
+      // Only send apiKey when the user typed one; a blank key in edit mode
+      // keeps the existing key (server merges it back).
+      if (apiKey) entry.apiKey = apiKey;
+      pendingProviders[type] = entry;
 
       hideAddProviderModal();
-      // Refresh provider list display
       if (currentConfig) {
-        const mergedProviders = { ...currentConfig.providers, ...pendingProviders };
-        populateProvidersForm(mergedProviders);
+        populateProvidersForm({ ...currentConfig.providers, ...pendingProviders });
       }
 
-      showSaveResult('success', t('Provider added (click Save to apply changes)'));
+      showToast('success', isEdit
+        ? t('Provider updated (click Save to apply changes)')
+        : t('Provider added (click Save to apply changes)'));
     }
 
-    // Edit provider
+    // Edit provider — opens the modal prefilled instead of a blocking prompt dialog
     function editProvider(id) {
-      const provider = currentConfig?.providers[id];
+      const provider = (currentConfig && currentConfig.providers[id]) || pendingProviders[id];
       if (!provider) return;
+      providerModalMode = 'edit';
+      editingProviderId = id;
 
-      const apiKey = prompt('Enter new API Key (leave blank to keep current):');
-      if (apiKey === null) return;
+      const typeSel = document.getElementById('new-provider-type');
+      const hasOption = Array.from(typeSel.options).some(o => o.value === id);
+      if (hasOption) typeSel.value = id;
+      typeSel.disabled = true;
+      updateProviderModalFields();
 
-      if (apiKey) {
-        pendingProviders[id] = {
-          ...provider,
-          hasApiKey: true,
-          apiKey: apiKey  // Save new apiKey
-        };
-        showSaveResult('success', t('Provider updated (click Save to apply changes)'));
-      }
+      document.getElementById('new-provider-base-url').value = provider.baseUrl || '';
+      document.getElementById('new-provider-name').value = provider.name || '';
+      document.getElementById('new-provider-group-id').value = provider.groupId || '';
+      const keyInput = document.getElementById('new-provider-api-key');
+      keyInput.value = '';
+      keyInput.placeholder = t('Leave blank to keep current key');
+
+      document.getElementById('add-provider-title').textContent = t('Edit Provider');
+      document.getElementById('add-provider-submit-btn').textContent = t('Update');
+      openProviderModal();
     }
 
     // Remove provider
-    function removeProvider(id) {
-      if (!confirm(t('Are you sure you want to remove this provider?'))) return;
+    async function removeProvider(id) {
+      const ok = await confirmDialog({
+        title: t('Delete provider'),
+        message: t('Are you sure you want to remove this provider?'),
+        confirmText: t('Delete'),
+      });
+      if (!ok) return;
 
       pendingProviders[id] = { id: id, hasApiKey: false };
       const mergedProviders = { ...currentConfig.providers };
       delete mergedProviders[id];
       populateProvidersForm(mergedProviders);
 
-      showSaveResult('success', t('Provider removed (click Save to apply changes)'));
+      showToast('success', t('Provider removed (click Save to apply changes)'));
     }
 
     // Save all config
@@ -1151,11 +1360,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       }
     }
 
-    // Show save result
+    // Show save result (inline banner + floating toast so it's visible when scrolled)
     function showSaveResult(type, message) {
       const resultEl = document.getElementById('save-result');
       resultEl.textContent = message;
       resultEl.className = 'save-result show ' + type;
+      showToast(type, message);
       // Hide after 5 seconds
       setTimeout(() => {
         hideSaveResult();
@@ -1187,7 +1397,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         if (result.error) {
           btn.textContent = t('Scan QR Login');
           btn.disabled = false;
-          alert(result.error);
+          showToast('error', result.error);
           return;
         }
 
@@ -1203,7 +1413,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       } catch (e) {
         btn.textContent = t('Scan QR Login');
         btn.disabled = false;
-        alert(t('Failed to get QR code') + ': ' + e.message);
+        showToast('error', t('Failed to get QR code') + ': ' + e.message);
       }
     }
 
@@ -1226,7 +1436,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
             btn.disabled = true;
             document.getElementById('weixin-status').textContent = t('Status: Logged in (Token valid)');
             document.getElementById('weixin-status').style.color = '#10b981';
-            alert(t('WeChat login successful! Click "Save All Changes" and restart the service.'));
+            showToast('success', t('WeChat login successful! Click "Save All Changes" and restart the service.'), { duration: 8000 });
           } else if (result.status === 'expired') {
             statusEl.textContent = t('QR code expired, please refresh');
             statusEl.style.color = '#ef4444';
@@ -1530,10 +1740,11 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const raw = getValue('settings-raw-yaml');
       if (!raw.trim()) {
         setRawError('');
-        alert(t('Raw YAML editor is empty — nothing to validate.'));
+        showToast('info', t('Raw YAML editor is empty — nothing to validate.'));
         return;
       }
       setRawError(t('YAML will be validated by the server when you save.'));
+      showToast('info', t('YAML will be validated by the server when you save.'));
     }
 
     function setRawError(msg) {
@@ -1545,6 +1756,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const el = document.getElementById('settings-save-result');
       el.textContent = message;
       el.className = 'save-result show ' + type;
+      showToast(type, message);
       setTimeout(hideSettingsSaveResult, 5000);
     }
 
@@ -1554,6 +1766,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       el.textContent = '';
     }
 
+    initControlUx();
     mountLanguageSwitcher();
     applyI18n();
     connect();
