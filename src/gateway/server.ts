@@ -299,7 +299,7 @@ export async function createGateway(config: VexConfig): Promise<Gateway> {
 }
 
 export async function startGateway(config: VexConfig): Promise<Gateway> {
-  setLogger(createLogger({ level: config.logging.level }));
+  setLogger(createLogger({ level: config.logging.level, pretty: config.logging.pretty ?? true }));
   const gateway = await createGateway(config);
   await gateway.start();
   process.on("SIGINT", async () => { console.log("\nReceived SIGINT, shutting down..."); await gateway.shutdown(); process.exit(0); });

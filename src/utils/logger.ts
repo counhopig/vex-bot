@@ -61,7 +61,9 @@ export function createLogger(options: {
       options: {
         colorize: true,
         translateTime: "SYS:standard",
-        ignore: "pid,hostname",
+        // Surface the child-logger module inline; pino-pretty colorizes the level label.
+        ignore: "pid,hostname,module",
+        messageFormat: "{if module}[{module}] {end}{msg}",
       },
     });
   } else {

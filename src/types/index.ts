@@ -304,6 +304,8 @@ export interface VexConfig {
   };
   logging: {
     level: "debug" | "info" | "warn" | "error";
+    /** Colorized console output; the log file stays JSON regardless. */
+    pretty?: boolean;
   };
   /** Session store config */
   sessions?: SessionStoreConfig;

@@ -52,6 +52,8 @@ const ServerConfigSchema = z.object({
 
 const LoggingConfigSchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  /** Colorized, human-readable console output. The log file stays JSON either way. */
+  pretty: z.boolean().default(true),
 });
 
 const SessionStoreConfigSchema = z.object({
