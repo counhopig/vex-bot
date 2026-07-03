@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
+## [1.15.0] - 2026-07-03
+
+### Fixed
+
+- **Cross-user data isolation (Persona / Skill Learner):** the pipeline registries and both extensions were process-global singletons, so in multi-user mode only the *last* initialized user's persona/skill-learner state was active and one user's long-term memory could be written into another user's store. Both extensions are now containerized per owning Web user (`Map<ownerId, runtime>`); the pipeline callbacks register once and resolve the owning user's state from the message context. WebChat messages are now tagged with `__webUserId` so extensions resolve to the same runtime as the per-user `Agent`.
+- **`UserRuntimeManager.getOrCreate` race:** concurrent first-touch requests for the same user could each build a duplicate `Agent` + `MemoryManager` on the same SQLite directory and leak one. The manager now caches the in-flight creation Promise so concurrent callers share a single build.
+- **`vex stop` / `vex restart` whole-machine kill:** the force-kill fell back to `pkill -f "node.*dist/cli.*start"`, which matches and kills unrelated processes (other instances, editors, greps). Both commands now resolve explicit PIDs and signal them individually, never `pkill` by pattern, and exclude the current process.
+- **Unbounded runtime cache:** `UserRuntimeManager` never evicted per-user runtimes, holding an `Agent` + SQLite handle + `MemoryManager` open for every user who ever logged in. It now evicts idle runtimes past a TTL and caps the live count (LRU), tearing down evicted runtimes and their extension state.
+- **Memory-tool global takeover:** `createMemoryTools` still called the process-wide `setMemoryManager()` even though each tool is bound to its own manager, letting the last-created user's manager clobber the global. The global fallback has been removed entirely.
+
+### Added
+
+- `webAuth.secureCookies` config option. When omitted, the `Secure` attribute on the session cookie is auto-detected per request (HTTPS → `Secure`, plain HTTP/localhost → not), so it works behind a TLS-terminating proxy and in local development; set `true`/`false` to force it.
+
+### Changed
+
+- The Web auth SQLite connection is now cached and reused instead of being opened, schema-initialized, and closed on every request; expired-session pruning is throttled instead of running a write on every request.
+
 ## [1.14.0] - 2026-07-03
 
 ### Added

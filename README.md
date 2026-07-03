@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.14.0-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-1.15.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
@@ -175,6 +175,7 @@ logging:
 webAuth:
   enabled: true
   database: ~/.vex/web-auth.sqlite
+  # secureCookies: true   # optional; auto-detected per request when omitted
 memory:
   enabled: true
   embeddingProvider: deepseek

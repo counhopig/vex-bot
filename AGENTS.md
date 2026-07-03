@@ -6,7 +6,7 @@
 
 ## OVERVIEW
 
-Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~23k lines / 99 .ts source files. TypeScript ESM only. npm package + CLI binary.
+Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~25k lines / 101 .ts source files. TypeScript ESM only. npm package + CLI binary.
 
 Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
 
@@ -98,6 +98,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
 - **Web UI auth storage**: Browser login/registration uses SQLite via `better-sqlite3`, defaulting to `~/.vex/web-auth.sqlite`; first registered user becomes `admin`
 - **Multi-user backend by default**: `webAuth.enabled: true` (default) routes WebChat and Weixin through `UserRuntimeManager`; per-user settings persist in the `web_user_settings` SQLite table; per-user memory/session dirs are namespaced. Setting `webAuth.enabled: false` reverts to the legacy single-user backend.
+- **Owner-scoped extensions, not global singletons**: the pipeline registries (`src/pipeline/index.ts`) are process-global and keyed by name, so extensions (Persona, Skill Learner) register their callbacks **once** and keep per-owner state in a `Map<ownerId, runtime>`, resolving the owner from `ctx` via `__webUserId` at call time. `initExtensions`/`initPersona`/`initSkillLearner` take an `ownerId`; `UserRuntimeManager` passes it as the Web user id and calls `disposeExtensions(ownerId)` when a runtime is reset/evicted. Any new stateful extension must follow this pattern rather than module-level globals. Inbound `webchat` contexts are tagged with `__webUserId` in `websocket.ts` so extensions resolve to the same runtime as the per-user `Agent`.
 - **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
 
 ## CHANGE HYGIENE

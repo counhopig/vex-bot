@@ -178,6 +178,7 @@ logging:
 webAuth:
   enabled: true
   database: /path/to/web-auth.sqlite
+  # secureCookies: true   # optional; auto-detected from the request when omitted
 memory:
   enabled: true
   directory: /path/to/memory
@@ -211,6 +212,7 @@ persona:
 | `logging.pretty` | `true` enables colorized human-readable console logs; daily log files stay JSON |
 | `webAuth.enabled` | Protects the browser UI and WebSocket with local login/registration; default `true` |
 | `webAuth.database` | SQLite database path for Web users, sessions, and per-user Weixin login records; default `~/.vex/web-auth.sqlite` |
+| `webAuth.secureCookies` | Force the `Secure` attribute on the session cookie on/off. Omit to auto-detect per request (HTTPS → `Secure`, plain HTTP → not) — the right default behind a TLS-terminating proxy or for local development |
 | First Web user | There is no fixed default admin password. The first registered Web user gets role `admin`; admins can manage all other accounts in the Control Panel Users view. |
 | `memory.enabled` | Whether the agent remembers cross-session information |
 | `memory.directory` | Where memory files are stored |
@@ -436,6 +438,7 @@ When `webAuth.enabled` is `true` (the default), Vex is a multi-user backend. Eac
 - **Per-user runtime settings** — agent model defaults, temperature, max tokens, system prompt, memory enable, persona flags, skill learner, sharelink, weather tool, and session directory are stored in the `web_user_settings` SQLite table. Editing these settings in the Control Panel saves to your row only.
 - **Per-user memory** — long-term memory files live under `~/.vex/memory/users/{userId}/`. Persona profile keys are namespaced by your Web user id, so the same Weixin sender id under different Vex accounts cannot collide.
 - **Per-user sessions** — WebChat sessions and per-Weixin-contact sessions live under `~/.vex/sessions/users/{userId}/`. You cannot see or reset another user's sessions.
+- **Per-user extensions** — the Persona and Skill Learner extensions keep separate state per Web user, so persona memories/profiles and learned skills are written to your own memory store and never bleed into another user's. Idle user runtimes (and their extension state) are evicted from memory after a period of inactivity and rebuilt on next use.
 
 ### Single-user compatibility mode
 
