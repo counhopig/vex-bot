@@ -218,10 +218,6 @@ export class Gateway {
       weixinChannel: this.weixinChannel,
     });
 
-    if (this.weixinChannel) {
-      await this.weixinChannel.initialize();
-    }
-
     logger.info("Gateway initialized");
   }
 
@@ -236,8 +232,20 @@ export class Gateway {
       console.log(`   Address: http://${host || "localhost"}:${port}`);
       console.log(`   WebChat: http://${host || "localhost"}:${port}/`);
       console.log(`   Control Panel: http://${host || "localhost"}:${port}/control`);
+
+      // Initialize the WeChat channel in the background. Its QR login flow can
+      // block for minutes waiting for a scan; awaiting it before listen() would
+      // keep the web UI (WebChat + Control Panel) unreachable. Run it detached
+      // so a missing/failed login never blocks the server — users can (re)scan
+      // from the Control Panel instead.
       if (this.weixinChannel) {
-        console.log(`   Personal WeChat: iLink OC API ready`);
+        console.log(`   Personal WeChat: logging in (see logs / Control Panel to scan QR)`);
+        this.weixinChannel.initialize().catch((error: unknown) => {
+          logger.error(
+            { error },
+            "Weixin channel initialization failed; web UI remains available",
+          );
+        });
       }
       console.log("");
     });
