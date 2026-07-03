@@ -58,6 +58,8 @@ export class FileSessionStore {
   private storePath: string;
   private indexFile: string;
   private cache: Map<string, SessionEntry> = new Map();
+  /** Maps every recovered transcript's sessionId to its canonical session key. */
+  private recoveredKeyBySessionId: Map<string, string> = new Map();
   private cacheTime = 0;
   private cacheTTL = 30_000; // 30-second cache
   private writeLock = new WriteLock();
@@ -97,6 +99,16 @@ export class FileSessionStore {
       this.cache = new Map(Object.entries(data));
       const recovered = await this.recoverIndexFromTranscripts();
       let changed = false;
+      // Purge stale cache keys that carry a sessionId we recovered on disk under a
+      // different (canonical) key. This heals legacy indexes written before session
+      // keys were classified correctly, without touching the transcript files.
+      for (const [existingKey, existingEntry] of this.cache) {
+        const canonicalKey = this.recoveredKeyBySessionId.get(existingEntry.sessionId);
+        if (canonicalKey && canonicalKey !== existingKey) {
+          this.cache.delete(existingKey);
+          changed = true;
+        }
+      }
       for (const [sessionKey, entry] of recovered) {
         for (const [existingKey, existingEntry] of this.cache) {
           if (existingKey !== sessionKey && existingEntry.sessionId === entry.sessionId) {
@@ -131,6 +143,7 @@ export class FileSessionStore {
   /** Rebuild index from transcript headers when sessions.json is absent/corrupt */
   private async recoverIndexFromTranscripts(): Promise<Map<string, SessionEntry>> {
     const index = new Map<string, SessionEntry>();
+    this.recoveredKeyBySessionId = new Map();
     const files = await this.findTranscriptFiles();
 
     for (const file of files) {
@@ -146,8 +159,13 @@ export class FileSessionStore {
         const relativePath = path.relative(this.storePath, transcriptPath);
         const pathSessionKey = relativePath.split(path.sep)[0]?.replace(/\.jsonl$/, "");
         const sessionId = header.sessionId ?? header.id;
-        const sessionKey = header.sessionKey ?? (pathSessionKey && sessionId ? `${pathSessionKey}:${sessionId}` : undefined);
+        // pi-coding-agent's nested logs omit sessionKey and live in a directory whose
+        // name is sanitizeSessionKey("<channel>:<sender>") — the ":" separator was
+        // replaced with "_". Rebuild the canonical "<channel>:<sender>" key so channel
+        // classification and de-duplication against flat records both work.
+        const sessionKey = header.sessionKey ?? (pathSessionKey ? this.canonicalizeSanitizedKey(pathSessionKey) : undefined);
         if (!sessionId || !sessionKey) continue;
+        this.recoveredKeyBySessionId.set(sessionId, sessionKey);
 
         let messageCount = 0;
         let inputTokens = 0;
@@ -179,20 +197,31 @@ export class FileSessionStore {
 
         const stat = await fs.promises.stat(transcriptPath);
         const createdAt = Date.parse(header.timestamp ?? "") || stat.birthtimeMs || stat.ctimeMs;
-        index.set(sessionKey, {
+        const candidate: SessionEntry = {
           sessionId,
           sessionKey,
           createdAt,
           updatedAt: stat.mtimeMs,
           transcriptFile: transcriptPath,
-          channel: sessionKey.includes(":") ? sessionKey.split(":")[0] : sessionKey.split("_")[0],
+          channel: sessionKey.split(":")[0],
           messageCount,
           inputTokens,
           outputTokens,
           totalTokens,
           model,
           provider,
-        });
+        };
+
+        // A single canonical key can map to several runtime logs (one per process
+        // restart). Keep the most recent segment as the representative entry so the
+        // list stays consistent with what loadTranscript returns.
+        const existing = index.get(sessionKey);
+        if (!existing || candidate.updatedAt >= existing.updatedAt) {
+          index.set(sessionKey, {
+            ...candidate,
+            createdAt: existing ? Math.min(existing.createdAt, candidate.createdAt) : candidate.createdAt,
+          });
+        }
       } catch (error) {
         logger.warn({ error, transcriptPath }, "Failed to recover session transcript");
       }
@@ -202,6 +231,20 @@ export class FileSessionStore {
       logger.info({ count: index.size, path: this.storePath }, "Recovered session index from transcripts");
     }
     return index;
+  }
+
+  /**
+   * Rebuild a canonical "<channel>:<sender>" session key from an AgentRuntime
+   * directory name produced by sanitizeSessionKey (which replaces the ":" separator
+   * with "_"). Channel ids never contain "_", so the first "_" is always the original
+   * separator, making this reversal lossless for the channel prefix.
+   */
+  private canonicalizeSanitizedKey(sanitizedKey: string): string {
+    const separator = sanitizedKey.indexOf("_");
+    if (separator <= 0) return sanitizedKey;
+    const channel = sanitizedKey.slice(0, separator);
+    const rest = sanitizedKey.slice(separator + 1);
+    return `${channel}:${rest}`;
   }
 
   /** Find JSONL transcript files recursively because AgentRuntime stores each session in a directory. */

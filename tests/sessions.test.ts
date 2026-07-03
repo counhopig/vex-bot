@@ -313,7 +313,7 @@ describe("sessions/store", () => {
 
         expect(list).toHaveLength(1);
         expect(list[0]).toMatchObject({
-          sessionKey: "weixin_sender:runtime-session",
+          sessionKey: "weixin:sender",
           sessionId: "runtime-session",
           messageCount: 2,
           totalTokens: 30,
@@ -328,6 +328,71 @@ describe("sessions/store", () => {
           content: "你好！",
           usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
         });
+      });
+
+      it("should classify the channel from the sanitized key even when the sender id contains underscores", async () => {
+        // AgentRuntime sanitizes "weixin:o9cq...-_im_wechat" into a directory name,
+        // replacing the ":" separator with "_". Recovery must still classify the
+        // channel as "weixin" (not the whole sanitized blob) and rebuild the key.
+        const sessionDir = path.join(testDir, "weixin_o9cq800ta-_im_wechat.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl"),
+          [
+            JSON.stringify({ type: "session", version: 3, id: "runtime-session", timestamp: "2026-07-02T08:50:43.724Z" }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: { role: "user", content: [{ type: "text", text: "hi" }] },
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const restoredStore = new FileSessionStore(testDir);
+        const entry = await restoredStore.get("weixin:o9cq800ta-_im_wechat");
+        expect(entry).not.toBeNull();
+        expect(entry?.channel).toBe("weixin");
+        expect(entry?.sessionKey).toBe("weixin:o9cq800ta-_im_wechat");
+      });
+
+      it("should not duplicate a webchat session that has both a flat record and a nested runtime log", async () => {
+        // Webchat writes an authoritative flat transcript AND produces a nested
+        // pi-agent event log. Both must collapse to a single canonical entry.
+        fs.writeFileSync(
+          path.join(testDir, "flat-session-id.jsonl"),
+          [
+            JSON.stringify({
+              type: "session",
+              version: 1,
+              sessionId: "flat-session-id",
+              sessionKey: "webchat:client_abc",
+              timestamp: "2026-07-02T00:00:00.000Z",
+            }),
+            JSON.stringify({ role: "user", content: "hello", timestamp: Date.now() }),
+          ].join("\n") + "\n",
+        );
+
+        const sessionDir = path.join(testDir, "webchat_client_abc.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl"),
+          [
+            JSON.stringify({ type: "session", version: 3, id: "runtime-session", timestamp: "2026-07-02T08:50:43.724Z" }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: { role: "user", content: [{ type: "text", text: "hello" }] },
+            }),
+          ].join("\n") + "\n",
+        );
+
+        const restoredStore = new FileSessionStore(testDir);
+        const list = await restoredStore.list();
+
+        expect(list).toHaveLength(1);
+        expect(list[0]?.sessionKey).toBe("webchat:client_abc");
       });
 
       it("should delete recovered nested transcript files so they do not reappear", async () => {
@@ -359,7 +424,7 @@ describe("sessions/store", () => {
         const restoredStore = new FileSessionStore(testDir);
         expect(await restoredStore.list()).toHaveLength(1);
 
-        await restoredStore.delete("weixin_sender:runtime-session");
+        await restoredStore.delete("weixin:sender");
 
         expect(fs.existsSync(transcriptPath)).toBe(false);
         expect(fs.readdirSync(sessionDir).some((name) => name.includes(".deleted."))).toBe(true);
@@ -368,7 +433,7 @@ describe("sessions/store", () => {
         expect(await freshStore.list()).toHaveLength(0);
       });
 
-      it("should delete nested transcript files when an old index lacks transcriptFile", async () => {
+      it("should migrate a legacy sanitized index key and delete the nested transcript", async () => {
         const sessionDir = path.join(testDir, "weixin_sender.jsonl");
         const transcriptPath = path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl");
         fs.mkdirSync(sessionDir, { recursive: true });
@@ -407,7 +472,12 @@ describe("sessions/store", () => {
         );
 
         const indexedStore = new FileSessionStore(testDir);
-        await indexedStore.delete("weixin_sender:runtime-session");
+        // The legacy sanitized key is migrated to the canonical channel:sender form on load.
+        const migrated = await indexedStore.list();
+        expect(migrated).toHaveLength(1);
+        expect(migrated[0]?.sessionKey).toBe("weixin:sender");
+
+        await indexedStore.delete("weixin:sender");
 
         expect(fs.existsSync(transcriptPath)).toBe(false);
 
