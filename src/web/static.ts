@@ -628,20 +628,10 @@ ${COMMON_CSS}${CONTROL_CSS}
             <div class="form-row">
               <div class="form-group">
                 <label class="checkbox-label">
-                  <input type="checkbox" id="persona-ignore-group-chat" />
-                  <span>Ignore Group Chat</span>
-                </label>
-              </div>
-              <div class="form-group">
-                <label class="checkbox-label">
                   <input type="checkbox" id="persona-debug-log" />
                   <span>Debug Log</span>
                 </label>
               </div>
-            </div>
-            <div class="form-group">
-              <label>Admin IDs (comma-separated)</label>
-              <input type="text" id="persona-admin-ids" class="form-input" placeholder="user1, user2" />
             </div>
           </div>
         </div>

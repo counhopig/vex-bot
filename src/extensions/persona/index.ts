@@ -20,14 +20,6 @@ function normalizeTimestampMs(timestamp: number): number {
   return timestamp < 1e12 ? timestamp * 1000 : timestamp;
 }
 
-function isIgnoredGroup(ctx: InboundMessageContext, ignoreGroupChat: boolean): boolean {
-  return ignoreGroupChat && ctx.chatType === "group";
-}
-
-function isAdmin(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): boolean {
-  return !config.adminIds || config.adminIds.length === 0 || config.adminIds.includes(ctx.senderId);
-}
-
 function memoryTags(ctx: InboundMessageContext): string[] {
   return [
     "persona",
@@ -75,7 +67,7 @@ async function recallPersonaMemories(
 
 async function buildPrompt(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext): Promise<string> {
   const currentStorage = storage;
-  if (!currentStorage || isIgnoredGroup(ctx, config.ignoreGroupChat)) {
+  if (!currentStorage) {
     logger.debug(
       { channelId: ctx.channelId, chatId: ctx.chatId, senderId: ctx.senderId, hasStorage: Boolean(currentStorage), chatType: ctx.chatType },
       "Persona prompt skipped"
@@ -255,9 +247,6 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
     case "/persona_affinity":
       return `亲密度：${Math.round(currentStorage.getAffinity(uid))}/100`;
     case "/persona_set_affinity": {
-      if (!isAdmin(config, ctx)) {
-        return "没有权限。";
-      }
       const profile = currentStorage.getProfile(uid);
       profile.affinity = Math.max(0, Math.min(100, parseNumber(arg, profile.affinity)));
       currentStorage.saveProfile(uid, profile);
@@ -317,7 +306,7 @@ async function handlePersonaCommand(config: ReturnType<typeof createPersonaConfi
 
 function observeResponse(config: ReturnType<typeof createPersonaConfig>, ctx: InboundMessageContext, replyText: string): void {
   const currentStorage = storage;
-  if (!currentStorage || isIgnoredGroup(ctx, config.ignoreGroupChat)) {
+  if (!currentStorage) {
     return;
   }
   const uid = userKey(ctx);
@@ -333,7 +322,6 @@ export function initPersona(config: VexConfig, options?: { memoryManager?: Memor
   logger.debug(
     {
       personaName: personaConfig.personaName,
-      ignoreGroupChat: personaConfig.ignoreGroupChat,
       emotionEnabled: personaConfig.emotionEnabled,
       effectEnabled: personaConfig.effectEnabled,
       todoEnabled: personaConfig.todoEnabled,

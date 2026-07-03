@@ -1203,9 +1203,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       setValue('persona-proactive-nudge-cron', p.proactive_nudge_cron);
       setChecked('persona-greeting-first-chat', p.greeting_on_first_chat);
       setChecked('persona-goodnight-hint', p.goodnight_hint_enabled);
-      setChecked('persona-ignore-group-chat', p.ignore_group_chat);
       setChecked('persona-debug-log', p.debug_log_enabled);
-      setValue('persona-admin-ids', Array.isArray(p.admin_ids) ? p.admin_ids.join(', ') : '');
 
       const sl = config.skillLearner || {};
       setChecked('skilllearner-enabled', sl.enabled);
@@ -1326,9 +1324,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         proactive_nudge_cron: getValue('persona-proactive-nudge-cron') || undefined,
         greeting_on_first_chat: getChecked('persona-greeting-first-chat'),
         goodnight_hint_enabled: getChecked('persona-goodnight-hint'),
-        ignore_group_chat: getChecked('persona-ignore-group-chat'),
         debug_log_enabled: getChecked('persona-debug-log'),
-        admin_ids: csvToArray(getValue('persona-admin-ids')),
       };
       payload.persona = persona;
 

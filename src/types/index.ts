@@ -279,7 +279,6 @@ export interface PersonaConfig {
   reflection_periodic_cron?: string;
   profile_building_enabled?: boolean;
   profile_building_trigger_turns?: number;
-  ignore_group_chat?: boolean;
   greeting_on_first_chat?: boolean;
   goodnight_hint_enabled?: boolean;
   proactive_nudge_enabled?: boolean;
@@ -289,7 +288,6 @@ export interface PersonaConfig {
   rest_wake_hour?: number;
   storage_cache_max?: number;
   debug_log_enabled?: boolean;
-  admin_ids?: string[];
 }
 
 /** Main config */

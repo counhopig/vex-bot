@@ -26,7 +26,6 @@ export interface PersonaConfig {
   reflectionPeriodicCron: string;
   profileBuildingEnabled: boolean;
   profileBuildingTriggerTurns: number;
-  ignoreGroupChat: boolean;
   greetingOnFirstChat: boolean;
   goodnightHintEnabled: boolean;
   proactiveNudgeEnabled: boolean;
@@ -36,7 +35,6 @@ export interface PersonaConfig {
   restWakeHour: number;
   storageCacheMax: number;
   debugLogEnabled: boolean;
-  adminIds?: string[];
 }
 
 export function createPersonaConfig(raw: object | undefined): PersonaConfig {
@@ -71,7 +69,6 @@ export function createPersonaConfig(raw: object | undefined): PersonaConfig {
     reflectionPeriodicCron: typeof c.reflection_periodic_cron === "string" ? c.reflection_periodic_cron : "0 */6 * * *",
     profileBuildingEnabled: typeof c.profile_building_enabled === "boolean" ? c.profile_building_enabled : true,
     profileBuildingTriggerTurns: typeof c.profile_building_trigger_turns === "number" ? c.profile_building_trigger_turns : 5,
-    ignoreGroupChat: typeof c.ignore_group_chat === "boolean" ? c.ignore_group_chat : true,
     greetingOnFirstChat: typeof c.greeting_on_first_chat === "boolean" ? c.greeting_on_first_chat : true,
     goodnightHintEnabled: typeof c.goodnight_hint_enabled === "boolean" ? c.goodnight_hint_enabled : true,
     proactiveNudgeEnabled: typeof c.proactive_nudge_enabled === "boolean" ? c.proactive_nudge_enabled : true,
@@ -81,7 +78,6 @@ export function createPersonaConfig(raw: object | undefined): PersonaConfig {
     restWakeHour: typeof c.rest_wake_hour === "number" ? c.rest_wake_hour : 7,
     storageCacheMax: typeof c.storage_cache_max === "number" ? c.storage_cache_max : 200,
     debugLogEnabled: typeof c.debug_log_enabled === "boolean" ? c.debug_log_enabled : false,
-    adminIds: Array.isArray(c.admin_ids) ? c.admin_ids.filter((s): s is string => typeof s === "string") : undefined,
   };
 }
 

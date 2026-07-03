@@ -156,7 +156,7 @@ Python module layout: `models.ts`, `storage.ts`, `config.ts`,
   (Phase 0 seam) that, per private-chat message, applies emotion decay, cleans
   expired effects, touches profile, and returns the layered blocks: persona,
   first-chat hint, time, rest/sleep, consolidation, emotion, effect, todo,
-  reflection, profile, history, style, goodnight. Honors `ignoreGroupChat`.
+  reflection, profile, history, style, goodnight.
 - **Message handling** (capture, via interceptor or a dedicated capture hook):
   append user turn, save UMO, `judge_outcome`, auto-trigger effects/todos
   **before** `record_interaction`, increment reflection/profile turn counters

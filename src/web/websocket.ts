@@ -86,7 +86,6 @@ const PersonaConfigSchema = z.object({
   reflection_periodic_cron: z.string().optional(),
   profile_building_enabled: z.boolean().optional(),
   profile_building_trigger_turns: z.number().int().optional(),
-  ignore_group_chat: z.boolean().optional(),
   greeting_on_first_chat: z.boolean().optional(),
   goodnight_hint_enabled: z.boolean().optional(),
   proactive_nudge_enabled: z.boolean().optional(),
@@ -96,7 +95,6 @@ const PersonaConfigSchema = z.object({
   rest_wake_hour: z.number().optional(),
   storage_cache_max: z.number().int().optional(),
   debug_log_enabled: z.boolean().optional(),
-  admin_ids: z.array(z.string()).optional(),
 }).passthrough();
 const SkillLearnerConfigSchema = z.object({
   enabled: z.boolean().optional(),

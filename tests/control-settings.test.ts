@@ -62,7 +62,6 @@ describe("control-settings config-handlers", () => {
           persona_name: "Vex",
           persona_base_prompt: "You are helpful.",
           emotion_decay_per_hour: 10,
-          admin_ids: ["u1", "u2"],
         },
         skillLearner: {
           enabled: true,
