@@ -3,8 +3,9 @@
  */
 
 import { existsSync, readFileSync } from "fs";
-import { join, extname } from "path";
+import { dirname, extname, join, normalize, sep } from "path";
 import type { IncomingMessage, ServerResponse } from "http";
+import { fileURLToPath } from "url";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig } from "../types/index.js";
 import { COMMON_CSS, WEBCHAT_CSS, CONTROL_CSS } from "./template-css.js";
@@ -12,15 +13,13 @@ import { WEBCHAT_CLIENT_JS, CONTROL_CLIENT_JS } from "./template-client.js";
 import { I18N_CLIENT_JS } from "./i18n.js";
 
 const logger = getChildLogger("static");
+const WEB_ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "assets");
+const MASCOT_IMAGE_PATH = "/assets/vex-mascot.png";
 
-/** Vex mascot SVG (small, for avatar) */
-const MASCOT_SVG_SMALL = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="32" height="32"><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="#10b981"/></svg>`;
-
-/** Vex mascot SVG (medium, for sidebar) */
-const MASCOT_SVG_MEDIUM = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="28" height="28"><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="#10b981"/></svg>`;
-
-/** Vex mascot SVG (large, animated, for welcome page) */
-const MASCOT_SVG_LARGE = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" width="80" height="80"><defs><linearGradient id="mascot-g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs><style>@keyframes mascot-wink{0%,90%,100%{transform:scaleY(1)}95%{transform:scaleY(0.1)}}@keyframes mascot-hide{0%,90%,100%{opacity:1}95%{opacity:0}}.mascot-left-eye{animation:mascot-wink 3s infinite;transform-origin:30px 44px}.mascot-left-highlight{animation:mascot-hide 3s infinite}</style><circle cx="40" cy="40" r="38" fill="#0f172a"/><path d="M12 30 L22 8 L30 28 Z" fill="#d4a054"/><path d="M15 28 L22 12 L28 26 Z" fill="#fca5a5" opacity="0.3"/><path d="M50 28 L58 8 L68 30 Z" fill="#d4a054"/><path d="M52 26 L58 12 L65 28 Z" fill="#fca5a5" opacity="0.3"/><ellipse cx="40" cy="46" rx="26" ry="22" fill="#e8a840"/><ellipse cx="40" cy="52" rx="18" ry="16" fill="#fff8f0"/><path d="M32 34 Q40 28 48 34 L46 40 Q40 36 34 40 Z" fill="#fff8f0"/><ellipse class="mascot-left-eye" cx="30" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle class="mascot-left-highlight" cx="31" cy="43" r="1.5" fill="white"/><ellipse cx="50" cy="44" rx="4" ry="5" fill="#1a1a2e"/><circle cx="51" cy="43" r="1.5" fill="white"/><ellipse cx="30" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="50" cy="38" rx="4" ry="1.5" fill="#c4903c"/><ellipse cx="20" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="60" cy="50" rx="4" ry="2.5" fill="#fca5a5" opacity="0.4"/><ellipse cx="40" cy="52" rx="4" ry="3" fill="#1a1a2e"/><ellipse cx="39" cy="51" rx="1" ry="0.8" fill="white" opacity="0.3"/><path d="M40 55 L40 58" stroke="#1a1a2e" stroke-width="1.5" stroke-linecap="round"/><path d="M34 60 Q40 64 46 60" stroke="#1a1a2e" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M18 66 Q40 74 62 66" stroke="#10b981" stroke-width="3" fill="none" stroke-linecap="round"/><circle cx="40" cy="72" r="4" fill="url(#mascot-g)"><animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite"/></circle></svg>`;
+/** Vex mascot image markup */
+const MASCOT_IMG_SMALL = `<img src="${MASCOT_IMAGE_PATH}" class="mascot-img mascot-img-small" alt="Vex mascot" />`;
+const MASCOT_IMG_MEDIUM = `<img src="${MASCOT_IMAGE_PATH}" class="mascot-img mascot-img-medium" alt="Vex mascot" />`;
+const MASCOT_IMG_LARGE = `<img src="${MASCOT_IMAGE_PATH}" class="mascot-img mascot-img-large" alt="Vex mascot" />`;
 
 /** MIME type mapping */
 const MIME_TYPES: Record<string, string> = {
@@ -59,7 +58,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
 <body>
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-      <span class="sidebar-logo">${MASCOT_SVG_MEDIUM}</span>
+      <span class="sidebar-logo">${MASCOT_IMG_MEDIUM}</span>
       <span class="sidebar-title">${assistantName}</span>
     </div>
     <button class="new-chat-btn" id="newChatBtn">+ New Chat</button>
@@ -91,7 +90,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
     <main class="main">
       <div class="messages" id="messages">
         <div class="welcome" id="welcome">
-          <div class="welcome-icon">${MASCOT_SVG_LARGE}</div>
+          <div class="welcome-icon">${MASCOT_IMG_LARGE}</div>
           <h2>Welcome to ${assistantName}</h2>
           <p>I'm an AI assistant powered by Chinese LLMs, here to help with questions, coding, data analysis, and more.</p>
           <div class="features">
@@ -113,7 +112,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
 
   <script>
 ${I18N_CLIENT_JS}
-${WEBCHAT_CLIENT_JS.replace("${MASCOT_SVG_SMALL}", MASCOT_SVG_SMALL)}
+${WEBCHAT_CLIENT_JS.replace("${MASCOT_AVATAR_HTML}", MASCOT_IMG_SMALL)}
   </script>
 </body>
 </html>`;
@@ -148,7 +147,7 @@ ${COMMON_CSS}${CONTROL_CSS}
       <button class="sidebar-close" id="control-sidebar-close" aria-label="Close menu">&times;</button>
       <div class="sidebar-header">
         <div class="sidebar-logo">
-          <span>${MASCOT_SVG_MEDIUM}</span>
+          <span>${MASCOT_IMG_MEDIUM}</span>
           <span>${assistantName}</span>
         </div>
       </div>
@@ -988,6 +987,45 @@ export interface StaticServerOptions {
   config: VexConfig;
 }
 
+function sendAsset(pathname: string, res: ServerResponse): boolean {
+  if (!pathname.startsWith("/assets/")) {
+    return false;
+  }
+
+  let assetName: string;
+  try {
+    assetName = decodeURIComponent(pathname.slice("/assets/".length));
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Bad request");
+    return true;
+  }
+
+  const assetPath = normalize(join(WEB_ASSETS_DIR, assetName));
+  const assetRoot = `${normalize(WEB_ASSETS_DIR)}${sep}`;
+  if (!assetPath.startsWith(assetRoot)) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Forbidden");
+    return true;
+  }
+
+  if (!existsSync(assetPath)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not found");
+    return true;
+  }
+
+  const content = readFileSync(assetPath);
+  const contentType = MIME_TYPES[extname(assetPath).toLowerCase()] ?? "application/octet-stream";
+  res.writeHead(200, {
+    "Content-Type": contentType,
+    "Content-Length": content.length,
+    "Cache-Control": "public, max-age=31536000, immutable",
+  });
+  res.end(content);
+  return true;
+}
+
 /** Handle static file request */
 export function handleStaticRequest(
   req: IncomingMessage,
@@ -1010,6 +1048,10 @@ export function handleStaticRequest(
   // Skip health check
   if (pathname === "/health") {
     return false;
+  }
+
+  if (sendAsset(pathname, res)) {
+    return true;
   }
 
   // Control UI

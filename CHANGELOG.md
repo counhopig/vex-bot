@@ -6,6 +6,13 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-07-03
+
+### Changed
+
+- Replaced the inline dog mascot SVG with an AI-designed Vex mascot image in the WebChat and control-panel UI.
+- Copied WebChat image assets into `dist/` during builds so packaged releases can serve them.
+
 ## [1.13.1] - 2026-07-03
 
 ### Fixed

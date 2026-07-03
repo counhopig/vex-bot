@@ -9,6 +9,7 @@ web/
 ├── types.ts       # WsFrame union, ChatMessage, ChatDeltaEvent, SessionInfo, SystemStatus, ConfigInfo + 7-section params
 ├── websocket.ts   # WsServer class: connection mgmt, 16 method handlers, heartbeat, YAML config save
 ├── static.ts      # Two inline SPAs (getEmbeddedHtml, getControlHtml), handleStaticRequest route dispatcher
+├── assets/        # Runtime-served Web UI image assets copied to dist/web/assets during build
 └── index.ts       # Barrel re-export
 ```
 
@@ -25,7 +26,7 @@ web/
 | Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`, explicit restore loads transcript into agent |
 | WebChat SPA | `static.ts:getEmbeddedHtml()` | Inline CSS/JS, `marked.js` via CDN, sidebar sessions, message list |
 | Control UI | `static.ts:getControlHtml()` | Inline CSS/JS, config editor, QR scan, status panel |
-| Route dispatch | `static.ts:handleStaticRequest()` | `/` → WebChat, `/control` → Control UI; skips `/ws`, `/api/*`, `/health` |
+| Route dispatch | `static.ts:handleStaticRequest()` | `/` → WebChat, `/control` → Control UI, `/assets/*` → copied Web UI assets; skips `/ws`, `/api/*`, `/health` |
 | HTML sanitization | `static.ts:sanitizeHtml()` (inline JS) | Blocks 7 tag types, strips `on*` attrs, `javascript:` URIs |
 | Heartbeat | `websocket.ts:checkHeartbeat()` | 30s ping, 60s timeout → `ws.terminate()` |
 
@@ -62,7 +63,7 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 - **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
 - **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.
-- **No filesystem for HTML**: Both SPAs are giant inline template strings with embedded CSS/JS. `handleStaticRequest` sets `Content-Length` via `Buffer.byteLength()`. `marked.js` loaded from CDN.
+- **No filesystem for HTML**: Both SPAs are giant inline template strings with embedded CSS/JS. `handleStaticRequest` sets `Content-Length` via `Buffer.byteLength()`. `marked.js` loaded from CDN. Image assets live in `src/web/assets/` and are copied to `dist/web/assets/` by `scripts/copy-web-assets.mjs`.
 
 ## ANTI-PATTERNS
 

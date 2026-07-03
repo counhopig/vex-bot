@@ -562,7 +562,7 @@ type ProviderId =
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | `tsc` compile → `dist/` (NodeNext module resolution, ES2022 target) |
+| `npm run build` | `tsc` compile → `dist/`, then copy Web UI assets to `dist/web/assets/` |
 | `npm run dev` | `tsx watch` development mode, auto-restart |
 | `npm test` | `vitest` run tests (15 test files) |
 | `npm start` | Production start (from `dist/`) |
@@ -701,6 +701,7 @@ Rollback guidance:
 
 - **Never add a frontend build system** — WebChat is server-rendered inline HTML, embedded in `src/web/static.ts`
 - `marked.js` loaded via CDN
+- Image assets live in `src/web/assets/` and are copied into `dist/web/assets/` during `npm run build`
 - `static.ts` is currently 2,303 lines, containing two inline SPAs. Never add a third UI to this file.
 
 ### Package Structure

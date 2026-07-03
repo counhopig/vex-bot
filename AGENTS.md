@@ -122,7 +122,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 
 | Stage | Detail |
 |-------|--------|
-| **Build** | `tsc` (NodeNext module, ES2022 target) → `dist/` |
+| **Build** | `tsc` (NodeNext module, ES2022 target) → copy `src/web/assets` to `dist/web/assets` |
 | **CI trigger** | GitHub Release `created` event → verify gates → npm publish → GHCR image publish |
 | **CI runner** | ubuntu-latest, Node 20 |
 | **Tests in CI** | `npm test -- --run` |
@@ -159,7 +159,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 ## COMMANDS
 
 ```bash
-npm run build          # tsc → dist/
+npm run build          # tsc → dist/ + copied Web UI assets
 npm run dev            # tsx watch (auto-restart)
 npm test               # vitest
 npm start              # Production start (from dist)

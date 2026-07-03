@@ -36,7 +36,11 @@ export const WEBCHAT_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       align-items: center;
       gap: 0.75rem;
     }
-    .sidebar-logo { font-size: 1.5rem; }
+    .sidebar-logo { font-size: 1.5rem; display: inline-flex; align-items: center; justify-content: center; }
+    .mascot-img { display: block; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+    .mascot-img-small { width: 32px; height: 32px; }
+    .mascot-img-medium { width: 28px; height: 28px; }
+    .mascot-img-large { width: 80px; height: 80px; }
     .sidebar-title { font-weight: 600; font-size: 1.125rem; }
     .new-chat-btn {
       margin: 1rem;
@@ -141,7 +145,7 @@ export const WEBCHAT_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
     .messages { flex: 1; overflow-y: auto; padding: 1rem 0; display: flex; flex-direction: column; gap: 1rem; }
     .message { display: flex; gap: 0.75rem; max-width: 85%; }
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
-    .message-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+    .message-avatar { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; overflow: hidden; }
     .message.user .message-avatar { background: var(--user-bg); color: white; }
     .message.assistant .message-avatar { background: var(--assistant-bg); }
     .message-content { padding: 0.75rem 1rem; border-radius: 1rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
@@ -259,6 +263,10 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       align-items: center;
       gap: 0.75rem;
     }
+    .mascot-img { display: block; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+    .mascot-img-small { width: 32px; height: 32px; }
+    .mascot-img-medium { width: 28px; height: 28px; }
+    .mascot-img-large { width: 80px; height: 80px; }
     .sidebar-logo span:first-child { font-size: 1.75rem; }
     .sidebar-logo span:last-child { font-size: 1.25rem; font-weight: 600; }
     .nav-section {

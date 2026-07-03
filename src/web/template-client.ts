@@ -1,12 +1,12 @@
 /**
  * Client-side JavaScript template strings — extracted from static.ts
  *
- * NOTE: WEBCHAT_CLIENT_JS contains a literal \${MASCOT_SVG_SMALL} placeholder
- * that must be replaced with the actual MASCOT_SVG_SMALL value at the
+ * NOTE: WEBCHAT_CLIENT_JS contains a literal \${MASCOT_AVATAR_HTML} placeholder
+ * that must be replaced with the actual assistant avatar markup at the
  * call site in static.ts.
  */
 
-export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_SVG_SMALL}\`;
+export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_AVATAR_HTML}\`;
     let ws = null;
     let reconnectTimer = null;
     let pendingRequests = new Map();
