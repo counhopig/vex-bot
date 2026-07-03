@@ -12,10 +12,9 @@ const logger = getChildLogger("memory-tools");
 
 export interface MemoryToolsOptions { manager?: MemoryManager; }
 
-let memoryManager: MemoryManager | null = null;
-
-export function setMemoryManager(manager: MemoryManager): void { memoryManager = manager; }
-function getManager(manager?: MemoryManager): MemoryManager | null { return manager ?? memoryManager; }
+// Each tool is bound to the MemoryManager passed at creation time. There is no
+// process-wide fallback: a per-user runtime's tools must never resolve to some
+// other user's manager just because that user's tool set was built last.
 
 export function createMemorySearchTool(manager?: MemoryManager): AgentTool {
   return {
@@ -30,7 +29,7 @@ export function createMemorySearchTool(manager?: MemoryManager): AgentTool {
       min_score: Type.Optional(Type.Number({ description: "Min relevance score 0-1", minimum: 0, maximum: 1 })),
     }),
     execute: async (_toolCallId, args) => {
-      const activeManager = getManager(manager);
+      const activeManager = manager;
       if (!activeManager) return jsonResult({ status: "disabled", message: "Memory system not enabled", results: [] });
       const params = args as Record<string, unknown>;
       const query = readStringParam(params, "query", { required: true })!;
@@ -61,7 +60,7 @@ export function createMemoryStoreTool(manager?: MemoryManager): AgentTool {
       source: Type.Optional(Type.String({ description: "Source of the information" })),
     }),
     execute: async (_toolCallId, args) => {
-      const activeManager = getManager(manager);
+      const activeManager = manager;
       if (!activeManager) return jsonResult({ status: "disabled", message: "Memory system not enabled" });
       const params = args as Record<string, unknown>;
       const content = readStringParam(params, "content", { required: true })!;
@@ -87,7 +86,7 @@ export function createMemoryListTool(manager?: MemoryManager): AgentTool {
       limit: Type.Optional(Type.Number({ description: "Max entries (default: 20)", minimum: 1, maximum: 100 })),
     }),
     execute: async (_toolCallId, args) => {
-      const activeManager = getManager(manager);
+      const activeManager = manager;
       if (!activeManager) return jsonResult({ status: "disabled", message: "Memory system not enabled", entries: [] });
       const params = args as Record<string, unknown>;
       const type = readStringParam(params, "type");
@@ -110,7 +109,7 @@ export function createMemoryDeleteTool(manager?: MemoryManager): AgentTool {
     description: "Delete a specific memory entry by ID.",
     parameters: Type.Object({ id: Type.String({ description: "Memory entry ID to delete" }) }),
     execute: async (_toolCallId, args) => {
-      const activeManager = getManager(manager);
+      const activeManager = manager;
       if (!activeManager) return jsonResult({ status: "disabled", message: "Memory system not enabled" });
       const params = args as Record<string, unknown>;
       const id = readStringParam(params, "id", { required: true })!;
@@ -124,7 +123,6 @@ export function createMemoryDeleteTool(manager?: MemoryManager): AgentTool {
 }
 
 export function createMemoryTools(options?: MemoryToolsOptions): AgentTool[] {
-  if (options?.manager) setMemoryManager(options.manager);
   return [
     createMemorySearchTool(options?.manager),
     createMemoryStoreTool(options?.manager),

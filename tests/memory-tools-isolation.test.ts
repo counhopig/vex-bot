@@ -54,4 +54,17 @@ describe("memory tools isolation", () => {
       entries: [expect.objectContaining({ content: "second user's fact" })],
     });
   });
+
+  it("does not leak a manager into an unbound tool set via process-wide state", async () => {
+    // Build a bound tool set first; this must not register any global fallback.
+    createMemoryTools({ manager: createMemoryManager({ directory: tempDir() }) });
+
+    // A tool set created without a manager must stay disabled, not silently
+    // resolve to the manager the previous tool set was built with.
+    const unboundTools = createMemoryTools();
+    const search = unboundTools.find((tool) => tool.name === "memory_search");
+    const result = await search?.execute("call-1", { query: "anything" }, undefined);
+
+    expect(result?.details).toMatchObject({ status: "disabled" });
+  });
 });
