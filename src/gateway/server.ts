@@ -9,12 +9,13 @@ import type { VexConfig, InboundMessageContext, WeixinConfig } from "../types/in
 import { createWeixinChannel, type WeixinChannel } from "../channels/weixin/index.js";
 import { registerChannel, getChannel } from "../channels/common/index.js";
 import { createAgent, type Agent } from "../agents/agent.js";
+import { UserRuntimeManager } from "../agents/user-runtime.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
 import { initializeProviders } from "../providers/index.js";
 import { getChildLogger, setLogger, createLogger } from "../utils/logger.js";
 import { WsServer } from "../web/websocket.js";
 import { handleStaticRequest } from "../web/static.js";
-import { installWebAuthRoutes, listUserWeixinLogins } from "../web/auth.js";
+import { installWebAuthRoutes, isWebAuthEnabled, listUserWeixinLogins } from "../web/auth.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import { PluginService } from "../plugins/service.js";
 import { getConfigWritePath } from "../config/index.js";
@@ -27,6 +28,7 @@ export class Gateway {
   private httpServer: HttpServer;
   private config: VexConfig;
   private agent!: Agent;
+  private runtimeManager?: UserRuntimeManager;
   private weixinChannel?: WeixinChannel;
   private userWeixinChannels = new Map<string, WeixinChannel>();
   private wsServer?: WsServer;
@@ -56,6 +58,11 @@ export class Gateway {
 
   async initAgent(): Promise<void> {
     this.agent = await createAgent(this.config, { memoryManager: this.memoryManager });
+    this.runtimeManager = new UserRuntimeManager({
+      config: this.config,
+      globalAgent: this.agent,
+      globalMemoryManager: this.memoryManager,
+    });
   }
 
   private setupMiddleware(): void {
@@ -81,7 +88,7 @@ export class Gateway {
     this.app.patch("/api/admin/users/:id", auth.updateUser);
     this.app.delete("/api/admin/users/:id", auth.deleteUser);
 
-    if (this.config.channels.weixin) {
+    if (this.config.channels.weixin && !isWebAuthEnabled(this.config)) {
       this.weixinChannel = createWeixinChannel(this.config.channels.weixin, {
         configPath: getConfigWritePath(this.config),
       });
@@ -162,7 +169,8 @@ export class Gateway {
         { channel: context.channelId, chatId: context.chatId, senderId: context.senderId, messageId: context.messageId },
         "Dispatching message to agent"
       );
-      const response = await this.agent.processMessage(context);
+      const agent = await this.getAgentForContext(context);
+      const response = await agent.processMessage(context);
       await this.sendReply(context, response.content);
       logger.info(
         {
@@ -233,6 +241,10 @@ export class Gateway {
     return undefined;
   }
 
+  private async getAgentForContext(context: InboundMessageContext): Promise<Agent> {
+    return this.runtimeManager?.getAgent(this.getContextWebUserId(context)) ?? this.agent;
+  }
+
   private async activateUserWeixinChannel(userId: string, weixinConfig: WeixinConfig): Promise<void> {
     const existing = this.userWeixinChannels.get(userId);
     if (existing) {
@@ -273,6 +285,15 @@ export class Gateway {
     }
   }
 
+  private getUserWeixinStatus(userId: string): { configured: boolean; connected: boolean; accountId?: string } {
+    const login = listUserWeixinLogins(this.config).find((item) => item.userId === userId);
+    return {
+      configured: Boolean(login),
+      connected: this.userWeixinChannels.has(userId),
+      accountId: login?.accountId,
+    };
+  }
+
   private isDuplicateMessage(messageId: string): boolean {
     if (this.processedMessages.has(messageId)) return true;
     this.processedMessages.set(messageId, 1);
@@ -287,9 +308,11 @@ export class Gateway {
     this.wsServer = new WsServer({
       server: this.httpServer,
       agent: this.agent,
+      runtimeManager: this.runtimeManager,
       config: this.config,
       weixinChannel: this.weixinChannel,
       onUserWeixinLogin: (userId, login) => this.activateUserWeixinChannel(userId, login),
+      getUserWeixinStatus: (userId) => this.getUserWeixinStatus(userId),
     });
 
     await this.restoreUserWeixinChannels();
@@ -335,6 +358,8 @@ export class Gateway {
       await channel.shutdown();
     }
     this.userWeixinChannels.clear();
+    await this.runtimeManager?.shutdown();
+    await this.agent.shutdown();
     if (this.pluginService) await this.pluginService.shutdown();
     this.httpServer.close();
     logger.info("Gateway shut down");

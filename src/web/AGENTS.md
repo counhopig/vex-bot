@@ -21,9 +21,9 @@ web/
 | WebSocket frame protocol | `types.ts` | `WsFrame = WsRequestFrame \| WsResponseFrame \| WsEventFrame` |
 | Web UI auth | `auth.ts` | Local register/login sessions in SQLite; first registered user becomes admin; default DB `~/.vex/web-auth.sqlite` |
 | Add a WS method | `websocket.ts` | Add case in `handleRequest()`, Zod schema, private handler |
-| Chat streaming | `websocket.ts:handleChatSend()` | `agent.processMessageStream()` → `chat.delta` events → client accumulates → `marked.js` render |
+| Chat streaming | `websocket.ts:handleChatSend()` | `UserRuntimeManager.getAgent(userId).processMessageStream()` → `chat.delta` events → client accumulates → `marked.js` render |
 | Cancel in-flight chat | `websocket.ts:handleChatCancel()` | `AbortController.abort()` → `chat.delta` with `cancelled:true` |
-| Config CRUD via WS | `websocket.ts:getConfigInfo/validateConfig/saveConfig()` | Reads existing YAML, merges 7 sections, writes to the runtime-selected config path |
+| Config CRUD via WS | `websocket.ts:getConfigForClient/saveConfigForClient()` | Authenticated user-owned settings go to SQLite; admin/system settings still merge into YAML |
 | QR login flow | `websocket.ts:handleWeixinQR/handleWeixinQRStatus()` | Generates QR; client polls status every 2s |
 | Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`, explicit restore loads transcript into agent |
 | WebChat SPA | `static.ts:getEmbeddedHtml()` | Inline CSS/JS, `marked.js` via CDN, sidebar sessions, message list |
@@ -59,13 +59,13 @@ Frames: `{id, type:"req"|"res"|"event", method?, params?, ok?, payload?, error?}
 
 ## KEY PATTERNS
 
-- **Streaming**: `handleChatSend` runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
+- **Streaming**: `handleChatSend` resolves the authenticated user's agent from `UserRuntimeManager`, then runs `agent.processMessageStream()` in a for-await loop, emitting `chat.delta` events per token. Client accumulates deltas in a buffer, calls `marked.parse()` on `done:true`.
 - **Lazy session binding**: Clients arrive sessionless. `ensureSession()` creates via `store.getOrCreate("webchat:${clientId}")` only on first `chat.send` or explicit `chat.clear`.
 - **Web session scope**: `sessions.list` filters the shared store to `webchat:` session keys before returning data to the browser UI, so Personal WeChat transcripts remain stored but do not appear on the webpage.
 - **Authenticated session scope**: when `webAuth.enabled` is true, WebChat session keys include the web user id (`webchat:{userId}:{clientId}`) and session list/history/delete/restore reject other users' keys.
 - **Admin bootstrap**: Vex does not create a fixed default admin password. The first registered Web user gets role `admin`; admins can manage all other accounts from the Control Panel Users view and `/api/admin/users`.
 - **Weixin login state**: QR login for authenticated users stores the confirmed token/account id under the current web user in SQLite and asks the Gateway to activate a user-scoped `WeixinChannel`. Startup restores stored user Weixin channels from SQLite.
-- **Config merge**: `saveConfig()` reads the runtime-selected config file, merges 7 top-level sections, deletes providers that sent `hasApiKey:false`, and writes YAML.
+- **Config merge**: authenticated `config.save` splits user-owned settings (`agent`, `memory`, `persona`, `skillLearner`, `sharelink`, `weather`, `sessions`) into SQLite and admin/system settings (`providers`, `channels`, `server`, `logging`, `skills`, `rawYaml`) into YAML. Legacy single-user mode still calls `saveConfig()` directly.
 - **Log streaming**: `LogStreamer` tails `~/.vex/logs/vex-YYYY-MM-DD.log`, returns a recent backlog on `logs.subscribe`, then emits normalized `log.entry` events.
 - **QR polling**: Client calls `weixin.qr` → gets QR URL → 2s interval polling `weixin.qr.status` until status resolves.
 - **No filesystem for HTML**: Both SPAs are giant inline template strings with embedded CSS/JS. `handleStaticRequest` sets `Content-Length` via `Buffer.byteLength()`. `marked.js` loaded from CDN. Image assets live in `src/web/assets/` and are copied to `dist/web/assets/` by `scripts/copy-web-assets.mjs`.

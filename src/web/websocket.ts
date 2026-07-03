@@ -20,8 +20,11 @@ import type {
   SessionsDeleteParams,
   SessionsResetParams,
   SessionsRestoreParams,
+  ConfigInfo,
+  ConfigSaveParams,
 } from "./types.js";
 import type { Agent } from "../agents/agent.js";
+import type { UserRuntimeManager } from "../agents/user-runtime.js";
 import type { VexConfig, WeixinConfig } from "../types/index.js";
 import type { WeixinChannel } from "../channels/weixin/index.js";
 import {
@@ -35,9 +38,23 @@ import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type SessionListItem, type TranscriptMessage } from "../sessions/index.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
-import { getConfigInfo, validateConfig, saveConfig } from "./config-handlers.js";
+import {
+  extractSystemConfigParams,
+  extractUserConfigSettings,
+  getConfigInfo,
+  getUserConfigInfo,
+  saveConfig,
+  validateConfig,
+} from "./config-handlers.js";
 import { LogStreamer } from "./log-stream.js";
-import { getRequestUser, isWebAuthEnabled, saveUserWeixinLogin, type PublicWebUser } from "./auth.js";
+import {
+  getRequestUser,
+  getUserConfigSettings,
+  isWebAuthEnabled,
+  saveUserConfigSettings,
+  saveUserWeixinLogin,
+  type PublicWebUser,
+} from "./auth.js";
 const logger = getChildLogger("websocket");
 const WEBCHAT_SESSION_PREFIX = "webchat:";
 
@@ -257,9 +274,11 @@ interface WsClient {
 export interface WsServerOptions {
   server: HttpServer;
   agent: Agent;
+  runtimeManager?: UserRuntimeManager;
   config: VexConfig;
   weixinChannel?: WeixinChannel;
   onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
+  getUserWeixinStatus?: (userId: string) => { configured: boolean; connected: boolean; accountId?: string };
   heartbeatInterval?: number;
   clientTimeout?: number;
 }
@@ -274,9 +293,11 @@ export class WsServer {
   private wss: WebSocketServer;
   private clients = new Map<string, WsClient>();
   private agent: Agent;
+  private runtimeManager?: UserRuntimeManager;
   private config: VexConfig;
   private weixinChannel?: WeixinChannel;
   private onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
+  private getUserWeixinStatus?: (userId: string) => { configured: boolean; connected: boolean; accountId?: string };
   private pendingUserWeixinLogins = new Map<string, PendingUserWeixinLogin>();
   private startTime = Date.now();
   private heartbeatInterval: number;
@@ -285,9 +306,11 @@ export class WsServer {
 
   constructor(options: WsServerOptions) {
     this.agent = options.agent;
+    this.runtimeManager = options.runtimeManager;
     this.config = options.config;
     this.weixinChannel = options.weixinChannel;
     this.onUserWeixinLogin = options.onUserWeixinLogin;
+    this.getUserWeixinStatus = options.getUserWeixinStatus;
     this.heartbeatInterval = options.heartbeatInterval ?? 30000;
     this.clientTimeout = options.clientTimeout ?? 60000;
 
@@ -415,21 +438,21 @@ export class WsServer {
           break;
         case "status.get":
           parseParams(EmptyParamsSchema, params);
-          result = this.getSystemStatus();
+          result = this.getSystemStatus(client);
           break;
         case "session.info":
           parseParams(EmptyParamsSchema, params);
-          result = this.getSessionInfo(client);
+          result = await this.getSessionInfo(client);
           break;
         case "config.get":
           parseParams(EmptyParamsSchema, params);
-          result = getConfigInfo(this.config);
+          result = this.getConfigForClient(client);
           break;
         case "config.validate":
           result = validateConfig(parseParams(ConfigSaveParamsSchema, params) ?? {});
           break;
         case "config.save":
-          result = saveConfig(this.config, parseParams(ConfigSaveParamsSchema, params) ?? {});
+          result = await this.saveConfigForClient(client, parseParams(ConfigSaveParamsSchema, params) ?? {});
           break;
         case "ping":
           parseParams(EmptyParamsSchema, params);
@@ -478,6 +501,43 @@ export class WsServer {
     client.logUnsubscribe?.();
     client.logUnsubscribe = null;
     return { ok: true };
+  }
+
+  private async getAgentForClient(client: WsClient): Promise<Agent> {
+    return this.runtimeManager?.getAgent(client.user?.id) ?? this.agent;
+  }
+
+  private getConfigForClient(client: WsClient): ConfigInfo {
+    if (!client.user || !isWebAuthEnabled(this.config)) {
+      return getConfigInfo(this.config);
+    }
+    return getUserConfigInfo(this.config, getUserConfigSettings(this.config, client.user.id), client.user);
+  }
+
+  private async saveConfigForClient(
+    client: WsClient,
+    params: ConfigSaveParams,
+  ): Promise<{ success: boolean; message: string; requiresRestart?: boolean }> {
+    if (!client.user || !isWebAuthEnabled(this.config)) {
+      return saveConfig(this.config, params);
+    }
+    const validation = validateConfig(params);
+    if (!validation.valid) {
+      return {
+        success: false,
+        message: "Config validation failed: " + validation.errors.join("; "),
+      };
+    }
+    saveUserConfigSettings(this.config, client.user.id, extractUserConfigSettings(params));
+    await this.runtimeManager?.reset(client.user.id);
+    const systemParams = client.user.role === "admin" ? extractSystemConfigParams(params) : {};
+    if (Object.keys(systemParams).length === 0) {
+      return { success: true, message: "User settings saved" };
+    }
+    const systemResult = saveConfig(this.config, systemParams);
+    return systemResult.success
+      ? { ...systemResult, message: "User settings and system config saved" }
+      : systemResult;
   }
 
   private createUserWeixinClient(): WeixinClient {
@@ -687,7 +747,8 @@ export class WsServer {
     client.currentAbortController = controller;
 
     try {
-      const stream = this.agent.processMessageStream(context, { signal: controller.signal });
+      const agent = await this.getAgentForClient(client);
+      const stream = agent.processMessageStream(context, { signal: controller.signal });
       let fullContent = "";
       let deltaCount = 0;
 
@@ -888,7 +949,8 @@ export class WsServer {
       .map((m) => ({ role: m.role as "user" | "assistant", content: m.content as string }));
 
     if (transcriptMessages.length > 0) {
-      this.agent.restoreSessionFromTranscript(agentSessionKey, transcriptMessages);
+      const agent = await this.getAgentForClient(client);
+      await agent.restoreSessionFromTranscript(agentSessionKey, transcriptMessages);
     }
 
     return {
@@ -899,18 +961,26 @@ export class WsServer {
   }
 
   /** Get system status */
-  private getSystemStatus(): SystemStatus {
+  private getSystemStatus(client: WsClient): SystemStatus {
     const providers = getAllProviders().map((p) => ({
       id: p.id,
       name: p.name,
       available: true,
     }));
 
-    const channels = getAllChannels().map((c) => ({
+    const channels: SystemStatus["channels"] = getAllChannels().map((c) => ({
       id: c.id,
       name: c.id,  // Use id as name
       connected: true,  // Simplification: assume configured channels are all connected
     }));
+    const userWeixin = client.user ? this.getUserWeixinStatus?.(client.user.id) : undefined;
+    if (userWeixin?.configured && !channels.some((channel) => channel.id === "weixin")) {
+      channels.push({
+        id: "weixin",
+        name: "Personal WeChat",
+        connected: userWeixin.connected,
+      });
+    }
 
     return {
       version: "1.0.0",
@@ -922,7 +992,7 @@ export class WsServer {
   }
 
   /** Get session info */
-  private getSessionInfo(client: WsClient): unknown {
+  private async getSessionInfo(client: WsClient): Promise<unknown> {
     const context = {
       channelId: "webchat" as const,
       chatId: client.sessionKey || `webchat:${client.id}`,
@@ -934,7 +1004,8 @@ export class WsServer {
       timestamp: Date.now(),
     };
 
-    const info = this.agent.getSessionInfo(context);
+    const agent = await this.getAgentForClient(client);
+    const info = agent.getSessionInfo(context);
     return {
       sessionKey: client.sessionKey,
       sessionId: client.sessionId,

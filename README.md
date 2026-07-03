@@ -2,7 +2,7 @@
 
 Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
 
-[![version](https://img.shields.io/badge/version-1.13.5-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-1.14.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
@@ -17,6 +17,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **WebChat UI** — built-in WebSocket-driven browser chat interface, server-rendered with no frontend build step
 - **Control panel** — browser control surface for config editing, WeChat QR login, service status, and live backend logs
 - **Web login protection** — local username/password registration and login backed by SQLite; the first registered user becomes admin and can manage other accounts
+- **Multi-user backend** — each Web user gets its own `Agent`, memory, sessions, persona state, and Weixin account via `UserRuntimeManager`; cross-user state cannot bleed
 - **Persona extension** — private persona state, emotion/effects/todos, and background user-profile extraction from chat history
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
 - **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, cron job management, memory access, sub-agent delegation, and system utilities
@@ -35,7 +36,10 @@ flowchart TD
     WX[WeChat<br/>iLink OC API] --> GW
     WC[WebChat<br/>WebSocket + SPA] --> GW
 
-    GW[Gateway<br/>Express + WebSocket] --> AG
+    GW[Gateway<br/>Express + WebSocket] --> URM
+    GW --> AG
+
+    URM[UserRuntimeManager<br/>per-Web-user Agent + MemoryManager] --> AG
 
     AG[Agent<br/>processMessage / processMessageStream<br/>wraps pi-coding-agent AgentRuntime] --> TO
     AG --> SK
@@ -46,7 +50,7 @@ flowchart TD
     subgraph Subsystems
         TO[Tools<br/>25+ built-in]
         SK[Skills<br/>SKILL.md injection]
-        ME[Memory<br/>TF-IDF]
+        ME[Memory<br/>TF-IDF, scoped per user]
         CR[Cron<br/>at / every / cron]
         OB[Outbound<br/>message delivery]
         EX[Extensions<br/>persona · sharelink · skill learner]
@@ -60,14 +64,15 @@ flowchart TD
 |-----------|----------|------|
 | Tools | `src/tools/` | Tool registration, validation, and execution engine |
 | Skills | `src/skills/` | SKILL.md YAML+Markdown parsing and injection |
-| Memory | `src/memory/` | TF-IDF vectorized long-term memory |
+| Memory | `src/memory/` | TF-IDF vectorized long-term memory, scoped per Web user under `users/{userId}/` |
 | Cron | `src/cron/` | at/every/cron schedule dispatching |
 | Outbound | `src/outbound/` | Cross-channel unified message delivery |
 | Extensions | `src/extensions/` | Built-in pipeline extensions: Persona, ShareLink, Skill Learner |
 | Plugins | `src/plugins/` | 3-tier auto-discovery + lifecycle management |
 | Browser | `src/browser/` | Playwright headless browser automation |
 | Hooks | `src/hooks/` | 12 event type hook system |
-| Sessions | `src/sessions/` | JSONL session persistence |
+| Sessions | `src/sessions/` | JSONL session persistence, scoped per Web user under `users/{userId}/` |
+| User runtime | `src/agents/user-runtime.ts` | `UserRuntimeManager` owns per-Web-user `Agent` and `MemoryManager` instances |
 
 ## Quick Start
 
@@ -182,11 +187,10 @@ persona:
 Config loading is YAML-only: Vex loads `config.local.yaml` from the current directory, then `~/.vex/config.local.yaml`, and falls back to built-in defaults for missing fields.
 
 ## Project Structure
-
 ```
 .
 ├── src/
-│   ├── agents/          # Agent orchestration + session management (pi-coding-agent wrapper)
+│   ├── agents/          # Agent orchestration + session management (pi-coding-agent wrapper) + per-user runtime manager
 │   ├── gateway/         # Express HTTP/WS server, route dispatch
 │   ├── channels/        # Platform adapters: personal WeChat (iLink OC API)
 │   ├── tools/           # Tool registration, validation, execution engine (25 built-in tools)

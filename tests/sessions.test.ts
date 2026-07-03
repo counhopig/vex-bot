@@ -507,6 +507,13 @@ describe("sessions/store", () => {
 
         expect(newEntry.sessionKey).toMatch(/^webchat:/);
       });
+
+      it("should preserve authenticated WebChat owner namespace in new sessionKey", async () => {
+        await store.getOrCreate("webchat:user-a:client-1");
+        const newEntry = await store.reset("webchat:user-a:client-1");
+
+        expect(newEntry.sessionKey).toMatch(/^webchat:user-a:session_/);
+      });
     });
 
     describe("transcript operations", () => {

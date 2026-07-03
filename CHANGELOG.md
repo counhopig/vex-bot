@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
+## [1.14.0] - 2026-07-03
+
+### Added
+
+- Introduced `UserRuntimeManager` (in `src/agents/user-runtime.ts`) so authenticated Web users each get their own `Agent` and `MemoryManager`, with per-user session and long-term-memory directories scoped under `users/{userId}/`.
+- Persisted user-owned runtime settings (`agent`, `memory`, `persona`, `skillLearner`, `sharelink`, `weather`, `sessions`) per Web user in the `web_user_settings` SQLite table.
+- Split WebSocket `config.save` into user-owned settings (written to SQLite) and admin/system settings (still written to YAML), and added `getConfigForClient` / `saveConfigForClient` to keep user state isolated.
+- Added `docs/multi-user-architecture-plan.md` describing the boundary-driven rollout of the multi-user backend.
+
+### Changed
+
+- Multi-user mode (default `webAuth.enabled: true`) no longer starts the process-wide Weixin channel; Weixin is now owned per Web user and dispatches inbound messages to that user's agent.
+- Persona profile and memory keys are now namespaced by the owning Web user id so identical Weixin sender ids under different Vex accounts cannot collide.
+- Memory tools (`search` / `store` / `list` / `delete`) now bind to the manager passed at tool-set creation, removing the process-wide `setMemoryManager()` takeover when a user-scoped runtime is active.
+- `Agent.restoreSessionFromTranscript` is now async and awaited by callers so user-scoped session restoration completes before the next request.
 
 ## [1.13.5] - 2026-07-03
 

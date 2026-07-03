@@ -14,6 +14,7 @@ import { getProviderName, PROVIDER_IDS } from "../providers/metadata.js";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig, ProviderId, WeixinConfig, SimpleProviderConfig } from "../types/index.js";
 import type { ConfigInfo, ConfigSaveParams, ConfigValidateResult } from "./types.js";
+import type { PublicWebUser, UserConfigSettings } from "./auth.js";
 
 const logger = getChildLogger("config-handlers");
 
@@ -151,6 +152,106 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
     sharelink,
     weather,
     sessions,
+  };
+}
+
+export function getUserConfigInfo(
+  config: VexConfig,
+  settings: UserConfigSettings,
+  user?: PublicWebUser | null,
+): ConfigInfo {
+  const info = getConfigInfo(buildUserEffectiveConfig(config, settings));
+  if (!user?.hasWeixin) return info;
+
+  const current = info.channels.weixin;
+  return {
+    ...info,
+    channels: {
+      ...info.channels,
+      weixin: {
+        id: "weixin",
+        name: current?.name ?? "Personal WeChat",
+        hasConfig: true,
+        enabled: true,
+        baseUrl: current?.baseUrl ?? config.channels.weixin?.baseUrl,
+        botType: current?.botType ?? config.channels.weixin?.botType,
+        accountId: user.weixinAccountId ?? current?.accountId,
+        hasToken: true,
+      },
+    },
+  };
+}
+
+export function buildUserEffectiveConfig(config: VexConfig, settings: UserConfigSettings): VexConfig {
+  return {
+    ...config,
+    agent: settings.agent
+      ? {
+          ...config.agent,
+          ...settings.agent,
+          defaultProvider: settings.agent.defaultProvider as ProviderId,
+        }
+      : config.agent,
+    memory: settings.memory
+      ? {
+          ...config.memory,
+          ...settings.memory,
+          embeddingProvider: settings.memory.embeddingProvider as ProviderId | undefined,
+        }
+      : config.memory,
+    persona: settings.persona ? { ...config.persona, ...settings.persona } : config.persona,
+    skillLearner: settings.skillLearner ? { ...config.skillLearner, ...settings.skillLearner } : config.skillLearner,
+    sharelink: settings.sharelink ? mergeSharelinkForEffectiveConfig(config.sharelink, settings.sharelink) : config.sharelink,
+    weather: settings.weather ? { ...config.weather, ...settings.weather } : config.weather,
+    sessions: settings.sessions
+      ? {
+          ...config.sessions,
+          ...settings.sessions,
+          type: settings.sessions.type ?? config.sessions?.type ?? "file",
+        }
+      : config.sessions,
+  };
+}
+
+export function extractUserConfigSettings(params: ConfigSaveParams): UserConfigSettings {
+  return {
+    ...(params.agent ? { agent: params.agent } : {}),
+    ...(params.memory ? { memory: params.memory } : {}),
+    ...(params.persona ? { persona: params.persona } : {}),
+    ...(params.skillLearner ? { skillLearner: params.skillLearner } : {}),
+    ...(params.sharelink ? { sharelink: params.sharelink } : {}),
+    ...(params.weather ? { weather: params.weather } : {}),
+    ...(params.sessions ? { sessions: params.sessions } : {}),
+  };
+}
+
+export function extractSystemConfigParams(params: ConfigSaveParams): ConfigSaveParams {
+  return {
+    ...(params.providers ? { providers: params.providers } : {}),
+    ...(params.channels ? { channels: params.channels } : {}),
+    ...(params.server ? { server: params.server } : {}),
+    ...(params.logging ? { logging: params.logging } : {}),
+    ...(params.skills ? { skills: params.skills } : {}),
+    ...(params.rawYaml ? { rawYaml: params.rawYaml } : {}),
+  };
+}
+
+function mergeSharelinkForEffectiveConfig(
+  globalSharelink: VexConfig["sharelink"],
+  userSharelink: UserConfigSettings["sharelink"],
+): VexConfig["sharelink"] {
+  if (!userSharelink) return globalSharelink;
+  return {
+    ...globalSharelink,
+    ...userSharelink,
+    bilibiliCookie: userSharelink.bilibiliCookie
+      ? {
+          ...globalSharelink?.bilibiliCookie,
+          ...userSharelink.bilibiliCookie,
+        }
+      : globalSharelink?.bilibiliCookie,
+    summarizeProviderId: userSharelink.summarizeProviderId as ProviderId | undefined,
+    sttProviderId: userSharelink.sttProviderId as ProviderId | undefined,
   };
 }
 

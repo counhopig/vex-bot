@@ -142,6 +142,7 @@ export interface ChannelConfigInfo {
   enabled?: boolean;
   baseUrl?: string;
   botType?: string;
+  accountId?: string;
   hasToken?: boolean;
 }
 

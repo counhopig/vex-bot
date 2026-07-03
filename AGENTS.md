@@ -63,7 +63,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 | Memory system | `src/memory/manager.ts` | MemoryManager: store/query/list, TF-IDF |
 | Cron scheduling | `src/cron/service.ts` | CronService: scheduling loop, job execution |
 | Outbound delivery | `src/outbound/index.ts` | deliverOutboundPayloads, deliverMessage |
-
+| Multi-user runtime | `src/agents/user-runtime.ts` | `UserRuntimeManager`: one `Agent` + `MemoryManager` per authenticated Web user; scoped session/memory dirs under `users/{userId}/` |
 ## CODE MAP
 
 | Symbol | Type | Location | Role |
@@ -82,6 +82,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 | `VexError` | Class | `src/types/index.ts` | Base error with code + details |
 | `ProviderError` | Class | `src/types/index.ts` | Provider-specific errors |
 | `ChannelError` | Class | `src/types/index.ts` | Channel-specific errors |
+| `UserRuntimeManager` | Class | `src/agents/user-runtime.ts` | Per-Web-user `Agent` + `MemoryManager` factory and registry |
 
 ## CONVENTIONS
 
@@ -96,6 +97,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 - **Node >= 18**: Uses `homedir()` from `os`, `readFileSync` from `fs`, ESM top-level await
 - **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
 - **Web UI auth storage**: Browser login/registration uses SQLite via `better-sqlite3`, defaulting to `~/.vex/web-auth.sqlite`; first registered user becomes `admin`
+- **Multi-user backend by default**: `webAuth.enabled: true` (default) routes WebChat and Weixin through `UserRuntimeManager`; per-user settings persist in the `web_user_settings` SQLite table; per-user memory/session dirs are namespaced. Setting `webAuth.enabled: false` reverts to the legacy single-user backend.
 - **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
 
 ## CHANGE HYGIENE

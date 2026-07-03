@@ -447,11 +447,9 @@ export class FileSessionStore {
     const existing = index.get(sessionKey);
     const now = Date.now();
 
-    // Extract channel prefix from old sessionKey (e.g. "webchat:")
-    const channelPrefix = sessionKey.includes(":") ? sessionKey.split(":")[0] + ":" : "";
-
-    // Generate new sessionKey
-    const newSessionKey = `${channelPrefix}${generateId("session")}`;
+    const namespaceEnd = sessionKey.lastIndexOf(":");
+    const namespacePrefix = namespaceEnd >= 0 ? sessionKey.slice(0, namespaceEnd + 1) : "";
+    const newSessionKey = `${namespacePrefix}${generateId("session")}`;
 
     // Create new session
     const newEntry: SessionEntry = {

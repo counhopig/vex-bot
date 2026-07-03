@@ -11,6 +11,7 @@ import type { IncomingMessage, ServerResponse } from "http";
 import type { Request, Response, NextFunction } from "express";
 import type { LoginResult } from "../channels/weixin/login.js";
 import type { VexConfig } from "../types/index.js";
+import type { ConfigSaveParams } from "./types.js";
 
 const SESSION_COOKIE = "vexsid";
 const PASSWORD_KEY_LENGTH = 64;
@@ -56,6 +57,11 @@ export interface StoredUserWeixinLogin {
   ilinkUserId?: string;
 }
 
+export type UserConfigSettings = Pick<
+  ConfigSaveParams,
+  "agent" | "memory" | "persona" | "skillLearner" | "sharelink" | "weather" | "sessions"
+>;
+
 function getAuthStorePath(config: VexConfig): string {
   return config.webAuth?.database ?? join(homedir(), ".vex", "web-auth.sqlite");
 }
@@ -89,6 +95,11 @@ function openAuthDatabase(config: VexConfig): Database.Database {
       account_id TEXT NOT NULL,
       base_url TEXT,
       ilink_user_id TEXT,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS web_user_settings (
+      user_id TEXT PRIMARY KEY REFERENCES web_users(id) ON DELETE CASCADE,
+      settings_json TEXT NOT NULL,
       updated_at INTEGER NOT NULL
     );
   `);
@@ -448,6 +459,82 @@ export function listUserWeixinLogins(config: VexConfig): StoredUserWeixinLogin[]
   } finally {
     db.close();
   }
+}
+
+export function getUserConfigSettings(config: VexConfig, userId: string): UserConfigSettings {
+  if (!isWebAuthEnabled(config)) return {};
+  const db = openAuthDatabase(config);
+  try {
+    const row = db.prepare("SELECT settings_json FROM web_user_settings WHERE user_id = ?")
+      .get(userId) as { settings_json: string } | undefined;
+    if (!row) return {};
+    const parsed = JSON.parse(row.settings_json) as UserConfigSettings;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch (error) {
+    throw new Error(`Failed to load user settings: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    db.close();
+  }
+}
+
+export function saveUserConfigSettings(config: VexConfig, userId: string, patch: UserConfigSettings): UserConfigSettings {
+  if (!isWebAuthEnabled(config)) return {};
+  const db = openAuthDatabase(config);
+  try {
+    const user = getUserById(db, userId);
+    if (!user) throw new Error("User not found");
+    const row = db.prepare("SELECT settings_json FROM web_user_settings WHERE user_id = ?")
+      .get(userId) as { settings_json: string } | undefined;
+    const existing = row ? JSON.parse(row.settings_json) as UserConfigSettings : {};
+    const next = mergeUserConfigSettings(existing, patch);
+    db.prepare(`
+      INSERT INTO web_user_settings (user_id, settings_json, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        settings_json = excluded.settings_json,
+        updated_at = excluded.updated_at
+    `).run(userId, JSON.stringify(next), Date.now());
+    return next;
+  } catch (error) {
+    throw new Error(`Failed to save user settings: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    db.close();
+  }
+}
+
+function mergeUserConfigSettings(existing: UserConfigSettings, patch: UserConfigSettings): UserConfigSettings {
+  return {
+    ...existing,
+    ...(patch.agent ? { agent: { ...existing.agent, ...patch.agent } } : {}),
+    ...(patch.memory ? { memory: { ...existing.memory, ...patch.memory } } : {}),
+    ...(patch.persona ? { persona: { ...existing.persona, ...patch.persona } } : {}),
+    ...(patch.skillLearner ? { skillLearner: { ...existing.skillLearner, ...patch.skillLearner } } : {}),
+    ...(patch.sharelink ? { sharelink: mergeSharelinkSettings(existing.sharelink, patch.sharelink) } : {}),
+    ...(patch.weather ? { weather: mergeWeatherSettings(existing.weather, patch.weather) } : {}),
+    ...(patch.sessions ? { sessions: { ...existing.sessions, ...patch.sessions } } : {}),
+  };
+}
+
+function mergeSharelinkSettings(
+  existing: UserConfigSettings["sharelink"],
+  patch: UserConfigSettings["sharelink"],
+): UserConfigSettings["sharelink"] {
+  if (!patch) return existing;
+  const next = { ...existing, ...patch };
+  if (!patch.bilibiliCookie) return next;
+  next.bilibiliCookie = {
+    ...existing?.bilibiliCookie,
+    ...patch.bilibiliCookie,
+  };
+  return next;
+}
+
+function mergeWeatherSettings(
+  existing: UserConfigSettings["weather"],
+  patch: UserConfigSettings["weather"],
+): UserConfigSettings["weather"] {
+  if (!patch) return existing;
+  return { ...existing, ...patch };
 }
 
 function getCredentials(body: unknown): { username: string; password: string } {

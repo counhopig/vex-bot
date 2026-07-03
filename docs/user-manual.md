@@ -427,6 +427,35 @@ vex --version
 
 ---
 
+## 5.5 Multi-User Accounts (admin and per-user Weixin)
+
+When `webAuth.enabled` is `true` (the default), Vex is a multi-user backend. Each Web user gets isolated state:
+
+- **Login identity and role** — every Web account has a username, password, role (`admin` or `user`), and an `active`/`disabled` status. The first registered Web user is automatically promoted to `admin`. There is no fixed default password.
+- **Per-Web-user Weixin** — each Web user can scan their own QR code and own one Weixin account at a time. Inbound Weixin messages are routed to that user's `Agent`; one user's Weixin connection cannot bleed into another user's chat history.
+- **Per-user runtime settings** — agent model defaults, temperature, max tokens, system prompt, memory enable, persona flags, skill learner, sharelink, weather tool, and session directory are stored in the `web_user_settings` SQLite table. Editing these settings in the Control Panel saves to your row only.
+- **Per-user memory** — long-term memory files live under `~/.vex/memory/users/{userId}/`. Persona profile keys are namespaced by your Web user id, so the same Weixin sender id under different Vex accounts cannot collide.
+- **Per-user sessions** — WebChat sessions and per-Weixin-contact sessions live under `~/.vex/sessions/users/{userId}/`. You cannot see or reset another user's sessions.
+
+### Single-user compatibility mode
+
+Setting `webAuth.enabled: false` in `config.local.yaml` reverts Vex to the legacy single-user backend (one global `Agent`, one global Weixin channel, all config in YAML). Use this only if you specifically need the old behaviour — most installs should keep `webAuth.enabled: true`.
+
+### Admin role
+
+The first registered user becomes `admin`. Admins can:
+
+- List, promote, demote, disable, and delete other Web accounts from the Control Panel Users view.
+- Edit system-level configuration (providers, server, logging, plugin rules) which still lives in `config.local.yaml`.
+- See other users' connection status (configured/connected) without seeing their Weixin tokens.
+
+Admins cannot delete or demote their own account, and user-management APIs reject non-admin callers.
+
+### Local admin password reset
+
+If you lose the admin password, stop Vex and delete the configured `webAuth.database` file (default `~/.vex/web-auth.sqlite`). Restarting Vex gives you a clean database; the first user to register becomes the new admin. Per-user Weixin tokens and settings live in the same database and are also cleared.
+
+---
 ## 6. WebChat Usage
 
 After running `vex start`, open a browser and go to `http://localhost:PORT` (default `http://localhost:3000`).

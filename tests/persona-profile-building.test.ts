@@ -65,6 +65,20 @@ function context(senderId = "user-1", messageIdSeed = "msg"): InboundMessageCont
   };
 }
 
+function weixinContext(ownerId: string, senderId: string, messageIdSeed: string): InboundMessageContext {
+  return {
+    channelId: "weixin",
+    chatId: "chat-1",
+    chatType: "direct",
+    messageId: `${messageIdSeed}-${Math.random().toString(36).slice(2, 8)}`,
+    senderId,
+    senderName: "Tester",
+    content: "我住在深圳，在香港上班",
+    timestamp: Date.now(),
+    raw: { __webUserId: ownerId },
+  };
+}
+
 function baseConfig(overrides: Partial<{ triggerTurns: number; enabled: boolean }> = {}): VexConfig {
   return {
     providers: {},
@@ -194,6 +208,38 @@ describe("persona auto-profile-building", () => {
 
       const memories = await memoryManager.list({ tags: ["persona", "user:webchat:user-b"] });
       expect(memories).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("scopes identical Weixin sender ids by owning web user", async () => {
+    mockedLlmComplete
+      .mockResolvedValueOnce({
+        text: JSON.stringify([
+          { category: "location", content: "A 的事实", evidence: "测试", confidence: 0.9 },
+        ]),
+      })
+      .mockResolvedValueOnce({
+        text: JSON.stringify([
+          { category: "location", content: "B 的事实", evidence: "测试", confidence: 0.9 },
+        ]),
+      });
+
+    const { cleanup } = await initPersonaOnce(baseConfig({ triggerTurns: 1 }));
+    try {
+      const { PersonaStorage } = await import("../src/extensions/persona/storage.js");
+      const first = fireResponse(weixinContext("owner-a", "same-openid", "m1"));
+      await waitForLlmCalls(1);
+      await first;
+      const second = fireResponse(weixinContext("owner-b", "same-openid", "m2"));
+      await waitForLlmCalls(2);
+      await second;
+
+      const store = new PersonaStorage();
+      expect(store.getProfileFacts("weixin:owner-a:same-openid")).toHaveLength(1);
+      expect(store.getProfileFacts("weixin:owner-b:same-openid")).toHaveLength(1);
+      expect(store.getProfileFacts("weixin:same-openid")).toHaveLength(0);
     } finally {
       await cleanup();
     }

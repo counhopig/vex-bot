@@ -22,7 +22,7 @@ vi.mock("os", async (importOriginal) => {
   };
 });
 
-import { getConfigInfo, validateConfig, saveConfig } from "../src/web/config-handlers.js";
+import { buildUserEffectiveConfig, getConfigInfo, getUserConfigInfo, validateConfig, saveConfig } from "../src/web/config-handlers.js";
 import type { VexConfig } from "../src/types/index.js";
 import type { ConfigSaveParams } from "../src/web/types.js";
 
@@ -116,6 +116,89 @@ describe("control-settings config-handlers", () => {
       expect(info.sharelink).toBeUndefined();
       expect(info.weather).toBeUndefined();
       expect(info.sessions).toBeUndefined();
+    });
+
+    it("overlays user settings on global config for config info", () => {
+      const config: VexConfig = {
+        ...baseConfig(),
+        agent: {
+          defaultModel: "global-model",
+          defaultProvider: "deepseek",
+          temperature: 0.1,
+        },
+        persona: { persona_name: "Global" },
+        weather: { weather_provider: "caiyun", caiyun_api_key: "global-weather-key" },
+      };
+
+      const info = getUserConfigInfo(config, {
+        agent: {
+          defaultProvider: "deepseek",
+          defaultModel: "user-model",
+          temperature: 0.7,
+        },
+        persona: { persona_name: "User" },
+        weather: { default_location: "广州" },
+      });
+
+      expect(info.agent).toMatchObject({
+        defaultModel: "user-model",
+        temperature: 0.7,
+      });
+      expect(info.persona).toMatchObject({ persona_name: "User" });
+      expect(info.weather).toMatchObject({
+        weather_provider: "caiyun",
+        default_location: "广州",
+        hasCaiyunApiKey: true,
+      });
+      expect((info.weather as unknown as Record<string, unknown>)?.caiyun_api_key).toBeUndefined();
+    });
+
+    it("reports authenticated user Weixin login state from SQLite-backed user data", () => {
+      const info = getUserConfigInfo(
+        {
+          ...baseConfig(),
+          channels: {
+            weixin: {
+              enabled: false,
+              baseUrl: "https://ilinkai.weixin.qq.com",
+              botType: "3",
+            },
+          },
+        },
+        {},
+        {
+          id: "user-1",
+          username: "alice",
+          role: "user",
+          createdAt: 1,
+          hasWeixin: true,
+          weixinAccountId: "wx-account",
+        },
+      );
+
+      expect(info.channels.weixin).toMatchObject({
+        hasConfig: true,
+        enabled: true,
+        hasToken: true,
+        accountId: "wx-account",
+      });
+    });
+
+    it("builds effective user config without mutating global config", () => {
+      const config = baseConfig();
+
+      const effective = buildUserEffectiveConfig(config, {
+        agent: {
+          defaultProvider: "deepseek",
+          defaultModel: "user-model",
+        },
+        memory: { enabled: true },
+      });
+
+      expect(effective.agent.defaultModel).toBe("user-model");
+      expect(effective.memory?.enabled).toBe(true);
+      expect(config.agent.defaultModel).toBe("deepseek-chat");
+      expect(config.memory).toBeUndefined();
     });
   });
 

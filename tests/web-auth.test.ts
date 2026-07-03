@@ -6,9 +6,11 @@ import type { IncomingMessage, ServerResponse } from "http";
 import {
   createWebUser,
   deleteWebUser,
+  getUserConfigSettings,
   getRequestUser,
   listWebUsers,
   loginWebUser,
+  saveUserConfigSettings,
   saveUserWeixinLogin,
   setLoginCookie,
   updateWebUserRole,
@@ -108,5 +110,37 @@ describe("web auth", () => {
 
     expect(updated.hasWeixin).toBe(true);
     expect(updated.weixinAccountId).toBe("wx-account");
+  });
+
+  it("stores config settings per user without sharing values", () => {
+    const cfg = config();
+    const first = createWebUser(cfg, "first-user", "password123");
+    const second = createWebUser(cfg, "second-user", "password123");
+
+    saveUserConfigSettings(cfg, first.id, {
+      agent: {
+        defaultProvider: "deepseek",
+        defaultModel: "first-model",
+        temperature: 0.2,
+      },
+      persona: { persona_name: "First" },
+    });
+    saveUserConfigSettings(cfg, second.id, {
+      agent: {
+        defaultProvider: "deepseek",
+        defaultModel: "second-model",
+        temperature: 0.8,
+      },
+      persona: { persona_name: "Second" },
+    });
+
+    expect(getUserConfigSettings(cfg, first.id)).toMatchObject({
+      agent: { defaultModel: "first-model", temperature: 0.2 },
+      persona: { persona_name: "First" },
+    });
+    expect(getUserConfigSettings(cfg, second.id)).toMatchObject({
+      agent: { defaultModel: "second-model", temperature: 0.8 },
+      persona: { persona_name: "Second" },
+    });
   });
 });

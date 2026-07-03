@@ -19,8 +19,18 @@ const inFlightProfileExtraction = new Set<string>();
 let agentProvider: ProviderId | undefined;
 let agentModel: string | undefined;
 
+function getWebOwnerId(ctx: InboundMessageContext): string | undefined {
+  const raw = ctx.raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw) || !("__webUserId" in raw)) {
+    return undefined;
+  }
+  const ownerId = raw.__webUserId;
+  return typeof ownerId === "string" ? ownerId : undefined;
+}
+
 function userKey(ctx: InboundMessageContext): string {
-  return `${ctx.channelId}:${ctx.senderId}`;
+  const ownerId = getWebOwnerId(ctx);
+  return ownerId ? `${ctx.channelId}:${ownerId}:${ctx.senderId}` : `${ctx.channelId}:${ctx.senderId}`;
 }
 
 function normalizeTimestampMs(timestamp: number): number {
@@ -30,7 +40,7 @@ function normalizeTimestampMs(timestamp: number): number {
 function memoryTags(ctx: InboundMessageContext): string[] {
   return [
     "persona",
-    `user:${ctx.channelId}:${ctx.senderId}`,
+    `user:${userKey(ctx)}`,
     `channel:${ctx.channelId}`,
   ];
 }
@@ -54,7 +64,7 @@ async function recallPersonaMemories(
   ctx: InboundMessageContext,
 ): Promise<string> {
   if (!config.memoryEnabled || !longTermMemory || !ctx.content.trim()) return "";
-  const userTag = `user:${ctx.channelId}:${ctx.senderId}`;
+  const userTag = `user:${userKey(ctx)}`;
   const belongsToUser = (entry: Awaited<ReturnType<MemoryManager["list"]>>[number]): boolean => {
     const tags = entry.metadata.tags ?? [];
     return tags.includes("persona") && tags.includes(userTag);
@@ -505,4 +515,3 @@ export function cleanupPersona(): void {
   agentModel = undefined;
   inFlightProfileExtraction.clear();
 }
-

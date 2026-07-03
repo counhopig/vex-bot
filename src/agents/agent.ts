@@ -186,11 +186,15 @@ export class Agent {
     };
   }
 
-  restoreSessionFromTranscript(
+  async restoreSessionFromTranscript(
     sessionKey: string,
     messages: Array<{ role: "user" | "assistant"; content: string }>
-  ): void {
-    this.runtime.restoreSessionFromTranscript(sessionKey, messages);
+  ): Promise<void> {
+    await this.runtime.restoreSessionFromTranscript(sessionKey, messages);
+  }
+
+  async shutdown(): Promise<void> {
+    await this.runtime.shutdown();
   }
 }
 

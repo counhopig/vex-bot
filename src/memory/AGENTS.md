@@ -4,7 +4,7 @@ Long-term cross-session memory with local TF-IDF embedding and JSON file persist
 
 ## OVERVIEW
 
-MemoryManager wraps JsonMemoryStore + SimpleEmbedding. Entries persist to `~/.vex/memory/index.json` (version 2 format: entries array + embeddings cache). Vocabulary is 256-dim TF-IDF with LRU eviction at 50k tokens. Hybrid scoring: cosine similarity (weight 0.7) + keyword match with position bonus (0.3). Created once in `createAgent()` if `config.memory` exists and `enabled !== false`. Injected into tools via `setMemoryManager()` singleton.
+MemoryManager wraps JsonMemoryStore + SimpleEmbedding. Entries persist to `~/.vex/memory/index.json` by default, or to `~/.vex/memory/users/{userId}/index.json` for authenticated user runtimes (version 2 format: entries array + embeddings cache). Vocabulary is 256-dim TF-IDF with LRU eviction at 50k tokens. Hybrid scoring: cosine similarity (weight 0.7) + keyword match with position bonus (0.3). Created by `createAgent()` if `config.memory` exists and `enabled !== false`; authenticated Web users get one manager per user runtime.
 
 ## STRUCTURE
 
@@ -32,7 +32,7 @@ memory/
 | Vocab eviction | `embedding.ts:evictLeastRecentlyUsed()` | Removes oldest 10% when vocab hits 50000 |
 | Agent wiring | `agent.ts:createAgent()` line 187-193 | Dynamic `import("../memory/index.js")`, passed to `createMemoryTools()` |
 | Tool definitions | `tools/builtin/memory.ts` | 4 tools: `memory_search`, `memory_store`, `memory_list`, `memory_delete` |
-| Tool injection | `tools/builtin/memory.ts:createMemoryTools()` | Sets singleton via `setMemoryManager()`, tools call `getManager()` |
+| Tool injection | `tools/builtin/memory.ts:createMemoryTools()` | Binds each tool set to the manager passed at creation time; `setMemoryManager()` remains only as legacy fallback |
 
 ## EMBEDDING
 
