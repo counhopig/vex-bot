@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Request, Response, NextFunction } from "express";
 import type { LoginResult } from "../channels/weixin/login.js";
@@ -153,18 +153,43 @@ function pruneExpiredSessions(db: Database.Database, now: number): void {
   db.prepare("DELETE FROM web_sessions WHERE expires_at <= ?").run(now);
 }
 
-function hashPassword(password: string, salt = randomBytes(16).toString("hex")): { hash: string; salt: string } {
+// Async scrypt runs on the libuv threadpool: login/register are unauthenticated
+// routes, and a synchronous scrypt there would let anyone stall the whole
+// event loop with a stream of requests.
+function scryptAsync(password: string, salt: string): Promise<Buffer> {
+  return new Promise((resolvePromise, reject) => {
+    scrypt(password, salt, PASSWORD_KEY_LENGTH, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolvePromise(derivedKey);
+    });
+  });
+}
+
+async function hashPassword(password: string, salt = randomBytes(16).toString("hex")): Promise<{ hash: string; salt: string }> {
   return {
-    hash: scryptSync(password, salt, PASSWORD_KEY_LENGTH).toString("hex"),
+    hash: (await scryptAsync(password, salt)).toString("hex"),
     salt,
   };
 }
 
-function verifyPassword(password: string, user: WebUser): boolean {
+async function verifyPassword(password: string, user: Pick<WebUser, "passwordHash" | "passwordSalt">): Promise<boolean> {
   const expected = Buffer.from(user.passwordHash, "hex");
-  const actual = scryptSync(password, user.passwordSalt, PASSWORD_KEY_LENGTH);
+  const actual = await scryptAsync(password, user.passwordSalt);
   if (actual.length !== expected.length) return false;
   return timingSafeEqual(actual, expected);
+}
+
+// Verified against when a login names a user that doesn't exist, so the
+// unknown-username path costs the same scrypt as the wrong-password path —
+// otherwise response time reveals which usernames are registered. The dummy
+// password is random and never matches anything.
+let dummyCredentials: Pick<WebUser, "passwordHash" | "passwordSalt"> | null = null;
+async function getDummyCredentials(): Promise<Pick<WebUser, "passwordHash" | "passwordSalt">> {
+  if (!dummyCredentials) {
+    const data = await hashPassword(randomBytes(32).toString("hex"));
+    dummyCredentials = { passwordHash: data.hash, passwordSalt: data.salt };
+  }
+  return dummyCredentials;
 }
 
 function parseCookieHeader(header: string | string[] | undefined): Record<string, string> {
@@ -173,7 +198,14 @@ function parseCookieHeader(header: string | string[] | undefined): Record<string
   for (const part of cookieHeader.split(";")) {
     const [rawName, ...rawValue] = part.trim().split("=");
     if (!rawName) continue;
-    cookies[rawName] = decodeURIComponent(rawValue.join("="));
+    const value = rawValue.join("=");
+    // Other origins' cookies arrive here too; a malformed percent-encoding in
+    // any of them must not throw and take every authenticated route down.
+    try {
+      cookies[rawName] = decodeURIComponent(value);
+    } catch {
+      cookies[rawName] = value;
+    }
   }
   return cookies;
 }
@@ -325,7 +357,7 @@ export function getRequestUser(config: VexConfig, req: IncomingMessage): PublicW
   return user ? toPublicUser(user) : null;
 }
 
-export function createWebUser(config: VexConfig, username: string, password: string): PublicWebUser {
+export async function createWebUser(config: VexConfig, username: string, password: string): Promise<PublicWebUser> {
   const normalizedUsername = username.trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,32}$/.test(normalizedUsername)) {
     throw new HttpError(400, "Username must be 3-32 characters and use letters, numbers, dot, underscore, or dash");
@@ -340,7 +372,7 @@ export function createWebUser(config: VexConfig, username: string, password: str
   }
 
   const db = openAuthDatabase(config);
-  const passwordData = hashPassword(password);
+  const passwordData = await hashPassword(password);
   const user: WebUser = {
     id: `user_${randomBytes(12).toString("hex")}`,
     username: normalizedUsername,
@@ -418,12 +450,13 @@ export function deleteWebUser(config: VexConfig, actorId: string, targetUserId: 
   db.prepare("DELETE FROM web_users WHERE id = ?").run(targetUserId);
 }
 
-export function loginWebUser(config: VexConfig, username: string, password: string): { user: PublicWebUser; session: WebAuthSession } {
+export async function loginWebUser(config: VexConfig, username: string, password: string): Promise<{ user: PublicWebUser; session: WebAuthSession }> {
   const normalizedUsername = username.trim().toLowerCase();
   const db = openAuthDatabase(config);
   const user = getUserByUsername(db, normalizedUsername);
-  if (!user || !verifyPassword(password, user)) {
-    throw new Error("Invalid username or password");
+  const valid = await verifyPassword(password, user ?? (await getDummyCredentials()));
+  if (!user || !valid) {
+    throw new HttpError(401, "Invalid username or password");
   }
 
   const now = Date.now();
@@ -571,6 +604,35 @@ function mergeWeatherSettings(
   return { ...existing, ...patch };
 }
 
+// Brute-force throttle for login: fixed window per IP+username, in memory.
+// Sized for a self-hosted instance — no external store, resets on restart.
+const LOGIN_ATTEMPT_WINDOW_MS = 5 * 60_000;
+const LOGIN_MAX_FAILURES = 10;
+const loginFailures = new Map<string, { windowStart: number; count: number }>();
+
+function assertLoginAllowed(key: string, now: number): void {
+  const entry = loginFailures.get(key);
+  if (!entry || now - entry.windowStart >= LOGIN_ATTEMPT_WINDOW_MS) return;
+  if (entry.count >= LOGIN_MAX_FAILURES) {
+    throw new HttpError(429, "Too many failed login attempts. Try again later.");
+  }
+}
+
+function recordLoginFailure(key: string, now: number): void {
+  const entry = loginFailures.get(key);
+  if (entry && now - entry.windowStart < LOGIN_ATTEMPT_WINDOW_MS) {
+    entry.count += 1;
+    return;
+  }
+  // Starting a fresh window; drop stale entries so the map cannot grow unbounded.
+  if (loginFailures.size >= 10_000) {
+    for (const [staleKey, stale] of loginFailures) {
+      if (now - stale.windowStart >= LOGIN_ATTEMPT_WINDOW_MS) loginFailures.delete(staleKey);
+    }
+  }
+  loginFailures.set(key, { windowStart: now, count: 1 });
+}
+
 function getCredentials(body: unknown): { username: string; password: string } {
   if (body === null || typeof body !== "object") {
     throw new HttpError(400, "Request body must be an object");
@@ -594,7 +656,7 @@ export function installWebAuthRoutes(config: VexConfig) {
   }
 
   return {
-    register(req: Request, res: Response): void {
+    async register(req: Request, res: Response): Promise<void> {
       try {
         // Self-service registration is only for bootstrapping the first account
         // (which becomes admin) or when the operator has explicitly opted into
@@ -608,8 +670,8 @@ export function installWebAuthRoutes(config: VexConfig) {
           return;
         }
         const credentials = getCredentials(req.body);
-        createWebUser(config, credentials.username, credentials.password);
-        const login = loginWebUser(config, credentials.username, credentials.password);
+        await createWebUser(config, credentials.username, credentials.password);
+        const login = await loginWebUser(config, credentials.username, credentials.password);
         setLoginCookie(res, login.session, shouldUseSecureCookie(config, req));
         res.json({ user: login.user });
       } catch (error) {
@@ -617,26 +679,38 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
-    createUser(req: Request, res: Response): void {
+    async createUser(req: Request, res: Response): Promise<void> {
       try {
         requireAdminRequest(req);
         const credentials = getCredentials(req.body);
         // Create the account without logging the admin out of their own session.
-        const user = createWebUser(config, credentials.username, credentials.password);
+        const user = await createWebUser(config, credentials.username, credentials.password);
         res.json({ user });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
-    login(req: Request, res: Response): void {
+    async login(req: Request, res: Response): Promise<void> {
       try {
         const credentials = getCredentials(req.body);
-        const login = loginWebUser(config, credentials.username, credentials.password);
+        const rateKey = `${req.ip ?? "unknown"}|${credentials.username.trim().toLowerCase()}`;
+        assertLoginAllowed(rateKey, Date.now());
+        let login;
+        try {
+          login = await loginWebUser(config, credentials.username, credentials.password);
+        } catch (error) {
+          if (error instanceof HttpError && error.status === 401) {
+            recordLoginFailure(rateKey, Date.now());
+          }
+          throw error;
+        }
+        loginFailures.delete(rateKey);
         setLoginCookie(res, login.session, shouldUseSecureCookie(config, req));
         res.json({ user: login.user });
-      } catch {
-        res.status(401).json({ error: "Invalid username or password" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     logout(req: Request, res: Response): void {
