@@ -16,6 +16,10 @@ This project follows semantic versioning for npm package releases.
 
 - Non-admin requests to `PATCH/DELETE /api/admin/users/:id` now return 403 as intended; the error-message string matching used to map them to 400.
 
+### Changed
+
+- User-management errors (`requireAdmin`, `updateWebUserRole`, `deleteWebUser`) now carry their HTTP status (`HttpError`) instead of being guessed from message text. `User not found` on `PATCH/DELETE /api/admin/users/:id` now returns 404 (previously 403 via the fallback), and unexpected server errors on admin routes return 500.
+
 ### Added
 
 - `agent.temperature` and `agent.maxTokens` are now actually applied to LLM calls made through the agent runtime; previously they were accepted by the config schema but silently ignored.

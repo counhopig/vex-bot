@@ -17,6 +17,21 @@ const SESSION_COOKIE = "vexsid";
 const PASSWORD_KEY_LENGTH = 64;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Error that carries the HTTP status it should be reported with, so route
+ * handlers don't have to guess the status from the error message. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function errorStatus(error: unknown, fallback: number): number {
+  return error instanceof HttpError ? error.status : fallback;
+}
+
 export interface WebUser {
   id: string;
   username: string;
@@ -282,7 +297,7 @@ function countWebUsers(db: Database.Database): number {
 function requireAdmin(db: Database.Database, actorId: string): WebUser {
   const actor = getUserById(db, actorId);
   if (!actor || actor.role !== "admin") {
-    throw new Error("Admin privileges required");
+    throw new HttpError(403, "Admin privileges required");
   }
   return actor;
 }
@@ -369,31 +384,31 @@ export function updateWebUserRole(
   role: WebUser["role"],
 ): PublicWebUser {
   if (role !== "admin" && role !== "user") {
-    throw new Error("Invalid role");
+    throw new HttpError(400, "Invalid role");
   }
   if (actorId === targetUserId) {
-    throw new Error("Admins cannot change their own role");
+    throw new HttpError(403, "Admins cannot change their own role");
   }
 
   const db = openAuthDatabase(config);
   requireAdmin(db, actorId);
   const target = getUserById(db, targetUserId);
-  if (!target) throw new Error("User not found");
+  if (!target) throw new HttpError(404, "User not found");
   db.prepare("UPDATE web_users SET role = ? WHERE id = ?").run(role, targetUserId);
   const updated = getUserById(db, targetUserId);
-  if (!updated) throw new Error("User not found");
+  if (!updated) throw new HttpError(404, "User not found");
   return toPublicUser(updated);
 }
 
 export function deleteWebUser(config: VexConfig, actorId: string, targetUserId: string): void {
   if (actorId === targetUserId) {
-    throw new Error("Admins cannot delete their own account");
+    throw new HttpError(403, "Admins cannot delete their own account");
   }
 
   const db = openAuthDatabase(config);
   requireAdmin(db, actorId);
   const target = getUserById(db, targetUserId);
-  if (!target) throw new Error("User not found");
+  if (!target) throw new HttpError(404, "User not found");
   db.prepare("DELETE FROM web_users WHERE id = ?").run(targetUserId);
 }
 
@@ -563,21 +578,6 @@ function getCredentials(body: unknown): { username: string; password: string } {
   return { username, password };
 }
 
-/** Error that carries the HTTP status it should be reported with, so route
- * handlers don't have to guess the status from the error message. */
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
-function errorStatus(error: unknown, fallback: number): number {
-  return error instanceof HttpError ? error.status : fallback;
-}
-
 export function installWebAuthRoutes(config: VexConfig) {
   function requireAdminRequest(req: Request): PublicWebUser {
     const user = getRequestUser(config, req);
@@ -648,7 +648,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.json({ users: listWebUsers(config, actor.id) });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        res.status(403).json({ error: message });
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     updateUser(req: Request, res: Response): void {
@@ -666,8 +666,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.json({ user: updateWebUserRole(config, actor.id, targetUserId, role) });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // Domain errors from updateWebUserRole (e.g. changing your own role) stay 403.
-        res.status(errorStatus(error, 403)).json({ error: message });
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     deleteUser(req: Request, res: Response): void {
@@ -681,7 +680,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.json({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        res.status(errorStatus(error, 403)).json({ error: message });
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     requireAuth(req: Request, res: Response, next: NextFunction): void {

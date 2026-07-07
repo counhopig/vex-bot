@@ -8,6 +8,7 @@ import {
   deleteWebUser,
   getUserConfigSettings,
   getRequestUser,
+  HttpError,
   installWebAuthRoutes,
   listWebUsers,
   loginWebUser,
@@ -114,6 +115,34 @@ describe("web auth", () => {
     expect(() => listWebUsers(cfg, user.id)).toThrow("Admin privileges required");
     expect(() => deleteWebUser(cfg, admin.id, admin.id)).toThrow("Admins cannot delete their own account");
     expect(() => updateWebUserRole(cfg, admin.id, admin.id, "user")).toThrow("Admins cannot change their own role");
+  });
+
+  it("throws HttpError with the right status from the user-management layer", () => {
+    const cfg = config();
+    const admin = createWebUser(cfg, "admin-user", "password123");
+    const user = createWebUser(cfg, "normal-user", "password123");
+
+    function caughtStatus(fn: () => unknown): number | undefined {
+      try {
+        fn();
+      } catch (error) {
+        return error instanceof HttpError ? error.status : undefined;
+      }
+      return undefined;
+    }
+
+    // 403: not an admin / acting on yourself
+    expect(caughtStatus(() => listWebUsers(cfg, user.id))).toBe(403);
+    expect(caughtStatus(() => updateWebUserRole(cfg, user.id, admin.id, "user"))).toBe(403);
+    expect(caughtStatus(() => updateWebUserRole(cfg, admin.id, admin.id, "user"))).toBe(403);
+    expect(caughtStatus(() => deleteWebUser(cfg, admin.id, admin.id))).toBe(403);
+
+    // 404: target does not exist
+    expect(caughtStatus(() => updateWebUserRole(cfg, admin.id, "user_missing", "user"))).toBe(404);
+    expect(caughtStatus(() => deleteWebUser(cfg, admin.id, "user_missing"))).toBe(404);
+
+    // 400: invalid input
+    expect(caughtStatus(() => updateWebUserRole(cfg, admin.id, user.id, "root" as never))).toBe(400);
   });
 
   it("stores per-user Weixin login state", () => {
@@ -269,5 +298,24 @@ describe("web auth routes", () => {
     delReq.params.id = admin.id;
     routes.deleteUser(delReq as never, del as never);
     expect(del.statusCode).toBe(403);
+  });
+
+  it("returns 404 when an admin updates or deletes a nonexistent user", () => {
+    const cfg = config();
+    createWebUser(cfg, "admin-user", "password123");
+    const routes = installWebAuthRoutes(cfg);
+    const adminCookie = loginCookie(cfg, "admin-user", "password123");
+
+    const patch = createRouteResponse();
+    const patchReq = request({ role: "user" }, adminCookie) as { params: Record<string, string> };
+    patchReq.params.id = "user_missing";
+    routes.updateUser(patchReq as never, patch as never);
+    expect(patch.statusCode).toBe(404);
+
+    const del = createRouteResponse();
+    const delReq = request(undefined, adminCookie) as { params: Record<string, string> };
+    delReq.params.id = "user_missing";
+    routes.deleteUser(delReq as never, del as never);
+    expect(del.statusCode).toBe(404);
   });
 });
