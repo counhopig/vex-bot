@@ -6,26 +6,36 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { AgentRuntime, createAgentRuntime, type RuntimeConfig } from "../src/agents/runtime.js";
 import type { VexConfig } from "../src/types/index.js";
 
-// Mock pi-coding-agent
-vi.mock("@mariozechner/pi-coding-agent", () => ({
-  createAgentSession: vi.fn().mockResolvedValue({
-    session: {
-      prompt: vi.fn().mockResolvedValue(undefined),
-      subscribe: vi.fn().mockReturnValue(() => {}),
-      getLastAssistantText: vi.fn().mockReturnValue("Mock response"),
-      getSessionStats: vi.fn().mockReturnValue({
-        tokens: { input: 100, output: 50, total: 150 },
-        totalMessages: 2,
-      }),
-      dispose: vi.fn(),
-      agent: {
-        setSystemPrompt: vi.fn(),
-        setTools: vi.fn(),
-        waitForIdle: vi.fn().mockResolvedValue(undefined),
-        abort: vi.fn(),
-      },
+// Mock pi-coding-agent — fresh session object per createAgentSession call so
+// tests can't observe each other's mutations (e.g. streamFn wrapping)
+function makeMockSession() {
+  const streamFn = vi.fn();
+  return {
+    // Handle to the original streamFn so tests can observe calls after the
+    // runtime replaces agent.streamFn with a wrapper
+    __innerStreamFn: streamFn,
+    prompt: vi.fn().mockResolvedValue(undefined),
+    subscribe: vi.fn().mockReturnValue(() => {}),
+    getLastAssistantText: vi.fn().mockReturnValue("Mock response"),
+    getSessionStats: vi.fn().mockReturnValue({
+      tokens: { input: 100, output: 50, total: 150 },
+      totalMessages: 2,
+    }),
+    dispose: vi.fn(),
+    agent: {
+      setSystemPrompt: vi.fn(),
+      setTools: vi.fn(),
+      waitForIdle: vi.fn().mockResolvedValue(undefined),
+      abort: vi.fn(),
+      streamFn,
     },
-  }),
+  };
+}
+
+vi.mock("@mariozechner/pi-coding-agent", () => ({
+  createAgentSession: vi.fn().mockImplementation(async () => ({
+    session: makeMockSession(),
+  })),
   SessionManager: {
     create: vi.fn().mockReturnValue({}),
   },
@@ -151,6 +161,45 @@ describe("agents/runtime", () => {
           completionTokens: 50,
           totalTokens: 150,
         });
+      });
+    });
+
+    describe("sampling parameters", () => {
+      const context = {
+        channelId: "test",
+        chatId: "chat-1",
+        chatType: "direct" as const,
+        senderId: "user-1",
+        content: "Hello",
+        messageId: "msg-1",
+        timestamp: Date.now(),
+      };
+
+      async function chatAndGetSession(config: RuntimeConfig) {
+        const { createAgentSession } = await import("@mariozechner/pi-coding-agent");
+        const rt = new AgentRuntime(config);
+        await rt.chat(context);
+        const results = vi.mocked(createAgentSession).mock.results;
+        const { session } = await results[results.length - 1]!.value;
+        return session;
+      }
+
+      it("passes configured temperature and maxTokens to the LLM stream call", async () => {
+        const session = await chatAndGetSession({ ...testConfig, temperature: 0.3, maxTokens: 1234 });
+
+        const inner = session.__innerStreamFn;
+        const model = { id: "m" };
+        session.agent.streamFn(model, { messages: [] }, { signal: undefined });
+
+        expect(inner).toHaveBeenCalledTimes(1);
+        const [calledModel, , options] = inner.mock.calls[0]!;
+        expect(calledModel).toBe(model);
+        expect(options).toMatchObject({ temperature: 0.3, maxTokens: 1234 });
+      });
+
+      it("leaves streamFn untouched when no sampling params are configured", async () => {
+        const session = await chatAndGetSession(testConfig);
+        expect(vi.isMockFunction(session.agent.streamFn)).toBe(true);
       });
     });
 

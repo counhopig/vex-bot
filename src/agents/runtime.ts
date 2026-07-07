@@ -198,6 +198,19 @@ export class AgentRuntime {
       tools: [], // Do not use default coding tools, only custom tools
     });
 
+    // Apply configured sampling parameters to every LLM call. createAgentSession
+    // exposes no temperature/maxTokens options, so wrap the agent's streamFn.
+    const { temperature, maxTokens } = this.config;
+    if (temperature !== undefined || maxTokens !== undefined) {
+      const innerStreamFn = newSession.agent.streamFn;
+      newSession.agent.streamFn = (model, context, options) =>
+        innerStreamFn(model, context, {
+          ...options,
+          ...(temperature !== undefined && { temperature }),
+          ...(maxTokens !== undefined && { maxTokens }),
+        });
+    }
+
     // Override system prompt (must also set _baseSystemPrompt, otherwise prompt() resets it each time)
     const systemPrompt = this.buildSystemPromptText();
     newSession.agent.setSystemPrompt(systemPrompt);
