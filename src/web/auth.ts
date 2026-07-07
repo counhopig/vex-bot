@@ -274,6 +274,11 @@ function getUserById(db: Database.Database, userId: string): WebUser | null {
   return row ? rowToUser(row) : null;
 }
 
+function countWebUsers(db: Database.Database): number {
+  const row = db.prepare("SELECT COUNT(*) AS count FROM web_users").get() as { count: number };
+  return row.count;
+}
+
 function requireAdmin(db: Database.Database, actorId: string): WebUser {
   const actor = getUserById(db, actorId);
   if (!actor || actor.role !== "admin") {
@@ -558,11 +563,26 @@ function getCredentials(body: unknown): { username: string; password: string } {
   return { username, password };
 }
 
+/** Error that carries the HTTP status it should be reported with, so route
+ * handlers don't have to guess the status from the error message. */
+class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+function errorStatus(error: unknown, fallback: number): number {
+  return error instanceof HttpError ? error.status : fallback;
+}
+
 export function installWebAuthRoutes(config: VexConfig) {
   function requireAdminRequest(req: Request): PublicWebUser {
     const user = getRequestUser(config, req);
     if (!user || user.role !== "admin") {
-      throw new Error("Admin privileges required");
+      throw new HttpError(403, "Admin privileges required");
     }
     return user;
   }
@@ -570,6 +590,17 @@ export function installWebAuthRoutes(config: VexConfig) {
   return {
     register(req: Request, res: Response): void {
       try {
+        // Self-service registration is only for bootstrapping the first account
+        // (which becomes admin) or when the operator has explicitly opted into
+        // open registration. Otherwise an admin must create the account, so a
+        // publicly reachable instance can't be claimed by the first stranger.
+        const db = openAuthDatabase(config);
+        const isBootstrap = countWebUsers(db) === 0;
+        const openRegistration = config.webAuth?.allowRegistration === true;
+        if (!isBootstrap && !openRegistration) {
+          res.status(403).json({ error: "Registration is disabled. Ask an administrator to create your account." });
+          return;
+        }
         const credentials = getCredentials(req.body);
         createWebUser(config, credentials.username, credentials.password);
         const login = loginWebUser(config, credentials.username, credentials.password);
@@ -578,6 +609,18 @@ export function installWebAuthRoutes(config: VexConfig) {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         res.status(400).json({ error: message });
+      }
+    },
+    createUser(req: Request, res: Response): void {
+      try {
+        requireAdminRequest(req);
+        const credentials = getCredentials(req.body);
+        // Create the account without logging the admin out of their own session.
+        const user = createWebUser(config, credentials.username, credentials.password);
+        res.json({ user });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.status(errorStatus(error, 400)).json({ error: message });
       }
     },
     login(req: Request, res: Response): void {
@@ -615,16 +658,16 @@ export function installWebAuthRoutes(config: VexConfig) {
         const body = req.body as Record<string, unknown>;
         const role = body.role;
         if (typeof targetUserId !== "string" || !targetUserId) {
-          throw new Error("User id is required");
+          throw new HttpError(400, "User id is required");
         }
         if (role !== "admin" && role !== "user") {
-          throw new Error("Invalid role");
+          throw new HttpError(400, "Invalid role");
         }
         res.json({ user: updateWebUserRole(config, actor.id, targetUserId, role) });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const status = message.includes("required") || message.includes("Invalid") ? 400 : 403;
-        res.status(status).json({ error: message });
+        // Domain errors from updateWebUserRole (e.g. changing your own role) stay 403.
+        res.status(errorStatus(error, 403)).json({ error: message });
       }
     },
     deleteUser(req: Request, res: Response): void {
@@ -632,14 +675,13 @@ export function installWebAuthRoutes(config: VexConfig) {
         const actor = requireAdminRequest(req);
         const targetUserId = req.params.id;
         if (typeof targetUserId !== "string" || !targetUserId) {
-          throw new Error("User id is required");
+          throw new HttpError(400, "User id is required");
         }
         deleteWebUser(config, actor.id, targetUserId);
         res.json({ ok: true });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const status = message.includes("required") ? 400 : 403;
-        res.status(status).json({ error: message });
+        res.status(errorStatus(error, 403)).json({ error: message });
       }
     },
     requireAuth(req: Request, res: Response, next: NextFunction): void {

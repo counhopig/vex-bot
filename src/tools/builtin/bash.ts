@@ -25,7 +25,12 @@ export interface BashToolOptions {
   defaultTimeout?: number;
   maxTimeout?: number;
   maxOutputSize?: number;
-  blockedCommands?: RegExp[];
+  /**
+   * Extra environment variable names to expose to spawned commands, on top of
+   * the base allowlist. Anything not listed here or in BASE_ENV_ALLOWLIST is
+   * withheld from the child process — including provider API keys.
+   */
+  envPassthrough?: string[];
   enabled?: boolean;
 }
 
@@ -34,17 +39,45 @@ const DEFAULT_OPTIONS: Required<BashToolOptions> = {
   defaultTimeout: 120000,
   maxTimeout: 600000,
   maxOutputSize: 100000,
-  blockedCommands: [
-    /\brm\s+(-[a-zA-Z]*r[a-zA-Z]*\s+)?(-[a-zA-Z]*f[a-zA-Z]*\s+)?[\/~]/i,
-    /\bmkfs\b/i,
-    /\bdd\s+.*of=\/dev/i,
-    /\b(poweroff|reboot|shutdown|halt)\b/i,
-    /\bkill\s+(-\d+\s+)?(-1|1)\b/,
-    />\s*\/dev\/(sda|hda|nvme|vda)/i,
-    />\s*\/etc\/(passwd|shadow|sudoers)/i,
-  ],
+  envPassthrough: [],
   enabled: true,
 };
+
+// The bash tool is a real shell: a command denylist over shell strings is
+// trivially bypassable (find -delete, base64|sh, $IFS tricks, ...) and only
+// buys false confidence. The actual boundaries are (1) who can reach the agent
+// at all (webAuth) and (2) what the child process can see. We enforce (2) here:
+// spawned commands inherit only a minimal, non-secret set of variables so a
+// single `bash` call cannot exfiltrate the whole process environment (API keys
+// live there). Everything else must be opted in via envPassthrough.
+const BASE_ENV_ALLOWLIST = [
+  // POSIX essentials
+  "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR", "TZ", "PWD",
+  // Windows essentials
+  "SystemRoot", "SystemDrive", "windir", "TEMP", "TMP", "PATHEXT", "ComSpec",
+  "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+  "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+  // Proxy configuration — curl/git/npm in child processes are dead behind a
+  // proxy without these. Tools honor both casings, so list both.
+  "http_proxy", "https_proxy", "ftp_proxy", "all_proxy", "no_proxy",
+  "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "ALL_PROXY", "NO_PROXY",
+];
+
+// Windows environment variables are case-insensitive, and process.env
+// enumerates them in their original casing ("Path", not "PATH") — so the
+// allowlist must match case-insensitively there. POSIX env is case-sensitive.
+export function buildChildEnv(passthrough: string[], opts?: { caseInsensitive?: boolean }): NodeJS.ProcessEnv {
+  const caseInsensitive = opts?.caseInsensitive ?? isWindows;
+  const normalize = (key: string) => (caseInsensitive ? key.toUpperCase() : key);
+  const allow = new Set([...BASE_ENV_ALLOWLIST, ...passthrough].map(normalize));
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    // Locale variables (LC_ALL, LC_CTYPE, ...) are safe and commonly needed.
+    if (allow.has(normalize(key)) || key.toUpperCase().startsWith("LC_")) env[key] = value;
+  }
+  return env;
+}
 
 function isPathAllowed(path: string, allowedPaths: string[]): boolean {
   const resolved = resolve(path);
@@ -52,10 +85,6 @@ function isPathAllowed(path: string, allowedPaths: string[]): boolean {
     const ra = resolve(allowed);
     return resolved === ra || resolved.startsWith(ra + sep);
   });
-}
-
-function isCommandBlocked(command: string, blockedPatterns: RegExp[]): boolean {
-  return blockedPatterns.some((pattern) => pattern.test(command));
 }
 
 const isWindows = process.platform === "win32";
@@ -73,7 +102,11 @@ function killProcess(proc: ReturnType<typeof spawn>, signal: "SIGTERM" | "SIGKIL
 }
 
 export function createBashTool(options?: BashToolOptions): AgentTool {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+  // Callers pass fields as `field: maybeUndefined` (e.g. envPassthrough from
+  // optional config), and object spread would let those undefineds clobber the
+  // defaults — drop them so defaults always win over absent values.
+  const provided = Object.fromEntries(Object.entries(options ?? {}).filter(([, v]) => v !== undefined));
+  const opts = { ...DEFAULT_OPTIONS, ...provided } as Required<BashToolOptions>;
   return {
     name: "bash",
     label: "Bash",
@@ -94,7 +127,6 @@ export function createBashTool(options?: BashToolOptions): AgentTool {
       const runInBackground = readBooleanParam(params, "run_in_background");
       const description = readStringParam(params, "description");
       if (!isPathAllowed(cwd, opts.allowedPaths)) return jsonResult({ status: "error", error: `Access denied: ${cwd}` }, true);
-      if (isCommandBlocked(command, opts.blockedCommands)) return jsonResult({ status: "error", error: "Command blocked for security" }, true);
 
       const sessionId = createSessionId();
       const session: ProcessSession = {
@@ -102,7 +134,7 @@ export function createBashTool(options?: BashToolOptions): AgentTool {
         stdout: "", stderr: "", aggregated: "", tail: "", truncated: false, backgrounded: runInBackground ?? false, maxOutputChars: opts.maxOutputSize,
       };
       const { shell, args: shellArgs } = getShellCommand(command);
-      const proc = spawn(shell, shellArgs, { cwd, env: { ...process.env }, stdio: ["pipe", "pipe", "pipe"] });
+      const proc = spawn(shell, shellArgs, { cwd, env: buildChildEnv(opts.envPassthrough), stdio: ["pipe", "pipe", "pipe"] });
       session.child = proc; session.pid = proc.pid; addSession(session);
       proc.stdout?.on("data", (data) => appendOutput(session, "stdout", data.toString()));
       proc.stderr?.on("data", (data) => appendOutput(session, "stderr", data.toString()));

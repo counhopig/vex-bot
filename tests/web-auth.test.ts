@@ -8,6 +8,7 @@ import {
   deleteWebUser,
   getUserConfigSettings,
   getRequestUser,
+  installWebAuthRoutes,
   listWebUsers,
   loginWebUser,
   saveUserConfigSettings,
@@ -159,5 +160,114 @@ describe("web auth", () => {
       agent: { defaultModel: "second-model", temperature: 0.8 },
       persona: { persona_name: "Second" },
     });
+  });
+});
+
+describe("web auth routes", () => {
+  function createRouteResponse() {
+    const res = {
+      statusCode: 200,
+      headers: {} as Record<string, unknown>,
+      body: undefined as unknown,
+      status(code: number) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload: unknown) {
+        this.body = payload;
+        return this;
+      },
+      setHeader(name: string, value: unknown) {
+        this.headers[name] = value;
+        return this;
+      },
+    };
+    return res;
+  }
+
+  function request(body?: unknown, cookie?: string) {
+    return { headers: cookie ? { cookie } : {}, body: body ?? {}, params: {} } as never;
+  }
+
+  function loginCookie(cfg: VexConfig, username: string, password: string): string {
+    const login = loginWebUser(cfg, username, password);
+    const res = createResponse();
+    setLoginCookie(res, login.session);
+    return String(res.headers?.["Set-Cookie"]);
+  }
+
+  it("allows registration only for the first account unless allowRegistration is set", () => {
+    const cfg = config();
+    const routes = installWebAuthRoutes(cfg);
+
+    const bootstrap = createRouteResponse();
+    routes.register(request({ username: "founder", password: "password123" }), bootstrap as never);
+    expect(bootstrap.statusCode).toBe(200);
+
+    const denied = createRouteResponse();
+    routes.register(request({ username: "stranger", password: "password123" }), denied as never);
+    expect(denied.statusCode).toBe(403);
+
+    cfg.webAuth!.allowRegistration = true;
+    const allowed = createRouteResponse();
+    routes.register(request({ username: "invited", password: "password123" }), allowed as never);
+    expect(allowed.statusCode).toBe(200);
+  });
+
+  it("lets admins create accounts without touching their own session", () => {
+    const cfg = config();
+    createWebUser(cfg, "admin-user", "password123");
+    const routes = installWebAuthRoutes(cfg);
+    const cookie = loginCookie(cfg, "admin-user", "password123");
+
+    const res = createRouteResponse();
+    routes.createUser(request({ username: "new-user", password: "password123" }, cookie), res as never);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ user: { username: "new-user", role: "user" } });
+    // No login cookie for the created user — the admin stays logged in.
+    expect(res.headers["Set-Cookie"]).toBeUndefined();
+  });
+
+  it("returns 403 for anonymous or non-admin createUser and 400 for bad input", () => {
+    const cfg = config();
+    createWebUser(cfg, "admin-user", "password123");
+    createWebUser(cfg, "normal-user", "password123");
+    const routes = installWebAuthRoutes(cfg);
+
+    const anonymous = createRouteResponse();
+    routes.createUser(request({ username: "x-user", password: "password123" }), anonymous as never);
+    expect(anonymous.statusCode).toBe(403);
+
+    const nonAdmin = createRouteResponse();
+    const userCookie = loginCookie(cfg, "normal-user", "password123");
+    routes.createUser(request({ username: "x-user", password: "password123" }, userCookie), nonAdmin as never);
+    expect(nonAdmin.statusCode).toBe(403);
+
+    const duplicate = createRouteResponse();
+    const adminCookie = loginCookie(cfg, "admin-user", "password123");
+    routes.createUser(request({ username: "normal-user", password: "password123" }, adminCookie), duplicate as never);
+    expect(duplicate.statusCode).toBe(400);
+    expect(duplicate.body).toMatchObject({ error: "Username already exists" });
+  });
+
+  it("returns 403 (not 400) when a non-admin hits updateUser/deleteUser", () => {
+    const cfg = config();
+    const admin = createWebUser(cfg, "admin-user", "password123");
+    createWebUser(cfg, "normal-user", "password123");
+    const routes = installWebAuthRoutes(cfg);
+    const userCookie = loginCookie(cfg, "normal-user", "password123");
+
+    const patch = createRouteResponse();
+    const patchReq = request({ role: "user" }, userCookie) as { params: Record<string, string> };
+    patchReq.params.id = admin.id;
+    routes.updateUser(patchReq as never, patch as never);
+    expect(patch.statusCode).toBe(403);
+
+    const del = createRouteResponse();
+    const delReq = request(undefined, userCookie) as { params: Record<string, string> };
+    delReq.params.id = admin.id;
+    routes.deleteUser(delReq as never, del as never);
+    expect(del.statusCode).toBe(403);
   });
 });

@@ -188,6 +188,8 @@ export interface AgentConfig {
   workingDirectory?: string;
   /** Whether function calling is enabled */
   enableFunctionCalling?: boolean;
+  /** Extra env var names the bash tool may pass to spawned commands (API keys are never passed unless listed here) */
+  bashEnvPassthrough?: string[];
 }
 
 /** Session store config */
@@ -302,6 +304,12 @@ export interface WebAuthConfig {
    * the right default behind a TLS-terminating proxy or for local development.
    */
   secureCookies?: boolean;
+  /**
+   * Allow open self-service registration via POST /api/auth/register. The first
+   * account is always allowed (it bootstraps the admin) regardless of this flag.
+   * Once an admin exists, registration is admin-only unless this is set true.
+   */
+  allowRegistration?: boolean;
 }
 
 /** Main config */

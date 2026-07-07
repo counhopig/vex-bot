@@ -85,6 +85,7 @@ export class Gateway {
     this.app.post("/api/auth/login", auth.login);
     this.app.post("/api/auth/logout", auth.logout);
     this.app.get("/api/admin/users", auth.listUsers);
+    this.app.post("/api/admin/users", auth.createUser);
     this.app.patch("/api/admin/users/:id", auth.updateUser);
     this.app.delete("/api/admin/users/:id", auth.deleteUser);
 

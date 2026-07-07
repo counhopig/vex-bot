@@ -41,6 +41,7 @@ export interface AgentOptions {
   maxToolRounds?: number;
   workingDirectory?: string;
   enableFunctionCalling?: boolean;
+  bashEnvPassthrough?: string[];
   memoryManager?: MemoryManager;
   weatherConfig?: WeatherConfig;
 }
@@ -90,7 +91,10 @@ export class Agent {
   private initializeTools(): void {
     const builtinOptions: BuiltinToolsOptions = {
       filesystem: { allowedPaths: [this.options.workingDirectory ?? process.cwd()] },
-      bash: { allowedPaths: [this.options.workingDirectory ?? process.cwd()] },
+      bash: {
+        allowedPaths: [this.options.workingDirectory ?? process.cwd()],
+        envPassthrough: this.options.bashEnvPassthrough,
+      },
       enableBrowser: true,
       enableMemory: !!this.options.memoryManager,
       memoryManager: this.options.memoryManager,
@@ -254,6 +258,7 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
     maxTokens: config.agent.maxTokens,
     workingDirectory: config.agent.workingDirectory ?? process.cwd(),
     enableFunctionCalling: config.agent.enableFunctionCalling ?? true,
+    bashEnvPassthrough: config.agent.bashEnvPassthrough,
     memoryManager,
     weatherConfig: config.weather,
     enableTools: true,

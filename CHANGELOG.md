@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
+
+### BREAKING
+
+- **`server.host` now defaults to `127.0.0.1` (was `0.0.0.0`).** A fresh install is no longer reachable from other machines by default. If you relied on the old default for remote access, set `server.host: 0.0.0.0` in your config or pass `--host 0.0.0.0` to `vex start`. The Docker images already pass `--host 0.0.0.0` (the container is isolated; the published port mapping controls real exposure), so Docker deployments are unaffected.
+- **Self-service registration (`POST /api/auth/register`) is now closed by default.** The first account can always register (it bootstraps the admin); after that, accounts must be created by an admin via the new `POST /api/admin/users` endpoint, unless `webAuth.allowRegistration: true` is set.
+- **The bash tool no longer inherits the full process environment.** Spawned commands see only a base allowlist (PATH, HOME, locale, proxy variables, ...) so provider API keys in the process environment cannot be read by a single `bash` call. Extra variables must be opted in via `agent.bashEnvPassthrough: [..]`. The bypassable `blockedCommands` regex denylist was removed along with its option.
+
+### Fixed
+
+- Non-admin requests to `PATCH/DELETE /api/admin/users/:id` now return 403 as intended; the error-message string matching used to map them to 400.
+
+### Added
+
+- `agent.temperature` and `agent.maxTokens` are now actually applied to LLM calls made through the agent runtime; previously they were accepted by the config schema but silently ignored.
+- `--host` CLI flag for `vex start` to override the bind address.
+
 ## [1.15.0] - 2026-07-03
 
 ### Fixed

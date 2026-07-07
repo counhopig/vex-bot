@@ -77,6 +77,7 @@ program
   .description("Start Gateway server")
   .option("-c, --config <path>", "Config file path")
   .option("-p, --port <port>", "Server port")
+  .option("--host <host>", "Bind address (default 127.0.0.1; use 0.0.0.0 to expose on all interfaces)")
   .option("--web-only", "WebChat only (no channel configuration required)")
   .action(async (options) => {
     try {
@@ -85,6 +86,11 @@ program
       // Override port
       if (options.port) {
         config.server.port = parseInt(options.port, 10);
+      }
+
+      // Override bind address
+      if (options.host) {
+        config.server.host = options.host;
       }
 
       // Validate configuration

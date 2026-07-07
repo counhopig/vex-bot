@@ -43,11 +43,21 @@ const AgentConfigSchema = z.object({
   maxTokens: z.number().optional().default(4096),
   workingDirectory: z.string().optional(),
   enableFunctionCalling: z.boolean().optional(),
+  /**
+   * Extra environment variable names the bash tool may expose to spawned
+   * commands. The base allowlist (PATH, HOME, LANG, ...) is always included;
+   * provider API keys are never passed unless named here.
+   */
+  bashEnvPassthrough: z.array(z.string()).optional(),
 });
 
 const ServerConfigSchema = z.object({
   port: z.number().default(3000),
-  host: z.string().optional().default("0.0.0.0"),
+  // Bind to loopback by default so a fresh install is not exposed on every
+  // network interface. Set host: 0.0.0.0 (or pass `--host 0.0.0.0`) to expose
+  // it — the Docker image does this via --host, where the container is isolated
+  // and the published port controls actual exposure.
+  host: z.string().optional().default("127.0.0.1"),
 });
 
 const LoggingConfigSchema = z.object({
@@ -126,6 +136,7 @@ const WebAuthConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   database: z.string().optional(),
   secureCookies: z.boolean().optional(),
+  allowRegistration: z.boolean().optional(),
 });
 
 const VexConfigSchema = z.object({

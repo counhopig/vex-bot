@@ -6,10 +6,14 @@ services:
     container_name: vex-bot
     restart: unless-stopped
 
-    # Command to start (use --web-only for web-only mode, remove it for full mode)
-    command: ["start", "--web-only"]
+    # Command to start (use --web-only for web-only mode, remove it for full mode).
+    # --host 0.0.0.0 binds on all interfaces *inside* the isolated container so
+    # the published port below can reach it; the default bind (127.0.0.1) is
+    # loopback-only and would make the container unreachable. Real exposure is
+    # controlled by the host-side port mapping.
+    command: ["start", "--web-only", "--host", "0.0.0.0"]
 
-    # Port mapping
+    # Port mapping (use "127.0.0.1:3000:3000" to restrict to the local host)
     ports:
       - "3000:3000"
 

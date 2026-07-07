@@ -85,7 +85,7 @@ describe("config", () => {
       expect(result.agent?.temperature).toBe(0.7);
       expect(result.agent?.maxTokens).toBe(4096);
       expect(result.server?.port).toBe(3000);
-      expect(result.server?.host).toBe("0.0.0.0");
+      expect(result.server?.host).toBe("127.0.0.1");
       expect(result.logging?.level).toBe("info");
     });
 
