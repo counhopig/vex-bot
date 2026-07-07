@@ -19,6 +19,7 @@ This project follows semantic versioning for npm package releases.
 ### Changed
 
 - User-management errors (`requireAdmin`, `updateWebUserRole`, `deleteWebUser`) now carry their HTTP status (`HttpError`) instead of being guessed from message text. `User not found` on `PATCH/DELETE /api/admin/users/:id` now returns 404 (previously 403 via the fallback), and unexpected server errors on admin routes return 500.
+- `createWebUser` validation and credential parsing are typed the same way: a duplicate username on `POST /api/auth/register` / `POST /api/admin/users` now returns 409 (was 400), unexpected server errors on those routes return 500 (were 400), and the SQLite UNIQUE violation is detected via the structured error code instead of message text. Passwords are now capped at 128 characters (minimum stays 8).
 
 ### Added
 

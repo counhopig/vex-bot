@@ -117,6 +117,31 @@ describe("web auth", () => {
     expect(() => updateWebUserRole(cfg, admin.id, admin.id, "user")).toThrow("Admins cannot change their own role");
   });
 
+  it("throws HttpError with the right status from createWebUser validation", () => {
+    const cfg = config();
+
+    function caughtStatus(fn: () => unknown): number | undefined {
+      try {
+        fn();
+      } catch (error) {
+        return error instanceof HttpError ? error.status : undefined;
+      }
+      return undefined;
+    }
+
+    // 400: invalid input
+    expect(caughtStatus(() => createWebUser(cfg, "x", "password123"))).toBe(400);
+    expect(caughtStatus(() => createWebUser(cfg, "bad name!", "password123"))).toBe(400);
+    expect(caughtStatus(() => createWebUser(cfg, "short-pass", "short"))).toBe(400);
+    expect(caughtStatus(() => createWebUser(cfg, "long-pass", "x".repeat(129)))).toBe(400);
+
+    // Boundary: a 128-character password is fine
+    expect(createWebUser(cfg, "edge-pass", "x".repeat(128)).username).toBe("edge-pass");
+
+    // 409: duplicate username
+    expect(caughtStatus(() => createWebUser(cfg, "edge-pass", "password123"))).toBe(409);
+  });
+
   it("throws HttpError with the right status from the user-management layer", () => {
     const cfg = config();
     const admin = createWebUser(cfg, "admin-user", "password123");
@@ -258,7 +283,7 @@ describe("web auth routes", () => {
     expect(res.headers["Set-Cookie"]).toBeUndefined();
   });
 
-  it("returns 403 for anonymous or non-admin createUser and 400 for bad input", () => {
+  it("returns 403 for anonymous or non-admin createUser and typed statuses for bad input", () => {
     const cfg = config();
     createWebUser(cfg, "admin-user", "password123");
     createWebUser(cfg, "normal-user", "password123");
@@ -273,10 +298,15 @@ describe("web auth routes", () => {
     routes.createUser(request({ username: "x-user", password: "password123" }, userCookie), nonAdmin as never);
     expect(nonAdmin.statusCode).toBe(403);
 
-    const duplicate = createRouteResponse();
     const adminCookie = loginCookie(cfg, "admin-user", "password123");
+
+    const missingBody = createRouteResponse();
+    routes.createUser(request({}, adminCookie), missingBody as never);
+    expect(missingBody.statusCode).toBe(400);
+
+    const duplicate = createRouteResponse();
     routes.createUser(request({ username: "normal-user", password: "password123" }, adminCookie), duplicate as never);
-    expect(duplicate.statusCode).toBe(400);
+    expect(duplicate.statusCode).toBe(409);
     expect(duplicate.body).toMatchObject({ error: "Username already exists" });
   });
 

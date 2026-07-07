@@ -328,10 +328,15 @@ export function getRequestUser(config: VexConfig, req: IncomingMessage): PublicW
 export function createWebUser(config: VexConfig, username: string, password: string): PublicWebUser {
   const normalizedUsername = username.trim().toLowerCase();
   if (!/^[a-z0-9._-]{3,32}$/.test(normalizedUsername)) {
-    throw new Error("Username must be 3-32 characters and use letters, numbers, dot, underscore, or dash");
+    throw new HttpError(400, "Username must be 3-32 characters and use letters, numbers, dot, underscore, or dash");
   }
   if (password.length < 8) {
-    throw new Error("Password must be at least 8 characters");
+    throw new HttpError(400, "Password must be at least 8 characters");
+  }
+  // Upper bound keeps the synchronous scrypt on unauthenticated routes from
+  // chewing on arbitrarily large inputs.
+  if (password.length > 128) {
+    throw new HttpError(400, "Password must be at most 128 characters");
   }
 
   const db = openAuthDatabase(config);
@@ -356,9 +361,10 @@ export function createWebUser(config: VexConfig, username: string, password: str
     })();
     return toPublicUser(inserted);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("UNIQUE")) {
-      throw new Error("Username already exists");
+    // better-sqlite3 reports constraint violations with a structured code;
+    // web_users has a single UNIQUE constraint (username).
+    if ((error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+      throw new HttpError(409, "Username already exists");
     }
     throw error;
   }
@@ -567,13 +573,13 @@ function mergeWeatherSettings(
 
 function getCredentials(body: unknown): { username: string; password: string } {
   if (body === null || typeof body !== "object") {
-    throw new Error("Request body must be an object");
+    throw new HttpError(400, "Request body must be an object");
   }
   const record = body as Record<string, unknown>;
   const username = typeof record.username === "string" ? record.username : "";
   const password = typeof record.password === "string" ? record.password : "";
   if (!username || !password) {
-    throw new Error("Username and password are required");
+    throw new HttpError(400, "Username and password are required");
   }
   return { username, password };
 }
@@ -608,7 +614,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.json({ user: login.user });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        res.status(400).json({ error: message });
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     createUser(req: Request, res: Response): void {
@@ -620,7 +626,7 @@ export function installWebAuthRoutes(config: VexConfig) {
         res.json({ user });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        res.status(errorStatus(error, 400)).json({ error: message });
+        res.status(errorStatus(error, 500)).json({ error: message });
       }
     },
     login(req: Request, res: Response): void {
