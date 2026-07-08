@@ -23,6 +23,72 @@ import { initSessionStore } from "../sessions/index.js";
 
 const logger = getChildLogger("gateway");
 
+/**
+ * Resolve the bind address. Defaults to loopback (never 0.0.0.0) so an unset or
+ * blank host is not silently exposed on every interface — real exposure must be
+ * opted into with an explicit host (see the server.host BREAKING change).
+ */
+export function resolveBindHost(host?: string): string {
+  const trimmed = host?.trim();
+  return trimmed ? trimmed : "127.0.0.1";
+}
+
+/**
+ * Bounded, TTL'd message-id dedup. NodeCache.set() throws ECACHEFULL once maxKeys
+ * is reached; this fails open (process the message) rather than letting that throw
+ * escape into the channel message loop.
+ */
+export class MessageDeduplicator {
+  private readonly cache: NodeCache;
+
+  constructor(options?: { ttlSeconds?: number; maxKeys?: number }) {
+    this.cache = new NodeCache({
+      stdTTL: options?.ttlSeconds ?? 300,
+      maxKeys: options?.maxKeys ?? 10000,
+      useClones: false,
+    });
+  }
+
+  isDuplicate(key: string): boolean {
+    if (this.cache.has(key)) return true;
+    try {
+      this.cache.set(key, 1);
+    } catch (error) {
+      // Cache full: fail open. Reprocessing a rare duplicate is far better than
+      // throwing out of the message handler and dropping/crashing the loop.
+      logger.warn({ error }, "Message dedup cache full; skipping dedup for this message");
+    }
+    return false;
+  }
+}
+
+/** Run teardown steps in order, isolating failures so one bad step can't abort the rest. */
+export async function runShutdownSteps(
+  steps: Array<{ label: string; run: () => Promise<void> | void }>,
+): Promise<void> {
+  for (const step of steps) {
+    try {
+      await step.run();
+    } catch (error) {
+      logger.warn({ error, step: step.label }, "Shutdown step failed; continuing");
+    }
+  }
+}
+
+/** Serialize async tasks per key so operations on the same key never interleave. */
+export function createKeyedSerializer(): <T>(key: string, task: () => Promise<T>) => Promise<T> {
+  const chains = new Map<string, Promise<unknown>>();
+  return <T>(key: string, task: () => Promise<T>): Promise<T> => {
+    const prev = chains.get(key) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(task);
+    chains.set(key, next);
+    void next.finally(() => {
+      if (chains.get(key) === next) chains.delete(key);
+    });
+    return next;
+  };
+}
+
 export class Gateway {
   private app: Express;
   private httpServer: HttpServer;
@@ -34,19 +100,15 @@ export class Gateway {
   private wsServer?: WsServer;
   private pluginService?: PluginService;
   private memoryManager?: MemoryManager;
-  private processedMessages: NodeCache;
-  private readonly MESSAGE_CACHE_TTL_SEC = 300;
-  private readonly MESSAGE_CACHE_MAX_KEYS = 10000;
+  private readonly dedup = new MessageDeduplicator();
+  // Serialize channel activate/deactivate per user so concurrent ops for the
+  // same user can't orphan a running channel or delete a just-created one.
+  private readonly channelOp = createKeyedSerializer();
 
   constructor(config: VexConfig) {
     this.config = config;
     this.app = express();
     this.httpServer = createServer(this.app);
-    this.processedMessages = new NodeCache({
-      stdTTL: this.MESSAGE_CACHE_TTL_SEC,
-      maxKeys: this.MESSAGE_CACHE_MAX_KEYS,
-      useClones: false,
-    });
 
     this.setupMiddleware();
     this.setupRoutes();
@@ -118,7 +180,7 @@ export class Gateway {
   private async handleMessage(context: InboundMessageContext): Promise<void> {
     const startedAt = Date.now();
     const webUserId = this.getContextWebUserId(context);
-    if (this.isDuplicateMessage(`${context.channelId}:${webUserId ?? "global"}:${context.messageId}`)) {
+    if (this.dedup.isDuplicate(`${context.channelId}:${webUserId ?? "global"}:${context.messageId}`)) {
       logger.debug(
         { messageId: context.messageId, channel: context.channelId, chatId: context.chatId, senderId: context.senderId, webUserId },
         "Skipping duplicate message"
@@ -246,36 +308,40 @@ export class Gateway {
     return this.runtimeManager?.getAgent(this.getContextWebUserId(context)) ?? this.agent;
   }
 
-  private async activateUserWeixinChannel(userId: string, weixinConfig: WeixinConfig): Promise<void> {
-    const existing = this.userWeixinChannels.get(userId);
-    if (existing) {
-      await existing.shutdown();
-      this.userWeixinChannels.delete(userId);
-    }
+  private activateUserWeixinChannel(userId: string, weixinConfig: WeixinConfig): Promise<void> {
+    return this.channelOp(userId, async () => {
+      const existing = this.userWeixinChannels.get(userId);
+      if (existing) {
+        await existing.shutdown();
+        this.userWeixinChannels.delete(userId);
+      }
 
-    const channel = createWeixinChannel({
-      ...this.config.channels.weixin,
-      ...weixinConfig,
-      enabled: true,
+      const channel = createWeixinChannel({
+        ...this.config.channels.weixin,
+        ...weixinConfig,
+        enabled: true,
+      });
+      channel.setMessageHandler((context) => {
+        const raw =
+          context.raw !== null && typeof context.raw === "object" && !Array.isArray(context.raw)
+            ? { ...(context.raw as Record<string, unknown>), __webUserId: userId }
+            : { value: context.raw, __webUserId: userId };
+        return this.handleMessage({ ...context, raw });
+      });
+      this.userWeixinChannels.set(userId, channel);
+      await channel.initialize();
+      logger.info({ userId, accountId: weixinConfig.accountId }, "User-scoped Weixin channel activated");
     });
-    channel.setMessageHandler((context) => {
-      const raw =
-        context.raw !== null && typeof context.raw === "object" && !Array.isArray(context.raw)
-          ? { ...(context.raw as Record<string, unknown>), __webUserId: userId }
-          : { value: context.raw, __webUserId: userId };
-      return this.handleMessage({ ...context, raw });
-    });
-    this.userWeixinChannels.set(userId, channel);
-    await channel.initialize();
-    logger.info({ userId, accountId: weixinConfig.accountId }, "User-scoped Weixin channel activated");
   }
 
-  private async deactivateUserWeixinChannel(userId: string): Promise<void> {
-    const existing = this.userWeixinChannels.get(userId);
-    if (!existing) return;
-    this.userWeixinChannels.delete(userId);
-    await existing.shutdown();
-    logger.info({ userId }, "User-scoped Weixin channel deactivated");
+  private deactivateUserWeixinChannel(userId: string): Promise<void> {
+    return this.channelOp(userId, async () => {
+      const existing = this.userWeixinChannels.get(userId);
+      if (!existing) return;
+      this.userWeixinChannels.delete(userId);
+      await existing.shutdown();
+      logger.info({ userId }, "User-scoped Weixin channel deactivated");
+    });
   }
 
   private async restoreUserWeixinChannels(): Promise<void> {
@@ -303,12 +369,6 @@ export class Gateway {
     };
   }
 
-  private isDuplicateMessage(messageId: string): boolean {
-    if (this.processedMessages.has(messageId)) return true;
-    this.processedMessages.set(messageId, 1);
-    return false;
-  }
-
   async initialize(): Promise<void> {
     logger.info("Initializing gateway...");
     initializeProviders(this.config);
@@ -333,14 +393,15 @@ export class Gateway {
   async start(): Promise<void> {
     await this.initialize();
 
-    const { port, host } = this.config.server;
+    const { port } = this.config.server;
+    const host = resolveBindHost(this.config.server.host);
 
-    this.httpServer.listen(port, host || "0.0.0.0", () => {
-      logger.info({ port, host: host || "0.0.0.0" }, "Gateway server started");
+    this.httpServer.listen(port, host, () => {
+      logger.info({ port, host }, "Gateway server started");
       console.log(`\n🚀 Vex Gateway started`);
-      console.log(`   Address: http://${host || "localhost"}:${port}`);
-      console.log(`   WebChat: http://${host || "localhost"}:${port}/`);
-      console.log(`   Control Panel: http://${host || "localhost"}:${port}/control`);
+      console.log(`   Address: http://${host}:${port}`);
+      console.log(`   WebChat: http://${host}:${port}/`);
+      console.log(`   Control Panel: http://${host}:${port}/control`);
 
       // Initialize the WeChat channel in the background. Its QR login flow can
       // block for minutes waiting for a scan; awaiting it before listen() would
@@ -362,16 +423,22 @@ export class Gateway {
 
   async shutdown(): Promise<void> {
     logger.info("Shutting down gateway...");
-    if (this.wsServer) this.wsServer.close();
-    if (this.weixinChannel) await this.weixinChannel.shutdown();
-    for (const channel of this.userWeixinChannels.values()) {
-      await channel.shutdown();
-    }
+    const userChannels = [...this.userWeixinChannels.values()];
     this.userWeixinChannels.clear();
-    await this.runtimeManager?.shutdown();
-    await this.agent.shutdown();
-    if (this.pluginService) await this.pluginService.shutdown();
-    this.httpServer.close();
+    // Fault-isolate each step so one component's teardown failure can't skip
+    // the rest — in particular httpServer.close() must always run.
+    await runShutdownSteps([
+      { label: "wsServer", run: () => this.wsServer?.close() },
+      { label: "weixinChannel", run: () => this.weixinChannel?.shutdown() },
+      ...userChannels.map((channel, i) => ({
+        label: `userWeixinChannel[${i}]`,
+        run: () => channel.shutdown(),
+      })),
+      { label: "runtimeManager", run: () => this.runtimeManager?.shutdown() },
+      { label: "agent", run: () => this.agent?.shutdown() },
+      { label: "pluginService", run: () => this.pluginService?.shutdown() },
+      { label: "httpServer", run: () => { this.httpServer.close(); } },
+    ]);
     logger.info("Gateway shut down");
   }
 

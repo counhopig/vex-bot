@@ -22,6 +22,10 @@ This project follows semantic versioning for npm package releases.
 - A per-user runtime rebuild could overlap the previous runtime's teardown on the same scoped directory (idle eviction disposes fire-and-forget, then rebuilds immediately). The rebuild now waits for the prior teardown to complete before touching the directory.
 - The memory index is now written atomically (temp file + rename) instead of overwriting `index.json` in place, so a crash or overlapping write can't leave a truncated index that fails to load.
 - Idle per-user runtimes are now reclaimed by a background timer, not only lazily on the next request, so a quiet multi-user instance releases their SQLite handles and memory past the idle TTL.
+- The gateway bound to `0.0.0.0` as a fallback when `server.host` was blank, defeating the loopback default from the earlier bind-default change; it now falls back to `127.0.0.1` at the actual `listen()` call.
+- The message-dedup cache threw `ECACHEFULL` once it hit its key cap, and the throw escaped the message handler (it ran before the try/catch), so a burst of >10k distinct messages could crash message processing. Dedup now fails open (processes the message) when the cache is full.
+- Gateway shutdown steps are fault-isolated: one component failing to shut down no longer skips the rest, so `httpServer.close()` always runs.
+- Concurrent activate/deactivate of a user's Weixin channel are serialized per user, so a re-login racing an unbind can no longer orphan a running channel.
 
 ### Security
 
