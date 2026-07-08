@@ -23,6 +23,19 @@ export function generateMemoryId(): string {
   return crypto.randomBytes(8).toString("hex");
 }
 
+/** Reject entries from a hand-edited or partially-written index rather than
+ * storing them under a bogus key (e.g. `undefined`). */
+function isValidEntry(entry: unknown): entry is MemoryEntry {
+  return (
+    entry !== null &&
+    typeof entry === "object" &&
+    typeof (entry as MemoryEntry).id === "string" &&
+    typeof (entry as MemoryEntry).content === "string" &&
+    typeof (entry as MemoryEntry).metadata === "object" &&
+    (entry as MemoryEntry).metadata !== null
+  );
+}
+
 /** Cosine similarity for two vectors */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0;
@@ -44,19 +57,14 @@ export class JsonMemoryStore implements MemoryStore {
   private directory: string;
   private indexFile: string;
   private entries: Map<string, MemoryEntry>;
-  private embeddingCache: Map<string, number[]>;
-  private maxCacheEntries: number;
   private dirty = false;
 
   constructor(options: {
     directory?: string;
-    maxCacheEntries?: number;
   } = {}) {
     this.directory = options.directory ? expandHomePath(options.directory) : path.join(os.homedir(), ".vex", "memory");
     this.indexFile = path.join(this.directory, "index.json");
-    this.maxCacheEntries = options.maxCacheEntries ?? 1000;
     this.entries = new Map();
-    this.embeddingCache = new Map();
     this.ensureDirectory();
     this.loadIndex();
   }
@@ -69,7 +77,6 @@ export class JsonMemoryStore implements MemoryStore {
 
   private loadIndex(): void {
     this.entries.clear();
-    this.embeddingCache.clear();
 
     if (!fs.existsSync(this.indexFile)) {
       logger.debug({ path: this.indexFile }, "Memory index file not found, starting fresh");
@@ -78,22 +85,18 @@ export class JsonMemoryStore implements MemoryStore {
 
     try {
       const data = JSON.parse(fs.readFileSync(this.indexFile, "utf-8"));
-      const entries = data.entries ?? [];
+      const entries = Array.isArray(data.entries) ? data.entries : [];
 
+      let skipped = 0;
       for (const entry of entries) {
-        this.entries.set(entry.id, entry);
-      }
-
-      if (data.embeddings && Array.isArray(data.embeddings)) {
-        for (const item of data.embeddings) {
-          if (item.hash && Array.isArray(item.embedding)) {
-            this.embeddingCache.set(item.hash, item.embedding);
-          }
+        if (isValidEntry(entry)) {
+          this.entries.set(entry.id, entry);
+        } else {
+          skipped++;
         }
-        this.pruneCache();
       }
 
-      logger.debug({ count: this.entries.size }, "Memory index loaded");
+      logger.debug({ count: this.entries.size, skipped }, "Memory index loaded");
     } catch (error) {
       logger.error({ error }, "Failed to load memory index");
     }
@@ -103,15 +106,9 @@ export class JsonMemoryStore implements MemoryStore {
     if (!this.dirty) return;
 
     try {
-      const embeddings = Array.from(this.embeddingCache.entries()).map(([hash, embedding]) => ({
-        hash,
-        embedding,
-      }));
-
       const data = {
         version: 2,
         entries: Array.from(this.entries.values()),
-        embeddings,
       };
 
       // Write to a temp file then rename: rename is atomic on POSIX, so a
@@ -125,17 +122,6 @@ export class JsonMemoryStore implements MemoryStore {
     } catch (error) {
       logger.error({ error }, "Failed to save memory index");
     }
-  }
-
-  private pruneCache(): void {
-    if (this.embeddingCache.size <= this.maxCacheEntries) return;
-
-    const entries = Array.from(this.embeddingCache.entries());
-    const toRemove = entries.slice(0, entries.length - this.maxCacheEntries);
-    for (const [hash] of toRemove) {
-      this.embeddingCache.delete(hash);
-    }
-    logger.debug({ removed: toRemove.length }, "Pruned embedding cache");
   }
 
   async add(entry: Omit<MemoryEntry, "id">): Promise<string> {
@@ -225,7 +211,6 @@ export class JsonMemoryStore implements MemoryStore {
 
   async clear(): Promise<void> {
     this.entries.clear();
-    this.embeddingCache.clear();
     this.dirty = true;
 
     if (fs.existsSync(this.indexFile)) {
@@ -241,7 +226,6 @@ export class JsonMemoryStore implements MemoryStore {
     return {
       entries: this.entries.size,
       backend: "json",
-      cacheSize: this.embeddingCache.size,
     };
   }
 

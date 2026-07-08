@@ -27,6 +27,7 @@ import {
   MemoryManager,
   createMemoryManager,
   JsonMemoryStore,
+  SimpleEmbedding,
   type MemoryEntry,
 } from "../src/memory/index.js";
 
@@ -365,6 +366,28 @@ describe("memory/index", () => {
     });
   });
 
+  describe("SimpleEmbedding is stateless and deterministic", () => {
+    it("produces the same embedding regardless of prior history or instance", async () => {
+      const fresh = new SimpleEmbedding();
+      const primed = new SimpleEmbedding();
+      // Prior unrelated documents must not shift the target embedding.
+      await primed.embed(["totally unrelated noise", "more filler documents here"]);
+
+      const [a] = await fresh.embed(["the quick brown fox"]);
+      const [b] = await primed.embed(["the quick brown fox"]);
+      expect(b).toEqual(a);
+    });
+
+    it("does not mutate state when embedding (no read-path side effects)", async () => {
+      const embedding = new SimpleEmbedding();
+      const [before] = await embedding.embed(["hello world"]);
+      // Embedding queries in between must not change future embeddings.
+      await embedding.embed(["some query", "another query"]);
+      const [after] = await embedding.embed(["hello world"]);
+      expect(after).toEqual(before);
+    });
+  });
+
   describe("Memory persistence", () => {
     it("should persist entries across store instances", async () => {
       const testDir = getTestDir();
@@ -383,6 +406,38 @@ describe("memory/index", () => {
 
       expect(entry).toBeDefined();
       expect(entry?.content).toBe("Persistent content");
+    });
+
+    it("skips malformed entries when loading a corrupt-ish index", async () => {
+      const testDir = getTestDir();
+      fs.mkdirSync(testDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(testDir, "index.json"),
+        JSON.stringify({
+          version: 2,
+          entries: [
+            { id: "good", content: "kept", metadata: { type: "note", timestamp: 1 } },
+            { content: "no id — should be skipped", metadata: { type: "note", timestamp: 1 } },
+            null,
+            "not an object",
+          ],
+        }),
+      );
+
+      const store = new JsonMemoryStore({ directory: testDir });
+      const all = await store.list();
+      expect(all.map((e) => e.id)).toEqual(["good"]);
+    });
+
+    it("does not write the dead embeddings cache into the index", async () => {
+      const testDir = getTestDir();
+      fs.mkdirSync(testDir, { recursive: true });
+      const store = new JsonMemoryStore({ directory: testDir });
+      await store.add({ content: "x", embedding: [0.1, 0.2], metadata: { type: "note", timestamp: 1 } });
+
+      const raw = JSON.parse(fs.readFileSync(path.join(testDir, "index.json"), "utf-8"));
+      expect(raw.embeddings).toBeUndefined();
+      expect(raw.entries).toHaveLength(1);
     });
   });
 });
