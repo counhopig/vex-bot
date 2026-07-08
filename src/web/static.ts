@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { dirname, extname, join, normalize, sep } from "path";
-import type { IncomingMessage, ServerResponse } from "http";
+import type { IncomingMessage, ServerResponse, OutgoingHttpHeaders } from "http";
 import { fileURLToPath } from "url";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig } from "../types/index.js";
@@ -16,6 +16,37 @@ import { getRequestUser, isWebAuthEnabled } from "./auth.js";
 const logger = getChildLogger("static");
 const WEB_ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), "assets");
 const MASCOT_IMAGE_PATH = "/assets/vex-mascot.png";
+
+/** Escape a value for safe interpolation into HTML text/attribute context. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Baseline security headers for every static response. 'unsafe-inline' is kept
+// because the pages ship large inline <script>/<style> blocks (removing it needs
+// nonces); the CSP still blocks external script/style origins, sandboxes framing,
+// and forbids plugins. Dynamic values are additionally HTML-escaped.
+const SECURITY_HEADERS: OutgoingHttpHeaders = {
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy":
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; " +
+    "font-src 'self' data:; " +
+    "connect-src 'self' ws: wss:; " +
+    "object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+};
+
+function withSecurityHeaders(headers: OutgoingHttpHeaders): OutgoingHttpHeaders {
+  return { ...SECURITY_HEADERS, ...headers };
+}
 
 /** Vex mascot image markup */
 const MASCOT_IMG_SMALL = `<img src="${MASCOT_IMAGE_PATH}" class="mascot-img mascot-img-small" alt="Vex mascot" />`;
@@ -42,8 +73,8 @@ const MIME_TYPES: Record<string, string> = {
 /** Get embedded HTML page */
 function getEmbeddedHtml(config: VexConfig): string {
   const assistantName = "Vex";
-  const defaultModel = config.agent.defaultModel;
-  const defaultProvider = config.agent.defaultProvider;
+  const defaultModel = escapeHtml(config.agent.defaultModel);
+  const defaultProvider = escapeHtml(config.agent.defaultProvider);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -54,7 +85,7 @@ function getEmbeddedHtml(config: VexConfig): string {
   <style>
 ${COMMON_CSS}${WEBCHAT_CSS}
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/assets/marked.min.js"></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -281,8 +312,8 @@ ${WEBCHAT_CSS}
 /** Get Control UI page */
 function getControlHtml(config: VexConfig): string {
   const assistantName = "Vex";
-  const defaultModel = config.agent.defaultModel;
-  const defaultProvider = config.agent.defaultProvider;
+  const defaultModel = escapeHtml(config.agent.defaultModel);
+  const defaultProvider = escapeHtml(config.agent.defaultProvider);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1213,11 +1244,11 @@ function sendAsset(pathname: string, res: ServerResponse): boolean {
 
   const content = readFileSync(assetPath);
   const contentType = MIME_TYPES[extname(assetPath).toLowerCase()] ?? "application/octet-stream";
-  res.writeHead(200, {
+  res.writeHead(200, withSecurityHeaders({
     "Content-Type": contentType,
     "Content-Length": content.length,
     "Cache-Control": "public, max-age=31536000, immutable",
-  });
+  }));
   res.end(content);
   return true;
 }
@@ -1258,10 +1289,10 @@ export function handleStaticRequest(
       return true;
     }
     const html = getLoginHtml();
-    res.writeHead(200, {
+    res.writeHead(200, withSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
       "Content-Length": Buffer.byteLength(html),
-    });
+    }));
     res.end(html);
     return true;
   }
@@ -1275,11 +1306,22 @@ export function handleStaticRequest(
 
   // Control UI
   if (pathname === "/control" || pathname === "/control/") {
+    // The control panel is an admin surface; its data endpoints are admin-gated,
+    // so don't hand its shell to non-admins either. (Unauthenticated users were
+    // already redirected to /login above.)
+    if (isWebAuthEnabled(options.config)) {
+      const user = getRequestUser(options.config, req);
+      if (user && user.role !== "admin") {
+        res.writeHead(302, { Location: "/" });
+        res.end();
+        return true;
+      }
+    }
     const html = getControlHtml(options.config);
-    res.writeHead(200, {
+    res.writeHead(200, withSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
       "Content-Length": Buffer.byteLength(html),
-    });
+    }));
     res.end(html);
     return true;
   }
@@ -1287,10 +1329,10 @@ export function handleStaticRequest(
   // Root path or index.html - return WebChat HTML
   if (pathname === "/" || pathname === "/index.html") {
     const html = getEmbeddedHtml(options.config);
-    res.writeHead(200, {
+    res.writeHead(200, withSecurityHeaders({
       "Content-Type": "text/html; charset=utf-8",
       "Content-Length": Buffer.byteLength(html),
-    });
+    }));
     res.end(html);
     return true;
   }

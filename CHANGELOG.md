@@ -34,6 +34,10 @@ This project follows semantic versioning for npm package releases.
 - `POST /api/auth/login` is rate-limited per IP+username (10 failures per 5 minutes, in memory); over the limit it returns 429. A successful login resets the counter.
 - Password hashing switched from synchronous to asynchronous scrypt, so unauthenticated login/register requests can no longer stall the event loop.
 - The config `rawYaml` patch is now schema-validated (against `VexConfigSchema`) before it is written or applied to the live config. Previously it bypassed validation entirely, so a malformed admin patch could corrupt the persisted config and crash the running instance.
+- The WebChat page loaded `marked.min.js` from the jsdelivr CDN with no Subresource Integrity — third-party JavaScript inside the authenticated session, plus a privacy and offline-availability problem. `marked` is now vendored and served locally from `/assets/marked.min.js`.
+- Config values (`agent.defaultModel`, `agent.defaultProvider`) interpolated into the served HTML are now HTML-escaped, closing a latent XSS via a crafted model string.
+- Static responses (HTML pages and assets) now carry baseline security headers: `Content-Security-Policy` (blocks external script/style origins, `frame-ancestors 'none'`, `object-src 'none'`), `X-Content-Type-Options: nosniff`, and `X-Frame-Options: DENY`.
+- The `/control` panel HTML is now served only to admins; authenticated non-admins are redirected to `/` (its data endpoints were already admin-gated).
 
 ### Changed
 
