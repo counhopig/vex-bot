@@ -104,7 +104,13 @@ function createCronAddTool(service: CronService): AgentTool {
         typeDesc = "System event";
       }
 
-      const job = service.add({ name, schedule, payload } as CronJobCreate);
+      let job;
+      try {
+        job = service.add({ name, schedule, payload } as CronJobCreate);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text", text: `Error: ${message}` }], details: { error: "add_failed" } };
+      }
       return { content: [{ type: "text", text: `Cron job created:\n- ID: ${job.id}\n- Name: ${job.name}\n- Type: ${typeDesc}\n- Schedule: ${formatSchedule(job.schedule)}` }], details: { jobId: job.id } };
     },
   };

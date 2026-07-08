@@ -120,7 +120,7 @@ export interface CronJobUpdate {
 }
 
 /** Cron event type */
-export type CronEventAction = "added" | "updated" | "removed" | "started" | "finished";
+export type CronEventAction = "added" | "updated" | "removed" | "started" | "finished" | "missed";
 
 /** Cron event */
 export interface CronEvent {
@@ -147,6 +147,8 @@ export interface CronServiceDeps {
   executeJob?: (job: CronJob) => Promise<{ status: "ok" | "error" | "skipped"; error?: string; summary?: string }>;
   /** Event callback */
   onEvent?: (event: CronEvent) => void;
+  /** Fallback execution timeout when a job has no timeoutSeconds (ms). */
+  defaultJobTimeoutMs?: number;
 }
 
 /** Store file format */

@@ -292,6 +292,91 @@ describe("cron/service", () => {
       expect(job.enabled).toBe(true);
       expect(events).toContainEqual({ jobId: job.id, action: "added" });
     });
+
+    it("rejects a duplicate job name", () => {
+      const input: CronJobCreate = {
+        name: "Dup",
+        schedule: { kind: "every", everyMs: 60000 },
+        payload: { kind: "systemEvent", message: "x" },
+      };
+      service.add(input);
+      expect(() => service.add(input)).toThrow(/already exists/i);
+    });
+  });
+
+  describe("execution safety", () => {
+    it("times out a hung job instead of wedging the scheduler", async () => {
+      const svc = new CronService({
+        nowMs: () => 1000,
+        storePath: "/tmp/test-timeout-jobs.json",
+        enabled: false,
+        executeJob: () => new Promise(() => {}), // never resolves
+        defaultJobTimeoutMs: 40,
+      });
+      try {
+        const job = svc.add({
+          name: "Hung",
+          schedule: { kind: "at", atMs: 2000 },
+          payload: { kind: "agentTurn", message: "x" },
+        });
+        const result = await svc.run(job.id, { forced: true });
+        expect(result.status).toBe("error");
+        expect(result.error).toMatch(/timed out/i);
+      } finally {
+        svc.stop();
+      }
+    }, 2000);
+
+    it("skips a manual run when the job is already running", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const svc = new CronService({
+        nowMs: () => 1000,
+        storePath: "/tmp/test-concurrent-jobs.json",
+        enabled: false,
+        executeJob: () => gate.then(() => ({ status: "ok" as const })),
+      });
+      try {
+        const job = svc.add({
+          name: "Once",
+          schedule: { kind: "every", everyMs: 60000 },
+          payload: { kind: "systemEvent", message: "x" },
+        });
+        const first = svc.run(job.id, { forced: true }); // marks running, awaits gate
+        await Promise.resolve();
+        const second = await svc.run(job.id, { forced: true });
+        expect(second.status).toBe("skipped");
+        release();
+        await first;
+      } finally {
+        svc.stop();
+      }
+    });
+  });
+
+  describe("missed one-time jobs", () => {
+    it("emits a missed event for an overdue 'at' job on startup", () => {
+      const svc = new CronService({
+        nowMs: () => 5000,
+        storePath: "/tmp/test-missed-jobs.json",
+        enabled: false,
+        executeJob: async () => ({ status: "ok" as const }),
+        onEvent: (event) => events.push({ jobId: event.jobId, action: event.action }),
+      });
+      try {
+        // atMs is in the past relative to nowMs -> the run window was missed.
+        const job = svc.add({
+          name: "Overdue",
+          schedule: { kind: "at", atMs: 1000 },
+          payload: { kind: "systemEvent", message: "x" },
+        });
+        events.length = 0;
+        svc.start(); // recomputes next-run times, surfacing the missed window
+        expect(events).toContainEqual({ jobId: job.id, action: "missed" });
+      } finally {
+        svc.stop();
+      }
+    });
   });
 
   describe("list", () => {

@@ -21,6 +21,25 @@ import { computeJobNextRunAtMs, formatSchedule } from "./schedule.js";
 /** Maximum safe setTimeout value (~24.8 days) */
 const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
+/** Fallback execution timeout when a job specifies none (10 minutes). */
+const DEFAULT_JOB_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Reject if the promise doesn't settle within `ms`. The underlying work isn't
+ * cancellable, but the scheduler must not block on it forever — a hung job
+ * would otherwise leave `running` stuck and wedge every future run.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Job execution timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 /**
  * Cron job service
  */
@@ -38,6 +57,7 @@ export class CronService {
       enabled: deps?.enabled ?? true,
       executeJob: deps?.executeJob ?? (async () => ({ status: "ok" as const })),
       onEvent: deps?.onEvent ?? (() => {}),
+      defaultJobTimeoutMs: deps?.defaultJobTimeoutMs ?? DEFAULT_JOB_TIMEOUT_MS,
     };
     this.store = new CronStore(this.deps.storePath);
   }
@@ -88,6 +108,9 @@ export class CronService {
 
   /** Add job */
   add(input: CronJobCreate): CronJob {
+    if (this.store.getJobByName(input.name)) {
+      throw new Error(`A cron job named "${input.name}" already exists`);
+    }
     const now = this.deps.nowMs();
     const id = randomUUID();
 
@@ -174,6 +197,10 @@ export class CronService {
     if (!job) {
       return { status: "not_found", error: "Job not found" };
     }
+    // Don't double-execute a job the timer (or another manual run) is running.
+    if (typeof job.state.runningAtMs === "number") {
+      return { status: "skipped", error: "Job is already running" };
+    }
 
     return this.executeJob(job, { forced: options?.forced ?? true });
   }
@@ -186,6 +213,14 @@ export class CronService {
   }
 
   // ============== Private methods ==============
+
+  /** Resolve a job's execution timeout: its own timeoutSeconds, else the default. */
+  private resolveJobTimeoutMs(job: CronJob): number {
+    if (job.payload.kind === "agentTurn" && typeof job.payload.timeoutSeconds === "number") {
+      return job.payload.timeoutSeconds * 1000;
+    }
+    return this.deps.defaultJobTimeoutMs;
+  }
 
   /** Emit event */
   private emit(jobId: string, action: CronEventAction, extra?: Partial<CronEvent>): void {
@@ -218,6 +253,20 @@ export class CronService {
       if (next !== job.state.nextRunAtMs) {
         job.state.nextRunAtMs = next;
         changed = true;
+      }
+
+      // A one-time job whose window passed while we were down would otherwise
+      // vanish silently (next is undefined). Surface it and disable it.
+      if (
+        next === undefined &&
+        job.enabled &&
+        job.schedule.kind === "at" &&
+        job.schedule.atMs < now &&
+        typeof job.state.lastRunAtMs !== "number"
+      ) {
+        job.enabled = false;
+        changed = true;
+        this.emit(job.id, "missed", { runAtMs: job.schedule.atMs });
       }
     }
 
@@ -309,7 +358,7 @@ export class CronService {
     let deleted = false;
 
     try {
-      const result = await this.deps.executeJob(job);
+      const result = await withTimeout(this.deps.executeJob(job), this.resolveJobTimeoutMs(job));
       status = result.status;
       error = result.error;
       summary = result.summary;
