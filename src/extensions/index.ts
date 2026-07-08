@@ -27,7 +27,8 @@ export async function initExtensions(
   if (config.sharelink?.enabled !== false) {
     try {
       const { initShareLink } = await import("./sharelink/index.js");
-      await initShareLink(config, agent);
+      void agent;
+      initShareLink(config, { ownerId: options?.ownerId });
       logger.info("ShareLink extension initialized");
     } catch (error) {
       logger.error({ error }, "Failed to initialize ShareLink extension");
@@ -76,5 +77,11 @@ export async function disposeExtensions(ownerId: string): Promise<void> {
     disposeSkillLearnerOwner(ownerId);
   } catch (error) {
     logger.warn({ error, ownerId }, "Failed to dispose skill-learner owner state");
+  }
+  try {
+    const { disposeShareLinkOwner } = await import("./sharelink/index.js");
+    disposeShareLinkOwner(ownerId);
+  } catch (error) {
+    logger.warn({ error, ownerId }, "Failed to dispose sharelink owner state");
   }
 }

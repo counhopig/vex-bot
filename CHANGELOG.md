@@ -37,6 +37,7 @@ This project follows semantic versioning for npm package releases.
 
 ### Security
 
+- ShareLink is now isolated per Web user. The auto-detect interceptor and the `sharelink_parse` tool both used a process-global config, so the last-initialized user's Bilibili cookie was used for every user's link parsing — a cross-user credential leak. The interceptor now resolves the owning user's config from the message context, and the tool is bound to its agent's config; the global config singleton was removed.
 - The `logs.subscribe` / `logs.unsubscribe` WebSocket methods now require an admin (when web auth is enabled). The backend log stream carries every user's chat previews, session keys, and errors; previously any authenticated user could subscribe and read all of it. Single-user mode (web auth disabled) is unaffected.
 - Login no longer leaks which usernames exist through response timing: unknown-username attempts now run the same scrypt verification (against a dummy hash) as wrong-password attempts.
 - `POST /api/auth/login` is rate-limited per IP+username (10 failures per 5 minutes, in memory); over the limit it returns 429. A successful login resets the counter.

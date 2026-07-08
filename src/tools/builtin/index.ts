@@ -32,6 +32,7 @@ import { createShareLinkTool } from "./sharelink.js";
 import { createWeatherTool, type WeatherToolOptions } from "./weather.js";
 import type { MemoryManager } from "../../memory/index.js";
 import type { CronService } from "../../cron/service.js";
+import type { ShareLinkConfig } from "../../types/index.js";
 
 /** Built-in tools options */
 export interface BuiltinToolsOptions {
@@ -40,6 +41,7 @@ export interface BuiltinToolsOptions {
   bash?: BashToolOptions;
   memory?: MemoryToolsOptions;
   weather?: WeatherToolOptions;
+  sharelink?: ShareLinkConfig;
   enableBrowser?: boolean;
   enableFilesystem?: boolean;
   enableBash?: boolean;
@@ -61,7 +63,7 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     createWebFetchTool(),
     createImageAnalyzeTool(options?.image),
     createDelayTool(),
-    createShareLinkTool(),
+    createShareLinkTool(options?.sharelink),
     createWeatherTool(options?.weather),
   ];
 

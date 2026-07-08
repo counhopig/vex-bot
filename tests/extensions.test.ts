@@ -118,6 +118,30 @@ describe("ShareLink", () => {
     expect(youtube.match("https://youtu.be/dQw4w9WgXcQ")).toBe(true);
     expect(youtube.extractId("https://youtu.be/dQw4w9WgXcQ")).toBe("dQw4w9WgXcQ");
   });
+
+  it("keeps each owner's config (bilibili cookie) isolated, no last-init clobber", async () => {
+    const { initShareLink, disposeShareLinkOwner, __getShareLinkOwnerConfigForTest, cleanupShareLink } =
+      await import("../src/extensions/sharelink/index.js");
+    try {
+      initShareLink(
+        { sharelink: { autoDetect: true, bilibiliCookie: { sessdata: "cookie-A" } } } as VexConfig,
+        { ownerId: "user-a" },
+      );
+      initShareLink(
+        { sharelink: { autoDetect: true, bilibiliCookie: { sessdata: "cookie-B" } } } as VexConfig,
+        { ownerId: "user-b" },
+      );
+
+      expect(__getShareLinkOwnerConfigForTest("user-a")?.bilibiliCookie?.sessdata).toBe("cookie-A");
+      expect(__getShareLinkOwnerConfigForTest("user-b")?.bilibiliCookie?.sessdata).toBe("cookie-B");
+
+      disposeShareLinkOwner("user-a");
+      expect(__getShareLinkOwnerConfigForTest("user-a")).toBeUndefined();
+      expect(__getShareLinkOwnerConfigForTest("user-b")?.bilibiliCookie?.sessdata).toBe("cookie-B");
+    } finally {
+      cleanupShareLink();
+    }
+  });
 });
 
 describe("Skill Learner", () => {

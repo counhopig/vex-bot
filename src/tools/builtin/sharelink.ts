@@ -1,19 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { ShareLinkConfig } from "../../types/index.js";
 import { textResult, errorResult, readStringParam } from "../common.js";
-import { BilibiliAdapter } from "../../extensions/sharelink/platforms/bilibili.js";
-import { YouTubeAdapter } from "../../extensions/sharelink/platforms/youtube.js";
-import { PlatformRegistry } from "../../extensions/sharelink/platforms/registry.js";
-import { getShareLinkConfig } from "../../extensions/sharelink/config.js";
-
-function createRegistry(): PlatformRegistry {
-  const cfg = getShareLinkConfig();
-  const cookie = cfg?.bilibiliCookie ?? {};
-  const registry = new PlatformRegistry();
-  registry.register(new BilibiliAdapter(cookie.sessdata ?? "", cookie.biliJct ?? ""));
-  registry.register(new YouTubeAdapter());
-  return registry;
-}
+import { buildShareLinkRegistry } from "../../extensions/sharelink/registry-factory.js";
 
 function formatDuration(seconds: number): string {
   if (seconds <= 0) {
@@ -25,9 +14,8 @@ function formatDuration(seconds: number): string {
   return hours > 0 ? `${hours}小时${minutes}分${sec}秒` : `${minutes}分${sec}秒`;
 }
 
-async function parseShareLink(target: string): Promise<string> {
-  const cfg = getShareLinkConfig();
-  const registry = createRegistry();
+async function parseShareLink(target: string, cfg?: ShareLinkConfig): Promise<string> {
+  const registry = buildShareLinkRegistry(cfg);
   const adapter = registry.match(target);
   if (!adapter) {
     throw new Error("Unsupported link. Currently supports Bilibili and YouTube.");
@@ -88,7 +76,7 @@ async function parseShareLink(target: string): Promise<string> {
   return lines.join("\n");
 }
 
-export function createShareLinkTool(): AgentTool {
+export function createShareLinkTool(config?: ShareLinkConfig): AgentTool {
   return {
     name: "sharelink_parse",
     label: "ShareLink Parse",
@@ -100,7 +88,7 @@ export function createShareLinkTool(): AgentTool {
       try {
         const params = args as Record<string, unknown>;
         const url = readStringParam(params, "url", { required: true, label: "url" });
-        const result = await parseShareLink(url ?? "");
+        const result = await parseShareLink(url ?? "", config);
         return textResult(result);
       } catch (error) {
         return errorResult(error instanceof Error ? error : new Error(String(error)));

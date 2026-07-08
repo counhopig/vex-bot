@@ -8,6 +8,7 @@ import type {
   ProviderId,
   VexConfig,
   WeatherConfig,
+  ShareLinkConfig,
 } from "../types/index.js";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { AgentRuntime, createAgentRuntime, type ChatResponse, type StreamEvent } from "./runtime.js";
@@ -44,6 +45,7 @@ export interface AgentOptions {
   bashEnvPassthrough?: string[];
   memoryManager?: MemoryManager;
   weatherConfig?: WeatherConfig;
+  sharelinkConfig?: ShareLinkConfig;
 }
 
 /** Agent response */
@@ -100,6 +102,7 @@ export class Agent {
       memoryManager: this.options.memoryManager,
       enableCron: false,
       weather: { config: this.options.weatherConfig },
+      sharelink: this.options.sharelinkConfig,
     };
 
     const builtinTools = createBuiltinTools(builtinOptions);
@@ -226,6 +229,7 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
     bashEnvPassthrough: config.agent.bashEnvPassthrough,
     memoryManager,
     weatherConfig: config.weather,
+    sharelinkConfig: config.sharelink,
     enableTools: true,
   });
 

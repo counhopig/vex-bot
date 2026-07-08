@@ -4,14 +4,12 @@
  * 注册消息拦截器（自动检测）和工具（供 Agent 调用）。
  */
 
-import type { VexConfig } from "../../types/index.js";
-import type { Agent } from "../../agents/agent.js";
+import type { VexConfig, ShareLinkConfig } from "../../types/index.js";
+import type { InboundMessageContext } from "../../types/index.js";
 import { registerMessageInterceptor } from "../../pipeline/index.js";
 import { getChildLogger } from "../../utils/logger.js";
-import { setShareLinkConfig } from "./config.js";
+import { buildShareLinkRegistry } from "./registry-factory.js";
 import { PlatformRegistry } from "./platforms/registry.js";
-import { BilibiliAdapter } from "./platforms/bilibili.js";
-import { YouTubeAdapter } from "./platforms/youtube.js";
 import { BasePlatformAdapter } from "./platforms/base.js";
 
 const logger = getChildLogger("sharelink");
@@ -19,74 +17,91 @@ const logger = getChildLogger("sharelink");
 const URL_PATTERN = /https?:\/\/[^\s]+/;
 const BV_PATTERN = /(?:bv|BV)([a-zA-Z0-9]{10})/;
 
+interface ShareLinkOwnerState {
+  cfg: ShareLinkConfig | undefined;
+  registry: PlatformRegistry;
+}
+
+// Per-owning-Web-user state. The pipeline interceptor is process-global (one
+// registry keyed by name), so it must resolve the owning user's config from the
+// message context at call time — registering per user would leave the last
+// user's bilibili cookie active for everyone.
+const owners = new Map<string, ShareLinkOwnerState>();
+const cleanupFns: Array<() => void> = [];
+let pipelineRegistered = false;
+
+const OWNER_SENTINEL = "";
+function ownerKey(ownerId: string | undefined): string {
+  return ownerId ?? OWNER_SENTINEL;
+}
+
+function getWebOwnerId(ctx: InboundMessageContext): string | undefined {
+  const raw = ctx.raw;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw) || !("__webUserId" in raw)) {
+    return undefined;
+  }
+  const ownerId = (raw as { __webUserId?: unknown }).__webUserId;
+  return typeof ownerId === "string" ? ownerId : undefined;
+}
+
 /** 初始化 ShareLink 扩展 */
-export function initShareLink(config: VexConfig, agent?: Agent): void {
-  void agent;
+export function initShareLink(config: VexConfig, options?: { ownerId?: string }): void {
   const cfg = config.sharelink;
-  setShareLinkConfig(cfg);
   logger.debug(
     {
+      owner: ownerKey(options?.ownerId),
       responseMode: cfg?.responseMode,
       autoDetect: cfg?.autoDetect,
-      includeDescription: cfg?.includeDescription,
-      includeCover: cfg?.includeCover,
       hasBilibiliSessdata: Boolean(cfg?.bilibiliCookie?.sessdata),
       hasBilibiliJct: Boolean(cfg?.bilibiliCookie?.biliJct),
     },
     "ShareLink config resolved"
   );
 
-  // Build registry
-  const registry = new PlatformRegistry();
-  const bilibiliCookie = cfg?.bilibiliCookie ?? {};
-  registry.register(
-    new BilibiliAdapter(bilibiliCookie.sessdata ?? "", bilibiliCookie.biliJct ?? "")
-  );
-  registry.register(new YouTubeAdapter());
-
-  logger.info(
-    { platforms: registry.platforms, autoDetect: cfg?.autoDetect },
-    "ShareLink extension initializing"
-  );
-
-  // Register message interceptor for auto-detect
-  if (cfg?.autoDetect) {
-    const unregister = registerMessageInterceptor("sharelink", async (ctx) => {
-      const target = extractTarget(ctx.content);
-      if (!target) {
-        logger.debug({ messageId: ctx.messageId, contentLength: ctx.content.length }, "ShareLink auto-detect found no target");
-        return null;
-      }
-
-      const adapter = registry.match(target);
-      if (!adapter) {
-        logger.debug({ target, messageId: ctx.messageId }, "ShareLink auto-detect found unsupported target");
-        return null;
-      }
-
-      logger.info({ target, senderId: ctx.senderId }, "ShareLink auto-detect triggered");
-
-      const result = await parseTarget(registry, cfg, target);
-      return result ?? null;
-    });
-
-    logger.info("ShareLink auto-detect interceptor registered");
-
-    // Store cleanup reference on module for tests
-    cleanupFns.push(unregister);
-  }
-
+  owners.set(ownerKey(options?.ownerId), { cfg, registry: buildShareLinkRegistry(cfg) });
+  registerShareLinkPipeline();
+  logger.info({ owner: ownerKey(options?.ownerId), autoDetect: cfg?.autoDetect }, "ShareLink extension initialized");
 }
 
-const cleanupFns: Array<() => void> = [];
+function registerShareLinkPipeline(): void {
+  if (pipelineRegistered) return;
+  pipelineRegistered = true;
+  const unregister = registerMessageInterceptor("sharelink", async (ctx) => {
+    const state = owners.get(ownerKey(getWebOwnerId(ctx)));
+    if (!state?.cfg?.autoDetect) return null;
 
-/** 清理 ShareLink 注册（用于测试） */
+    const target = extractTarget(ctx.content);
+    if (!target) return null;
+    if (!state.registry.match(target)) {
+      logger.debug({ target, messageId: ctx.messageId }, "ShareLink auto-detect found unsupported target");
+      return null;
+    }
+
+    logger.info({ target, senderId: ctx.senderId }, "ShareLink auto-detect triggered");
+    const result = await parseTarget(state.registry, state.cfg, target);
+    return result ?? null;
+  });
+  cleanupFns.push(unregister);
+}
+
+/** Drop a single owner's ShareLink state when their runtime is torn down. */
+export function disposeShareLinkOwner(ownerId: string | undefined): void {
+  owners.delete(ownerKey(ownerId));
+}
+
+/** Reset all ShareLink registration and per-owner state (tests). */
 export function cleanupShareLink(): void {
   for (const fn of cleanupFns) {
     fn();
   }
   cleanupFns.length = 0;
-  setShareLinkConfig(undefined);
+  pipelineRegistered = false;
+  owners.clear();
+}
+
+/** @internal test-only: read an owner's resolved config. */
+export function __getShareLinkOwnerConfigForTest(ownerId: string | undefined): ShareLinkConfig | undefined {
+  return owners.get(ownerKey(ownerId))?.cfg;
 }
 
 /** 从消息中提取首个 URL 或裸 BV 号 */
