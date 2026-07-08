@@ -211,6 +211,66 @@ describe("UserRuntimeManager", () => {
     now.mockRestore();
   });
 
+  it("waits for the prior teardown before rebuilding the same user on the same directory", async () => {
+    let releaseShutdown!: () => void;
+    const shutdownGate = new Promise<void>((resolve) => {
+      releaseShutdown = resolve;
+    });
+    const firstAgent = { id: "first", shutdown: vi.fn().mockReturnValue(shutdownGate) } as unknown as Agent;
+    const secondAgent = agent("second");
+    createAgentMock.mockResolvedValueOnce(firstAgent).mockResolvedValueOnce(secondAgent);
+    createMemoryManagerMock.mockReturnValue({ close: vi.fn() });
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValue(1_000);
+    const manager = new UserRuntimeManager({
+      config: config(true),
+      globalAgent: agent("legacy"),
+      idleTtlMs: 60_000,
+    });
+
+    await manager.getAgent("user-a");
+    // Past the TTL: the next touch of user-a evicts (teardown gated) then rebuilds.
+    now.mockReturnValue(1_000 + 120_000);
+    const rebuilding = manager.getAgent("user-a");
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(firstAgent.shutdown).toHaveBeenCalled();
+    // Rebuild must not start on the same directory until teardown completes.
+    expect(createAgentMock).toHaveBeenCalledTimes(1);
+
+    releaseShutdown();
+    const rebuilt = await rebuilding;
+    expect(createAgentMock).toHaveBeenCalledTimes(2);
+    expect(rebuilt).toBe(secondAgent);
+    now.mockRestore();
+  });
+
+  it("reclaims idle runtimes on a timer without any further traffic", async () => {
+    vi.useFakeTimers();
+    try {
+      const idleAgent = agent("idle-timer-agent");
+      const close = vi.fn();
+      createAgentMock.mockResolvedValueOnce(idleAgent);
+      createMemoryManagerMock.mockReturnValue({ close });
+      const manager = new UserRuntimeManager({
+        config: config(true),
+        globalAgent: agent("legacy"),
+        idleTtlMs: 1_000,
+      });
+
+      await manager.getAgent("user-a");
+      // No further getOrCreate calls — only the background sweep can reclaim it.
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(idleAgent.shutdown).toHaveBeenCalled();
+      expect(close).toHaveBeenCalledTimes(1);
+      await manager.shutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("drops a cached user runtime when reset", async () => {
     const firstAgent = agent("first-agent");
     const secondAgent = agent("second-agent");

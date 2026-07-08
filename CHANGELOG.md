@@ -19,6 +19,9 @@ This project follows semantic versioning for npm package releases.
 - A corrupt `settings_json` row no longer throws on every load — which failed the user's runtime construction and locked them out of chat entirely. It now logs a warning and falls back to empty settings; the next save overwrites the bad row.
 - Changing the server port in the control panel now correctly reports "restart required"; the check compared the new port against the already-updated live config, so it was always false.
 - The control panel showed `0.0.0.0` as the default bind host when none was set, contradicting the actual `127.0.0.1` default; it now shows `127.0.0.1`.
+- A per-user runtime rebuild could overlap the previous runtime's teardown on the same scoped directory (idle eviction disposes fire-and-forget, then rebuilds immediately). The rebuild now waits for the prior teardown to complete before touching the directory.
+- The memory index is now written atomically (temp file + rename) instead of overwriting `index.json` in place, so a crash or overlapping write can't leave a truncated index that fails to load.
+- Idle per-user runtimes are now reclaimed by a background timer, not only lazily on the next request, so a quiet multi-user instance releases their SQLite handles and memory past the idle TTL.
 
 ### Security
 

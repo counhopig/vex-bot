@@ -34,8 +34,13 @@ export class UserRuntimeManager {
   private readonly globalAgent: Agent;
   private readonly globalMemoryManager?: MemoryManager;
   private readonly runtimes = new Map<string, RuntimeEntry>();
+  // Teardown-in-progress per userId. A rebuild of the same user must wait for
+  // this so the old runtime's dispose (memoryManager.close/saveIndex, session
+  // teardown) never overlaps the new one on the identical scoped directory.
+  private readonly pendingDisposes = new Map<string, Promise<void>>();
   private readonly maxRuntimes: number;
   private readonly idleTtlMs: number;
+  private readonly sweepTimer?: ReturnType<typeof setInterval>;
 
   constructor(options: {
     readonly config: VexConfig;
@@ -50,6 +55,14 @@ export class UserRuntimeManager {
     this.globalMemoryManager = options.globalMemoryManager;
     this.maxRuntimes = options.maxRuntimes ?? DEFAULT_MAX_RUNTIMES;
     this.idleTtlMs = options.idleTtlMs ?? DEFAULT_IDLE_TTL_MS;
+
+    // Reclaim idle runtimes on a timer, not only lazily on the next getOrCreate,
+    // so a quiet instance still releases SQLite handles + memory past the TTL.
+    // unref() so it never keeps the process alive on its own.
+    if (this.idleTtlMs > 0) {
+      this.sweepTimer = setInterval(() => this.evictIdle(), this.idleTtlMs);
+      this.sweepTimer.unref?.();
+    }
   }
 
   async getAgent(userId?: string): Promise<Agent> {
@@ -88,7 +101,7 @@ export class UserRuntimeManager {
     for (const [userId, entry] of this.runtimes) {
       if (entry.lastAccess < cutoff) {
         this.runtimes.delete(userId);
-        void this.disposeRuntime(entry.runtime, userId, "idle");
+        void this.trackDispose(entry.runtime, userId, "idle");
       }
     }
   }
@@ -108,11 +121,15 @@ export class UserRuntimeManager {
       if (oldestKey === undefined) break;
       const entry = this.runtimes.get(oldestKey)!;
       this.runtimes.delete(oldestKey);
-      void this.disposeRuntime(entry.runtime, oldestKey, "overflow");
+      void this.trackDispose(entry.runtime, oldestKey, "overflow");
     }
   }
 
   private async buildRuntime(userId: string): Promise<UserRuntime> {
+    // Wait for any in-flight teardown of this user's previous runtime before
+    // touching the same on-disk directory.
+    const pending = this.pendingDisposes.get(userId);
+    if (pending) await pending.catch(() => {});
     const effectiveConfig = this.buildUserConfig(userId);
     const memoryManager = this.createUserMemoryManager(effectiveConfig, userId);
     const agent = await createAgent(effectiveConfig, { memoryManager, ownerId: userId });
@@ -121,10 +138,11 @@ export class UserRuntimeManager {
   }
 
   async shutdown(): Promise<void> {
+    if (this.sweepTimer) clearInterval(this.sweepTimer);
     const entries = [...this.runtimes.entries()];
     this.runtimes.clear();
     for (const [userId, entry] of entries) {
-      await this.disposeRuntime(entry.runtime, userId, "shutdown");
+      await this.trackDispose(entry.runtime, userId, "shutdown");
     }
   }
 
@@ -132,7 +150,28 @@ export class UserRuntimeManager {
     const entry = this.runtimes.get(userId);
     if (!entry) return;
     this.runtimes.delete(userId);
-    await this.disposeRuntime(entry.runtime, userId, "reset");
+    await this.trackDispose(entry.runtime, userId, "reset");
+  }
+
+  /**
+   * Dispose a runtime while recording the teardown in pendingDisposes, so a
+   * concurrent rebuild of the same user waits for it (see buildRuntime).
+   */
+  private trackDispose(
+    runtimePromise: Promise<UserRuntime>,
+    userId: string,
+    reason: "shutdown" | "reset" | "idle" | "overflow",
+  ): Promise<void> {
+    const prior = this.pendingDisposes.get(userId);
+    const task = (async () => {
+      if (prior) await prior.catch(() => {});
+      await this.disposeRuntime(runtimePromise, userId, reason);
+    })();
+    this.pendingDisposes.set(userId, task);
+    void task.finally(() => {
+      if (this.pendingDisposes.get(userId) === task) this.pendingDisposes.delete(userId);
+    });
+    return task;
   }
 
   private async disposeRuntime(
@@ -159,6 +198,9 @@ export class UserRuntimeManager {
 
   private buildUserConfig(userId: string): VexConfig {
     const userConfig = buildUserEffectiveConfig(this.config, getUserConfigSettings(this.config, userId));
+    // Any user-supplied sessions/memory `directory` is intentionally overwritten
+    // with a per-user scoped path below: a user must not be able to redirect
+    // their storage outside their sandbox (or onto another user's directory).
     return {
       ...userConfig,
       sessions: userConfig.sessions

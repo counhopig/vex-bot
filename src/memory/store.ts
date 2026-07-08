@@ -114,7 +114,12 @@ export class JsonMemoryStore implements MemoryStore {
         embeddings,
       };
 
-      fs.writeFileSync(this.indexFile, JSON.stringify(data, null, 2), "utf-8");
+      // Write to a temp file then rename: rename is atomic on POSIX, so a
+      // crash or an overlapping writer can never leave a truncated index.json
+      // that the next loadIndex would fail to parse.
+      const tempFile = `${this.indexFile}.tmp`;
+      fs.writeFileSync(tempFile, JSON.stringify(data, null, 2), "utf-8");
+      fs.renameSync(tempFile, this.indexFile);
       this.dirty = false;
       logger.debug("Memory index saved");
     } catch (error) {

@@ -59,6 +59,29 @@ describe("memory/index", () => {
       }
     });
 
+    it("persists via atomic rename and leaves no temp file behind", async () => {
+      const testDir = getTestDir();
+      fs.mkdirSync(testDir, { recursive: true });
+      const indexFile = path.join(testDir, "index.json");
+      // Seed a valid but read-only index; the directory stays writable. An
+      // in-place writeFileSync would fail (EACCES) and silently drop the add,
+      // but an atomic temp-write + rename replaces it (rename needs dir write,
+      // not file write) — proving the write never truncates the live index.
+      fs.writeFileSync(indexFile, JSON.stringify({ version: 2, entries: [], embeddings: [] }));
+      fs.chmodSync(indexFile, 0o444);
+      try {
+        const store = new JsonMemoryStore({ directory: testDir });
+        const id = await store.add({ content: "survives", metadata: { type: "note", timestamp: Date.now() } });
+
+        const reopened = new JsonMemoryStore({ directory: testDir });
+        expect(await reopened.get(id)).toBeDefined();
+        expect(fs.existsSync(indexFile + ".tmp")).toBe(false);
+      } finally {
+        fs.chmodSync(indexFile, 0o644);
+        fs.rmSync(testDir, { recursive: true, force: true });
+      }
+    });
+
     it("should create store and add entries", async () => {
       const testDir = getTestDir();
       fs.mkdirSync(testDir, { recursive: true });
