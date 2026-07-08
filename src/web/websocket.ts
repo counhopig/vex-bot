@@ -51,6 +51,7 @@ import {
   getRequestUser,
   getUserConfigSettings,
   isWebAuthEnabled,
+  deleteUserWeixinLogin,
   saveUserConfigSettings,
   saveUserWeixinLogin,
   type PublicWebUser,
@@ -278,6 +279,7 @@ export interface WsServerOptions {
   config: VexConfig;
   weixinChannel?: WeixinChannel;
   onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
+  onUserWeixinUnbind?: (userId: string) => Promise<void> | void;
   getUserWeixinStatus?: (userId: string) => { configured: boolean; connected: boolean; accountId?: string };
   heartbeatInterval?: number;
   clientTimeout?: number;
@@ -297,6 +299,7 @@ export class WsServer {
   private config: VexConfig;
   private weixinChannel?: WeixinChannel;
   private onUserWeixinLogin?: (userId: string, login: WeixinConfig) => Promise<void> | void;
+  private onUserWeixinUnbind?: (userId: string) => Promise<void> | void;
   private getUserWeixinStatus?: (userId: string) => { configured: boolean; connected: boolean; accountId?: string };
   private pendingUserWeixinLogins = new Map<string, PendingUserWeixinLogin>();
   private startTime = Date.now();
@@ -310,6 +313,7 @@ export class WsServer {
     this.config = options.config;
     this.weixinChannel = options.weixinChannel;
     this.onUserWeixinLogin = options.onUserWeixinLogin;
+    this.onUserWeixinUnbind = options.onUserWeixinUnbind;
     this.getUserWeixinStatus = options.getUserWeixinStatus;
     this.heartbeatInterval = options.heartbeatInterval ?? 30000;
     this.clientTimeout = options.clientTimeout ?? 60000;
@@ -473,6 +477,10 @@ export class WsServer {
         case "weixin.qr.status":
           result = await this.handleWeixinQRStatus(client, parseParams(WeixinQrStatusParamsSchema, params));
           break;
+        case "weixin.unbind":
+          parseParams(EmptyParamsSchema, params);
+          result = await this.handleWeixinUnbind(client);
+          break;
         default:
           throw new Error(`Unknown method: ${method}`);
       }
@@ -631,6 +639,18 @@ export class WsServer {
       this.pendingUserWeixinLogins.delete(params.qrcode);
     }
     return payload;
+  }
+
+  private async handleWeixinUnbind(client: WsClient): Promise<{ user: PublicWebUser }> {
+    if (!client.user) {
+      throw new Error("Login required");
+    }
+    const user = deleteUserWeixinLogin(this.config, client.user.id);
+    client.user = user;
+    // Shut down the user's running Weixin channel so the unbind takes effect
+    // immediately, not at the next restart.
+    await this.onUserWeixinUnbind?.(user.id);
+    return { user };
   }
 
   /** Ensure client has a session; create if none */

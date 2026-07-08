@@ -1,15 +1,18 @@
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import Database from "better-sqlite3";
 import { describe, expect, it, afterEach } from "vitest";
 import type { IncomingMessage, ServerResponse } from "http";
 import {
   createWebUser,
+  deleteUserWeixinLogin,
   deleteWebUser,
   getUserConfigSettings,
   getRequestUser,
   HttpError,
   installWebAuthRoutes,
+  listUserWeixinLogins,
   listWebUsers,
   loginWebUser,
   saveUserConfigSettings,
@@ -229,6 +232,59 @@ describe("web auth", () => {
 
     expect(updated.hasWeixin).toBe(true);
     expect(updated.weixinAccountId).toBe("wx-account");
+  });
+
+  it("unbinds a Weixin login and is idempotent about it", async () => {
+    const cfg = config();
+    const user = await createWebUser(cfg, "bob", "password123");
+    saveUserWeixinLogin(cfg, user.id, {
+      token: "wx-token",
+      accountId: "wx-account",
+      baseUrl: "https://example.com",
+      userId: "ilink-user",
+    });
+    expect(listUserWeixinLogins(cfg).map((item) => item.userId)).toEqual([user.id]);
+
+    const unbound = deleteUserWeixinLogin(cfg, user.id);
+    expect(unbound.hasWeixin).toBe(false);
+    expect(unbound.weixinAccountId).toBeUndefined();
+    expect(listUserWeixinLogins(cfg)).toEqual([]);
+
+    // Unbinding again is a no-op, not an error
+    expect(deleteUserWeixinLogin(cfg, user.id).hasWeixin).toBe(false);
+
+    // Unknown users still 404
+    expect(await caughtStatus(() => deleteUserWeixinLogin(cfg, "user_missing"))).toBe(404);
+  });
+
+  it("recovers from a corrupt settings row instead of bricking the user", async () => {
+    const cfg = config();
+    const user = await createWebUser(cfg, "corrupt-user", "password123");
+    saveUserConfigSettings(cfg, user.id, { persona: { persona_name: "Fine" } });
+
+    // Corrupt the stored JSON out-of-band, as disk damage or a buggy writer would.
+    const raw = new Database(cfg.webAuth!.database!);
+    raw.prepare("UPDATE web_user_settings SET settings_json = ? WHERE user_id = ?").run("{not json", user.id);
+    raw.close();
+
+    // Load self-heals to empty settings; the next save overwrites the bad row.
+    expect(getUserConfigSettings(cfg, user.id)).toEqual({});
+    const saved = saveUserConfigSettings(cfg, user.id, { persona: { persona_name: "Recovered" } });
+    expect(saved).toMatchObject({ persona: { persona_name: "Recovered" } });
+    expect(getUserConfigSettings(cfg, user.id)).toMatchObject({ persona: { persona_name: "Recovered" } });
+  });
+
+  it("throws an unwrapped HttpError(404) for settings/weixin writes to unknown users", async () => {
+    const cfg = config();
+    await createWebUser(cfg, "someone", "password123");
+
+    const settings = await caught(() => saveUserConfigSettings(cfg, "user_missing", { persona: {} }));
+    expect(settings).toEqual({ status: 404, message: "User not found" });
+
+    const weixin = await caught(() =>
+      saveUserWeixinLogin(cfg, "user_missing", { token: "t", accountId: "a", baseUrl: "https://x", userId: "u" }),
+    );
+    expect(weixin).toEqual({ status: 404, message: "User not found" });
   });
 
   it("stores config settings per user without sharing values", async () => {

@@ -16,6 +16,7 @@ This project follows semantic versioning for npm package releases.
 
 - Non-admin requests to `PATCH/DELETE /api/admin/users/:id` now return 403 as intended; the error-message string matching used to map them to 400.
 - A malformed percent-encoding in any cookie (e.g. a third-party tracking cookie) crashed cookie parsing with a `URIError` and turned every authenticated request into a 500. Values that fail to decode are now kept raw instead.
+- A corrupt `settings_json` row no longer throws on every load — which failed the user's runtime construction and locked them out of chat entirely. It now logs a warning and falls back to empty settings; the next save overwrites the bad row.
 
 ### Security
 
@@ -28,11 +29,13 @@ This project follows semantic versioning for npm package releases.
 - User-management errors (`requireAdmin`, `updateWebUserRole`, `deleteWebUser`) now carry their HTTP status (`HttpError`) instead of being guessed from message text. `User not found` on `PATCH/DELETE /api/admin/users/:id` now returns 404 (previously 403 via the fallback), and unexpected server errors on admin routes return 500.
 - `createWebUser` validation and credential parsing are typed the same way: a duplicate username on `POST /api/auth/register` / `POST /api/admin/users` now returns 409 (was 400), unexpected server errors on those routes return 500 (were 400), and the SQLite UNIQUE violation is detected via the structured error code instead of message text. Passwords are now capped at 128 characters (minimum stays 8).
 - `loginWebUser` failures are typed as `HttpError(401)`; the login route no longer reports genuine server errors as 401 (they return 500). `createWebUser` and `loginWebUser` are now async (they await the scrypt hash).
+- `saveUserConfigSettings` and `saveUserWeixinLogin` throw `HttpError(404, "User not found")` directly instead of wrapping every failure into `Failed to save user settings: ...` / losing the error type; unexpected errors propagate unwrapped.
 
 ### Added
 
 - `agent.temperature` and `agent.maxTokens` are now actually applied to LLM calls made through the agent runtime; previously they were accepted by the config schema but silently ignored.
 - `--host` CLI flag for `vex start` to override the bind address.
+- `weixin.unbind` WebSocket method: unbinds the current user's Weixin login, deletes the stored token, and shuts down their running Weixin channel immediately. Previously a binding could only be removed by deleting the account.
 
 ## [1.15.0] - 2026-07-03
 

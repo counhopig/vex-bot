@@ -9,9 +9,12 @@ import { homedir } from "os";
 import { randomBytes, scrypt, timingSafeEqual } from "crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 import type { Request, Response, NextFunction } from "express";
+import { getChildLogger } from "../utils/logger.js";
 import type { LoginResult } from "../channels/weixin/login.js";
 import type { VexConfig } from "../types/index.js";
 import type { ConfigSaveParams } from "./types.js";
+
+const logger = getChildLogger("web-auth");
 
 const SESSION_COOKIE = "vexsid";
 const PASSWORD_KEY_LENGTH = 64;
@@ -493,7 +496,7 @@ export function clearLoginCookie(res: ServerResponse, secure = false): void {
 export function saveUserWeixinLogin(config: VexConfig, userId: string, login: LoginResult): PublicWebUser {
   const db = openAuthDatabase(config);
   const user = getUserById(db, userId);
-  if (!user) throw new Error("User not found");
+  if (!user) throw new HttpError(404, "User not found");
   db.prepare(`
     INSERT INTO web_user_weixin (user_id, token, account_id, base_url, ilink_user_id, updated_at)
     VALUES (?, ?, ?, ?, ?, ?)
@@ -504,9 +507,17 @@ export function saveUserWeixinLogin(config: VexConfig, userId: string, login: Lo
       ilink_user_id = excluded.ilink_user_id,
       updated_at = excluded.updated_at
   `).run(userId, login.token, login.accountId, login.baseUrl, login.userId, Date.now());
-  const updatedUser = getUserById(db, userId);
-  if (!updatedUser) throw new Error("User not found");
-  return toPublicUser(updatedUser);
+  // Synchronous driver, single process: the user cannot vanish between the
+  // check above and this re-read (which picks up the new weixin state).
+  return toPublicUser(getUserById(db, userId)!);
+}
+
+export function deleteUserWeixinLogin(config: VexConfig, userId: string): PublicWebUser {
+  const db = openAuthDatabase(config);
+  const user = getUserById(db, userId);
+  if (!user) throw new HttpError(404, "User not found");
+  db.prepare("DELETE FROM web_user_weixin WHERE user_id = ?").run(userId);
+  return toPublicUser(getUserById(db, userId)!);
 }
 
 export function listUserWeixinLogins(config: VexConfig): StoredUserWeixinLogin[] {
@@ -515,7 +526,6 @@ export function listUserWeixinLogins(config: VexConfig): StoredUserWeixinLogin[]
   const rows = db.prepare(`
     SELECT user_id, token, account_id, base_url, ilink_user_id
       FROM web_user_weixin
-     WHERE token <> ''
   `).all() as Array<{
     user_id: string;
     token: string;
@@ -535,38 +545,33 @@ export function listUserWeixinLogins(config: VexConfig): StoredUserWeixinLogin[]
 export function getUserConfigSettings(config: VexConfig, userId: string): UserConfigSettings {
   if (!isWebAuthEnabled(config)) return {};
   const db = openAuthDatabase(config);
+  const row = db.prepare("SELECT settings_json FROM web_user_settings WHERE user_id = ?")
+    .get(userId) as { settings_json: string } | undefined;
+  if (!row) return {};
   try {
-    const row = db.prepare("SELECT settings_json FROM web_user_settings WHERE user_id = ?")
-      .get(userId) as { settings_json: string } | undefined;
-    if (!row) return {};
     const parsed = JSON.parse(row.settings_json) as UserConfigSettings;
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (parsed && typeof parsed === "object") return parsed;
   } catch (error) {
-    throw new Error(`Failed to load user settings: ${error instanceof Error ? error.message : String(error)}`);
+    logger.warn({ error, userId }, "Corrupt user settings row; falling back to empty settings");
   }
+  // A corrupt row must not brick the user's runtime — the next save overwrites it.
+  return {};
 }
 
 export function saveUserConfigSettings(config: VexConfig, userId: string, patch: UserConfigSettings): UserConfigSettings {
   if (!isWebAuthEnabled(config)) return {};
   const db = openAuthDatabase(config);
-  try {
-    const user = getUserById(db, userId);
-    if (!user) throw new Error("User not found");
-    const row = db.prepare("SELECT settings_json FROM web_user_settings WHERE user_id = ?")
-      .get(userId) as { settings_json: string } | undefined;
-    const existing = row ? JSON.parse(row.settings_json) as UserConfigSettings : {};
-    const next = mergeUserConfigSettings(existing, patch);
-    db.prepare(`
-      INSERT INTO web_user_settings (user_id, settings_json, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET
-        settings_json = excluded.settings_json,
-        updated_at = excluded.updated_at
-    `).run(userId, JSON.stringify(next), Date.now());
-    return next;
-  } catch (error) {
-    throw new Error(`Failed to save user settings: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const user = getUserById(db, userId);
+  if (!user) throw new HttpError(404, "User not found");
+  const next = mergeUserConfigSettings(getUserConfigSettings(config, userId), patch);
+  db.prepare(`
+    INSERT INTO web_user_settings (user_id, settings_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET
+      settings_json = excluded.settings_json,
+      updated_at = excluded.updated_at
+  `).run(userId, JSON.stringify(next), Date.now());
+  return next;
 }
 
 function mergeUserConfigSettings(existing: UserConfigSettings, patch: UserConfigSettings): UserConfigSettings {

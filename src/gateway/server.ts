@@ -270,6 +270,14 @@ export class Gateway {
     logger.info({ userId, accountId: weixinConfig.accountId }, "User-scoped Weixin channel activated");
   }
 
+  private async deactivateUserWeixinChannel(userId: string): Promise<void> {
+    const existing = this.userWeixinChannels.get(userId);
+    if (!existing) return;
+    this.userWeixinChannels.delete(userId);
+    await existing.shutdown();
+    logger.info({ userId }, "User-scoped Weixin channel deactivated");
+  }
+
   private async restoreUserWeixinChannels(): Promise<void> {
     const logins = listUserWeixinLogins(this.config);
     for (const login of logins) {
@@ -313,6 +321,7 @@ export class Gateway {
       config: this.config,
       weixinChannel: this.weixinChannel,
       onUserWeixinLogin: (userId, login) => this.activateUserWeixinChannel(userId, login),
+      onUserWeixinUnbind: (userId) => this.deactivateUserWeixinChannel(userId),
       getUserWeixinStatus: (userId) => this.getUserWeixinStatus(userId),
     });
 
