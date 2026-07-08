@@ -9,7 +9,7 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import yaml from "yaml";
-import { getConfigWritePath } from "../config/index.js";
+import { getConfigWritePath, VexConfigSchema } from "../config/index.js";
 import { getProviderName, PROVIDER_IDS } from "../providers/metadata.js";
 import { getChildLogger } from "../utils/logger.js";
 import type { VexConfig, ProviderId, WeixinConfig, SimpleProviderConfig } from "../types/index.js";
@@ -70,7 +70,7 @@ export function getConfigInfo(config: VexConfig): ConfigInfo {
   // Server configuration
   const server = {
     port: config.server.port,
-    host: config.server.host || "0.0.0.0",
+    host: config.server.host || "127.0.0.1",
   };
 
   // Logging configuration
@@ -655,6 +655,25 @@ export function saveConfig(
     }
   }
 
+  // rawYaml bypasses the hand-rolled validateConfig above (which only knows the
+  // redacted form shape), so schema-check the fully assembled config before
+  // touching disk or the live object — a malformed patch must not brick a
+  // running instance or persist corruption. Validate only; keep writing the
+  // assembled object so intentional unknown keys survive.
+  const schemaCheck = VexConfigSchema.safeParse(configToSave);
+  if (!schemaCheck.success) {
+    return {
+      success: false,
+      message:
+        "Config validation failed: " +
+        schemaCheck.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; "),
+    };
+  }
+
+  // Capture the running port before Object.assign overwrites it below, so the
+  // restart heuristic compares against what's actually loaded, not the new value.
+  const previousPort = currentConfig.server.port;
+
   // Ensure directory exists
   if (!existsSync(vexDir)) {
     mkdirSync(vexDir, { recursive: true });
@@ -668,7 +687,7 @@ export function saveConfig(
 
   // Check if restart required
   let requiresRestart = false;
-  if (params.server?.port && params.server.port !== currentConfig.server.port) {
+  if (params.server?.port && params.server.port !== previousPort) {
     requiresRestart = true;
   }
   if (params.channels) {

@@ -17,6 +17,8 @@ This project follows semantic versioning for npm package releases.
 - Non-admin requests to `PATCH/DELETE /api/admin/users/:id` now return 403 as intended; the error-message string matching used to map them to 400.
 - A malformed percent-encoding in any cookie (e.g. a third-party tracking cookie) crashed cookie parsing with a `URIError` and turned every authenticated request into a 500. Values that fail to decode are now kept raw instead.
 - A corrupt `settings_json` row no longer throws on every load — which failed the user's runtime construction and locked them out of chat entirely. It now logs a warning and falls back to empty settings; the next save overwrites the bad row.
+- Changing the server port in the control panel now correctly reports "restart required"; the check compared the new port against the already-updated live config, so it was always false.
+- The control panel showed `0.0.0.0` as the default bind host when none was set, contradicting the actual `127.0.0.1` default; it now shows `127.0.0.1`.
 
 ### Security
 
@@ -24,6 +26,7 @@ This project follows semantic versioning for npm package releases.
 - Login no longer leaks which usernames exist through response timing: unknown-username attempts now run the same scrypt verification (against a dummy hash) as wrong-password attempts.
 - `POST /api/auth/login` is rate-limited per IP+username (10 failures per 5 minutes, in memory); over the limit it returns 429. A successful login resets the counter.
 - Password hashing switched from synchronous to asynchronous scrypt, so unauthenticated login/register requests can no longer stall the event loop.
+- The config `rawYaml` patch is now schema-validated (against `VexConfigSchema`) before it is written or applied to the live config. Previously it bypassed validation entirely, so a malformed admin patch could corrupt the persisted config and crash the running instance.
 
 ### Changed
 

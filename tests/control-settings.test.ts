@@ -118,6 +118,12 @@ describe("control-settings config-handlers", () => {
       expect(info.sessions).toBeUndefined();
     });
 
+    it("falls back to the real default bind (127.0.0.1) when host is unset", () => {
+      const config = baseConfig();
+      config.server = { port: 3000 } as VexConfig["server"];
+      expect(getConfigInfo(config).server.host).toBe("127.0.0.1");
+    });
+
     it("overlays user settings on global config for config info", () => {
       const config: VexConfig = {
         ...baseConfig(),
@@ -405,6 +411,37 @@ describe("control-settings config-handlers", () => {
       const result = saveConfig(baseConfig(), { rawYaml: "- 1\n- 2\n- 3\n" });
       expect(result.success).toBe(false);
       expect(result.message).toContain("must be an object");
+    });
+
+    it("requires restart when the server port changes", () => {
+      const current = baseConfig();
+      current.server = { port: 3000, host: "127.0.0.1" };
+
+      const result = saveConfig(current, { server: { port: 4000, host: "127.0.0.1" } });
+      expect(result.success).toBe(true);
+      expect(result.requiresRestart).toBe(true);
+    });
+
+    it("does not require restart when the server port is unchanged", () => {
+      const current = baseConfig();
+      current.server = { port: 3000, host: "127.0.0.1" };
+
+      const result = saveConfig(current, { server: { port: 3000, host: "0.0.0.0" } });
+      expect(result.success).toBe(true);
+      expect(result.requiresRestart).toBe(false);
+    });
+
+    it("rejects rawYaml that makes a known field the wrong type instead of bricking the live config", () => {
+      const current = baseConfig();
+      const result = saveConfig(current, {
+        // agent must be an object; a string would corrupt the live config and disk
+        rawYaml: "agent: not-an-object\n",
+      });
+      expect(result.success).toBe(false);
+      expect(result.message).toContain("validation failed");
+      // Live config untouched, nothing written
+      expect(current.agent.defaultProvider).toBe("deepseek");
+      expect(fs.existsSync(path.join(tmpHome, ".vex", "config.local.yaml"))).toBe(false);
     });
 
     it("requires restart when sessions.type changes", () => {
