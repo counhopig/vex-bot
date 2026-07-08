@@ -4,6 +4,9 @@
 
 import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { request as undiciRequest, Agent, type Dispatcher } from "undici";
+import { isIP } from "net";
+import { lookup as dnsLookup } from "dns";
 import { jsonResult, errorResult, readStringParam, readNumberParam } from "../common.js";
 import { getChildLogger } from "../../utils/logger.js";
 
@@ -210,6 +213,138 @@ export function createWebSearchTool(): AgentTool {
   };
 }
 
+// ============== SSRF protection for web_fetch ==============
+
+const MAX_REDIRECTS = 5;
+const MAX_FETCH_BYTES = 5 * 1024 * 1024; // hard ceiling on downloaded bytes
+const METADATA_HOSTS = new Set(["metadata.google.internal", "metadata.goog"]);
+
+/**
+ * Is this IP in a private/reserved/link-local range that must not be reachable
+ * via a model-supplied URL? Covers the cloud-metadata address (169.254.169.254)
+ * and the RFC1918 / loopback / CGNAT / IPv6 ULA+link-local ranges.
+ */
+export function isBlockedAddress(ip: string): boolean {
+  const family = isIP(ip);
+  if (family === 4) {
+    const p = ip.split(".").map(Number);
+    if (p.length !== 4 || p.some((n) => Number.isNaN(n))) return true;
+    if (p[0] === 0) return true; // "this" network
+    if (p[0] === 10) return true; // private
+    if (p[0] === 127) return true; // loopback
+    if (p[0] === 169 && p[1] === 254) return true; // link-local (incl. cloud metadata)
+    if (p[0] === 172 && p[1]! >= 16 && p[1]! <= 31) return true; // private
+    if (p[0] === 192 && p[1] === 168) return true; // private
+    if (p[0] === 100 && p[1]! >= 64 && p[1]! <= 127) return true; // CGNAT 100.64/10
+    if (p[0]! >= 224) return true; // multicast / reserved
+    return false;
+  }
+  if (family === 6) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "::") return true; // loopback / unspecified
+    if (lower.startsWith("fe80")) return true; // link-local
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA fc00::/7
+    const mapped = lower.match(/::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
+    if (mapped?.[1]) return isBlockedAddress(mapped[1]);
+    return false;
+  }
+  return false;
+}
+
+/** Reject non-http(s) schemes and (unless allowPrivate) private/metadata hosts. */
+export function assertWebFetchUrlAllowed(url: URL, allowPrivate: boolean): void {
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`Unsupported URL scheme for web_fetch: ${url.protocol}`);
+  }
+  if (allowPrivate) return;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase(); // strip IPv6 brackets
+  if (METADATA_HOSTS.has(host)) {
+    throw new Error(`Blocked request to metadata host: ${host}`);
+  }
+  if (isIP(host) && isBlockedAddress(host)) {
+    throw new Error(`Blocked request to private/reserved address: ${host}`);
+  }
+}
+
+/** DNS lookup that rejects hostnames resolving to a blocked address (also
+ * defeats DNS-rebinding, since the address actually connected to is validated). */
+function guardedLookup(hostname: string, options: Parameters<typeof dnsLookup>[1], cb: (err: NodeJS.ErrnoException | null, ...args: unknown[]) => void): void {
+  dnsLookup(hostname, options as never, (err, address, family) => {
+    if (err) return cb(err, address, family);
+    const list = Array.isArray(address) ? address : [{ address: address as string, family }];
+    for (const a of list) {
+      if (isBlockedAddress(a.address)) {
+        return cb(new Error(`Blocked private/reserved address for ${hostname}: ${a.address}`), address, family);
+      }
+    }
+    cb(null, address, family);
+  });
+}
+
+function allowPrivateNetwork(): boolean {
+  const v = process.env.VEX_WEB_FETCH_ALLOW_PRIVATE?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** Read a response stream into text, stopping once maxChars is reached. */
+async function readCapped(body: Dispatcher.ResponseData["body"], maxChars: number): Promise<{ text: string; truncated: boolean }> {
+  let text = "";
+  let bytes = 0;
+  try {
+    for await (const chunk of body) {
+      bytes += chunk.length;
+      text += chunk.toString("utf-8");
+      if (text.length >= maxChars || bytes >= MAX_FETCH_BYTES) {
+        body.destroy();
+        return { text: text.slice(0, maxChars), truncated: true };
+      }
+    }
+  } catch (error) {
+    // Aborting the stream after destroy() surfaces here; treat as clean stop.
+    if (text.length >= maxChars) return { text: text.slice(0, maxChars), truncated: true };
+    throw error;
+  }
+  return { text, truncated: false };
+}
+
+/** Fetch a URL following redirects manually, re-validating every hop against SSRF rules. */
+async function safeWebFetch(
+  rawUrl: string,
+  opts: { maxLength: number; timeoutMs: number },
+): Promise<{ finalUrl: string; statusCode: number; contentType: string; content: string; truncated: boolean }> {
+  const allowPrivate = allowPrivateNetwork();
+  const dispatcher = allowPrivate ? undefined : new Agent({ connect: { lookup: guardedLookup as never } });
+  let current = new URL(rawUrl);
+
+  for (let hop = 0; ; hop++) {
+    assertWebFetchUrlAllowed(current, allowPrivate);
+    // undici.request does not follow redirects by default; we follow manually
+    // (re-validating each hop) so redirect-to-internal SSRF can't bypass checks.
+    const res = await undiciRequest(current, {
+      method: "GET",
+      dispatcher,
+      signal: AbortSignal.timeout(opts.timeoutMs),
+      headers: {
+        "User-Agent": "Vexlla/5.0 (compatible; VexBot/1.0)",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+
+    const location = res.headers.location;
+    if (res.statusCode >= 300 && res.statusCode < 400 && location) {
+      res.body.destroy();
+      if (hop >= MAX_REDIRECTS) throw new Error("Too many redirects");
+      const loc = Array.isArray(location) ? location[0]! : location;
+      current = new URL(loc, current);
+      continue;
+    }
+
+    const contentType = String(res.headers["content-type"] ?? "");
+    const { text, truncated } = await readCapped(res.body, opts.maxLength);
+    return { finalUrl: current.toString(), statusCode: res.statusCode, contentType, content: text, truncated };
+  }
+}
+
 /** Web page fetch tool */
 export function createWebFetchTool(): AgentTool {
   return {
@@ -223,33 +358,21 @@ export function createWebFetchTool(): AgentTool {
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
       const url = readStringParam(params, "url", { required: true })!;
-      const maxLength = readNumberParam(params, "maxLength", { min: 100 }) ?? 10000;
+      const maxLength = Math.min(
+        MAX_FETCH_BYTES,
+        Math.max(100, readNumberParam(params, "maxLength", { min: 100 }) ?? 10000),
+      );
 
       try {
-        // Validate URL
-        new URL(url);
+        new URL(url); // fail fast on unparseable input
+        const res = await safeWebFetch(url, { maxLength, timeoutMs: DEFAULT_TIMEOUT_MS });
 
-        const response = await fetch(url, {
-          headers: {
-            "User-Agent": "Vexlla/5.0 (compatible; VexBot/1.0)",
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          },
-        });
-
-        if (!response.ok) {
-          return errorResult(`HTTP ${response.status}: ${response.statusText}`);
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          return errorResult(`HTTP ${res.statusCode}`);
         }
 
-        const contentType = response.headers.get("content-type") ?? "";
-        let content = await response.text();
-
-        // Truncate overly long content
-        if (content.length > maxLength) {
-          content = content.slice(0, maxLength) + "\n...[truncated]";
-        }
-
-        // Simple HTML cleanup (remove scripts and styles)
-        if (contentType.includes("text/html")) {
+        let content = res.content;
+        if (res.contentType.includes("text/html")) {
           content = content
             .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
             .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -257,11 +380,12 @@ export function createWebFetchTool(): AgentTool {
             .replace(/\s+/g, " ")
             .trim();
         }
+        if (res.truncated) content += "\n...[truncated]";
 
         return jsonResult({
           status: "success",
-          url,
-          contentType,
+          url: res.finalUrl,
+          contentType: res.contentType,
           length: content.length,
           content,
         });
