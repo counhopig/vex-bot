@@ -8,7 +8,8 @@ import NodeCache from "node-cache";
 import type { VexConfig, InboundMessageContext, WeixinConfig } from "../types/index.js";
 import { createWeixinChannel, type WeixinChannel } from "../channels/weixin/index.js";
 import { registerChannel, getChannel } from "../channels/common/index.js";
-import { createAgent, type Agent } from "../agents/agent.js";
+import { createAgent, startCronService, type Agent } from "../agents/agent.js";
+import { resetCronService } from "../cron/service.js";
 import { UserRuntimeManager } from "../agents/user-runtime.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
 import { initializeProviders } from "../providers/index.js";
@@ -387,6 +388,10 @@ export class Gateway {
 
     await this.restoreUserWeixinChannels();
 
+    // Cron is a process-wide, system-scoped scheduler: start it once, bound to
+    // the global agent — never inside per-user createAgent().
+    startCronService(this.agent);
+
     logger.info("Gateway initialized");
   }
 
@@ -428,6 +433,7 @@ export class Gateway {
     // Fault-isolate each step so one component's teardown failure can't skip
     // the rest — in particular httpServer.close() must always run.
     await runShutdownSteps([
+      { label: "cronService", run: () => resetCronService() },
       { label: "wsServer", run: () => this.wsServer?.close() },
       { label: "weixinChannel", run: () => this.weixinChannel?.shutdown() },
       ...userChannels.map((channel, i) => ({

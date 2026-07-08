@@ -3,6 +3,9 @@
  */
 
 import { describe, it, expect, afterEach } from "vitest";
+import { mkdtempSync, rmSync, realpathSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { createBashTool, buildChildEnv } from "../src/tools/builtin/bash.js";
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
@@ -10,6 +13,17 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
 }
 
 describe("tools/builtin/bash", () => {
+  it("defaults the working directory to the first allowed path (per-user sandbox)", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "vex-bash-cwd-")));
+    try {
+      const tool = createBashTool({ allowedPaths: [dir] });
+      const result = await tool.execute("call-cwd", { command: "pwd" }, undefined);
+      expect(textOf(result).trim()).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("executes a command when envPassthrough is explicitly undefined (default agent config)", async () => {
     // agent.ts passes envPassthrough: config.agent.bashEnvPassthrough, which is
     // undefined unless the user configured it — this must not break the tool.

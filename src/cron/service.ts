@@ -373,3 +373,11 @@ export function getCronService(deps?: CronServiceDeps): CronService {
   }
   return defaultService;
 }
+
+/** Stop and drop the default Cron service (graceful shutdown / test isolation). */
+export function resetCronService(): void {
+  if (defaultService) {
+    defaultService.stop();
+    defaultService = null;
+  }
+}

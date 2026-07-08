@@ -16,8 +16,8 @@ import { createBuiltinTools, type BuiltinToolsOptions } from "../tools/builtin/i
 import { getAllTools } from "../tools/registry.js";
 import { initSkills, type SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
-import { getCronService } from "../cron/service.js";
-import { createDefaultCronExecuteJob } from "../cron/executor.js";
+import { getCronService, type CronService } from "../cron/service.js";
+import { createDefaultCronExecuteJob, type AgentExecutor } from "../cron/executor.js";
 import { initExtensions } from "../extensions/index.js";
 
 const logger = getChildLogger("agent");
@@ -146,7 +146,6 @@ export class Agent {
     context: InboundMessageContext,
     options?: { signal?: AbortSignal }
   ): AsyncGenerator<string, AgentResponse, unknown> {
-    const allToolCalls: ToolCallResult[] = [];
     let fullContent = "";
 
     for await (const event of this.runtime.chatStream(context, options)) {
@@ -160,10 +159,8 @@ export class Agent {
       }
     }
 
-    // Return final response
     return {
       content: fullContent,
-      toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined,
       provider: this.options.provider ?? ("deepseek" as ProviderId),
       model: this.options.model,
     };
@@ -217,38 +214,6 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
   // Create runtime
   const runtime = createAgentRuntime(config);
 
-  // Set cron executor
-  const agentExecutor = async (params: {
-    message: string;
-    sessionKey?: string;
-    model?: string;
-    timeoutSeconds?: number;
-  }) => {
-    try {
-      const response = await runtime.chat({
-        channelId: "webchat",
-        chatId: params.sessionKey ?? `cron-${Date.now()}`,
-        chatType: "direct",
-        senderId: "cron-system",
-        content: params.message,
-        messageId: `cron-${Date.now()}`,
-        timestamp: Date.now(),
-      });
-      return { success: true, output: response.content };
-    } catch (err) {
-      return { success: false, output: "", error: err instanceof Error ? err.message : String(err) };
-    }
-  };
-
-  const cronExecuteJob = createDefaultCronExecuteJob({ agentExecutor });
-  const cronService = getCronService({
-    enabled: true,
-    executeJob: cronExecuteJob,
-    onEvent: (event) => { logger.debug({ event }, "Cron event"); },
-  });
-  cronService.start();
-  logger.info("Cron service initialized");
-
   // Create Agent
   const agent = new Agent(runtime, {
     model: config.agent.defaultModel,
@@ -279,4 +244,41 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
   await initExtensions(config, agent, { memoryManager, ownerId: options?.ownerId });
 
   return agent;
+}
+
+/** Build a cron executor bound to a specific agent (runs jobs as the system). */
+export function createAgentCronExecutor(agent: Pick<Agent, "processMessage">): AgentExecutor {
+  return async (params) => {
+    try {
+      const response = await agent.processMessage({
+        channelId: "webchat",
+        chatId: params.sessionKey ?? `cron-${Date.now()}`,
+        chatType: "direct",
+        senderId: "cron-system",
+        content: params.message,
+        messageId: `cron-${Date.now()}`,
+        timestamp: Date.now(),
+      });
+      return { success: true, output: response.content };
+    } catch (err) {
+      return { success: false, output: "", error: err instanceof Error ? err.message : String(err) };
+    }
+  };
+}
+
+/**
+ * Initialize and start the process-wide cron service, bound to the global agent.
+ * Cron is a system-wide scheduler (a single global job store, no per-user owner),
+ * so it must be started exactly once — not inside per-user createAgent(), where
+ * the singleton would ignore each user's executor and bind to whoever ran first.
+ */
+export function startCronService(agent: Pick<Agent, "processMessage">): CronService {
+  const cronService = getCronService({
+    enabled: true,
+    executeJob: createDefaultCronExecuteJob({ agentExecutor: createAgentCronExecutor(agent) }),
+    onEvent: (event) => { logger.debug({ event }, "Cron event"); },
+  });
+  cronService.start();
+  logger.info("Cron service initialized");
+  return cronService;
 }

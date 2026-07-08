@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { join } from "path";
 import type { Agent } from "../src/agents/agent.js";
 import type { VexConfig } from "../src/types/index.js";
 
@@ -28,7 +29,7 @@ function config(webAuthEnabled: boolean): VexConfig {
   return {
     providers: {},
     channels: {},
-    agent: { defaultModel: "deepseek-chat", defaultProvider: "deepseek" },
+    agent: { defaultModel: "deepseek-chat", defaultProvider: "deepseek", workingDirectory: "/tmp/vex-workspace" },
     server: { port: 3000 },
     logging: { level: "info" },
     sessions: { type: "file", directory: "/tmp/vex-sessions" },
@@ -269,6 +270,22 @@ describe("UserRuntimeManager", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("scopes the per-user working directory into a user sandbox", async () => {
+    const userAgent = agent("user-a-agent");
+    createAgentMock.mockResolvedValueOnce(userAgent);
+    createMemoryManagerMock.mockReturnValue({ close: vi.fn() });
+    const manager = new UserRuntimeManager({
+      config: config(true),
+      globalAgent: agent("legacy"),
+    });
+
+    await manager.getAgent("user-a");
+
+    const passedConfig = createAgentMock.mock.calls[0]![0] as VexConfig;
+    expect(passedConfig.agent.workingDirectory).toBeDefined();
+    expect(passedConfig.agent.workingDirectory).toContain(join("users", "user-a"));
   });
 
   it("drops a cached user runtime when reset", async () => {

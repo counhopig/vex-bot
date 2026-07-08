@@ -1,4 +1,6 @@
 import { join } from "path";
+import { mkdirSync } from "fs";
+import { homedir } from "os";
 import type { Agent } from "./agent.js";
 import { createAgent } from "./agent.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
@@ -6,6 +8,7 @@ import { disposeExtensions } from "../extensions/index.js";
 import type { VexConfig } from "../types/index.js";
 import { getUserConfigSettings, isWebAuthEnabled } from "../web/auth.js";
 import { buildUserEffectiveConfig } from "../web/config-handlers.js";
+import { expandHomePath } from "../utils/path.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("user-runtime");
@@ -198,11 +201,17 @@ export class UserRuntimeManager {
 
   private buildUserConfig(userId: string): VexConfig {
     const userConfig = buildUserEffectiveConfig(this.config, getUserConfigSettings(this.config, userId));
-    // Any user-supplied sessions/memory `directory` is intentionally overwritten
-    // with a per-user scoped path below: a user must not be able to redirect
-    // their storage outside their sandbox (or onto another user's directory).
+    // Any user-supplied sessions/memory `directory` and the working directory
+    // are intentionally overwritten with per-user scoped paths below: a user
+    // must not redirect storage outside their sandbox (or onto another user's
+    // directory), and per-user agents must not share one bash/filesystem
+    // workspace under process.cwd().
     return {
       ...userConfig,
+      agent: {
+        ...userConfig.agent,
+        workingDirectory: this.scopedWorkspace(userId),
+      },
       sessions: userConfig.sessions
         ? {
             ...userConfig.sessions,
@@ -219,6 +228,17 @@ export class UserRuntimeManager {
           }
         : userConfig.memory,
     };
+  }
+
+  /** Per-user bash/filesystem working directory. Must be a real, existing
+   * absolute path since the bash tool spawns with it as cwd. */
+  private scopedWorkspace(userId: string): string {
+    const base = this.config.agent.workingDirectory
+      ? expandHomePath(this.config.agent.workingDirectory)
+      : join(homedir(), ".vex", "workspace");
+    const dir = join(base, "users", sanitizeUserId(userId));
+    mkdirSync(dir, { recursive: true });
+    return dir;
   }
 
   private createUserMemoryManager(config: VexConfig, userId: string): MemoryManager | undefined {

@@ -23,7 +23,15 @@ const DEFAULT_OPTIONS: Required<FilesystemToolsOptions> = {
   maxLines: 2000,
 };
 
+/** Resolve a (possibly relative) model-supplied path against the sandbox base
+ * (first allowed path) rather than process.cwd(), so relative paths land inside
+ * a scoped per-user working directory. Absolute paths are unaffected. */
+function resolveUserPath(allowedPaths: string[], filePath: string): string {
+  return resolve(allowedPaths[0] ?? process.cwd(), filePath);
+}
+
 function isPathAllowed(filePath: string, allowedPaths: string[]): boolean {
+  // Callers pass an already-resolved absolute path here.
   const resolved = resolve(filePath);
   return allowedPaths.some((allowed) => {
     const resolvedAllowed = resolve(allowed);
@@ -81,7 +89,7 @@ export function createReadFileTool(options?: FilesystemToolsOptions): AgentTool 
       const filePath = readStringParam(params, "path", { required: true })!;
       const offset = readNumberParam(params, "offset", { min: 1 }) ?? 1;
       const limit = readNumberParam(params, "limit", { min: 1 }) ?? opts.maxLines;
-      const resolved = resolve(filePath);
+      const resolved = resolveUserPath(opts.allowedPaths, filePath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `File not found: ${filePath}` }, true);
       try {
@@ -113,7 +121,7 @@ export function createWriteFileTool(options?: FilesystemToolsOptions): AgentTool
       const params = args as Record<string, unknown>;
       const filePath = readStringParam(params, "path", { required: true })!;
       const content = readStringParam(params, "content", { required: true })!;
-      const resolved = resolve(filePath);
+      const resolved = resolveUserPath(opts.allowedPaths, filePath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       try {
         await writeFile(resolved, content, "utf-8");
@@ -142,7 +150,7 @@ export function createEditFileTool(options?: FilesystemToolsOptions): AgentTool 
       const oldString = readStringParam(params, "old_string", { required: true })!;
       const newString = readStringParam(params, "new_string", { required: true })!;
       const replaceAll = readBooleanParam(params, "replace_all") ?? false;
-      const resolved = resolve(filePath);
+      const resolved = resolveUserPath(opts.allowedPaths, filePath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${filePath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `File not found: ${filePath}` }, true);
       try {
@@ -174,7 +182,7 @@ export function createListDirectoryTool(options?: FilesystemToolsOptions): Agent
       const dirPath = readStringParam(params, "path", { required: true })!;
       const recursive = readBooleanParam(params, "recursive") ?? false;
       const maxDepth = readNumberParam(params, "max_depth", { min: 1, max: 10 }) ?? 3;
-      const resolved = resolve(dirPath);
+      const resolved = resolveUserPath(opts.allowedPaths, dirPath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${dirPath}` }, true);
       if (!existsSync(resolved)) return jsonResult({ status: "error", error: `Directory not found: ${dirPath}` }, true);
       try {
@@ -219,7 +227,7 @@ export function createGlobTool(options?: FilesystemToolsOptions): AgentTool {
       const pattern = readStringParam(params, "pattern", { required: true })!;
       const basePath = readStringParam(params, "path") ?? process.cwd();
       const maxResults = readNumberParam(params, "max_results", { min: 1, max: 1000 }) ?? 100;
-      const resolved = resolve(basePath);
+      const resolved = resolveUserPath(opts.allowedPaths, basePath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${basePath}` }, true);
       try {
         const matches = await glob(pattern, { cwd: resolved, nodir: false, ignore: ["**/node_modules/**", "**/.git/**"], maxDepth: 20 });
@@ -252,7 +260,7 @@ export function createGrepTool(options?: FilesystemToolsOptions): AgentTool {
       const context = readNumberParam(params, "context", { min: 0, max: 10 }) ?? 0;
       const maxResults = readNumberParam(params, "max_results", { min: 1, max: 500 }) ?? 50;
       const caseInsensitive = readBooleanParam(params, "case_insensitive") ?? false;
-      const resolved = resolve(searchPath);
+      const resolved = resolveUserPath(opts.allowedPaths, searchPath);
       if (!(await isRealPathAllowed(resolved, opts.allowedPaths))) return jsonResult({ status: "error", error: `Access denied: ${searchPath}` }, true);
       try {
         const regex = new RegExp(pattern, caseInsensitive ? "gi" : "g");

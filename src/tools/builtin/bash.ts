@@ -122,7 +122,9 @@ export function createBashTool(options?: BashToolOptions): AgentTool {
       if (!opts.enabled) return jsonResult({ status: "error", error: "Bash tool is disabled" }, true);
       const params = args as Record<string, unknown>;
       const command = readStringParam(params, "command", { required: true })!;
-      const cwd = readStringParam(params, "cwd") ?? process.cwd();
+      // Default into the sandbox (first allowed path) rather than process.cwd(),
+      // so a per-user scoped workingDirectory isn't immediately access-denied.
+      const cwd = readStringParam(params, "cwd") ?? opts.allowedPaths[0] ?? process.cwd();
       const timeout = Math.min(readNumberParam(params, "timeout") ?? opts.defaultTimeout, opts.maxTimeout);
       const runInBackground = readBooleanParam(params, "run_in_background");
       const description = readStringParam(params, "description");
