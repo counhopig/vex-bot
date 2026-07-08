@@ -19,6 +19,8 @@ export interface WsResponseFrame {
   error?: {
     code: string;
     message: string;
+    /** HTTP-equivalent status when the failure is a typed HttpError (401/403/404/...). */
+    status?: number;
     details?: unknown;
   };
 }

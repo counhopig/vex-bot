@@ -54,10 +54,21 @@ import {
   deleteUserWeixinLogin,
   saveUserConfigSettings,
   saveUserWeixinLogin,
+  HttpError,
   type PublicWebUser,
 } from "./auth.js";
 const logger = getChildLogger("websocket");
 const WEBCHAT_SESSION_PREFIX = "webchat:";
+
+/**
+ * The backend log stream carries every user's activity (chat previews, session
+ * keys, errors). It's an operator/admin view: any authenticated user must not
+ * be able to read it. Single-user mode (web auth disabled) has one operator, so
+ * there's nothing to gate.
+ */
+export function canAccessBackendLogs(webAuthEnabled: boolean, role?: string): boolean {
+  return !webAuthEnabled || role === "admin";
+}
 
 /** Keep the browser UI scoped to sessions created by WebChat itself. */
 export function filterWebChatSessions(
@@ -72,8 +83,9 @@ export function filterWebChatSessions(
 
 const EmptyParamsSchema = z.object({}).passthrough().default({});
 const ChatSendParamsSchema = z.object({
-  message: z.string().min(1),
-  sessionKey: z.string().optional(),
+  // The target session is the client's own restored/active session, never a
+  // client-supplied key — bound it so a single message can't be unbounded.
+  message: z.string().min(1).max(100_000),
 });
 const SessionsListParamsSchema = z.object({
   limit: z.number().int().positive().optional(),
@@ -394,11 +406,7 @@ export class WsServer {
       logger.error({ error, data }, "Failed to handle message");
       const id = getRequestId(data);
       if (id) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.sendResponse(client.ws, id, false, undefined, {
-          code: "BAD_REQUEST",
-          message,
-        });
+        this.sendResponse(client.ws, id, false, undefined, this.toErrorFrame(error, "BAD_REQUEST"));
       }
     }
   }
@@ -487,16 +495,26 @@ export class WsServer {
 
       this.sendResponse(client.ws, id, true, result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.sendResponse(client.ws, id, false, undefined, {
-        code: "ERROR",
-        message,
-      });
+      this.sendResponse(client.ws, id, false, undefined, this.toErrorFrame(error, "ERROR"));
+    }
+  }
+
+  /** Build a WS error frame, preserving the HTTP-equivalent status of typed errors. */
+  private toErrorFrame(error: unknown, code: string): { code: string; message: string; status?: number } {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof HttpError) return { code, message, status: error.status };
+    return { code, message };
+  }
+
+  private requireBackendLogAccess(client: WsClient): void {
+    if (!canAccessBackendLogs(isWebAuthEnabled(this.config), client.user?.role)) {
+      throw new HttpError(403, "Admin privileges required");
     }
   }
 
   /** Subscribe a client to live backend logs and return the recent backlog. */
   private handleLogsSubscribe(client: WsClient): { entries: ReturnType<LogStreamer["getBacklog"]> } {
+    this.requireBackendLogAccess(client);
     if (!client.logUnsubscribe) {
       client.logUnsubscribe = this.logStreamer.subscribe((entry) => {
         this.sendEvent(client.ws, "log.entry", entry);
@@ -506,6 +524,7 @@ export class WsServer {
   }
 
   private handleLogsUnsubscribe(client: WsClient): { ok: true } {
+    this.requireBackendLogAccess(client);
     client.logUnsubscribe?.();
     client.logUnsubscribe = null;
     return { ok: true };
@@ -1043,7 +1062,7 @@ export class WsServer {
     id: string,
     ok: boolean,
     payload?: unknown,
-    error?: { code: string; message: string }
+    error?: { code: string; message: string; status?: number }
   ): void {
     const frame: WsResponseFrame = { type: "res", id, ok, payload, error };
     ws.send(JSON.stringify(frame));

@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { filterWebChatSessions } from "../src/web/websocket.js";
+import { filterWebChatSessions, canAccessBackendLogs } from "../src/web/websocket.js";
 import type { SessionListItem } from "../src/sessions/types.js";
+
+describe("backend log access", () => {
+  it("allows the sole operator when web auth is disabled (single-user mode)", () => {
+    expect(canAccessBackendLogs(false, undefined)).toBe(true);
+    expect(canAccessBackendLogs(false, "user")).toBe(true);
+  });
+
+  it("restricts backend logs to admins when web auth is enabled", () => {
+    expect(canAccessBackendLogs(true, "admin")).toBe(true);
+    expect(canAccessBackendLogs(true, "user")).toBe(false);
+    expect(canAccessBackendLogs(true, undefined)).toBe(false);
+  });
+});
 
 describe("websocket sessions", () => {
   it("only exposes WebChat sessions to the webpage", () => {

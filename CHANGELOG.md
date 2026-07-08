@@ -20,6 +20,7 @@ This project follows semantic versioning for npm package releases.
 
 ### Security
 
+- The `logs.subscribe` / `logs.unsubscribe` WebSocket methods now require an admin (when web auth is enabled). The backend log stream carries every user's chat previews, session keys, and errors; previously any authenticated user could subscribe and read all of it. Single-user mode (web auth disabled) is unaffected.
 - Login no longer leaks which usernames exist through response timing: unknown-username attempts now run the same scrypt verification (against a dummy hash) as wrong-password attempts.
 - `POST /api/auth/login` is rate-limited per IP+username (10 failures per 5 minutes, in memory); over the limit it returns 429. A successful login resets the counter.
 - Password hashing switched from synchronous to asynchronous scrypt, so unauthenticated login/register requests can no longer stall the event loop.
@@ -30,6 +31,7 @@ This project follows semantic versioning for npm package releases.
 - `createWebUser` validation and credential parsing are typed the same way: a duplicate username on `POST /api/auth/register` / `POST /api/admin/users` now returns 409 (was 400), unexpected server errors on those routes return 500 (were 400), and the SQLite UNIQUE violation is detected via the structured error code instead of message text. Passwords are now capped at 128 characters (minimum stays 8).
 - `loginWebUser` failures are typed as `HttpError(401)`; the login route no longer reports genuine server errors as 401 (they return 500). `createWebUser` and `loginWebUser` are now async (they await the scrypt hash).
 - `saveUserConfigSettings` and `saveUserWeixinLogin` throw `HttpError(404, "User not found")` directly instead of wrapping every failure into `Failed to save user settings: ...` / losing the error type; unexpected errors propagate unwrapped.
+- WebSocket error responses now carry a numeric `status` when the failure is a typed `HttpError`, so the client can distinguish 401/403/404. The `chat.send` message is capped at 100k characters, and its unused `sessionKey` parameter (the target session is always the client's own) was removed.
 
 ### Added
 
