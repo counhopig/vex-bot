@@ -8,6 +8,8 @@
 import { Type } from "@sinclair/typebox";
 import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { jsonResult, errorResult, readStringParam, readNumberParam, readBooleanParam } from "../common.js";
+import { assertWebFetchUrlAllowed, allowPrivateNetwork } from "./web.js";
+import { GLOBAL_OWNER_KEY } from "./process-registry.js";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 
 // Browser session state
@@ -19,7 +21,10 @@ interface BrowserSession {
   refsMode: "aria" | "role";
 }
 
-let browserSession: BrowserSession | null = null;
+// One browser session per owner (per-user sandbox). A shared module singleton
+// would let any user drive — and read cookies/logged-in state from — another
+// user's browser. Keyed by ownerKey so sessions stay isolated.
+const browserSessions = new Map<string, BrowserSession>();
 type PlaywrightModule = typeof import("playwright-core");
 let playwrightModule: PlaywrightModule | null = null;
 
@@ -35,16 +40,64 @@ async function getPlaywright(): Promise<PlaywrightModule> {
   return playwrightModule;
 }
 
-/** Get or create browser session */
-async function getBrowserSession(): Promise<BrowserSession> {
-  if (browserSession) {
-    return browserSession;
-  }
-  throw new Error("Browser not started. Use 'start' action first.");
+/** Get the owner's browser session, or throw if it hasn't been started. */
+function getBrowserSession(ownerKey: string): BrowserSession {
+  const session = browserSessions.get(ownerKey);
+  if (!session) throw new Error("Browser not started. Use 'start' action first.");
+  return session;
 }
 
-/** Resolve element locator by ref */
-function getRefLocator(page: Page, ref: string, session: BrowserSession) {
+/** Close and forget an owner's browser session (idempotent). */
+export async function disposeBrowserOwner(ownerKey: string): Promise<void> {
+  const session = browserSessions.get(ownerKey);
+  if (!session) return;
+  browserSessions.delete(ownerKey);
+  try { await session.browser.close(); } catch {
+    // Browser may already be torn down; ignore.
+  }
+}
+
+/** Close every browser session (used on shutdown to avoid leaking chromium). */
+export async function disposeAllBrowsers(): Promise<void> {
+  await Promise.all(Array.from(browserSessions.keys()).map((k) => disposeBrowserOwner(k)));
+}
+
+/** Chromium launch args. The sandbox is disabled only on explicit opt-in
+ *  (VEX_BROWSER_NO_SANDBOX=1) — needed inside some containers, but a real
+ *  security downgrade, so it must never be the default. */
+export function browserLaunchArgs(noSandbox: boolean): string[] {
+  return noSandbox ? ["--no-sandbox", "--disable-setuid-sandbox"] : [];
+}
+
+function browserNoSandbox(): boolean {
+  const v = process.env.VEX_BROWSER_NO_SANDBOX?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+/** Validate a navigation target with the same SSRF policy as web_fetch:
+ *  http(s) only, and (unless private access is allowed) no metadata/private
+ *  hosts. Returns the parsed URL. */
+export function assertNavigableUrl(rawUrl: string, allowPrivate: boolean): URL {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid URL: ${rawUrl}`);
+  }
+  assertWebFetchUrlAllowed(url, allowPrivate);
+  return url;
+}
+
+type RefLocatorSpec =
+  | { kind: "role"; role: string; name?: string; nth?: number }
+  | { kind: "css"; selector: string };
+
+/** Resolve a snapshot ref (e.g. "e1", "@e1", "ref=e1") to the locator spec it
+ *  denotes, or a raw CSS selector otherwise. Throws for an unknown e-ref. */
+export function resolveRefLocatorSpec(
+  ref: string,
+  refs: Map<string, { role: string; name?: string; nth?: number }>,
+): RefLocatorSpec {
   const normalized = ref.startsWith("@")
     ? ref.slice(1)
     : ref.startsWith("ref=")
@@ -52,19 +105,29 @@ function getRefLocator(page: Page, ref: string, session: BrowserSession) {
       : ref;
 
   if (/^e\d+$/i.test(normalized)) {
-    const info = session.refs.get(normalized.toLowerCase());
+    const info = refs.get(normalized.toLowerCase());
     if (!info) {
       throw new Error(`Unknown ref "${normalized}". Run a new snapshot first.`);
     }
-    const locator = info.name
-      ? page.getByRole(info.role as Parameters<typeof page.getByRole>[0], { name: info.name, exact: true })
-      : page.getByRole(info.role as Parameters<typeof page.getByRole>[0]);
+    return { kind: "role", role: info.role, name: info.name, nth: info.nth };
   }
-  return page.locator(ref);
+  return { kind: "css", selector: ref };
+}
+
+/** Resolve element locator by ref (or CSS selector fallback). */
+function getRefLocator(page: Page, ref: string, session: BrowserSession) {
+  const spec = resolveRefLocatorSpec(ref, session.refs);
+  if (spec.kind === "css") return page.locator(spec.selector);
+  const role = spec.role as Parameters<typeof page.getByRole>[0];
+  let locator = spec.name
+    ? page.getByRole(role, { name: spec.name, exact: true })
+    : page.getByRole(role);
+  if (spec.nth !== undefined) locator = locator.nth(spec.nth);
+  return locator;
 }
 
 /** Parse aria snapshot to generate element references */
-function parseAriaSnapshot(snapshot: string): Map<string, { role: string; name?: string; nth?: number }> {
+export function parseAriaSnapshot(snapshot: string): Map<string, { role: string; name?: string; nth?: number }> {
   const refs = new Map<string, { role: string; name?: string; nth?: number }>();
   let refCounter = 1;
   const lines = snapshot.split("\n");
@@ -116,7 +179,7 @@ function generateRefSnapshot(refs: Map<string, { role: string; name?: string; nt
 }
 
 /** Browser control tool */
-export function createBrowserTool(): AgentTool {
+export function createBrowserTool(ownerKey: string = GLOBAL_OWNER_KEY): AgentTool {
   return {
     name: "browser",
     label: "Browser Control",
@@ -146,7 +209,7 @@ Element Reference: After 'snapshot', use refs like 'e1', 'e2' for interactions.`
       fullPage: Type.Optional(Type.Boolean({ description: "Take full page screenshot" })),
       direction: Type.Optional(Type.String({ description: "Scroll direction: up, down, left, right" })),
       amount: Type.Optional(Type.Number({ description: "Scroll amount in pixels" })),
-      waitFor: Type.Optional(Type.String({ description: "Wait condition: selector, text, textGone, timeout, load, network, url" })),
+      waitFor: Type.Optional(Type.String({ description: "Wait condition: selector, text, load, network, timeout" })),
       value: Type.Optional(Type.String({ description: "Value for wait condition" })),
       code: Type.Optional(Type.String({ description: "JavaScript code for evaluate action" })),
       headless: Type.Optional(Type.Boolean({ description: "Run browser headless (default: true)" })),
@@ -158,22 +221,24 @@ Element Reference: After 'snapshot', use refs like 'e1', 'e2' for interactions.`
       const timeout = readNumberParam(params, "timeout", { min: 1000, max: 120000 }) ?? 30000;
 
       try {
+        if (action === "start") return await startBrowser(ownerKey, params);
+        if (action === "stop") return await stopBrowser(ownerKey);
+
+        const session = getBrowserSession(ownerKey);
         switch (action) {
-          case "start": return await startBrowser(params);
-          case "stop": return await stopBrowser();
-          case "navigate": return await navigateTo(params, timeout);
-          case "screenshot": return await takeScreenshot(params, timeout);
-          case "snapshot": return await getSnapshot(params, timeout);
-          case "click": return await clickElement(params, timeout);
-          case "type": return await typeText(params, timeout);
-          case "hover": return await hoverElement(params, timeout);
-          case "drag": return await dragElement(params, timeout);
-          case "press": return await pressKey(params);
-          case "select": return await selectOption(params, timeout);
-          case "scroll": return await scrollPage(params, timeout);
-          case "evaluate": return await evaluateScript(params, timeout);
-          case "wait": return await waitFor(params, timeout);
-          case "fill": return await fillForm(params, timeout);
+          case "navigate": return await navigateTo(session, params, timeout);
+          case "screenshot": return await takeScreenshot(session, params, timeout);
+          case "snapshot": return await getSnapshot(session, params, timeout);
+          case "click": return await clickElement(session, params, timeout);
+          case "type": return await typeText(session, params, timeout);
+          case "hover": return await hoverElement(session, params, timeout);
+          case "drag": return await dragElement(session, params, timeout);
+          case "press": return await pressKey(session, params);
+          case "select": return await selectOption(session, params, timeout);
+          case "scroll": return await scrollPage(session, params, timeout);
+          case "evaluate": return await evaluateScript(session, params, timeout);
+          case "wait": return await waitFor(session, params, timeout);
+          case "fill": return await fillForm(session, params, timeout);
           default: return errorResult(`Unknown action: ${action}`);
         }
       } catch (error) {
@@ -183,42 +248,40 @@ Element Reference: After 'snapshot', use refs like 'e1', 'e2' for interactions.`
   };
 }
 
-async function startBrowser(params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
-  if (browserSession) return jsonResult({ status: "already_running", message: "Browser is already running" });
+async function startBrowser(ownerKey: string, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
+  if (browserSessions.has(ownerKey)) return jsonResult({ status: "already_running", message: "Browser is already running" });
   const headless = readBooleanParam(params, "headless") ?? true;
   const playwright = await getPlaywright();
 
-  const browser = await playwright.chromium.launch({ headless, args: ["--no-sandbox", "--disable-setuid-sandbox"] });
+  const browser = await playwright.chromium.launch({ headless, args: browserLaunchArgs(browserNoSandbox()) });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
     userAgent: "Vexlla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
   const page = await context.newPage();
-  browserSession = { browser, context, page, refs: new Map(), refsMode: "role" };
+  browserSessions.set(ownerKey, { browser, context, page, refs: new Map(), refsMode: "role" });
   return jsonResult({ status: "started", headless, viewport: { width: 1280, height: 720 } });
 }
 
-async function stopBrowser(): Promise<AgentToolResult<unknown>> {
-  if (!browserSession) return jsonResult({ status: "not_running" });
-  try { await browserSession.browser.close(); } catch {
-    // Browser may already be torn down; ignore.
-  }
-  browserSession = null;
+async function stopBrowser(ownerKey: string): Promise<AgentToolResult<unknown>> {
+  if (!browserSessions.has(ownerKey)) return jsonResult({ status: "not_running" });
+  await disposeBrowserOwner(ownerKey);
   return jsonResult({ status: "stopped" });
 }
 
-async function navigateTo(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
-  const url = readStringParam(params, "url", { required: true })!;
-  try { new URL(url); } catch { return errorResult(`Invalid URL: ${url}`); }
+async function navigateTo(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
+  const rawUrl = readStringParam(params, "url", { required: true })!;
+  // Same SSRF policy as web_fetch: no metadata/internal hosts unless explicitly
+  // allowed. Note this guards the top-level navigation only; sub-resources the
+  // page itself fetches are not intercepted here.
+  const url = assertNavigableUrl(rawUrl, allowPrivateNetwork());
   const page = session.page;
-  await page.goto(url, { timeout, waitUntil: "domcontentloaded" });
+  await page.goto(url.href, { timeout, waitUntil: "domcontentloaded" });
   session.refs.clear();
   return jsonResult({ status: "navigated", url: page.url(), title: await page.title() });
 }
 
-async function takeScreenshot(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function takeScreenshot(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const fullPage = readBooleanParam(params, "fullPage") ?? false;
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
@@ -235,8 +298,7 @@ async function takeScreenshot(params: Record<string, unknown>, timeout: number):
   return jsonResult({ status: "screenshot_taken", fullPage, size: buffer.length, dataUrl: `data:image/png;base64,${buffer.toString("base64")}` });
 }
 
-async function getSnapshot(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function getSnapshot(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const page = session.page;
   const title = await page.title();
   const url = page.url();
@@ -267,8 +329,7 @@ async function getSnapshot(params: Record<string, unknown>, timeout: number): Pr
   return jsonResult({ status: "snapshot", url, title, elements: interactiveElements, elementsCount: interactiveElements.length });
 }
 
-async function clickElement(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function clickElement(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
@@ -281,8 +342,7 @@ async function clickElement(params: Record<string, unknown>, timeout: number): P
   return jsonResult({ status: "clicked", element: ref || selector });
 }
 
-async function typeText(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function typeText(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   const text = readStringParam(params, "text", { required: true })!;
@@ -297,8 +357,7 @@ async function typeText(params: Record<string, unknown>, timeout: number): Promi
   return jsonResult({ status: "typed", element: ref || selector, text: text.slice(0, 50), submitted: submit });
 }
 
-async function hoverElement(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function hoverElement(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   if (!ref && !selector) return errorResult("Either 'ref' or 'selector' is required");
@@ -308,8 +367,7 @@ async function hoverElement(params: Record<string, unknown>, timeout: number): P
   return jsonResult({ status: "hovered", element: ref || selector });
 }
 
-async function dragElement(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function dragElement(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const startRef = readStringParam(params, "startRef", { required: true })!;
   const endRef = readStringParam(params, "endRef", { required: true })!;
   const page = session.page;
@@ -317,15 +375,13 @@ async function dragElement(params: Record<string, unknown>, timeout: number): Pr
   return jsonResult({ status: "dragged", from: startRef, to: endRef });
 }
 
-async function pressKey(params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function pressKey(session: BrowserSession, params: Record<string, unknown>): Promise<AgentToolResult<unknown>> {
   const key = readStringParam(params, "key", { required: true })!;
   await (session.page as any).keyboard.press(key);
   return jsonResult({ status: "pressed", key });
 }
 
-async function selectOption(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function selectOption(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const ref = readStringParam(params, "ref");
   const selector = readStringParam(params, "selector");
   const values = params.values as string[] | undefined;
@@ -337,8 +393,7 @@ async function selectOption(params: Record<string, unknown>, timeout: number): P
   return jsonResult({ status: "selected", element: ref || selector, values });
 }
 
-async function scrollPage(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function scrollPage(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const ref = readStringParam(params, "ref");
   const direction = readStringParam(params, "direction") ?? "down";
   const amount = readNumberParam(params, "amount", { min: 100, max: 10000 }) ?? 500;
@@ -350,8 +405,7 @@ async function scrollPage(params: Record<string, unknown>, timeout: number): Pro
   return jsonResult({ status: "scrolled", direction, amount });
 }
 
-async function evaluateScript(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function evaluateScript(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const code = readStringParam(params, "code", { required: true })!;
   const ref = readStringParam(params, "ref");
   const page = session.page;
@@ -359,8 +413,7 @@ async function evaluateScript(params: Record<string, unknown>, timeout: number):
   return jsonResult({ status: "evaluated", result: JSON.stringify(result, null, 2).slice(0, 2000) });
 }
 
-async function waitFor(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function waitFor(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const waitForCondition = readStringParam(params, "waitFor") ?? "timeout";
   const value = readStringParam(params, "value");
   const page = session.page;
@@ -373,8 +426,7 @@ async function waitFor(params: Record<string, unknown>, timeout: number): Promis
   }
 }
 
-async function fillForm(params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
-  const session = await getBrowserSession();
+async function fillForm(session: BrowserSession, params: Record<string, unknown>, timeout: number): Promise<AgentToolResult<unknown>> {
   const fields = params.fields as Array<{ ref: string; type: string; value: string | boolean | number }> | undefined;
   if (!fields?.length) return errorResult("'fields' array is required");
   const page = session.page;

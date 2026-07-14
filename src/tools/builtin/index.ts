@@ -92,7 +92,7 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
 
   // Browser tool is optional, as it requires playwright-core to be installed
   if (options?.enableBrowser) {
-    tools.push(createBrowserTool());
+    tools.push(createBrowserTool(options?.owner));
   }
 
   // Memory tools (require MemoryManager instance)

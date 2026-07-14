@@ -281,7 +281,7 @@ function guardedLookup(hostname: string, options: Parameters<typeof dnsLookup>[1
   });
 }
 
-function allowPrivateNetwork(): boolean {
+export function allowPrivateNetwork(): boolean {
   const v = process.env.VEX_WEB_FETCH_ALLOW_PRIVATE?.trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
 }

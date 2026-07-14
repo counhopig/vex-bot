@@ -10,6 +10,7 @@ import { createWeixinChannel, type WeixinChannel } from "../channels/weixin/inde
 import { registerChannel, getChannel } from "../channels/common/index.js";
 import { createAgent, startCronService, type Agent } from "../agents/agent.js";
 import { resetCronService } from "../cron/service.js";
+import { disposeAllBrowsers } from "../tools/builtin/browser.js";
 import { UserRuntimeManager } from "../agents/user-runtime.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
 import { initializeProviders } from "../providers/index.js";
@@ -442,6 +443,7 @@ export class Gateway {
       })),
       { label: "runtimeManager", run: () => this.runtimeManager?.shutdown() },
       { label: "agent", run: () => this.agent?.shutdown() },
+      { label: "browsers", run: () => disposeAllBrowsers() },
       { label: "pluginService", run: () => this.pluginService?.shutdown() },
       { label: "httpServer", run: () => { this.httpServer.close(); } },
     ]);
