@@ -427,7 +427,8 @@ describe("sessions/store", () => {
         await restoredStore.delete("weixin:sender");
 
         expect(fs.existsSync(transcriptPath)).toBe(false);
-        expect(fs.readdirSync(sessionDir).some((name) => name.includes(".deleted."))).toBe(true);
+        // F3: delete now physically unlinks the transcript; no ".deleted." archive is left behind.
+        expect(fs.readdirSync(sessionDir).some((name) => name.includes(".deleted."))).toBe(false);
 
         const freshStore = new FileSessionStore(testDir);
         expect(await freshStore.list()).toHaveLength(0);
@@ -571,23 +572,107 @@ describe("sessions/store", () => {
         expect(updated?.provider).toBe("test-provider");
       });
 
-      it("should clear transcript", async () => {
-        const entry = await store.getOrCreate("clear-transcript-test");
+    });
 
-        await store.appendTranscript(entry.sessionId, entry.sessionKey, {
-          role: "user",
-          content: "Test",
-          timestamp: Date.now(),
-        });
+    describe("F1/F4 hardening", () => {
+      it("keeps messageCount and the header consistent under concurrent appends (F4)", async () => {
+        const entry = await store.getOrCreate("concurrent-append");
+        const N = 8;
 
-        // Verify transcript exists
-        const before = await store.loadTranscript(entry.sessionId);
-        expect(before.length).toBe(1);
+        await Promise.all(
+          Array.from({ length: N }, (_, i) =>
+            store.appendTranscript(entry.sessionId, entry.sessionKey, {
+              role: "user",
+              content: `msg-${i}`,
+              timestamp: Date.now(),
+            }),
+          ),
+        );
 
-        await store.clearTranscript(entry.sessionId);
+        const updated = await store.get(entry.sessionKey);
+        expect(updated?.messageCount).toBe(N);
 
-        const after = await store.loadTranscript(entry.sessionId);
-        expect(after).toEqual([]);
+        const loaded = await store.loadTranscript(entry.sessionId);
+        expect(loaded).toHaveLength(N);
+
+        // Exactly one session header must exist — concurrent first-appends must
+        // not each race the isNew check and write their own header.
+        const raw = fs.readFileSync(store.getTranscriptPath(entry.sessionId), "utf-8");
+        const headerCount = raw
+          .split("\n")
+          .filter((l) => l.trim())
+          .filter((l) => {
+            try {
+              return (JSON.parse(l) as { type?: string }).type === "session";
+            } catch {
+              return false;
+            }
+          }).length;
+        expect(headerCount).toBe(1);
+      });
+
+      it("does not re-scan transcripts once the index is cached (F1)", async () => {
+        vi.useFakeTimers();
+        try {
+          await store.upsert({
+            sessionId: "seed-id",
+            sessionKey: "webchat:seed",
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messageCount: 1,
+          });
+
+          const recoverSpy = vi.spyOn(
+            store as unknown as { recoverIndexFromTranscripts: () => Promise<unknown> },
+            "recoverIndexFromTranscripts",
+          );
+
+          await store.list();
+          // Advance well past the old 30s cache TTL: a cached index must still be
+          // served directly, without another full transcript rescan.
+          vi.advanceTimersByTime(60_000);
+          await store.list();
+
+          expect(recoverSpy).not.toHaveBeenCalled();
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("still reconciles a legacy sanitized index key on cold load (dedup preserved)", async () => {
+        // Guards that F1 (serve cache without rescan) did not disable the
+        // one-time recover+dedup reconciliation on a cold load.
+        const sessionDir = path.join(testDir, "weixin_sender.jsonl");
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl"),
+          [
+            JSON.stringify({ type: "session", version: 3, id: "runtime-session", timestamp: "2026-07-02T08:50:43.724Z" }),
+            JSON.stringify({
+              type: "message",
+              id: "msg-user",
+              timestamp: "2026-07-02T08:50:43.735Z",
+              message: { role: "user", content: [{ type: "text", text: "hi" }] },
+            }),
+          ].join("\n") + "\n",
+        );
+        fs.writeFileSync(
+          path.join(testDir, "sessions.json"),
+          JSON.stringify({
+            "weixin_sender:runtime-session": {
+              sessionId: "runtime-session",
+              sessionKey: "weixin_sender:runtime-session",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messageCount: 1,
+            },
+          }),
+        );
+
+        const migratedStore = new FileSessionStore(testDir);
+        const list = await migratedStore.list();
+        expect(list).toHaveLength(1);
+        expect(list[0]?.sessionKey).toBe("weixin:sender");
       });
     });
   });

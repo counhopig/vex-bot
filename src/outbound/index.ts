@@ -11,6 +11,23 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("outbound");
 
+/** Race a channel send against a timeout. Channel.sendMessage has no timeout of
+ *  its own, so a wedged transport would otherwise hang delivery indefinitely. */
+function sendWithTimeout(
+  send: Promise<SendResult>,
+  timeoutMs: number | undefined,
+): Promise<SendResult> {
+  if (!timeoutMs || timeoutMs <= 0) return send;
+  return new Promise<SendResult>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`Channel send timed out after ${timeoutMs}ms`)), timeoutMs);
+    timer.unref?.();
+    send.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 /** Delivery target */
 export interface DeliveryTarget {
   /** Channel ID */
@@ -95,7 +112,7 @@ export async function deliverMessage(
   options?: DeliveryOptions
 ): Promise<DeliveryResult> {
   const { channel: channelId, to } = target;
-  const { bestEffort = false } = options ?? {};
+  const { bestEffort = false, timeoutMs } = options ?? {};
 
   logger.debug({ channelId, to, text: payload.text.slice(0, 100) }, "Delivering message");
 
@@ -119,8 +136,8 @@ export async function deliverMessage(
       mediaUrls: payload.mediaUrls,
     };
 
-    // Send the message
-    const result = await channel.sendMessage(message);
+    // Send the message (bounded by timeoutMs when provided)
+    const result = await sendWithTimeout(channel.sendMessage(message), timeoutMs);
 
     if (result.success) {
       logger.info({ channelId, to, messageId: result.messageId }, "Message delivered");

@@ -60,9 +60,18 @@ export class FileSessionStore {
   private cache: Map<string, SessionEntry> = new Map();
   /** Maps every recovered transcript's sessionId to its canonical session key. */
   private recoveredKeyBySessionId: Map<string, string> = new Map();
-  private cacheTime = 0;
-  private cacheTTL = 30_000; // 30-second cache
   private writeLock = new WriteLock();
+
+  /** Run fn while holding the write lock, so a read-modify-write of the index
+   *  (and its paired transcript file write) cannot interleave with another. */
+  private async withLock<T>(fn: () => Promise<T>): Promise<T> {
+    await this.writeLock.acquire();
+    try {
+      return await fn();
+    } finally {
+      this.writeLock.release();
+    }
+  }
 
   constructor(storePath?: string) {
     this.storePath = storePath ? expandHomePath(storePath) : getDefaultStorePath();
@@ -80,15 +89,18 @@ export class FileSessionStore {
 
   /** Load the index */
   private async loadIndex(): Promise<Map<string, SessionEntry>> {
-    // Check cache
-    if (this.cache.size > 0 && Date.now() - this.cacheTime < this.cacheTTL) {
+    // Once the in-memory index is populated, serve it directly. Recovery is a
+    // one-time cold-load / self-heal step — NOT a per-reload transcript rescan.
+    // The old 30s TTL re-read and re-tokenized every user's full transcript on
+    // a timer (F1); the in-process index is authoritative after the first load.
+    if (this.cache.size > 0) {
       return this.cache;
     }
 
     if (!fs.existsSync(this.indexFile)) {
       const recovered = await this.recoverIndexFromTranscripts();
       if (recovered.size > 0) {
-        await this.saveIndex(recovered);
+        await this.saveIndexUnlocked(recovered);
       }
       return recovered;
     }
@@ -130,9 +142,8 @@ export class FileSessionStore {
         }
       }
       if (changed) {
-        await this.saveIndex(this.cache);
+        await this.saveIndexUnlocked(this.cache);
       }
-      this.cacheTime = Date.now();
       return this.cache;
     } catch (error) {
       logger.error({ error }, "Failed to load session index");
@@ -340,22 +351,21 @@ export class FileSessionStore {
       .join("\n");
   }
 
-  /** Save the index */
-  private async saveIndex(index: Map<string, SessionEntry>): Promise<void> {
-    await this.writeLock.acquire();
-    try {
-      const data = Object.fromEntries(index);
-      const content = JSON.stringify(data, null, 2);
-      const tmpFile = `${this.indexFile}.${randomUUID()}.tmp`;
+  /**
+   * Persist the index (atomic temp+rename). Unlocked: callers that mutate the
+   * index run the whole read-modify-write inside withLock(), so acquiring the
+   * lock here too would deadlock. loadIndex's cold-load save is a one-shot and
+   * also runs without the lock.
+   */
+  private async saveIndexUnlocked(index: Map<string, SessionEntry>): Promise<void> {
+    const data = Object.fromEntries(index);
+    const content = JSON.stringify(data, null, 2);
+    const tmpFile = `${this.indexFile}.${randomUUID()}.tmp`;
 
-      await fs.promises.writeFile(tmpFile, content, "utf-8");
-      await fs.promises.rename(tmpFile, this.indexFile);
+    await fs.promises.writeFile(tmpFile, content, "utf-8");
+    await fs.promises.rename(tmpFile, this.indexFile);
 
-      this.cache = index;
-      this.cacheTime = Date.now();
-    } finally {
-      this.writeLock.release();
-    }
+    this.cache = index;
   }
 
   /** List all sessions */
@@ -406,18 +416,21 @@ export class FileSessionStore {
 
   /** Create or update a session */
   async upsert(entry: SessionEntry): Promise<void> {
-    const index = await this.loadIndex();
-    index.set(entry.sessionKey, entry);
-    await this.saveIndex(index);
+    await this.withLock(async () => {
+      const index = await this.loadIndex();
+      index.set(entry.sessionKey, entry);
+      await this.saveIndexUnlocked(index);
+    });
     logger.debug({ sessionKey: entry.sessionKey }, "Session upserted");
   }
 
   /** Delete a session */
   async delete(sessionKey: string): Promise<void> {
-    const index = await this.loadIndex();
-    const entry = index.get(sessionKey);
+    await this.withLock(async () => {
+      const index = await this.loadIndex();
+      const entry = index.get(sessionKey);
+      if (!entry) return;
 
-    if (entry) {
       const transcriptPaths = new Set<string>();
       if (entry.transcriptFile && isPathInside(this.storePath, entry.transcriptFile)) {
         transcriptPaths.add(entry.transcriptFile);
@@ -428,52 +441,55 @@ export class FileSessionStore {
         transcriptPaths.add(recoveredTranscriptPath);
       }
 
+      // Physically remove the transcript (F3): a "delete" must actually delete
+      // the user's data, not rename it to a .deleted.* file that lingers forever.
       for (const transcriptPath of transcriptPaths) {
         if (fs.existsSync(transcriptPath)) {
-          const archivePath = `${transcriptPath}.deleted.${Date.now()}`;
-          await fs.promises.rename(transcriptPath, archivePath);
+          await fs.promises.unlink(transcriptPath);
         }
       }
 
       index.delete(sessionKey);
-      await this.saveIndex(index);
+      await this.saveIndexUnlocked(index);
       logger.info({ sessionKey }, "Session deleted");
-    }
+    });
   }
 
   /** Reset a session (create new session) */
   async reset(sessionKey: string): Promise<SessionEntry> {
-    const index = await this.loadIndex();
-    const existing = index.get(sessionKey);
-    const now = Date.now();
+    return this.withLock(async () => {
+      const index = await this.loadIndex();
+      const existing = index.get(sessionKey);
+      const now = Date.now();
 
-    const namespaceEnd = sessionKey.lastIndexOf(":");
-    const namespacePrefix = namespaceEnd >= 0 ? sessionKey.slice(0, namespaceEnd + 1) : "";
-    const newSessionKey = `${namespacePrefix}${generateId("session")}`;
+      const namespaceEnd = sessionKey.lastIndexOf(":");
+      const namespacePrefix = namespaceEnd >= 0 ? sessionKey.slice(0, namespaceEnd + 1) : "";
+      const newSessionKey = `${namespacePrefix}${generateId("session")}`;
 
-    // Create new session
-    const newEntry: SessionEntry = {
-      sessionId: randomUUID(),
-      sessionKey: newSessionKey,
-      label: undefined,  // New session does not inherit label
-      createdAt: now,
-      updatedAt: now,
-      channel: existing?.channel,
-      model: existing?.model,
-      provider: existing?.provider,
-      messageCount: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      totalTokens: 0,
-    };
+      // Create new session
+      const newEntry: SessionEntry = {
+        sessionId: randomUUID(),
+        sessionKey: newSessionKey,
+        label: undefined,  // New session does not inherit label
+        createdAt: now,
+        updatedAt: now,
+        channel: existing?.channel,
+        model: existing?.model,
+        provider: existing?.provider,
+        messageCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        totalTokens: 0,
+      };
 
-    // Keep old session (don't delete)
-    // Add new session to index
-    index.set(newSessionKey, newEntry);
-    await this.saveIndex(index);
+      // Keep old session (don't delete)
+      // Add new session to index
+      index.set(newSessionKey, newEntry);
+      await this.saveIndexUnlocked(index);
 
-    logger.info({ oldSessionKey: sessionKey, newSessionKey, sessionId: newEntry.sessionId }, "New session created");
-    return newEntry;
+      logger.info({ oldSessionKey: sessionKey, newSessionKey, sessionId: newEntry.sessionId }, "New session created");
+      return newEntry;
+    });
   }
 
   /** Get or create a session */
@@ -555,47 +571,45 @@ export class FileSessionStore {
     sessionKey: string,
     message: TranscriptMessage
   ): Promise<void> {
-    const transcriptPath = this.getTranscriptPath(sessionId);
-    const isNew = !fs.existsSync(transcriptPath);
+    // The file append and the index count update are one read-modify-write:
+    // serialize them so concurrent appends can't each race the isNew check
+    // (writing duplicate headers) or lose a messageCount increment (F4).
+    await this.withLock(async () => {
+      const transcriptPath = this.getTranscriptPath(sessionId);
+      const isNew = !fs.existsSync(transcriptPath);
 
-    // If it's a new file, write header first
-    if (isNew) {
-      const header: TranscriptHeader = {
-        type: "session",
-        version: TRANSCRIPT_VERSION,
-        sessionId,
-        sessionKey,
-        timestamp: new Date().toISOString(),
-        cwd: process.cwd(),
-      };
-      await fs.promises.appendFile(transcriptPath, JSON.stringify(header) + "\n");
-    }
-
-    // Append the message
-    await fs.promises.appendFile(transcriptPath, JSON.stringify(message) + "\n");
-
-    // Update session index
-    const entry = await this.get(sessionKey);
-    if (entry) {
-      entry.updatedAt = Date.now();
-      entry.messageCount = (entry.messageCount ?? 0) + 1;
-      if (message.usage) {
-        entry.inputTokens = (entry.inputTokens ?? 0) + (message.usage.promptTokens ?? 0);
-        entry.outputTokens = (entry.outputTokens ?? 0) + (message.usage.completionTokens ?? 0);
-        entry.totalTokens = (entry.totalTokens ?? 0) + (message.usage.totalTokens ?? 0);
+      // If it's a new file, write header first
+      if (isNew) {
+        const header: TranscriptHeader = {
+          type: "session",
+          version: TRANSCRIPT_VERSION,
+          sessionId,
+          sessionKey,
+          timestamp: new Date().toISOString(),
+          cwd: process.cwd(),
+        };
+        await fs.promises.appendFile(transcriptPath, JSON.stringify(header) + "\n");
       }
-      if (message.model) entry.model = message.model;
-      if (message.provider) entry.provider = message.provider;
-      await this.upsert(entry);
-    }
-  }
 
-  /** Clear transcript */
-  async clearTranscript(sessionId: string): Promise<void> {
-    const transcriptPath = this.getTranscriptPath(sessionId);
-    if (fs.existsSync(transcriptPath)) {
-      await fs.promises.unlink(transcriptPath);
-    }
+      // Append the message
+      await fs.promises.appendFile(transcriptPath, JSON.stringify(message) + "\n");
+
+      // Update session index (in place on the cached entry, then persist)
+      const index = await this.loadIndex();
+      const entry = index.get(sessionKey);
+      if (entry) {
+        entry.updatedAt = Date.now();
+        entry.messageCount = (entry.messageCount ?? 0) + 1;
+        if (message.usage) {
+          entry.inputTokens = (entry.inputTokens ?? 0) + (message.usage.promptTokens ?? 0);
+          entry.outputTokens = (entry.outputTokens ?? 0) + (message.usage.completionTokens ?? 0);
+          entry.totalTokens = (entry.totalTokens ?? 0) + (message.usage.totalTokens ?? 0);
+        }
+        if (message.model) entry.model = message.model;
+        if (message.provider) entry.provider = message.provider;
+        await this.saveIndexUnlocked(index);
+      }
+    });
   }
 }
 

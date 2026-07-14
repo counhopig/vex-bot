@@ -40,6 +40,24 @@ describe("outbound/index", () => {
     vi.clearAllMocks();
   });
 
+  describe("deliverMessage timeout", () => {
+    it("fails a channel send that never resolves once timeoutMs elapses", async () => {
+      (getChannel as unknown as { mockReturnValueOnce: (v: unknown) => void }).mockReturnValueOnce({
+        id: "weixin",
+        sendMessage: vi.fn(() => new Promise(() => {})),
+      });
+
+      const result = await deliverMessage(
+        { channel: "weixin", to: "user123" },
+        { text: "hi" },
+        { bestEffort: true, timeoutMs: 50 },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/time/i);
+    });
+  });
+
   describe("parseDeliveryTarget", () => {
     it("should parse channel:chatId format", () => {
       const result = parseDeliveryTarget("weixin:user123");

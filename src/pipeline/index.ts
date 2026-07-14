@@ -9,6 +9,22 @@ import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("pipeline");
 
+/** Interceptors run inline on the inbound path and may call an LLM (e.g. the
+ *  persona interceptor); bound each so one hung interceptor can't wedge the
+ *  whole message pipeline. */
+const INTERCEPTOR_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    timer.unref?.();
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
+
 function contextDebugFields(ctx: InboundMessageContext): Record<string, unknown> {
   return {
     channelId: ctx.channelId,
@@ -86,7 +102,7 @@ export async function runMessageInterceptors(ctx: InboundMessageContext): Promis
   for (const [name, interceptor] of messageInterceptors) {
     const startedAt = Date.now();
     try {
-      const result = await interceptor(ctx);
+      const result = await withTimeout(interceptor(ctx), INTERCEPTOR_TIMEOUT_MS, `Message interceptor "${name}"`);
       const durationMs = Date.now() - startedAt;
       if (result !== null) {
         logger.debug({ ...contextDebugFields(ctx), name, resultLength: result.length, durationMs }, "Message intercepted");
