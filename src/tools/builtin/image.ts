@@ -6,15 +6,19 @@ import { Type } from "@sinclair/typebox";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { jsonResult, errorResult, readStringParam } from "../common.js";
 import { resolveModel, getApiKeyForProvider, isProviderAvailable } from "../../providers/index.js";
+import { resolveUserPath, isRealPathAllowed } from "./filesystem.js";
 import type { ProviderId } from "../../types/index.js";
 import { readFileSync, existsSync } from "fs";
 import { extname } from "path";
 import { completeSimple } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 
 /** Image analysis tool options */
 export interface ImageAnalyzeToolOptions {
   defaultProvider?: ProviderId;
   defaultModel?: string;
+  /** Sandbox roots for local-file image sources (defaults to process.cwd()). */
+  allowedPaths?: string[];
 }
 
 /** Get MIME type for an image */
@@ -31,14 +35,29 @@ function getMimeType(filePath: string): string {
   return mimeTypes[ext] ?? "image/jpeg";
 }
 
+/** Build the multimodal user-message content: the prompt plus the image itself
+ *  as a real image block, so the vision model actually receives the pixels
+ *  (the old code sent a text placeholder and the "analysis" was hallucinated). */
+export function buildImageAnalysisContent(
+  prompt: string,
+  base64: string,
+  mimeType: string,
+): (TextContent | ImageContent)[] {
+  return [
+    { type: "text", text: prompt },
+    { type: "image", data: base64, mimeType },
+  ];
+}
+
 /** Image analysis tool */
 export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): AgentTool {
+  const allowedPaths = options?.allowedPaths ?? [process.cwd()];
   return {
     name: "image_analyze",
     label: "Image Analyze",
-    description: "Analyze an image using a vision-capable model. Can describe content, extract text, identify objects, etc.",
+    description: "Analyze a local image (file path, data URL, or base64) using a vision-capable model. To analyze a remote image, download it first.",
     parameters: Type.Object({
-      image: Type.String({ description: "Image source: file path, URL, or base64 data" }),
+      image: Type.String({ description: "Image source: local file path, data URL, or base64 data" }),
       prompt: Type.Optional(Type.String({ description: "Question or instruction about the image (default: 'Describe this image')" })),
       provider: Type.Optional(Type.String({ description: "Model provider to use" })),
       model: Type.Optional(Type.String({ description: "Specific model to use" })),
@@ -51,27 +70,31 @@ export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): Agent
       const modelParam = readStringParam(params, "model");
 
       try {
-        // Parse image data
-        let imageData: { url?: string; base64?: string; mediaType?: string };
+        // Resolve the image into base64 + media type. Remote URLs are rejected:
+        // pi-ai carries images as base64 only, so a URL would mean fetching it
+        // here — a second, unguarded SSRF surface. Callers must download first.
+        let base64: string;
+        let mediaType: string;
 
         if (image.startsWith("http://") || image.startsWith("https://")) {
-          imageData = { url: image };
+          return errorResult("Remote URLs are not supported. Download the image first (e.g. via web_fetch) and pass a file path or base64 data.");
         } else if (image.startsWith("data:")) {
           const match = image.match(/^data:([^;]+);base64,(.+)$/);
-          if (!match) {
-            return errorResult("Invalid data URL format");
-          }
-          imageData = { base64: match[2], mediaType: match[1] };
+          if (!match) return errorResult("Invalid data URL format");
+          mediaType = match[1]!;
+          base64 = match[2]!;
         } else if (existsSync(image)) {
-          const buffer = readFileSync(image);
-          imageData = {
-            base64: buffer.toString("base64"),
-            mediaType: getMimeType(image),
-          };
+          const resolved = resolveUserPath(allowedPaths, image);
+          if (!(await isRealPathAllowed(resolved, allowedPaths))) {
+            return errorResult(`Access denied: ${image}`);
+          }
+          base64 = readFileSync(resolved).toString("base64");
+          mediaType = getMimeType(resolved);
         } else if (/^[A-Za-z0-9+/=]+$/.test(image) && image.length > 100) {
-          imageData = { base64: image, mediaType: "image/jpeg" };
+          base64 = image;
+          mediaType = "image/jpeg";
         } else {
-          return errorResult("Invalid image source. Provide a URL, file path, or base64 data.");
+          return errorResult("Invalid image source. Provide a local file path, data URL, or base64 data.");
         }
 
         // Find vision-capable models
@@ -105,13 +128,8 @@ export function createImageAnalyzeTool(options?: ImageAnalyzeToolOptions): Agent
 
         const apiKey = getApiKeyForProvider(selectedProvider);
 
-        // Build user message (including image info)
-        const userContent = imageData.url
-          ? `${prompt}\n\n![image](${imageData.url})`
-          : `${prompt}\n\n[Attached image: ${imageData.mediaType}, base64 length=${imageData.base64?.length}]`;
-
         const response = await completeSimple(piModel, {
-          messages: [{ role: "user" as const, content: userContent, timestamp: Date.now() }],
+          messages: [{ role: "user" as const, content: buildImageAnalysisContent(prompt, base64, mediaType), timestamp: Date.now() }],
           tools: [],
         }, {
           apiKey,

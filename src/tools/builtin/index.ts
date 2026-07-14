@@ -62,7 +62,7 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     createCalculatorTool(),
     createWebSearchTool(),
     createWebFetchTool(),
-    createImageAnalyzeTool(options?.image),
+    createImageAnalyzeTool({ ...options?.image, allowedPaths: options?.image?.allowedPaths ?? options?.filesystem?.allowedPaths }),
     createDelayTool(),
     createShareLinkTool(options?.sharelink),
     createWeatherTool(options?.weather),
