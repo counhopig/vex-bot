@@ -46,6 +46,8 @@ export interface AgentOptions {
   memoryManager?: MemoryManager;
   weatherConfig?: WeatherConfig;
   sharelinkConfig?: ShareLinkConfig;
+  /** Owner key isolating per-user tool state (process registry, browser session). */
+  owner?: string;
 }
 
 /** Agent response */
@@ -97,6 +99,7 @@ export class Agent {
         allowedPaths: [this.options.workingDirectory ?? process.cwd()],
         envPassthrough: this.options.bashEnvPassthrough,
       },
+      owner: this.options.owner,
       enableBrowser: true,
       enableMemory: !!this.options.memoryManager,
       memoryManager: this.options.memoryManager,
@@ -230,6 +233,7 @@ export async function createAgent(config: VexConfig, options?: { memoryManager?:
     memoryManager,
     weatherConfig: config.weather,
     sharelinkConfig: config.sharelink,
+    owner: options?.ownerId,
     enableTools: true,
   });
 

@@ -25,12 +25,18 @@ function killProcessCrossPlatform(child: ChildProcess, signal: "SIGTERM" | "SIGK
   }
 }
 
+/** Owner key used for sessions started outside a per-user sandbox (the global agent). */
+export const GLOBAL_OWNER_KEY = "__global__";
+
 /** Process session status */
 export type SessionStatus = "running" | "completed" | "failed";
 
 /** Process session */
 export interface ProcessSession {
   id: string;
+  /** Whose agent started this process. Used to isolate the registry between
+   *  per-user sandboxes so one user cannot list/read/kill another's processes. */
+  ownerKey: string;
   command: string;
   pid?: number;
   child?: ChildProcess;
@@ -79,25 +85,35 @@ export function addSession(session: ProcessSession): void {
   runningSessions.set(session.id, session);
 }
 
-/** Get a running session */
-export function getSession(id: string): ProcessSession | undefined {
-  return runningSessions.get(id);
+/** A session is visible to a caller only when its owner matches (or no owner
+ *  filter is supplied — used by teardown/tests that scan every session). */
+function ownedBy(session: ProcessSession | undefined, ownerKey?: string): ProcessSession | undefined {
+  if (!session) return undefined;
+  if (ownerKey !== undefined && session.ownerKey !== ownerKey) return undefined;
+  return session;
 }
 
-/** Get a finished session */
-export function getFinishedSession(id: string): ProcessSession | undefined {
-  return finishedSessions.get(id);
+/** Get a running session (scoped to ownerKey when provided) */
+export function getSession(id: string, ownerKey?: string): ProcessSession | undefined {
+  return ownedBy(runningSessions.get(id), ownerKey);
 }
 
-/** List running sessions */
-export function listRunningSessions(): ProcessSession[] {
-  return Array.from(runningSessions.values());
+/** Get a finished session (scoped to ownerKey when provided) */
+export function getFinishedSession(id: string, ownerKey?: string): ProcessSession | undefined {
+  return ownedBy(finishedSessions.get(id), ownerKey);
 }
 
-/** List finished sessions */
-export function listFinishedSessions(): ProcessSession[] {
+/** List running sessions (scoped to ownerKey when provided) */
+export function listRunningSessions(ownerKey?: string): ProcessSession[] {
+  const all = Array.from(runningSessions.values());
+  return ownerKey === undefined ? all : all.filter((s) => s.ownerKey === ownerKey);
+}
+
+/** List finished sessions (scoped to ownerKey when provided) */
+export function listFinishedSessions(ownerKey?: string): ProcessSession[] {
   cleanupExpiredSessions();
-  return Array.from(finishedSessions.values());
+  const all = Array.from(finishedSessions.values());
+  return ownerKey === undefined ? all : all.filter((s) => s.ownerKey === ownerKey);
 }
 
 /** Mark as backgrounded */
@@ -164,9 +180,10 @@ export function drainSession(session: ProcessSession): { stdout: string; stderr:
   return { stdout, stderr };
 }
 
-/** Delete a session */
-export function deleteSession(id: string): boolean {
-  if (finishedSessions.has(id)) {
+/** Delete a finished session (scoped to ownerKey when provided) */
+export function deleteSession(id: string, ownerKey?: string): boolean {
+  const session = finishedSessions.get(id);
+  if (session && (ownerKey === undefined || session.ownerKey === ownerKey)) {
     finishedSessions.delete(id);
     return true;
   }
@@ -182,6 +199,20 @@ export function killSession(session: ProcessSession): void {
         killProcessCrossPlatform(session.child, "SIGKILL");
       }
     }, 5000);
+  }
+}
+
+/** Kill and forget every session owned by ownerKey. Called when a per-user
+ *  runtime is torn down so a user's background processes don't outlive it. */
+export function disposeOwnerSessions(ownerKey: string): void {
+  for (const [id, session] of runningSessions) {
+    if (session.ownerKey === ownerKey) {
+      killSession(session);
+      runningSessions.delete(id);
+    }
+  }
+  for (const [id, session] of finishedSessions) {
+    if (session.ownerKey === ownerKey) finishedSessions.delete(id);
   }
 }
 

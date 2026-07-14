@@ -17,6 +17,7 @@ import {
   deriveSessionName,
   formatDuration,
   truncateMiddle,
+  GLOBAL_OWNER_KEY,
   type ProcessSession,
 } from "./process-registry.js";
 
@@ -32,6 +33,9 @@ export interface BashToolOptions {
    */
   envPassthrough?: string[];
   enabled?: boolean;
+  /** Owner key stamped on spawned sessions so the process tool can isolate the
+   *  registry per user. Defaults to the global agent's key. */
+  owner?: string;
 }
 
 const DEFAULT_OPTIONS: Required<BashToolOptions> = {
@@ -41,6 +45,7 @@ const DEFAULT_OPTIONS: Required<BashToolOptions> = {
   maxOutputSize: 100000,
   envPassthrough: [],
   enabled: true,
+  owner: GLOBAL_OWNER_KEY,
 };
 
 // The bash tool is a real shell: a command denylist over shell strings is
@@ -132,7 +137,7 @@ export function createBashTool(options?: BashToolOptions): AgentTool {
 
       const sessionId = createSessionId();
       const session: ProcessSession = {
-        id: sessionId, command: truncateMiddle(command, 200), startedAt: Date.now(), cwd, status: "running",
+        id: sessionId, ownerKey: opts.owner, command: truncateMiddle(command, 200), startedAt: Date.now(), cwd, status: "running",
         stdout: "", stderr: "", aggregated: "", tail: "", truncated: false, backgrounded: runInBackground ?? false, maxOutputChars: opts.maxOutputSize,
       };
       const { shell, args: shellArgs } = getShellCommand(command);

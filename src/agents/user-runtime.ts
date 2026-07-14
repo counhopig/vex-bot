@@ -5,6 +5,7 @@ import type { Agent } from "./agent.js";
 import { createAgent } from "./agent.js";
 import { createMemoryManager, type MemoryManager } from "../memory/index.js";
 import { disposeExtensions } from "../extensions/index.js";
+import { disposeOwnerSessions } from "../tools/builtin/process-registry.js";
 import type { VexConfig } from "../types/index.js";
 import { getUserConfigSettings, isWebAuthEnabled } from "../web/auth.js";
 import { buildUserEffectiveConfig } from "../web/config-handlers.js";
@@ -193,6 +194,9 @@ export class UserRuntimeManager {
       await runtime.agent.shutdown();
       await runtime.memoryManager?.close();
       await disposeExtensions(userId);
+      // Kill this user's background processes so they don't outlive the runtime
+      // (keyed by the same owner id createAgent stamps onto the tools).
+      disposeOwnerSessions(userId);
       logger.info({ userId, reason }, "User runtime disposed");
     } catch (error) {
       logger.warn({ userId, reason, error }, "Failed to dispose user runtime");

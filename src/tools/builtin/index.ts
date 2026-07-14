@@ -51,6 +51,8 @@ export interface BuiltinToolsOptions {
   memoryManager?: MemoryManager;
   /** CronService instance */
   cronService?: CronService;
+  /** Owner key isolating the background-process registry per user. */
+  owner?: string;
 }
 
 /** Create all built-in tools */
@@ -71,14 +73,15 @@ export function createBuiltinTools(options?: BuiltinToolsOptions): AgentTool[] {
     tools.push(...createFilesystemTools(options?.filesystem));
   }
 
-  // Bash tool (enabled by default)
+  // Bash tool (enabled by default). Stamp spawned sessions with the owner so
+  // the process registry stays isolated per user.
   if (options?.enableBash !== false) {
-    tools.push(createBashTool(options?.bash));
+    tools.push(createBashTool({ ...options?.bash, owner: options?.owner ?? options?.bash?.owner }));
   }
 
   // Process management tool (enabled by default, alongside Bash tool)
   if (options?.enableProcess !== false && options?.enableBash !== false) {
-    tools.push(createProcessTool());
+    tools.push(createProcessTool(options?.owner));
   }
 
   // apply_patch tool (enabled by default)
