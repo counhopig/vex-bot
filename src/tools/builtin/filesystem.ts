@@ -26,7 +26,7 @@ const DEFAULT_OPTIONS: Required<FilesystemToolsOptions> = {
 /** Resolve a (possibly relative) model-supplied path against the sandbox base
  * (first allowed path) rather than process.cwd(), so relative paths land inside
  * a scoped per-user working directory. Absolute paths are unaffected. */
-function resolveUserPath(allowedPaths: string[], filePath: string): string {
+export function resolveUserPath(allowedPaths: string[], filePath: string): string {
   return resolve(allowedPaths[0] ?? process.cwd(), filePath);
 }
 
@@ -61,7 +61,7 @@ async function resolveRealPath(filePath: string): Promise<string> {
 /**
  * Same as isPathAllowed, but follows symlinks before validating to prevent escaping allowed paths via symlinks within the workspace.
  */
-async function isRealPathAllowed(filePath: string, allowedPaths: string[]): Promise<boolean> {
+export async function isRealPathAllowed(filePath: string, allowedPaths: string[]): Promise<boolean> {
   const real = await resolveRealPath(filePath);
   return isPathAllowed(real, allowedPaths);
 }

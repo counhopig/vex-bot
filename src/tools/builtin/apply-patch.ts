@@ -5,9 +5,10 @@
 import { Type } from "@sinclair/typebox";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
-import { resolve, dirname, sep } from "path";
+import { dirname } from "path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { jsonResult, readStringParam } from "../common.js";
+import { resolveUserPath, isRealPathAllowed } from "./filesystem.js";
 
 interface PatchHunk { oldStart: number; oldCount: number; newStart: number; newCount: number; lines: string[]; }
 interface FilePatch { oldPath: string; newPath: string; hunks: PatchHunk[]; isNew: boolean; isDelete: boolean; }
@@ -76,10 +77,6 @@ function applyHunk(lines: string[], hunk: PatchHunk): string[] | null {
 
 export function createApplyPatchTool(allowedPaths?: string[]): AgentTool {
   const allowed = allowedPaths ?? [process.cwd()];
-  function isPathAllowed(filePath: string): boolean {
-    const resolved = resolve(filePath);
-    return allowed.some(a => { const ra = resolve(a); return resolved === ra || resolved.startsWith(ra + sep); });
-  }
   return {
     name: "apply_patch",
     label: "Apply Patch",
@@ -94,8 +91,11 @@ export function createApplyPatchTool(allowedPaths?: string[]): AgentTool {
         const results: Array<{ file: string; status: string; error?: string }> = [];
         for (const patch of patches) {
           const targetPath = patch.isNew ? patch.newPath : patch.oldPath;
-          const resolvedPath = resolve(targetPath);
-          if (!isPathAllowed(resolvedPath)) { results.push({ file: targetPath, status: "error", error: `Access denied: ${targetPath}` }); continue; }
+          // Resolve relative paths against the sandbox (allowedPaths[0]), matching
+          // the filesystem tools — not process.cwd() — and follow symlinks before
+          // the allow-check so a link inside the sandbox can't write through it.
+          const resolvedPath = resolveUserPath(allowed, targetPath);
+          if (!(await isRealPathAllowed(resolvedPath, allowed))) { results.push({ file: targetPath, status: "error", error: `Access denied: ${targetPath}` }); continue; }
           try {
             if (patch.isDelete) {
               if (existsSync(resolvedPath)) { const { unlink } = await import("fs/promises"); await unlink(resolvedPath); results.push({ file: targetPath, status: "deleted" }); }
