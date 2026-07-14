@@ -11,7 +11,6 @@ export * from "./bash.js";
 export * from "./process-registry.js";
 export * from "./process-tool.js";
 export * from "./apply-patch.js";
-export * from "./subagent.js";
 export * from "./memory.js";
 export * from "./cron.js";
 export * from "./sharelink.js";
