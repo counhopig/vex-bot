@@ -574,7 +574,7 @@ interface ChatMessage {
 
 ## 4. Plugins
 
-Three-tier plugin system with auto-discovery (bundled / user-global / workspace). Provides extension capabilities for tools, hooks, HTTP routes, and background services.
+Three-tier plugin system with auto-discovery (bundled / user-global / workspace). Provides extension capabilities for tools, hooks, and background services.
 
 **Source:** `src/plugins/index.ts`, `src/plugins/service.ts`
 
@@ -612,7 +612,6 @@ interface PluginApi {
     eventType: T,
     handler: HookHandler
   ) => () => void;                                               // Register a hook (returns unsubscribe fn)
-  registerHttpRoute?: (route: HttpRoute) => void;                // Register an HTTP route
   registerService?: (service: PluginService) => void;            // Register a background service
   getLogger: (name?: string) => ReturnType<typeof getChildLogger>;  // Get a logger
   getStateDir: () => string;                                     // Get persistent state directory
@@ -626,7 +625,6 @@ Plugin definition object.
 ```typescript
 interface PluginDefinition {
   meta: PluginMeta;
-  configSchema?: PluginConfigSchema;                              // JSON Schema for plugin config
   register?: (api: PluginApi) => void | Promise<void>;            // Register phase
   activate?: (api: PluginApi) => void | Promise<void>;            // Activate phase
   cleanup?: () => void | Promise<void>;                           // Cleanup function
@@ -635,16 +633,6 @@ interface PluginDefinition {
 
 **Lifecycle:** `register` → `activate` → runtime → `cleanup`
 
-#### `HttpRoute`
-
-```typescript
-interface HttpRoute {
-  method: "GET" | "POST" | "PUT" | "DELETE";
-  path: string;
-  handler: (req: unknown, res: unknown) => void | Promise<void>;
-}
-```
-
 #### `PluginService`
 
 ```typescript
@@ -652,17 +640,6 @@ interface PluginService {
   id: string;
   start: () => void | Promise<void>;
   stop: () => void | Promise<void>;
-}
-```
-
-#### `PluginConfigSchema`
-
-```typescript
-interface PluginConfigSchema {
-  type: "object";
-  properties?: Record<string, unknown>;
-  required?: string[];
-  additionalProperties?: boolean;
 }
 ```
 
@@ -1264,13 +1241,13 @@ Checks if a specific channel is registered.
 
 ## 10. Hooks
 
-Global event hook system supporting 12 event types. Registration returns an unsubscribe function. Batch registration is supported.
+Global event hook system supporting 8 event types. Registration returns an unsubscribe function. Batch registration is supported.
 
 **Source:** `src/hooks/index.ts`
 
 ### Event Types
 
-`HookEventType` includes the following 12 events:
+`HookEventType` includes the following 8 events:
 
 | Event Type | Trigger |
 |-----------|---------|
@@ -1281,10 +1258,6 @@ Global event hook system supporting 12 event types. Registration returns an unsu
 | `agent_end` | Agent finishes processing |
 | `tool_start` | Tool execution begins |
 | `tool_end` | Tool execution completes |
-| `session_start` | Session begins |
-| `session_end` | Session ends |
-| `compaction_start` | Context compaction begins |
-| `compaction_end` | Context compaction completes |
 | `error` | An error occurs |
 
 ### Event Interfaces (selected)
@@ -1729,7 +1702,6 @@ export {
 export {
   BaseChannelAdapter, createWeixinChannel,
   registerChannel, getChannel, getAllChannels,
-  setGlobalMessageHandler,
 } from "./channels/index.js";
 ```
 

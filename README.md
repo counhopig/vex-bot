@@ -25,7 +25,7 @@ Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agen
 - **Cron scheduling** — supports `at`, `every`, and standard cron expressions; triggers agent turns and system events on schedule
 - **Playwright browser automation** — screenshots, form filling, and web interaction via headless Chromium
 - **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected into the agent system prompt at runtime
-- **Event hook system** — 12 event types with `on`/`once`/`off` registration for extending agent behavior
+- **Event hook system** — 8 event types with registration and unsubscribe support for extending agent behavior
 - **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001), Compose files included
 - **YAML config** — a single `config.local.yaml` format for all application configuration
 
@@ -70,7 +70,7 @@ flowchart TD
 | Extensions | `src/extensions/` | Built-in pipeline extensions: Persona, ShareLink, Skill Learner |
 | Plugins | `src/plugins/` | 3-tier auto-discovery + lifecycle management |
 | Browser | `src/browser/` | Playwright headless browser automation |
-| Hooks | `src/hooks/` | 12 event type hook system |
+| Hooks | `src/hooks/` | 8 event type hook system |
 | Sessions | `src/sessions/` | JSONL session persistence, scoped per Web user under `users/{userId}/` |
 | User runtime | `src/agents/user-runtime.ts` | `UserRuntimeManager` owns per-Web-user `Agent` and `MemoryManager` instances |
 
@@ -204,7 +204,7 @@ Config loading is YAML-only: Vex loads `config.local.yaml` from the current dire
 │   ├── web/             # Server-rendered WebChat SPA (inline HTML/CSS/JS)
 │   ├── sessions/        # Session persistence (memory/file, JSONL transcripts)
 │   ├── browser/         # Playwright headless browser automation
-│   ├── hooks/           # Event hook system (12 event types, on/once/off)
+│   ├── hooks/           # Event hook system (8 event types)
 │   ├── providers/       # Model resolution layer (pi-ai wrapper)
 │   ├── config/          # YAML config loading + Zod validation
 │   ├── cli/             # Commander.js CLI (9 subcommands, onboard wizard)

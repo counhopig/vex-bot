@@ -28,7 +28,7 @@ Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), str
 │   ├── web/           # Server-rendered WebChat SPA (inline HTML/CSS/JS, no frontend build)
 │   ├── sessions/      # Session persistence (memory/file, JSONL transcript)
 │   ├── browser/       # Playwright headless browser automation
-│   ├── hooks/         # Event hook system (12 event types)
+│   ├── hooks/         # Event hook system (8 event types)
 │   ├── providers/     # Model resolution layer (pi-ai wrapper)
 │   ├── config/        # YAML config loading + Zod validation
 │   ├── cli/           # Commander.js CLI (onboard, start, logs, status, etc.)

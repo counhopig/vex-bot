@@ -62,6 +62,10 @@ This project follows semantic versioning for npm package releases.
 
 - `agent.temperature` and `agent.maxTokens` are now actually applied to LLM calls made through the agent runtime; previously they were accepted by the config schema but silently ignored.
 - `--host` CLI flag for `vex start` to override the bind address.
+- Weixin API error envelopes are now validated centrally, session timeouts reset the adapter cleanly, non-empty polls are re-read immediately, and id-less inbound messages receive deterministic deduplication IDs.
+- Hook events are now emitted from real gateway, agent, tool, and outbound message paths; plugin lifecycle activation reuses registration context and compiled discovery skips TypeScript-only entries.
+- Skills with equal numeric priority now resolve from the most local source: workspace, then user, then bundled.
+- Removed obsolete channel registry lifecycle APIs and the redundant raw LLM completion wrapper.
 - `weixin.unbind` WebSocket method: unbinds the current user's Weixin login, deletes the stored token, and shuts down their running Weixin channel immediately. Previously a binding could only be removed by deleting the account.
 
 ## [1.15.0] - 2026-07-03

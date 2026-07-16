@@ -6,9 +6,9 @@ Plugin extension system with 3-tier auto-discovery (bundled/global/workspace). P
 
 ```
 plugins/
-├── index.ts           # definePlugin(), registerPlugin(), activatePlugin(), PluginApi class, 15+ type interfaces
+├── index.ts           # definePlugin(), registerPlugin(), activatePlugin(), PluginApi and lifecycle types
 ├── loader.ts          # loadPlugins() → resolveEnableState() → module import → register; activateAllPlugins()
-├── discovery.ts       # discoverPlugins() — filesystem scan for vex.plugin.json, package.json, index.ts
+├── discovery.ts       # discoverPlugins() — filesystem scan for vex.plugin.json, package.json, index.ts/index.js
 └── service.ts         # PluginService orchestrator: initialize() → loadPlugins() → activateAllPlugins()
 ```
 
@@ -16,7 +16,7 @@ plugins/
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Plugin definition shape | `index.ts` | `PluginDefinition`: `meta`, `configSchema`, `register`, `activate`, `cleanup` |
+| Plugin definition shape | `index.ts` | `PluginDefinition`: `meta`, `register`, `activate`, `cleanup` |
 | PluginApi surface | `index.ts` | `registerTool`, `registerTools`, `registerHook`, `registerService`, `getLogger`, `getStateDir` |
 | Define a plugin | `index.ts` | `definePlugin(meta, init, cleanup?)` helper; also `defineToolPlugin(meta, tools)` |
 | Load plugins from disk | `loader.ts` | `loadPlugins(config, enableConfig)` → discover + resolveEnableState + import + register |
@@ -32,7 +32,7 @@ plugins/
 - `PluginApi.registerHook()` wraps `hooks/index.ts` `registerHook()` — returns unsubscribe function
 - `discoverPlugins()` scans `CWD/plugins/` (bundled), `~/.vex/plugins/` (global), `CWD/.vex/plugins/` (workspace)
 - Later tiers override earlier: workspace > global > bundled (same plugin ID wins)
-- Each plugin directory needs one of: `vex.plugin.json`, `package.json` with `vex.plugin` field, or `index.ts`/`index.js`
+- Each plugin directory needs one of: `vex.plugin.json`, `package.json` with `vex.plugin` field, or `index.ts`/`index.js`; compiled runtimes load JavaScript entries only
 - `PluginService.initialize()` returns `{ loaded, activated, skipped, failed }` arrays
 
 ## ANTI-PATTERNS

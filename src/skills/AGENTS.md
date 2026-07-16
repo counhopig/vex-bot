@@ -69,7 +69,7 @@ Skills load in 3 tiers (lowest to highest override priority):
 | 2 | user | `~/.vex/skills/` | Overrides bundled by `name` |
 | 3 (highest) | workspace | `./.vex/skills/` | Overrides user + bundled by `name` |
 
-Within each tier, `glob('**/SKILL.md')` finds all skill files. After loading, the pipeline applies sequentially: (1) filter by `enabled` frontmatter field, (2) filter by `disabled[]` config list, (3) if `only[]` is set, keep only listed names, (4) check eligibility (os/binaries/envVars), (5) sort by `priority` ascending, (6) deduplicate (first-seen wins, so workspace beats user beats bundled).
+Within each tier, `glob('**/SKILL.md')` finds all skill files. After loading, the pipeline applies sequentially: (1) filter by `enabled` frontmatter field, (2) filter by `disabled[]` config list, (3) if `only[]` is set, keep only listed names, (4) check eligibility (os/binaries/envVars), (5) sort by numeric `priority` ascending, using workspace > user > bundled as the tie-breaker, (6) deduplicate (first-seen wins).
 
 ## CONVENTIONS
 

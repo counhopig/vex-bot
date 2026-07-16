@@ -126,7 +126,7 @@ vex-bot/
 │   ├── outbound/           # Unified cross-channel message delivery
 │   │   └── index.ts        #   deliverOutboundPayloads / deliverMessage
 │   │
-│   ├── hooks/              # Event hook system (12 event types)
+│   ├── hooks/              # Event hook system (8 event types)
 │   │   └── index.ts        #   registerHook, triggerHook
 │   │
 │   ├── config/             # YAML config loading + Zod validation
@@ -386,13 +386,12 @@ The plugin system provides 3-tier auto-discovery, allowing tools, hooks, and ser
 | `registerTool(tool)` | Register a single tool |
 | `registerTools(tools)` | Batch-register tools |
 | `registerHook(event, handler)` | Register an event hook, returns unsubscribe function |
-| `registerHttpRoute(method, path, handler)` | Register an HTTP route |
-| `registerService(name, service)` | Register a service instance |
+| `registerService(service)` | Register a background service |
 | `getLogger()` | Get a plugin-specific pino logger |
 | `getStateDir()` | Get the plugin state directory |
 
 **Lifecycle**:
-1. **register** (sync) — register tools, hooks, routes
+1. **register** (sync) — register tools and hooks
 2. **activate** (async, optional) — start background services, establish connections
 3. **cleanup** (sync, optional) — clean up resources, close connections
 
@@ -409,7 +408,7 @@ Plugins with the same ID — higher tiers override lower tiers.
 **Plugin manifest** — each plugin directory needs one of:
 - `vex.plugin.json` (recommended)
 - `package.json` with `vex.plugin` field
-- `index.ts` or `index.js`
+- `index.ts` in a TypeScript runtime or `index.js` in a compiled runtime
 
 **Enable/disable control**: resolved via `loader.ts:resolveEnableState()` using config's `plugins.enable` (supports `allow`/`deny`/`slots`/`entries` modes).
 
@@ -444,7 +443,7 @@ export default defineToolPlugin(
 );
 ```
 
-**⚠ Known issue**: `PluginService` (`src/plugins/service.ts`) is implemented but **not wired** into Gateway startup. Bundled/global/workspace plugins are not auto-loaded on `vex start`. You must call `PluginService.initialize()` manually.
+**Known limitation**: `PluginService` (`src/plugins/service.ts`) is implemented but not wired into Gateway startup. Bundled/global/workspace plugins are not auto-loaded on `vex start`; call `PluginService.initialize()` manually.
 
 **Anti-patterns**:
 - Never call `registerPlugin()` after `Gateway.initialize()` — tools must be registered before Agent starts
@@ -504,8 +503,8 @@ When no frontmatter exists, the directory name becomes the skill name and the en
 3. Filter by config `disabled[]` list
 4. If `only[]` is set, keep only listed names
 5. Eligibility check (os / binaries / envVars)
-6. Sort by `priority` ascending
-7. Deduplicate (first-seen wins: workspace > user > bundled)
+6. Sort by numeric `priority` ascending; equal priorities use workspace > user > bundled source precedence
+7. Deduplicate (first-seen wins after sorting)
 
 **Prompt injection**: `SkillsRegistry.buildPrompt()` assembles all loaded skills as `## Skill: <title>` Markdown sections, injected into the system prompt.
 
