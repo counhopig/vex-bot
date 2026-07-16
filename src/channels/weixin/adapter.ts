@@ -1,4 +1,5 @@
 import yaml from "yaml";
+import crypto from "crypto";
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { dirname } from "path";
 import type {
@@ -11,6 +12,7 @@ import type {
 import { BaseChannelAdapter } from "../common/base.js";
 import {
   WeixinClient,
+  WeixinApiError,
   DEFAULT_WEIXIN_OC_BASE_URL,
   DEFAULT_WEIXIN_OC_CDN_BASE_URL,
   DEFAULT_WEIXIN_OC_BOT_TYPE,
@@ -21,6 +23,19 @@ import type { LoginResult } from "./login.js";
 import { getChildLogger } from "../../utils/logger.js";
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35000;
+
+/** Deterministic id for a message the OC API delivered without its own id, so a
+ *  redelivered (e.g. retried) message dedups to the same key instead of a fresh
+ *  `Date.now()` that slips past the gateway's message dedup. */
+function stableFallbackMessageId(msg: WeixinInboundMessage): string {
+  const material = JSON.stringify({
+    from: msg.from_user_id ?? "",
+    t: msg.create_time_ms ?? msg.create_time ?? "",
+    items: msg.item_list ?? [],
+  });
+  const hash = crypto.createHash("sha1").update(material).digest("hex").slice(0, 16);
+  return `wx_${hash}`;
+}
 
 const WEIXIN_META: ChannelMeta = {
   id: "weixin",
@@ -58,10 +73,9 @@ interface WeixinInboundMessage {
   create_time?: number;
 }
 
+/** Envelope errors (ret/errcode) are checked inside WeixinClient and surface
+ *  as WeixinApiError, so only the payload matters here. */
 interface WeixinPollResponse {
-  ret?: number;
-  errcode?: number;
-  errmsg?: string;
   msgs?: Array<WeixinInboundMessage | Record<string, unknown>>;
 }
 
@@ -200,31 +214,15 @@ export class WeixinChannel extends BaseChannelAdapter {
   }
 
   private async pollingLoop(): Promise<void> {
-    const longPollTimeoutMs =
+    // Client-side sleep after an EMPTY poll. Despite the config name, this is
+    // not sent to the server: getupdates returns immediately, so this value is
+    // the idle poll interval and bounds first-message latency after a quiet spell.
+    const idleDelayMs =
       this.config.longPollTimeoutMs ?? DEFAULT_LONG_POLL_TIMEOUT_MS;
 
     while (this.pollingActive) {
       try {
         const response = (await this.client.pollMessages()) as WeixinPollResponse;
-
-        const ret = response.ret ?? 0;
-        const errcode = response.errcode ?? 0;
-        if (ret !== 0 || errcode !== 0) {
-          const errmsg = response.errmsg ?? "unknown error";
-          this.logger.warn(
-            { ret, errcode, errmsg },
-            "Weixin pollMessages returned error",
-          );
-
-          if (errcode === -14) {
-            this.logger.warn("Weixin session timed out, clearing state");
-            await this.handleSessionTimeout();
-            return;
-          }
-
-          await this.delay(5000);
-          continue;
-        }
 
         const msgs = response.msgs ?? [];
         for (const rawMsg of msgs) {
@@ -235,9 +233,18 @@ export class WeixinChannel extends BaseChannelAdapter {
           await this.handleInboundWeixinMessage(msg);
         }
 
-        await this.delay(longPollTimeoutMs);
+        // When a batch arrived, re-poll immediately — more may be waiting, and
+        // sleeping here just adds latency. Only back off when the queue is empty.
+        if (msgs.length > 0) continue;
+        await this.delay(idleDelayMs);
       } catch (error) {
         if (!this.pollingActive) return;
+
+        if (error instanceof WeixinApiError && error.errcode === -14) {
+          this.logger.warn("Weixin session timed out, clearing state");
+          await this.handleSessionTimeout();
+          return;
+        }
 
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.logger.warn(
@@ -264,7 +271,7 @@ export class WeixinChannel extends BaseChannelAdapter {
     }
 
     const content = this.extractTextContent(msg.item_list ?? []);
-    const messageId = msg.message_id ?? msg.msg_id ?? "wx_" + String(Date.now());
+    const messageId = msg.message_id ?? msg.msg_id ?? stableFallbackMessageId(msg);
 
     let timestamp: number;
     if (

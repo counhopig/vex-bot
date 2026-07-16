@@ -20,6 +20,31 @@ export const DEFAULT_WEIXIN_OC_BOT_TYPE = "3";
 /** Default API timeout (milliseconds) */
 export const DEFAULT_WEIXIN_OC_API_TIMEOUT_MS = 120_000;
 
+/** Error for a 200 response whose body carries a non-zero ret/errcode.
+ *  The OC API signals failures (session timeout, invalid context_token, ...)
+ *  in the body, so HTTP success alone never means the call succeeded. */
+export class WeixinApiError extends Error {
+  constructor(
+    readonly endpoint: string,
+    readonly ret: number,
+    readonly errcode: number,
+    readonly errmsg: string,
+  ) {
+    super(`Weixin ${endpoint} failed: ret=${ret} errcode=${errcode} ${errmsg}`);
+    this.name = "WeixinApiError";
+  }
+}
+
+/** Throw a WeixinApiError when a response body carries a non-zero ret/errcode. */
+function assertOkEnvelope(endpoint: string, data: Record<string, unknown>): void {
+  const ret = typeof data.ret === "number" ? data.ret : 0;
+  const errcode = typeof data.errcode === "number" ? data.errcode : 0;
+  if (ret !== 0 || errcode !== 0) {
+    const errmsg = typeof data.errmsg === "string" ? data.errmsg : "unknown error";
+    throw new WeixinApiError(endpoint, ret, errcode, errmsg);
+  }
+}
+
 /** QR code status polling response */
 export interface QRStatusResponse {
   status: string;
@@ -186,7 +211,9 @@ export class WeixinClient {
       },
     );
 
-    return response.data as PollMessagesResponse;
+    const data = (response.data ?? {}) as Record<string, unknown>;
+    assertOkEnvelope("pollMessages", data);
+    return data as PollMessagesResponse;
   }
 
   /** Send a message
@@ -224,7 +251,9 @@ export class WeixinClient {
       },
     );
 
-    return response.data;
+    const data = (response.data ?? {}) as Record<string, unknown>;
+    assertOkEnvelope("sendMessage", data);
+    return data;
   }
 
   /** Check whether the client is authenticated (has a valid token) */
