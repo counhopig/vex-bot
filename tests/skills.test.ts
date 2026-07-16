@@ -202,6 +202,50 @@ const x = 1;
 });
 
 describe("skills/loader", () => {
+  it("workspace skill overrides a same-named user skill at equal priority", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "vex-skill-override-"));
+    const userDir = path.join(base, "user");
+    const workspaceDir = path.join(base, "workspace");
+
+    try {
+      for (const [dir, marker] of [[userDir, "from-user"], [workspaceDir, "from-workspace"]] as const) {
+        const skillDir = path.join(dir, "dupe");
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(path.join(skillDir, "SKILL.md"), `---\nname: dupe\n---\n\n${marker}\n`);
+      }
+
+      const skills = await loadAllSkills({ userDir, workspaceDir, only: ["dupe"] });
+
+      expect(skills).toHaveLength(1);
+      expect(skills[0].content).toBe("from-workspace");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("a lower priority number beats source precedence for same-named skills", async () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "vex-skill-priority-"));
+    const userDir = path.join(base, "user");
+    const workspaceDir = path.join(base, "workspace");
+
+    try {
+      const userSkillDir = path.join(userDir, "dupe");
+      fs.mkdirSync(userSkillDir, { recursive: true });
+      fs.writeFileSync(path.join(userSkillDir, "SKILL.md"), "---\nname: dupe\npriority: 1\n---\n\nfrom-user\n");
+
+      const workspaceSkillDir = path.join(workspaceDir, "dupe");
+      fs.mkdirSync(workspaceSkillDir, { recursive: true });
+      fs.writeFileSync(path.join(workspaceSkillDir, "SKILL.md"), "---\nname: dupe\n---\n\nfrom-workspace\n");
+
+      const skills = await loadAllSkills({ userDir, workspaceDir, only: ["dupe"] });
+
+      expect(skills).toHaveLength(1);
+      expect(skills[0].content).toBe("from-user");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("expands home directory shorthand for configured skill directories", async () => {
     const dirName = `.vex-skill-expand-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const skillDir = path.join(os.homedir(), dirName, "home-skill");

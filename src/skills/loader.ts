@@ -180,14 +180,17 @@ export async function loadAllSkills(
     }
   }
 
-  // Sort by priority
+  // Sort by priority (lower number wins); at equal priority the more local
+  // source wins, so a workspace skill overrides a same-named user/bundled one.
+  const sourceRank: Record<SkillSource, number> = { workspace: 0, user: 1, bundled: 2 };
   eligibleSkills.sort((a, b) => {
     const priorityA = a.frontmatter.priority ?? 100;
     const priorityB = b.frontmatter.priority ?? 100;
-    return priorityA - priorityB;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    return sourceRank[a.source] - sourceRank[b.source];
   });
 
-  // Deduplicate (keep highest-priority for same-named skills)
+  // Deduplicate (first entry wins after the sort above)
   const seen = new Map<string, SkillEntry>();
   for (const skill of eligibleSkills) {
     const name = skill.frontmatter.name;
