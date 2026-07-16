@@ -18,10 +18,6 @@ export type HookEventType =
   | "agent_end"             // Agent finished processing
   | "tool_start"            // Tool started executing
   | "tool_end"              // Tool finished executing
-  | "session_start"         // Session started
-  | "session_end"           // Session ended
-  | "compaction_start"      // Compaction started
-  | "compaction_end"        // Compaction finished
   | "error";                // Error occurred
 
 /** Hook event base data */
@@ -95,36 +91,6 @@ export interface ToolEndEvent extends HookEventBase {
   durationMs: number;
 }
 
-/** Session start event */
-export interface SessionStartEvent extends HookEventBase {
-  type: "session_start";
-  channelId: string;
-  chatId: string;
-  senderId: string;
-}
-
-/** Session end event */
-export interface SessionEndEvent extends HookEventBase {
-  type: "session_end";
-  messageCount: number;
-  totalTokens: number;
-}
-
-/** Compaction start event */
-export interface CompactionStartEvent extends HookEventBase {
-  type: "compaction_start";
-  messageCount: number;
-  estimatedTokens: number;
-}
-
-/** Compaction end event */
-export interface CompactionEndEvent extends HookEventBase {
-  type: "compaction_end";
-  compactedMessages: number;
-  summaryLength: number;
-  durationMs: number;
-}
-
 /** Error event */
 export interface ErrorEvent extends HookEventBase {
   type: "error";
@@ -141,10 +107,6 @@ export type HookEvent =
   | AgentEndEvent
   | ToolStartEvent
   | ToolEndEvent
-  | SessionStartEvent
-  | SessionEndEvent
-  | CompactionStartEvent
-  | CompactionEndEvent
   | ErrorEvent;
 
 // ============== Hook Handlers ==============
@@ -159,7 +121,8 @@ export type HookTransformer<T extends HookEvent = HookEvent> = (
   event: T
 ) => T | Promise<T>;
 
-/** Hook registry */
+/** Hook registry (deliberately process-global: hooks observe process-wide
+ *  lifecycle events; per-user isolation lives in the runtimes, not here) */
 const hookRegistry = new Map<HookEventType, Array<HookHandler>>();
 
 // ============== Hook Management ==============
@@ -280,6 +243,23 @@ export function emitMessageSending(params: {
     chatId: params.chatId,
     content: params.content,
     replyToId: params.replyToId,
+  });
+}
+
+/** Emit message sent event */
+export function emitMessageSent(params: {
+  channelId: string;
+  chatId: string;
+  messageId?: string;
+  success: boolean;
+  sessionKey?: string;
+}): void {
+  triggerHookSync({
+    ...createEventBase("message_sent", params.sessionKey),
+    channelId: params.channelId,
+    chatId: params.chatId,
+    messageId: params.messageId,
+    success: params.success,
   });
 }
 

@@ -7,6 +7,7 @@
 
 import type { ChannelId, SendResult, OutboundMessage } from "../types/index.js";
 import { getChannel, getAllChannels } from "../channels/common/index.js";
+import { emitMessageSending, emitMessageSent } from "../hooks/index.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("outbound");
@@ -136,8 +137,11 @@ export async function deliverMessage(
       mediaUrls: payload.mediaUrls,
     };
 
+    emitMessageSending({ channelId, chatId: to, content: payload.text, replyToId: payload.replyToId });
+
     // Send the message (bounded by timeoutMs when provided)
     const result = await sendWithTimeout(channel.sendMessage(message), timeoutMs);
+    emitMessageSent({ channelId, chatId: to, messageId: result.messageId, success: result.success });
 
     if (result.success) {
       logger.info({ channelId, to, messageId: result.messageId }, "Message delivered");
@@ -159,6 +163,7 @@ export async function deliverMessage(
     }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
+    emitMessageSent({ channelId, chatId: to, success: false });
     logger.error({ channelId, to, error }, "Message delivery error");
 
     if (!bestEffort) {

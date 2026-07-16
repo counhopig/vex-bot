@@ -19,6 +19,7 @@ import { WsServer } from "../web/websocket.js";
 import { handleStaticRequest } from "../web/static.js";
 import { installWebAuthRoutes, isWebAuthEnabled, listUserWeixinLogins } from "../web/auth.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
+import { emitMessageReceived, emitMessageSending, emitMessageSent, emitError } from "../hooks/index.js";
 import { PluginService } from "../plugins/service.js";
 import { getConfigWritePath } from "../config/index.js";
 import { initSessionStore } from "../sessions/index.js";
@@ -203,6 +204,8 @@ export class Gateway {
       return;
     }
 
+    emitMessageReceived(context);
+
     // Run message interceptors (commands, auto-detect, skill capture)
     logger.debug(
       {
@@ -268,6 +271,7 @@ export class Gateway {
         },
         "Failed to process message"
       );
+      emitError(error instanceof Error ? error : new Error(String(error)), "gateway.handleMessage");
       await this.sendReply(context, "Sorry, an error occurred while processing your message. Please try again later.");
     }
   }
@@ -277,9 +281,12 @@ export class Gateway {
     if (context.channelId === "weixin" && webUserId) {
       const userChannel = this.userWeixinChannels.get(webUserId);
       if (userChannel) {
+        emitMessageSending({ channelId: context.channelId, chatId: context.chatId, content: text });
         try {
-          await userChannel.replyToContext(context, text);
+          const result = await userChannel.replyToContext(context, text);
+          emitMessageSent({ channelId: context.channelId, chatId: context.chatId, messageId: result.messageId, success: result.success });
         } catch (error) {
+          emitMessageSent({ channelId: context.channelId, chatId: context.chatId, success: false });
           logger.error({ error, channelId: context.channelId, chatId: context.chatId, webUserId }, "Failed to send user-scoped Weixin reply");
         }
         return;
@@ -291,9 +298,12 @@ export class Gateway {
       logger.warn({ channelId: context.channelId }, "No channel registered for reply");
       return;
     }
+    emitMessageSending({ channelId: context.channelId, chatId: context.chatId, content: text });
     try {
-      await channel.replyToContext(context, text);
+      const result = await channel.replyToContext(context, text);
+      emitMessageSent({ channelId: context.channelId, chatId: context.chatId, messageId: result.messageId, success: result.success });
     } catch (error) {
+      emitMessageSent({ channelId: context.channelId, chatId: context.chatId, success: false });
       logger.error({ error, channelId: context.channelId, chatId: context.chatId }, "Failed to send reply");
     }
   }

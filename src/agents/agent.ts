@@ -20,6 +20,7 @@ import type { MemoryManager } from "../memory/index.js";
 import { getCronService, type CronService } from "../cron/service.js";
 import { createDefaultCronExecuteJob, type AgentExecutor } from "../cron/executor.js";
 import { initExtensions } from "../extensions/index.js";
+import { emitAgentStart, emitAgentEnd } from "../hooks/index.js";
 
 const logger = getChildLogger("agent");
 
@@ -137,7 +138,23 @@ export class Agent {
 
   /** Process message (non-streaming) */
   async processMessage(context: InboundMessageContext): Promise<AgentResponse> {
+    const startedAt = Date.now();
+    const provider = this.options.provider ?? ("deepseek" as ProviderId);
+    emitAgentStart({
+      provider,
+      model: this.options.model,
+      messages: [{ role: "user", content: context.content }],
+    });
+
     const response = await this.runtime.chat(context);
+
+    emitAgentEnd({
+      provider: response.provider,
+      model: response.model,
+      response: response.content,
+      usage: response.usage,
+      durationMs: Date.now() - startedAt,
+    });
 
     return {
       content: response.content,

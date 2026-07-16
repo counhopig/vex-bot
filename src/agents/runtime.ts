@@ -24,6 +24,7 @@ import type { SkillsRegistry } from "../skills/index.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { CronService } from "../cron/service.js";
 import { gatherPromptInjections } from "../pipeline/index.js";
+import { emitToolStart, emitToolEnd } from "../hooks/index.js";
 
 const logger = getChildLogger("runtime");
 
@@ -53,6 +54,37 @@ function wrapErrorAwareTool(tool: AgentTool): AgentTool {
         throw new Error(getToolErrorMessage(result));
       }
       return result;
+    },
+  };
+}
+
+/** Wrap a tool so every execution fires the tool_start/tool_end plugin hooks. */
+export function wrapToolWithHookEvents(tool: AgentTool): AgentTool {
+  return {
+    ...tool,
+    execute: async (toolCallId, params, signal, onUpdate) => {
+      const startedAt = Date.now();
+      emitToolStart({ toolName: tool.name, toolCallId, arguments: params });
+      try {
+        const result = await tool.execute(toolCallId, params, signal, onUpdate);
+        emitToolEnd({
+          toolName: tool.name,
+          toolCallId,
+          result,
+          isError: hasToolErrorFlag(result),
+          durationMs: Date.now() - startedAt,
+        });
+        return result;
+      } catch (error) {
+        emitToolEnd({
+          toolName: tool.name,
+          toolCallId,
+          result: error instanceof Error ? error.message : String(error),
+          isError: true,
+          durationMs: Date.now() - startedAt,
+        });
+        throw error;
+      }
     },
   };
 }
@@ -112,7 +144,7 @@ export class AgentRuntime {
 
   /** Register custom tool */
   registerCustomTool(tool: AgentTool): void {
-    this.customTools.push(wrapErrorAwareTool(tool));
+    this.customTools.push(wrapToolWithHookEvents(wrapErrorAwareTool(tool)));
     logger.debug({ toolName: tool.name, toolCount: this.customTools.length }, "Custom tool registered");
   }
 
