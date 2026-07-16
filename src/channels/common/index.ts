@@ -30,4 +30,3 @@ export function getChannel(id: ChannelId): ChannelAdapter | undefined {
 export function getAllChannels(): ChannelAdapter[] {
   return Array.from(channels.values());
 }
-
