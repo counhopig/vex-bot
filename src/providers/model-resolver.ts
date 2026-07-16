@@ -15,7 +15,8 @@ export interface ResolvedModel {
   providerId: ProviderId;
 }
 
-/** Model registry */
+/** Model registry (deliberately process-global: models derive from the single
+ *  process-wide provider config; per-user runtimes share the same providers) */
 const modelRegistry = new Map<string, ResolvedModel>();
 
 /** Provider config cache */
@@ -183,22 +184,6 @@ function registerChinaProvider(
   logger.debug({ providerId, modelCount: models.length }, "China provider registered");
 }
 
-/** Register preset providers (openrouter, together, groq, ollama, vllm) */
-function registerPresetProvider(
-  providerId: string,
-  config: SimpleProviderConfig,
-): void {
-  const preset = PRESET_PROVIDER_CONFIGS[providerId];
-  if (!preset) return;
-
-  const baseUrl = config.baseUrl ?? preset.baseUrl;
-  const headers = { ...preset.headers, ...config.headers };
-
-  // These providers have dynamic models; register a placeholder so resolveModel can create on demand.
-  // Do not pre-register specific models; they are handled dynamically by resolveModel.
-  logger.debug({ providerId, baseUrl }, "Preset provider registered");
-}
-
 /** Register custom OpenAI provider */
 function registerCustomOpenAI(config: Record<string, unknown>): void {
   const baseUrl = config.baseUrl as string;
@@ -273,9 +258,10 @@ export function initModelResolver(config: VexConfig): void {
 
     if (chinaProviders.includes(id) && providerConfig.apiKey) {
       registerChinaProvider(id, providerConfig);
-    } else if (Object.keys(PRESET_PROVIDER_CONFIGS).includes(id)) {
-      registerPresetProvider(id, providerConfig);
     }
+    // Preset providers (openrouter, together, groq, ollama, vllm) need no
+    // registration: resolveModel builds their models on demand from
+    // PRESET_PROVIDER_CONFIGS.
   }
 
   // Custom OpenAI

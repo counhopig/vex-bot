@@ -118,12 +118,3 @@ export async function llmComplete(options: LlmCompleteOptions): Promise<LlmCompl
     throw error;
   }
 }
-
-/**
- * One-shot LLM completion with raw result
- * (for cases where you need the full AssistantMessage)
- */
-export async function llmCompleteRaw(options: LlmCompleteOptions): Promise<LlmCompleteResult> {
-  const result = await llmComplete(options);
-  return result;
-}
