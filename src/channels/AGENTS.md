@@ -35,7 +35,7 @@ channels/
 
 ## NOTES
 
-- `common/index.ts` is a **hybrid barrel+logic file**. It re-exports everything from `common/base.ts` (`ChannelAdapter`, `BaseChannelAdapter`, `MessageHandler`) AND defines its own inline logic: `registerChannel()`, `getChannel()`, `getAllChannels()`, `hasChannel()`, `setGlobalMessageHandler()`, `initializeAllChannels()`, `shutdownAllChannels()`. The channel registry (`Map<ChannelId, ChannelAdapter>`) and global message handler live here, not in `base.ts`.
+- `common/index.ts` is a hybrid barrel+logic file. It re-exports everything from `common/base.ts` (`ChannelAdapter`, `BaseChannelAdapter`, `MessageHandler`) and defines the process-global channel registry functions `registerChannel()`, `getChannel()`, and `getAllChannels()`. Per-user Weixin channels are managed by the Gateway, not this registry.
 - The **only external consumer** of the channel registry is the outbound module (`src/outbound/index.ts`), which imports `getChannel()` and `getAllChannels()` from `../channels/common/index.js` to resolve channels for message delivery. Every call path for outbound delivery flows through these two functions.
 
 ## ANTI-PATTERNS

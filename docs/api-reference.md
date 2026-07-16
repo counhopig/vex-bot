@@ -1561,18 +1561,6 @@ getChannel(id: ChannelId): ChannelAdapter | undefined
 // Get all registered channels
 getAllChannels(): ChannelAdapter[]
 
-// Check if a channel is registered
-hasChannel(id: ChannelId): boolean
-
-// Set global message handler (applied to all registered channels)
-setGlobalMessageHandler(handler: MessageHandler): void
-
-// Initialize all channels
-initializeAllChannels(): Promise<void>
-
-// Shut down all channels
-shutdownAllChannels(): Promise<void>
-
 // Create a personal WeChat channel (iLink OC API)
 createWeixinChannel(config: WeixinConfig): WeixinChannel
 ```
