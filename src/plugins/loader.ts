@@ -48,7 +48,9 @@ function resolveEnableState(
     }
   }
 
-  // Individual configuration
+  // Individual configuration. Deliberate: an explicit per-plugin enabled=true
+  // wins over the exclusive-slot check below, so an operator can force a
+  // specific plugin on without touching the slot assignment.
   const entry = enableConfig.entries?.[candidate.id];
   if (entry?.enabled === false) {
     return { enabled: false, reason: "explicitly disabled" };

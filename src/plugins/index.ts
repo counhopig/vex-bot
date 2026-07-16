@@ -36,14 +36,6 @@ export interface PluginMeta {
   dependencies?: string[];
 }
 
-/** Plugin config schema (JSON Schema format) */
-export interface PluginConfigSchema {
-  type: "object";
-  properties?: Record<string, unknown>;
-  required?: string[];
-  additionalProperties?: boolean;
-}
-
 /** Plugin manifest (vex.plugin.json) */
 export interface PluginManifest {
   id: string;
@@ -53,12 +45,7 @@ export interface PluginManifest {
   author?: string;
   kind?: string;
   main?: string;
-  configSchema?: PluginConfigSchema;
   dependencies?: string[];
-  /** List of provided tool names */
-  tools?: string[];
-  /** List of provided channel IDs */
-  channels?: string[];
 }
 
 /** Plugin API */
@@ -83,21 +70,12 @@ export interface PluginApi {
   registerTools: (tools: Tool[]) => void;
   /** Register a Hook */
   registerHook: <T extends HookEventType>(eventType: T, handler: HookHandler) => () => void;
-  /** Register an HTTP route (for extension) */
-  registerHttpRoute?: (route: HttpRoute) => void;
   /** Register a service (background task) */
   registerService?: (service: PluginService) => void;
   /** Get a logger */
   getLogger: (name?: string) => ReturnType<typeof getChildLogger>;
   /** Get state directory */
   getStateDir: () => string;
-}
-
-/** HTTP route */
-export interface HttpRoute {
-  method: "GET" | "POST" | "PUT" | "DELETE";
-  path: string;
-  handler: (req: unknown, res: unknown) => void | Promise<void>;
 }
 
 /** Plugin service (background task) */
@@ -111,8 +89,6 @@ export interface PluginService {
 export interface PluginDefinition {
   /** Plugin metadata */
   meta: PluginMeta;
-  /** Config schema */
-  configSchema?: PluginConfigSchema;
   /** Registration phase (sync) */
   register?: (api: PluginApi) => void | Promise<void>;
   /** Activation phase (async) */
@@ -153,6 +129,8 @@ export interface LoadedPlugin {
   origin: PluginOrigin;
   /** Definition */
   definition: PluginDefinition;
+  /** Global config the plugin was registered with (reused for activate) */
+  config: VexConfig;
   /** Configuration */
   pluginConfig?: Record<string, unknown>;
   /** Registered Hook unsubscribe functions */
@@ -196,8 +174,50 @@ export type PluginLifecycleEvent =
 
 // ============== Plugin Management ==============
 
-/** Plugin registry */
+/** Plugin registry (deliberately process-global: plugins are process-level, not per-user) */
 const pluginRegistry = new Map<string, LoadedPlugin>();
+
+/** Build the one true PluginApi. Both register and activate phases use this,
+ *  sharing the same config and pushing into the same unsubscriber/service lists. */
+function buildPluginApi(params: {
+  meta: PluginMeta;
+  config: VexConfig;
+  pluginConfig?: Record<string, unknown>;
+  memoryManager?: MemoryManager;
+  hookUnsubscribers: Array<() => void>;
+  services: PluginService[];
+}): PluginApi {
+  const { meta, config, pluginConfig, memoryManager, hookUnsubscribers, services } = params;
+  return {
+    id: meta.id,
+    meta,
+    config,
+    pluginConfig,
+    memoryManager,
+    remember: memoryManager?.remember.bind(memoryManager),
+    recall: memoryManager?.recall.bind(memoryManager),
+    registerTool: (tool) => {
+      registerTool(tool);
+      logger.debug({ pluginId: meta.id, toolName: tool.name }, "Plugin registered tool");
+    },
+    registerTools: (tools) => {
+      registerTools(tools);
+      logger.debug({ pluginId: meta.id, count: tools.length }, "Plugin registered tools");
+    },
+    registerHook: (eventType, handler) => {
+      const unsubscribe = registerHook(eventType, handler);
+      hookUnsubscribers.push(unsubscribe);
+      logger.debug({ pluginId: meta.id, eventType }, "Plugin registered hook");
+      return unsubscribe;
+    },
+    registerService: (service) => {
+      services.push(service);
+      logger.debug({ pluginId: meta.id, serviceId: service.id }, "Plugin registered service");
+    },
+    getLogger: (name) => getChildLogger(name ?? `plugin:${meta.id}`),
+    getStateDir: () => join(homedir(), ".vex", "plugins", meta.id),
+  };
+}
 
 /** Register a plugin */
 export async function registerPlugin(
@@ -223,36 +243,14 @@ export async function registerPlugin(
   const hookUnsubscribers: Array<() => void> = [];
   const services: PluginService[] = [];
 
-  // Create plugin API
-  const api: PluginApi = {
-    id: meta.id,
+  const api = buildPluginApi({
     meta,
     config,
     pluginConfig: options?.pluginConfig,
     memoryManager: options?.memoryManager,
-    remember: options?.memoryManager?.remember.bind(options.memoryManager),
-    recall: options?.memoryManager?.recall.bind(options.memoryManager),
-    registerTool: (tool) => {
-      registerTool(tool);
-      logger.debug({ pluginId: meta.id, toolName: tool.name }, "Plugin registered tool");
-    },
-    registerTools: (tools) => {
-      registerTools(tools);
-      logger.debug({ pluginId: meta.id, count: tools.length }, "Plugin registered tools");
-    },
-    registerHook: (eventType, handler) => {
-      const unsubscribe = registerHook(eventType, handler);
-      hookUnsubscribers.push(unsubscribe);
-      logger.debug({ pluginId: meta.id, eventType }, "Plugin registered hook");
-      return unsubscribe;
-    },
-    registerService: (service) => {
-      services.push(service);
-      logger.debug({ pluginId: meta.id, serviceId: service.id }, "Plugin registered service");
-    },
-    getLogger: (name) => getChildLogger(name ?? `plugin:${meta.id}`),
-    getStateDir: () => join(homedir(), ".vex", "plugins", meta.id),
-  };
+    hookUnsubscribers,
+    services,
+  });
 
   // Execute register phase
   try {
@@ -264,6 +262,7 @@ export async function registerPlugin(
       id: meta.id,
       origin,
       definition,
+      config,
       pluginConfig: options?.pluginConfig,
       hookUnsubscribers,
       services,
@@ -294,25 +293,14 @@ export async function activatePlugin(pluginId: string): Promise<void> {
 
   logger.info({ pluginId }, "Activating plugin");
 
-  // Create API (simplified version)
-  const api: PluginApi = {
-    id: plugin.id,
+  const api = buildPluginApi({
     meta: plugin.definition.meta,
-    config: {} as VexConfig,  // Needs to be passed in externally
+    config: plugin.config,
     pluginConfig: plugin.pluginConfig,
     memoryManager: plugin.memoryManager,
-    remember: plugin.memoryManager?.remember.bind(plugin.memoryManager),
-    recall: plugin.memoryManager?.recall.bind(plugin.memoryManager),
-    registerTool: (tool) => registerTool(tool),
-    registerTools: (tools) => registerTools(tools),
-    registerHook: (eventType, handler) => {
-      const unsubscribe = registerHook(eventType, handler);
-      plugin.hookUnsubscribers.push(unsubscribe);
-      return unsubscribe;
-    },
-    getLogger: (name) => getChildLogger(name ?? `plugin:${plugin.id}`),
-    getStateDir: () => join(homedir(), ".vex", "plugins", plugin.id),
-  };
+    hookUnsubscribers: plugin.hookUnsubscribers,
+    services: plugin.services,
+  });
 
   // Execute activate phase
   try {
@@ -343,8 +331,8 @@ export async function unregisterPlugin(pluginId: string): Promise<void> {
 
   logger.info({ pluginId }, "Unregistering plugin");
 
-  // Stop services (reverse order)
-  for (const service of plugin.services.reverse()) {
+  // Stop services (reverse order; copy so the plugin's list is not mutated)
+  for (const service of [...plugin.services].reverse()) {
     try {
       await service.stop();
     } catch (error) {

@@ -23,6 +23,13 @@ const DEFAULT_SEARCH_DIRS = {
   workspace: join(process.cwd(), ".vex", "plugins"),
 };
 
+/** Whether this runtime can dynamically import .ts files. True when running
+ *  from TypeScript sources (tsx/vitest); false in the compiled dist, where
+ *  import() of a .ts entry would always fail at load time. */
+function runtimeCanImportTs(): boolean {
+  return import.meta.url.endsWith(".ts");
+}
+
 /**
  * Discover plugin candidates
  */
@@ -31,12 +38,15 @@ export async function discoverPlugins(options?: {
   includeBuiltin?: boolean;
   includeGlobal?: boolean;
   includeWorkspace?: boolean;
+  /** Override .ts entry support (defaults to runtime detection) */
+  allowTsEntries?: boolean;
 }): Promise<PluginCandidate[]> {
   const {
     paths = [],
     includeBuiltin = true,
     includeGlobal = true,
     includeWorkspace = true,
+    allowTsEntries = runtimeCanImportTs(),
   } = options || {};
 
   const candidates: PluginCandidate[] = [];
@@ -63,7 +73,7 @@ export async function discoverPlugins(options?: {
   }
 
   for (const { dir, origin } of searchDirs) {
-    const found = await scanDirectory(dir, origin);
+    const found = await scanDirectory(dir, origin, allowTsEntries);
     for (const candidate of found) {
       // For plugins with the same ID, later entries override earlier ones
       if (seenIds.has(candidate.id)) {
@@ -84,7 +94,7 @@ export async function discoverPlugins(options?: {
 /**
  * Scan a directory for plugins
  */
-async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginCandidate[]> {
+async function scanDirectory(dir: string, origin: PluginOrigin, allowTsEntries: boolean): Promise<PluginCandidate[]> {
   const candidates: PluginCandidate[] = [];
 
   try {
@@ -95,11 +105,11 @@ async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginC
       const stat = statSync(entryPath);
 
       if (stat.isDirectory()) {
-        const candidate = await scanPluginDirectory(entryPath, origin);
+        const candidate = await scanPluginDirectory(entryPath, origin, allowTsEntries);
         if (candidate) {
           candidates.push(candidate);
         }
-      } else if (entry.endsWith(".js") || entry.endsWith(".ts")) {
+      } else if (entry.endsWith(".js") || (allowTsEntries && entry.endsWith(".ts"))) {
         // Single-file plugin
         const id = basename(entry, entry.endsWith(".ts") ? ".ts" : ".js");
         candidates.push({
@@ -108,6 +118,8 @@ async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginC
           entryPath,
           directory: dir,
         });
+      } else if (entry.endsWith(".ts")) {
+        logger.warn({ entryPath }, "Skipping .ts plugin: this runtime cannot import TypeScript");
       }
     }
   } catch (error) {
@@ -120,7 +132,7 @@ async function scanDirectory(dir: string, origin: PluginOrigin): Promise<PluginC
 /**
  * Scan a single plugin directory
  */
-async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<PluginCandidate | null> {
+async function scanPluginDirectory(dir: string, origin: PluginOrigin, allowTsEntries: boolean): Promise<PluginCandidate | null> {
   const manifestPath = join(dir, MANIFEST_FILENAME);
   const packageJsonPath = join(dir, "package.json");
 
@@ -173,7 +185,9 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
 
   // 3. Look for default entry file
   if (!entryPath) {
-    const defaultEntries = ["index.ts", "index.js", "plugin.ts", "plugin.js"];
+    const defaultEntries = allowTsEntries
+      ? ["index.ts", "index.js", "plugin.ts", "plugin.js"]
+      : ["index.js", "plugin.js"];
     for (const entry of defaultEntries) {
       const candidate = join(dir, entry);
       if (existsSync(candidate)) {
@@ -181,6 +195,11 @@ async function scanPluginDirectory(dir: string, origin: PluginOrigin): Promise<P
         break;
       }
     }
+  }
+
+  if (entryPath && entryPath.endsWith(".ts") && !allowTsEntries) {
+    logger.warn({ dir, entryPath }, "Skipping .ts plugin entry: this runtime cannot import TypeScript");
+    return null;
   }
 
   if (!entryPath) {
