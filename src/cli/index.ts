@@ -373,7 +373,7 @@ program
 // Restart service command
 program
   .command("restart")
-  .description("Restart Vex service")
+  .description("Restart Vex service (the new service runs in this terminal's foreground; closing the terminal stops it)")
   .option("-c, --config <path>", "Config file path")
   .option("-p, --port <port>", "Server port")
   .option("--web-only", "WebChat only")

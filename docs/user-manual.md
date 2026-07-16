@@ -408,8 +408,7 @@ vex stop
 
 ### `vex restart` — Restart the service
 
-Stops the current service, then starts a new one.
-
+Stops the current service, then starts a new one in the current terminal's foreground. Closing that terminal stops the replacement service.
 ```bash
 # Restart with current config
 vex restart
