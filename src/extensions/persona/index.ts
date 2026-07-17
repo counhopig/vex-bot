@@ -180,6 +180,16 @@ async function buildPrompt(rt: PersonaRuntime, ctx: InboundMessageContext): Prom
     blocks.push("【注意】如果用户道晚安或准备睡觉，要温柔收束，不要强行延长聊天。");
   }
 
+  // Frame the injected persona/profile/history as the assistant's own memory.
+  // Without this directive the blocks above are inert data, and weaker models
+  // ignore them and reply "I have no memory of you" even with the facts in
+  // context. It is prepended (first block) so it frames everything that follows.
+  const hasKnownInfo = Boolean(profileFacts || history || relevantMemories || profile.nickname);
+  const memoryDirective = hasKnownInfo
+    ? `【记忆】以下的 Persona、用户画像、近期对话都是你（${config.personaName}）已经掌握的、关于这位用户的记忆。你认识这位用户，请把它们当作你自己的记忆自然地回应；绝不要说"我没有记忆""每次对话都是独立的""我不认识你"这类话。`
+    : `【记忆】你（${config.personaName}）是一个有连续记忆的角色。绝不要说"我只是AI，没有记忆""每次对话都是独立的"这类话；如果暂时还不了解用户，就自然地去认识对方，而不是否认自己有记忆。`;
+  blocks.unshift(memoryDirective);
+
   const prompt = blocks.join("\n\n");
   logger.debug(
     {
