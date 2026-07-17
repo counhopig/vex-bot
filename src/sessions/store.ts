@@ -53,7 +53,23 @@ function getDefaultStorePath(): string {
   return path.join(os.homedir(), ".vex", "sessions");
 }
 
-/** Session store class */
+/**
+ * WebChat transcript store.
+ *
+ * Two persistence layers coexist under the same session directory, with distinct
+ * responsibilities:
+ *   1. THIS store — flat `<sessionId>.jsonl` files it appends to, the source of
+ *      truth for what the WebChat UI renders (session list, history panel).
+ *   2. pi-coding-agent's SessionManager — nested per-session logs it owns, the
+ *      source of truth for the LLM conversation context.
+ *
+ * They stay coherent only because both are keyed off the same sessionKey (see the
+ * `stableSenderId` derivation in websocket.ts): restoring a session in the UI just
+ * repoints the client at a sessionKey, and pi reloads that key's context on the
+ * next turn — there is no explicit replay between the two layers. The recovery /
+ * canonicalization logic below exists to read pi's nested logs back into the UI
+ * list; it never writes into pi's files.
+ */
 export class FileSessionStore {
   private storePath: string;
   private indexFile: string;

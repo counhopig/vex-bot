@@ -25,7 +25,7 @@ web/
 | Cancel in-flight chat | `websocket.ts:handleChatCancel()` | `AbortController.abort()` → `chat.delta` with `cancelled:true` |
 | Config CRUD via WS | `websocket.ts:getConfigForClient/saveConfigForClient()` | Authenticated user-owned settings go to SQLite; admin/system settings still merge into YAML |
 | QR login flow | `websocket.ts:handleWeixinQR/handleWeixinQRStatus()` | Generates QR; client polls status every 2s |
-| Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`, explicit restore loads transcript into agent |
+| Session lifecycle | `websocket.ts:ensureSession/handleSessionsRestore()` | Lazy-create via `store.getOrCreate()`; restore repoints the client at a sessionKey (pi reloads that key's LLM context on the next turn) and returns the transcript for the UI |
 | WebChat SPA | `static.ts:getEmbeddedHtml()` | Inline CSS/JS, `marked.js` via CDN, sidebar sessions, message list |
 | Control UI | `static.ts:getControlHtml()` | Inline CSS/JS, config editor, QR scan, status panel |
 | Route dispatch | `static.ts:handleStaticRequest()` | `/login` → auth page, `/` → WebChat, `/control` → Control UI, `/assets/*` → copied Web UI assets; skips `/ws`, `/api/*`, `/health` |

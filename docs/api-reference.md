@@ -63,12 +63,6 @@ class Agent {
     lastUpdate: Date;
   } | null
 
-  // Restore a session from historical transcript
-  restoreSessionFromTranscript(
-    sessionKey: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>
-  ): void
-
   // Register a custom tool
   registerTool(tool: AgentTool): void
 
@@ -104,12 +98,6 @@ class AgentRuntime {
     messageCount: number;
     lastUpdate: Date;
   } | null
-
-  // Restore session from historical messages
-  restoreSessionFromTranscript(
-    sessionKey: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>
-  ): Promise<void>
 
   // Shut down all sessions
   shutdown(): Promise<void>

@@ -34,7 +34,21 @@ export interface SystemPromptOptions {
   skillsPrompt?: string;
   /** Whether memory system is enabled (for injecting memory usage guide) */
   enableMemory?: boolean;
+  /**
+   * When true and no explicit `basePrompt` is given, omit the default assistant
+   * identity line entirely. Used when a persona (or other injector) supplies the
+   * identity, so the base prompt does not assert a competing one.
+   */
+  omitDefaultIdentity?: boolean;
 }
+
+/**
+ * Neutral fallback identity. Deliberately language-agnostic and role-agnostic:
+ * this is a general chatbot framework, so the default must not claim to be a
+ * coding assistant or force English replies.
+ */
+const DEFAULT_IDENTITY =
+  "You are a helpful, friendly AI assistant. Respond in the same language the user writes in.";
 
 /** Get platform info */
 function getPlatformInfo(): string {
@@ -130,11 +144,14 @@ function buildUnifiedContextSection(options: SystemPromptOptions): string {
 export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
-  // Base prompt
-  const basePrompt = options.basePrompt ??
-    "You are an intelligent programming assistant that helps users with various software development tasks. Please respond in English. Code and commands should use English.";
-
-  sections.push(basePrompt);
+  // Base identity. An explicit basePrompt always wins. Otherwise fall back to a
+  // neutral identity — unless omitDefaultIdentity is set, in which case emit no
+  // identity line at all (a persona injector supplies it downstream).
+  if (options.basePrompt) {
+    sections.push(options.basePrompt);
+  } else if (!options.omitDefaultIdentity) {
+    sections.push(DEFAULT_IDENTITY);
+  }
 
   // Environment info
   if (options.includeEnvironment !== false) {

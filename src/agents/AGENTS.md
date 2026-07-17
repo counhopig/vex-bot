@@ -20,13 +20,13 @@ agents/
 | Message processing entry | `agent.ts:Agent.processMessage()` | Non-streaming; delegates to `runtime.chat()` |
 | Streaming response | `agent.ts:Agent.processMessageStream()` | AsyncGenerator; yields text_delta, tool_start, tool_end |
 | Tool initialization | `agent.ts:Agent.initializeTools()` | `createBuiltinTools()` → register each tool on runtime |
-| Session lifecycle | `runtime.ts:AgentRuntime` | getOrCreateSession, clearSession, restoreSessionFromTranscript, shutdown |
+| Session lifecycle | `runtime.ts:AgentRuntime` | getOrCreateSession, clearSession, shutdown |
+| Per-session serialization | `runtime.ts:lockSession()` | Exclusive per-sessionKey lock; chat/chatStream run one turn at a time per key |
 | pi-coding-agent wiring | `runtime.ts:getOrCreateSession()` | SessionManager, AuthStorage, ModelRegistry, createAgentSession |
 | API key injection | `runtime.ts:getOrCreateSession()` | AuthStorage from `getApiKeyForProvider()` + fallback resolver |
 | System prompt assembly | `system-prompt.ts:buildSystemPrompt()` | basePrompt → environment → tool rules → skills → memory → output format |
 | Chat bypass (CLI) | `src/cli/index.ts:chat` | Constructs pi-ai messages directly; does NOT use Agent |
 | Session key derivation | `runtime.ts:getSessionKey()` | `channelId:chatId` for groups, `channelId:senderId` for DM |
-| Transcript restore | `agent.ts:restoreSessionFromTranscript()` | Delegates to runtime; simplified implementation |
 | Model resolution | `runtime.ts:getOrCreateSession()` | `resolveModel(provider, model)` → `createAgentSession()` |
 
 ## KEY PATTERNS

@@ -7,6 +7,7 @@ import type { Server as HttpServer, IncomingMessage } from "http";
 import { z } from "zod";
 import { getChildLogger } from "../utils/logger.js";
 import { generateId } from "../utils/index.js";
+import { renderQrSvgDataUri } from "../utils/qr.js";
 import type {
   WsFrame,
   WsRequestFrame,
@@ -587,7 +588,7 @@ export class WsServer {
         userId: client.user.id,
         client: weixinClient,
       });
-      const qrcode_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.qrcodeImgContent)}`;
+      const qrcode_url = renderQrSvgDataUri(result.qrcodeImgContent);
       return { qrcode_url, qrcode: result.qrcode };
     }
 
@@ -598,7 +599,7 @@ export class WsServer {
     if (!result) {
       return { error: "Failed to get QR code" };
     }
-    const qrcode_url = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(result.qrcodeImgContent)}`;
+    const qrcode_url = renderQrSvgDataUri(result.qrcodeImgContent);
     return { qrcode_url, qrcode: result.qrcode };
   }
 
@@ -975,25 +976,16 @@ export class WsServer {
       throw new Error(`Session not found: ${params.sessionKey}`);
     }
 
-    // Update client session
+    // Update client session. Pointing the client at this sessionKey is all the
+    // agent needs: the runtime derives its session key from the same key (see
+    // chat.send's stableSenderId), and pi's SessionManager reloads that session's
+    // persisted transcript on the next turn. The UI's own transcript is returned
+    // below for display; there is no separate "replay into the agent" step.
     client.sessionKey = session.sessionKey;
     client.sessionId = session.sessionId;
 
-    // Load history messages
+    // Load history messages for the UI to render.
     const messages = await store.loadTranscript(session.sessionId);
-
-    // Restore Agent's session context
-    // Agent uses "webchat:{senderId}" as sessionKey for direct chat
-    // senderId extracted from sessionKey (remove "webchat:" prefix)
-    const agentSessionKey = session.sessionKey; // webchat:session_xxx
-    const transcriptMessages = messages
-      .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
-      .map((m) => ({ role: m.role as "user" | "assistant", content: m.content as string }));
-
-    if (transcriptMessages.length > 0) {
-      const agent = await this.getAgentForClient(client);
-      await agent.restoreSessionFromTranscript(agentSessionKey, transcriptMessages);
-    }
 
     return {
       sessionKey: session.sessionKey,

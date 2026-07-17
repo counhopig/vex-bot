@@ -210,13 +210,6 @@ export class Agent {
     };
   }
 
-  async restoreSessionFromTranscript(
-    sessionKey: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>
-  ): Promise<void> {
-    await this.runtime.restoreSessionFromTranscript(sessionKey, messages);
-  }
-
   async shutdown(): Promise<void> {
     await this.runtime.shutdown();
   }

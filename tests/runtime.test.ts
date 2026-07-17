@@ -292,6 +292,114 @@ describe("agents/runtime", () => {
       });
     });
 
+    describe("base identity wiring", () => {
+      const context = {
+        channelId: "test",
+        chatId: "chat-1",
+        chatType: "direct" as const,
+        senderId: "user-1",
+        content: "Hello",
+        messageId: "msg-1",
+        timestamp: Date.now(),
+      };
+
+      it("omits the default identity when persona is enabled (persona supplies it)", async () => {
+        const { buildSystemPrompt } = await import("../src/agents/system-prompt.js");
+        const rt = new AgentRuntime({ ...testConfig, personaEnabled: true });
+        await rt.chat(context);
+        expect(vi.mocked(buildSystemPrompt)).toHaveBeenCalledWith(
+          expect.objectContaining({ omitDefaultIdentity: true })
+        );
+      });
+
+      it("keeps the default identity when persona is not enabled", async () => {
+        const { buildSystemPrompt } = await import("../src/agents/system-prompt.js");
+        const rt = new AgentRuntime({ ...testConfig, personaEnabled: false });
+        await rt.chat(context);
+        expect(vi.mocked(buildSystemPrompt)).toHaveBeenCalledWith(
+          expect.objectContaining({ omitDefaultIdentity: false })
+        );
+      });
+    });
+
+    describe("concurrency", () => {
+      it("serializes concurrent turns on the same session key so only one session is built", async () => {
+        const { createAgentSession } = await import("@mariozechner/pi-coding-agent");
+        const context = {
+          channelId: "test",
+          chatId: "chat-1",
+          chatType: "direct" as const,
+          senderId: "user-1",
+          content: "Hello",
+          messageId: "msg-1",
+          timestamp: Date.now(),
+        };
+
+        await Promise.all([runtime.chat(context), runtime.chat(context)]);
+
+        // Without per-session serialization both turns race getOrCreateSession
+        // and each build their own AgentSession (call count 2), then mutate the
+        // shared prompt concurrently. Serialized, the second turn reuses the
+        // first's session.
+        expect(vi.mocked(createAgentSession)).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe("chatStream", () => {
+      it("completes when the prompt resolves even without an explicit agent_end event", async () => {
+        const context = {
+          channelId: "test",
+          chatId: "chat-1",
+          chatType: "direct" as const,
+          senderId: "user-1",
+          content: "Hello",
+          messageId: "msg-1",
+          timestamp: Date.now(),
+        };
+
+        const events: unknown[] = [];
+        for await (const event of runtime.chatStream(context)) {
+          events.push(event);
+        }
+        // Reaching here means the stream terminated instead of busy-looping
+        // forever waiting for an agent_end that the session never emits.
+        expect(Array.isArray(events)).toBe(true);
+      }, 2000);
+
+      it("yields tool events pushed by the session subscription", async () => {
+        const { createAgentSession } = await import("@mariozechner/pi-coding-agent");
+        let captured: ((event: unknown) => void) | undefined;
+        const session = makeMockSession();
+        session.subscribe = vi.fn().mockImplementation((cb: (event: unknown) => void) => {
+          captured = cb;
+          return () => {};
+        });
+        session.prompt = vi.fn().mockImplementation(async () => {
+          captured?.({ type: "tool_execution_start", toolName: "bash", args: { command: "ls" } });
+          captured?.({ type: "tool_execution_end", isError: false });
+        });
+        vi.mocked(createAgentSession).mockResolvedValueOnce({ session } as never);
+
+        const context = {
+          channelId: "test",
+          chatId: "chat-2",
+          chatType: "direct" as const,
+          senderId: "user-2",
+          content: "run ls",
+          messageId: "msg-2",
+          timestamp: Date.now(),
+        };
+
+        const events: unknown[] = [];
+        for await (const event of runtime.chatStream(context)) {
+          events.push(event);
+        }
+
+        expect(events).toContainEqual({ type: "tool_start", name: "bash", argsPreview: "ls" });
+        expect(events).toContainEqual({ type: "tool_end", isError: false });
+      }, 2000);
+    });
+
     describe("shutdown", () => {
       it("should dispose all sessions on shutdown", async () => {
         const context = {

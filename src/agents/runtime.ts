@@ -100,6 +100,11 @@ export interface RuntimeConfig {
   sessionDir?: string;
   memoryManager?: MemoryManager;
   cronService?: CronService;
+  /**
+   * When persona is enabled it injects the assistant's identity per turn, so the
+   * base prompt omits its default identity to avoid a competing one.
+   */
+  personaEnabled?: boolean;
 }
 
 /** Chat response */
@@ -129,6 +134,12 @@ export class AgentRuntime {
   private sessionDir: string;
   private skillsRegistry: SkillsRegistry | null = null;
   private customTools: AgentTool[] = [];
+  // Per-sessionKey exclusive lock. A turn mutates the shared AgentSession's
+  // system prompt (applyPromptInjections) and drives session.prompt(); two
+  // concurrent turns on the same key would corrupt each other's injected prompt
+  // and interleave the underlying pi session. Serialize them here so overlapping
+  // requests for one session run one-at-a-time instead of racing.
+  private readonly sessionLocks = new Map<string, Promise<void>>();
 
   constructor(config: RuntimeConfig) {
     this.config = config;
@@ -146,6 +157,26 @@ export class AgentRuntime {
   registerCustomTool(tool: AgentTool): void {
     this.customTools.push(wrapToolWithHookEvents(wrapErrorAwareTool(tool)));
     logger.debug({ toolName: tool.name, toolCount: this.customTools.length }, "Custom tool registered");
+  }
+
+  /**
+   * Acquire the exclusive per-sessionKey lock, returning a release function.
+   * Callers MUST call release() in a finally so the chain can't wedge.
+   */
+  private async lockSession(sessionKey: string): Promise<() => void> {
+    const prev = this.sessionLocks.get(sessionKey) ?? Promise.resolve();
+    let release!: () => void;
+    const done = new Promise<void>((resolve) => { release = resolve; });
+    const tail = prev.then(() => done);
+    this.sessionLocks.set(sessionKey, tail);
+    await prev.catch(() => {});
+    return () => {
+      release();
+      // Drop the entry only if nobody chained a newer waiter after us.
+      if (this.sessionLocks.get(sessionKey) === tail) {
+        this.sessionLocks.delete(sessionKey);
+      }
+    };
   }
 
   /** Get or create session */
@@ -269,6 +300,7 @@ export class AgentRuntime {
       tools: this.customTools,
       skillsPrompt: this.skillsRegistry?.buildPrompt(),
       enableMemory: !!this.config.memoryManager,
+      omitDefaultIdentity: !!this.config.personaEnabled,
     });
   }
 
@@ -354,18 +386,150 @@ export class AgentRuntime {
     const startedAt = Date.now();
     logger.debug({ sessionKey, contentPreview: context.content.slice(0, 100), contentLength: context.content.length }, "Processing message");
 
-    const session = await this.getOrCreateSession(sessionKey);
-    const restorePrompt = await this.applyPromptInjections(session, context);
-
-    this.logApiQuery(session, context.content, sessionKey);
-
+    const releaseLock = await this.lockSession(sessionKey);
     try {
-      await session.prompt(context.content);
-      await session.agent.waitForIdle();
+      const session = await this.getOrCreateSession(sessionKey);
+      const restorePrompt = await this.applyPromptInjections(session, context);
 
+      this.logApiQuery(session, context.content, sessionKey);
+
+      try {
+        await session.prompt(context.content);
+        await session.agent.waitForIdle();
+
+        const lastText = session.getLastAssistantText() ?? "";
+
+        // Get usage statistics
+        const stats = session.getSessionStats();
+
+        logger.debug(
+          {
+            sessionKey,
+            responseLength: lastText.length,
+            durationMs: Date.now() - startedAt,
+            usage: stats.tokens,
+          },
+          "Message processed"
+        );
+
+        return {
+          content: lastText,
+          provider: this.config.provider,
+          model: this.config.model,
+          usage: {
+            promptTokens: stats.tokens.input,
+            completionTokens: stats.tokens.output,
+            totalTokens: stats.tokens.total,
+          },
+        };
+      } finally {
+        restorePrompt();
+      }
+    } finally {
+      releaseLock();
+    }
+  }
+
+  /** Streaming chat */
+  async *chatStream(
+    context: InboundMessageContext,
+    options?: { signal?: AbortSignal }
+  ): AsyncGenerator<StreamEvent, ChatResponse, unknown> {
+    const sessionKey = this.getSessionKey(context);
+    const startedAt = Date.now();
+    logger.debug({ sessionKey, contentPreview: context.content.slice(0, 100), contentLength: context.content.length }, "Processing message (stream)");
+
+    const releaseLock = await this.lockSession(sessionKey);
+    try {
+      const session = await this.getOrCreateSession(sessionKey);
+      const restorePrompt = await this.applyPromptInjections(session, context);
+
+      this.logApiQuery(session, context.content, sessionKey);
+
+      // Event queue plus a single-slot waiter: the subscription and the prompt
+      // completion wake the consumer instead of it polling on a timer.
+      const eventQueue: StreamEvent[] = [];
+      let done = false;
+      let promptError: Error | null = null;
+      let notify: (() => void) | null = null;
+      const wake = (): void => {
+        const resume = notify;
+        notify = null;
+        if (resume) resume();
+      };
+
+      // Subscribe to events
+      const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
+        if (event.type === "message_update") {
+          const updateEvent = event as { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } };
+          if (updateEvent.assistantMessageEvent?.type === "text_delta" && updateEvent.assistantMessageEvent.delta) {
+            eventQueue.push({ type: "text_delta", delta: updateEvent.assistantMessageEvent.delta });
+          }
+        } else if (event.type === "tool_execution_start") {
+          const toolEvent = event as { type: "tool_execution_start"; toolName: string; args: Record<string, unknown> };
+          const argsPreview = this.getArgsPreview(toolEvent.args);
+          eventQueue.push({ type: "tool_start", name: toolEvent.toolName, argsPreview });
+          logger.debug({ sessionKey, toolName: toolEvent.toolName, argsPreview }, "Tool execution started");
+        } else if (event.type === "tool_execution_end") {
+          const toolEvent = event as { type: "tool_execution_end"; isError: boolean };
+          eventQueue.push({ type: "tool_end", isError: toolEvent.isError });
+          logger.debug({ sessionKey, isError: toolEvent.isError }, "Tool execution ended");
+        } else if (event.type === "agent_end") {
+          logger.debug({ sessionKey }, "Agent stream ended");
+        }
+        wake();
+      });
+
+      const onAbort = (): void => wake();
+      options?.signal?.addEventListener("abort", onAbort);
+
+      // Start prompt. Mark done in finally so the loop always terminates once
+      // the turn settles, even if no agent_end event is observed.
+      const promptPromise = session.prompt(context.content)
+        .then(() => session.agent.waitForIdle())
+        .catch((err: unknown) => {
+          promptError = err instanceof Error ? err : new Error(String(err));
+        })
+        .finally(() => {
+          done = true;
+          wake();
+        });
+
+      // Stream output events
+      try {
+        while (!done) {
+          if (options?.signal?.aborted) {
+            session.agent.abort();
+            throw new DOMException("Aborted", "AbortError");
+          }
+
+          while (eventQueue.length > 0) {
+            yield eventQueue.shift()!;
+          }
+
+          if (!done && eventQueue.length === 0) {
+            await new Promise<void>((resolve) => { notify = resolve; });
+          }
+        }
+
+        // Drain remaining events
+        while (eventQueue.length > 0) {
+          yield eventQueue.shift()!;
+        }
+      } finally {
+        unsubscribe();
+        options?.signal?.removeEventListener("abort", onAbort);
+        restorePrompt();
+      }
+
+      await promptPromise;
+
+      if (promptError) {
+        throw promptError;
+      }
+
+      // Get result
       const lastText = session.getLastAssistantText() ?? "";
-
-      // Get usage statistics
       const stats = session.getSessionStats();
 
       logger.debug(
@@ -375,7 +539,7 @@ export class AgentRuntime {
           durationMs: Date.now() - startedAt,
           usage: stats.tokens,
         },
-        "Message processed"
+        "Stream message processed"
       );
 
       return {
@@ -389,116 +553,8 @@ export class AgentRuntime {
         },
       };
     } finally {
-      restorePrompt();
+      releaseLock();
     }
-  }
-
-  /** Streaming chat */
-  async *chatStream(
-    context: InboundMessageContext,
-    options?: { signal?: AbortSignal }
-  ): AsyncGenerator<StreamEvent, ChatResponse, unknown> {
-    const sessionKey = this.getSessionKey(context);
-    const startedAt = Date.now();
-    logger.debug({ sessionKey, contentPreview: context.content.slice(0, 100), contentLength: context.content.length }, "Processing message (stream)");
-
-    const session = await this.getOrCreateSession(sessionKey);
-    const restorePrompt = await this.applyPromptInjections(session, context);
-
-    this.logApiQuery(session, context.content, sessionKey);
-
-    // Event queue
-    const eventQueue: StreamEvent[] = [];
-    let done = false;
-    let promptError: Error | null = null;
-
-    // Subscribe to events
-    const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-      if (event.type === "message_update") {
-        const updateEvent = event as { type: "message_update"; assistantMessageEvent: { type: string; delta?: string } };
-        if (updateEvent.assistantMessageEvent?.type === "text_delta" && updateEvent.assistantMessageEvent.delta) {
-          eventQueue.push({ type: "text_delta", delta: updateEvent.assistantMessageEvent.delta });
-        }
-      } else if (event.type === "tool_execution_start") {
-        const toolEvent = event as { type: "tool_execution_start"; toolName: string; args: Record<string, unknown> };
-        const argsPreview = this.getArgsPreview(toolEvent.args);
-        eventQueue.push({ type: "tool_start", name: toolEvent.toolName, argsPreview });
-        logger.debug({ sessionKey, toolName: toolEvent.toolName, argsPreview }, "Tool execution started");
-      } else if (event.type === "tool_execution_end") {
-        const toolEvent = event as { type: "tool_execution_end"; isError: boolean };
-        eventQueue.push({ type: "tool_end", isError: toolEvent.isError });
-        logger.debug({ sessionKey, isError: toolEvent.isError }, "Tool execution ended");
-      } else if (event.type === "agent_end") {
-        done = true;
-        logger.debug({ sessionKey }, "Agent stream ended");
-      }
-    });
-
-    // Start prompt
-    const promptPromise = session.prompt(context.content)
-      .then(() => session.agent.waitForIdle())
-      .catch((err: unknown) => {
-        done = true;
-        promptError = err instanceof Error ? err : new Error(String(err));
-      });
-
-    // Stream output events
-    try {
-      while (!done) {
-        if (options?.signal?.aborted) {
-          session.agent.abort();
-          throw new DOMException("Aborted", "AbortError");
-        }
-
-        while (eventQueue.length > 0) {
-          yield eventQueue.shift()!;
-        }
-
-        if (!done) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      }
-
-      // Drain remaining events
-      while (eventQueue.length > 0) {
-        yield eventQueue.shift()!;
-      }
-    } finally {
-      unsubscribe();
-    }
-
-    await promptPromise;
-
-    if (promptError) {
-      throw promptError;
-    }
-
-    // Get result
-    const lastText = session.getLastAssistantText() ?? "";
-    const stats = session.getSessionStats();
-
-    // Restore base prompt after turn
-    restorePrompt();
-    logger.debug(
-      {
-        sessionKey,
-        responseLength: lastText.length,
-        durationMs: Date.now() - startedAt,
-        usage: stats.tokens,
-      },
-      "Stream message processed"
-    );
-
-    return {
-      content: lastText,
-      provider: this.config.provider,
-      model: this.config.model,
-      usage: {
-        promptTokens: stats.tokens.input,
-        completionTokens: stats.tokens.output,
-        totalTokens: stats.tokens.total,
-      },
-    };
   }
 
   /** Get argument preview */
@@ -539,20 +595,6 @@ export class AgentRuntime {
     };
   }
 
-  /** Restore session from transcript */
-  async restoreSessionFromTranscript(
-    sessionKey: string,
-    messages: Array<{ role: "user" | "assistant"; content: string }>
-  ): Promise<void> {
-    const session = await this.getOrCreateSession(sessionKey);
-
-    // AgentSession auto-persists; we can restore context by sending initial messages
-    // Note: this is a simplified implementation; real restoration may require more complex handling
-    if (messages.length > 0) {
-      logger.debug({ sessionKey, messageCount: messages.length }, "Session restored from transcript");
-    }
-  }
-
   /** Close all sessions */
   async shutdown(): Promise<void> {
     for (const session of this.sessions.values()) {
@@ -573,6 +615,7 @@ export function createAgentRuntime(config: VexConfig): AgentRuntime {
     maxTokens: config.agent.maxTokens,
     workingDirectory: config.agent.workingDirectory,
     sessionDir: config.sessions?.directory,
+    personaEnabled: config.persona?.enabled !== false,
   };
 
   // Initialize model resolver
