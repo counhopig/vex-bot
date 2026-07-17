@@ -4,6 +4,7 @@
  */
 
 import { getChildLogger } from "../../utils/logger.js";
+import { renderQrTerminal } from "../../utils/qr.js";
 import { WeixinClient, DEFAULT_WEIXIN_OC_BASE_URL } from "./client.js";
 import type { QRStatusResponse } from "./client.js";
 
@@ -66,9 +67,11 @@ function mapQRStatus(
 }
 
 function displayQRCode(qrcode: string): void {
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrcode)}`;
   logger.info("Scan QR code with WeChat on your phone to log in (valid for 5 minutes)");
-  logger.info(`QR code link: ${qrUrl}`);
+  // Render locally to the terminal — never hand the login URL to a third-party
+  // QR image service.
+  // eslint-disable-next-line no-console
+  console.log("\n" + renderQrTerminal(qrcode) + "\n");
 }
 
 async function sleep(ms: number): Promise<void> {
