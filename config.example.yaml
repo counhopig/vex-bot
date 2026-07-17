@@ -1,0 +1,119 @@
+# Vex sample configuration.
+#
+# Copy this to one of the locations Vex loads (first found wins, later files
+# override earlier ones for fields they set):
+#   1. ./config.local.yaml          (current working directory)
+#   2. ~/.vex/config.local.yaml     (per-user)
+# Any field you omit falls back to the built-in default shown in [brackets].
+# Vex reads YAML only.
+
+# ── Model providers ─────────────────────────────────────────────────────────
+# Only configure the providers you actually use. Each Chinese/Western preset
+# just needs an apiKey. Custom OpenAI/Anthropic-compatible endpoints also take a
+# baseUrl and an explicit models list.
+providers:
+  deepseek:
+    apiKey: sk-your-deepseek-key
+  # kimi:
+  #   apiKey: sk-your-kimi-key
+  # minimax:
+  #   apiKey: your-minimax-key
+  #   groupId: your-group-id        # MiniMax only
+  # custom-openai:
+  #   baseUrl: https://api.example.com/v1
+  #   apiKey: sk-xxx
+  #   models:
+  #     - id: qwen2.5-72b
+  #       name: Qwen 2.5 72B
+
+# ── Agent ───────────────────────────────────────────────────────────────────
+agent:
+  defaultProvider: deepseek          # [deepseek]
+  defaultModel: deepseek-chat        # [deepseek-chat]
+  temperature: 0.7                   # [0.7]  range 0–2
+  maxTokens: 4096                    # [4096]
+  enableFunctionCalling: true        # [true]
+  # Identity/base prompt. Leave unset to use the neutral default; when the
+  # persona extension is enabled it supplies the identity, so you usually leave
+  # this blank and configure `persona` below instead.
+  # systemPrompt: "You are a helpful assistant for our team."
+  # Per-user bash/filesystem sandbox root (multi-user mode scopes under this).
+  # workingDirectory: ~/.vex/workspace
+  # Extra env var names the bash tool may pass through (API keys never leak
+  # unless listed here).
+  # bashEnvPassthrough: []
+
+# ── Server ──────────────────────────────────────────────────────────────────
+server:
+  port: 3000                         # [3000]
+  # Bind address. Defaults to loopback so the server is NOT exposed on all
+  # interfaces unless you opt in explicitly. Set 0.0.0.0 only behind a
+  # TLS-terminating reverse proxy.
+  host: 127.0.0.1                    # [127.0.0.1]
+
+# ── Web login / multi-user ──────────────────────────────────────────────────
+# When enabled, each web user gets an isolated Agent, memory, sessions, persona
+# state, and WeChat login. The first registered account becomes admin.
+webAuth:
+  enabled: true                      # [true]
+  # database: ~/.vex/web-auth.sqlite
+  # secureCookies: true              # auto-detected per request when omitted
+  # allowRegistration: false         # after an admin exists, registration is admin-only unless true
+
+# ── Channels ────────────────────────────────────────────────────────────────
+# Personal WeChat via the iLink OC API. Log in by scanning the QR from the
+# Control Panel (/control) or the CLI. In multi-user mode each web user binds
+# their own account, so leave this disabled and bind per-user from the UI.
+channels:
+  weixin:
+    enabled: false                   # [false]
+    botType: "3"                     # ["3"]
+    # baseUrl: https://ilinkai.weixin.qq.com
+    # apiTimeoutMs: 120000
+
+# ── Long-term memory ────────────────────────────────────────────────────────
+# Enabled by default (omitting this block still turns it on). Uses local TF-IDF
+# style embeddings, so no external embedding provider is required.
+memory:
+  enabled: true                      # [true]
+  # directory: ~/.vex/memory
+  # embeddingProvider: deepseek      # optional; local embeddings used otherwise
+
+# ── Sessions ────────────────────────────────────────────────────────────────
+# sessions:
+#   type: file                       # [memory]  "file" persists JSONL transcripts
+#   directory: ~/.vex/sessions
+
+# ── Persona extension ───────────────────────────────────────────────────────
+# A private, stateful character with memory, emotion, and background user-profile
+# extraction. Keys are snake_case. Enabled by default.
+persona:
+  enabled: true                      # [true]
+  persona_name: 小忆
+  # persona_base_prompt: "你是一个温柔细腻、略带毒舌但内心柔软的助手。"
+  # persona_reply_style: "自然口语化，2~4 句话，偶尔用 emoji。"
+  emotion_enabled: true              # [true]
+  profile_building_enabled: true     # [true] extract durable user facts in the background
+  profile_building_trigger_turns: 5  # [5]
+
+# ── Skills ──────────────────────────────────────────────────────────────────
+skills:
+  enabled: true                      # [true]
+  # userDir: ~/.vex/skills
+  # workspaceDir: ./.vex/skills
+  # disabled: []
+  # only: []
+
+# ── Other extensions (all default-on; uncomment to tune) ────────────────────
+# sharelink:
+#   enabled: true
+#   autoDetect: false                # auto-summarize links pasted in chat
+# skillLearner:
+#   enabled: true
+# weather:
+#   weather_provider: wttr           # or "caiyun" (needs caiyun_api_key)
+
+# ── Logging ─────────────────────────────────────────────────────────────────
+logging:
+  level: info                        # [info]  debug | info | warn | error
+  pretty: true                       # [true]  colorized console; the log file stays JSON
