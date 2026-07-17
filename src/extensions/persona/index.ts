@@ -45,6 +45,12 @@ function getWebOwnerId(ctx: InboundMessageContext): string | undefined {
 
 function userKey(ctx: InboundMessageContext): string {
   const ownerId = getWebOwnerId(ctx);
+  // WebChat: every session of one web user shares a single persona (keyed by the
+  // web user, not the per-session sender id). Other channels stay per-sender so
+  // e.g. each WeChat contact keeps its own persona.
+  if (ctx.channelId === "webchat") {
+    return ownerId ? `webchat:${ownerId}` : "webchat";
+  }
   return ownerId ? `${ctx.channelId}:${ownerId}:${ctx.senderId}` : `${ctx.channelId}:${ctx.senderId}`;
 }
 

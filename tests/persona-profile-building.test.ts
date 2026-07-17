@@ -164,12 +164,12 @@ describe("persona auto-profile-building", () => {
       // After await runResponseObservers, the detached extraction's first LLM call is in flight;
       // resolve it by waiting for writes.
       const store = new PersonaStorage();
-      const facts = store.getProfileFacts("webchat:user-a");
+      const facts = store.getProfileFacts("webchat");
       expect(facts).toHaveLength(1);
       expect(facts[0]?.category).toBe("location");
       expect(facts[0]?.content).toBe("住在深圳，在香港上班");
 
-      const memories = await memoryManager.list({ tags: ["persona", "user:webchat:user-a"] });
+      const memories = await memoryManager.list({ tags: ["persona", "user:webchat"] });
       const personaFacts = memories.filter((m) => m.content.includes("[location]"));
       expect(personaFacts).toHaveLength(1);
     } finally {
@@ -194,7 +194,7 @@ describe("persona auto-profile-building", () => {
       const { PersonaStorage } = await import("../src/extensions/persona/storage.js");
       const store = new PersonaStorage();
       // Pre-seed an existing fact so addProfileFact dedupes.
-      store.addProfileFact("webchat:user-b", "location", "住在深圳", "之前说过", 0.95);
+      store.addProfileFact("webchat", "location", "住在深圳", "之前说过", 0.95);
 
       // The existing fact is also passed to the LLM via prompt context,
       // but the model's "test response" returns it anyway — dedup guard in
@@ -203,10 +203,10 @@ describe("persona auto-profile-building", () => {
       await waitForLlmCalls(1);
       await promise;
 
-      const facts = store.getProfileFacts("webchat:user-b");
+      const facts = store.getProfileFacts("webchat");
       expect(facts).toHaveLength(1);
 
-      const memories = await memoryManager.list({ tags: ["persona", "user:webchat:user-b"] });
+      const memories = await memoryManager.list({ tags: ["persona", "user:webchat"] });
       expect(memories).toHaveLength(0);
     } finally {
       await cleanup();
@@ -286,7 +286,7 @@ describe("persona auto-profile-building", () => {
       await promise;
 
       const store = new PersonaStorage();
-      const facts = store.getProfileFacts("webchat:user-c");
+      const facts = store.getProfileFacts("webchat");
       expect(facts).toHaveLength(1);
       expect(facts[0]?.category).toBe("job");
       expect(facts[0]?.content).toBe("做产品经理");
@@ -366,7 +366,7 @@ describe("persona auto-profile-building", () => {
       await second;
 
       const store = new PersonaStorage();
-      const facts = store.getProfileFacts("webchat:user-f");
+      const facts = store.getProfileFacts("webchat");
       expect(facts).toHaveLength(1);
     } finally {
       await cleanup();

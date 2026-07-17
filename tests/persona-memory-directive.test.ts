@@ -66,8 +66,9 @@ describe("persona memory directive", () => {
     const { PersonaStorage } = await import("../src/extensions/persona/storage.js");
     const { gatherPromptInjections } = await import("../src/pipeline/index.js");
 
+    // Single-user WebChat unifies onto one persona key ("webchat").
     const store = new PersonaStorage();
-    store.addProfileFact("webchat:user-1", "居住地", "深圳", "用户说过", 0.9);
+    store.addProfileFact("webchat", "居住地", "深圳", "用户说过", 0.9);
 
     initPersona(baseConfig());
     const injections = await gatherPromptInjections(context("user-1"));
