@@ -148,7 +148,9 @@ const VexConfigSchema = z.object({
   server: ServerConfigSchema.optional().default({}),
   logging: LoggingConfigSchema.optional().default({}),
   sessions: SessionStoreConfigSchema.optional(),
-  memory: MemoryConfigSchema.optional(),
+  // Default-on when omitted, matching persona/skills/sharelink/webAuth. The gates
+  // in gateway/user-runtime/agent still honour an explicit `enabled: false`.
+  memory: MemoryConfigSchema.optional().default({}),
   skills: SkillsConfigSchema.optional(),
   skillLearner: SkillLearnerConfigSchema.optional(),
   sharelink: ShareLinkConfigSchema.optional(),

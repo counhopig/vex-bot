@@ -139,6 +139,12 @@ describe("config", () => {
       expect(result.success).toBe(false);
     });
 
+    it("enables memory by default when the block is omitted (consistent with persona/skills/etc.)", () => {
+      const result = VexConfigSchema.parse({});
+      expect(result.memory).toBeDefined();
+      expect(result.memory?.enabled).toBe(true);
+    });
+
     it("should validate memory config", () => {
       const result = VexConfigSchema.safeParse({
         memory: {
