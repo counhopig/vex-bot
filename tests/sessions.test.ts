@@ -517,6 +517,20 @@ describe("sessions/store", () => {
       });
     });
 
+    describe("setLabel", () => {
+      it("sets the label on an existing session", async () => {
+        await store.getOrCreate("webchat:user-a:s1");
+        await store.setLabel("webchat:user-a:s1", "深圳租房讨论");
+        const entry = await store.get("webchat:user-a:s1");
+        expect(entry?.label).toBe("深圳租房讨论");
+      });
+
+      it("is a no-op for a missing session", async () => {
+        await store.setLabel("does-not-exist", "x");
+        expect(await store.get("does-not-exist")).toBeNull();
+      });
+    });
+
     describe("transcript operations", () => {
       it("should get transcript path", () => {
         const transcriptPath = store.getTranscriptPath("session-123");

@@ -38,6 +38,7 @@ import {
 import { getAllProviders } from "../providers/index.js";
 import { getAllChannels } from "../channels/index.js";
 import { getSessionStore, type SessionListItem, type TranscriptMessage } from "../sessions/index.js";
+import { generateSessionTitle } from "../sessions/title.js";
 import { runMessageInterceptors, runResponseObservers } from "../pipeline/index.js";
 import {
   extractSystemConfigParams,
@@ -315,6 +316,9 @@ export class WsServer {
   private onUserWeixinUnbind?: (userId: string) => Promise<void> | void;
   private getUserWeixinStatus?: (userId: string) => { configured: boolean; connected: boolean; accountId?: string };
   private pendingUserWeixinLogins = new Map<string, PendingUserWeixinLogin>();
+  // Sessions currently having a title generated, so concurrent replies don't
+  // fire duplicate title LLM calls for the same session.
+  private titleInFlight = new Set<string>();
   private startTime = Date.now();
   private heartbeatInterval: number;
   private clientTimeout: number;
@@ -834,6 +838,11 @@ export class WsServer {
 
       // Run response observers
       await runResponseObservers(context, fullContent);
+
+      // Auto-title the session from its first exchange (detached; never blocks
+      // the reply). No-op once the session already has a label.
+      void this.maybeGenerateTitle(client, context.content, fullContent);
+
       logger.debug(
         {
           clientId: client.id,
@@ -872,6 +881,38 @@ export class WsServer {
     }
 
     return { messageId };
+  }
+
+  /**
+   * Generate a sidebar title for a WebChat session from its first exchange.
+   * Runs at most once per session (guarded by the label + an in-flight set),
+   * retries on a later reply if the LLM call failed, and pushes a `session.title`
+   * event so the sidebar updates live.
+   */
+  private async maybeGenerateTitle(client: WsClient, userText: string, assistantText: string): Promise<void> {
+    const sessionKey = client.sessionKey;
+    if (!sessionKey || this.titleInFlight.has(sessionKey)) return;
+    const store = getSessionStore();
+    const existing = await store.get(sessionKey);
+    if (!existing || existing.label) return;
+
+    this.titleInFlight.add(sessionKey);
+    try {
+      const label = await generateSessionTitle({
+        provider: this.config.agent.defaultProvider,
+        model: this.config.agent.defaultModel,
+        userText,
+        assistantText,
+      });
+      if (!label) return;
+      await store.setLabel(sessionKey, label);
+      this.sendEvent(client.ws, "session.title", { sessionKey, label });
+      logger.debug({ clientId: client.id, sessionKey, label }, "WebChat session titled");
+    } catch (error) {
+      logger.debug({ error, sessionKey }, "WebChat session title generation failed");
+    } finally {
+      this.titleInFlight.delete(sessionKey);
+    }
   }
 
   /** Cancel current client's chat request */

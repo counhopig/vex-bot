@@ -298,6 +298,9 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
           finalizeStreamingMessage();
           loadSessionList();
         }
+      } else if (event === 'session.title') {
+        // A session was auto-titled after its first exchange; refresh the list.
+        loadSessionList();
       } else if (event === 'chat.error') {
         isStreaming = false;
         sendBtn.style.display = '';

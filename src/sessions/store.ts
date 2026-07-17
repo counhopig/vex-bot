@@ -528,6 +528,18 @@ export class FileSessionStore {
     return entry;
   }
 
+  /** Set a session's display label (title). No-op if the session is unknown. */
+  async setLabel(sessionKey: string, label: string): Promise<void> {
+    await this.withLock(async () => {
+      const index = await this.loadIndex();
+      const entry = index.get(sessionKey);
+      if (!entry) return;
+      entry.label = label;
+      await this.saveIndexUnlocked(index);
+    });
+    logger.debug({ sessionKey, label }, "Session label set");
+  }
+
   /** Get transcript file path */
   getTranscriptPath(sessionId: string): string {
     return path.join(this.storePath, `${sessionId}.jsonl`);
