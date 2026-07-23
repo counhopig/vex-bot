@@ -694,7 +694,7 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | 模块 | 状态 | 备注 |
 |---|---|---|
 | 归档（`_archive/`） | ✅ 完成 | 旧 `src/`（113 文件）+ `tests/`（48 文件）整体 `git mv` 保留历史；`src/`、`tests/` 现为空目录 |
-| `memory/tokenizer/{Tokenizer,CJKTokenizer}.ts` | 待开始 | 参考 `_archive/src/memory/embedding.ts` 里被批评的 `split(/\s+/)` 天真分词，TDD 重写 |
+| `memory/tokenizer/{Tokenizer,CJKTokenizer}.ts` | ✅ 完成 | TDD, 11 tests, tsc clean。Latin 按空格分词+小写，CJK 3+字拆重叠 bigram，混合文本组合策略 |
 | `agent/AgentRegistry.ts` | 待开始 | 参考 `_archive/src/agents/user-runtime.ts` 及 `_archive/tests/user-runtime.test.ts` 里已验证的并发/TTL/LRU 契约，泛型化重写，去掉 globalAgent 分支，缓存键改为 `(userId, channelId)` |
 | `config/ConfigStore.ts` | 待开始 | |
 | `dispatcher/Dispatcher.ts` | 待开始 | 依赖 ConfigStore + AgentRegistry |
@@ -702,4 +702,4 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `channels/ChannelRegistry.ts` | 待开始 | |
 | 其余模块 | 待开始 | 见第一部分完整清单 |
 
-当前 `src/`、`tests/` 均为空，`_archive/` 保有完整旧实现供参考。下一步建议仍从 `memory/tokenizer/` 开始——它是唯一一个"新架构里从空白开始、旧代码没有对应实现"的模块。
+下一步：`agent/AgentRegistry.ts`——参考 `_archive/src/agents/user-runtime.ts` 及 `_archive/tests/user-runtime.test.ts` 并发/TTL/LRU 契约，泛型化重写，去掉 globalAgent 分支，缓存键改为 `(userId, channelId)`。
