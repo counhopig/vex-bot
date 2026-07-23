@@ -697,9 +697,9 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `memory/tokenizer/{Tokenizer,CJKTokenizer}.ts` | ✅ 完成 | TDD, 11 tests, tsc clean。Latin 按空格分词+小写，CJK 3+字拆重叠 bigram，混合文本组合策略 |
 | `agent/AgentRegistry.ts` | ✅ 完成 | TDD, 16 tests, tsc clean。Generic over entry type T, (userId,channelId) 复合键, 无 globalAgent, 并发构建共享 / idle-TTL / LRU / dispose-before-rebuild / reset / shutdown |
 | `config/ConfigStore.ts` + `config/resolvers/{YamlLoader,SqliteLoader}.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。Zod schema, YAML 加载验证, SQLite 用户配置读取, 3层 merge (defaults→YAML→SQLite), resolve(userId,channelId) |
-| `dispatcher/Dispatcher.ts` | 待开始 | 依赖 ConfigStore + AgentRegistry |
+| `dispatcher/Dispatcher.ts` + `channels/ChannelAdapter.ts`（类型定义部分） | ✅ 完成 | TDD, 6 tests, tsc clean。dispatch(ctx) + dispatchSynthetic()，resolveUserId, ConfigStore+AgentRegistry+deliver 编排 |
 | `agent/Agent.ts` / `agent/persona/Persona.ts` | 待开始 | 最大的一块，建议拆多轮 TDD |
 | `channels/ChannelRegistry.ts` | 待开始 | |
 | 其余模块 | 待开始 | 见第一部分完整清单 |
 
-下一步：`dispatcher/Dispatcher.ts`——依赖 ConfigStore + AgentRegistry，实现 `dispatch(ctx)` 和 `dispatchSynthetic()`（供 Cron 使用）。读 `_archive/src/gateway/server.ts` 中 `handleMessage`/`getAgentForContext` 的 resolve 逻辑。
+下一步：`channels/ChannelRegistry.ts`——`getChannelForUser` 命中 per-user 实例、未命中回退默认实例。然后 `agent/Agent.ts` + `agent/persona/Persona.ts`（最大模块）。
