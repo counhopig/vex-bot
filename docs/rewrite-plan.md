@@ -695,11 +695,11 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 |---|---|---|
 | 归档（`_archive/`） | ✅ 完成 | 旧 `src/`（113 文件）+ `tests/`（48 文件）整体 `git mv` 保留历史；`src/`、`tests/` 现为空目录 |
 | `memory/tokenizer/{Tokenizer,CJKTokenizer}.ts` | ✅ 完成 | TDD, 11 tests, tsc clean。Latin 按空格分词+小写，CJK 3+字拆重叠 bigram，混合文本组合策略 |
-| `agent/AgentRegistry.ts` | 待开始 | 参考 `_archive/src/agents/user-runtime.ts` 及 `_archive/tests/user-runtime.test.ts` 里已验证的并发/TTL/LRU 契约，泛型化重写，去掉 globalAgent 分支，缓存键改为 `(userId, channelId)` |
+| `agent/AgentRegistry.ts` | ✅ 完成 | TDD, 16 tests, tsc clean。Generic over entry type T, (userId,channelId) 复合键, 无 globalAgent, 并发构建共享 / idle-TTL / LRU / dispose-before-rebuild / reset / shutdown |
 | `config/ConfigStore.ts` | 待开始 | |
 | `dispatcher/Dispatcher.ts` | 待开始 | 依赖 ConfigStore + AgentRegistry |
 | `agent/Agent.ts` / `agent/persona/Persona.ts` | 待开始 | 最大的一块，建议拆多轮 TDD |
 | `channels/ChannelRegistry.ts` | 待开始 | |
 | 其余模块 | 待开始 | 见第一部分完整清单 |
 
-下一步：`agent/AgentRegistry.ts`——参考 `_archive/src/agents/user-runtime.ts` 及 `_archive/tests/user-runtime.test.ts` 并发/TTL/LRU 契约，泛型化重写，去掉 globalAgent 分支，缓存键改为 `(userId, channelId)`。
+下一步：`config/ConfigStore.ts` + `config/EffectiveConfig.ts` + `config/resolvers/{YamlLoader,SqliteLoader}.ts`——Zod schema, YAML 加载, SQLite 用户配置覆盖, `resolve(userId, channelId)` 方法。
