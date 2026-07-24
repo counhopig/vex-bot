@@ -702,6 +702,5 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `agent/SystemPromptAssembler.ts` | ✅ 完成 | TDD, 7 tests, tsc clean。5段式 prompt 组装，persona vs DEFAULT_IDENTITY 互斥分支，Agent.ts 已重构使用。 |
 | `channels/ChannelRegistry.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。ChannelRegistryImpl: 平面 + per-user 双层查找，getChannelForUser 回退到 flat getChannel |
 | `outbound/OutboundDeliver.ts` | ✅ 完成 | TDD, 6 tests, tsc clean。通过 ChannelRegistry 投递(flat + per-user fallback)，sendWithTimeout 超时保护，error 不抛出（纯返回值）。 |
-| `providers/ProviderMetadata.ts` | ✅ 完成 | TDD, 15 tests, tsc clean。从 `_archive/src/providers/metadata.ts` 保留迁移但切断对已归档 `src/types/index.js` 的依赖。`PROVIDERS` 17 entries (15 primary + 2 custom-*)，`PROVIDER_IDS` 仅 15 primary（custom-* 仅 admin 配置使用） |
-
+| `providers/ProviderMetadata.ts` | ✅ 完成 | TDD, 16 tests, tsc clean。从 `_archive/src/providers/metadata.ts` 保留迁移但切断对已归档 `src/types/index.js` 的依赖。**复审修正后**：`PROVIDERS` 17 entries，`PROVIDER_IDS` 也是 17（与归档一致，是 config schema 验证 `agent.defaultProvider` 的枚举来源），`PRIMARY_PROVIDER_IDS` = 15（CLI/Web UI 下拉列表用，排除 custom-*）。ModelResolver 必须把 `custom-openai`/`custom-anthropic` 当作一等公民处理，带测试覆盖。 |
 下一步：`providers/ModelResolver.ts` —— 真正的模型/API 解析，下个模块。

@@ -8,8 +8,8 @@
  *
  * Migration note: ported verbatim from `_archive/src/providers/metadata.ts`.
  * The old module imported `ProviderId` from the now-archived `src/types/index.js`;
- * here `ProviderId` is re-derived as a union of the 15 ids in this table, so
- * the table itself becomes the single source for the type as well.
+ * here `ProviderId` will be re-derived in ModelResolver as a union of the ids
+ * exposed by `PROVIDERS`, so this table also becomes the source for the type.
  */
 
 export type ProviderTier = "china" | "overseas" | "custom";
@@ -50,29 +50,22 @@ export const PROVIDERS: readonly ProviderMeta[] = [
 	{ id: "custom-anthropic", name: "Custom Anthropic", tier: "custom", defaultModel: "", requiresApiKey: true },
 ];
 
+/** Every id in PROVIDERS. This is what the config schema validates against — matching
+ *  the archive's behavior, where `custom-openai` and `custom-anthropic` are first-class
+ *  `agent.defaultProvider` values whose `baseUrl`/`apiKey`/`models` come from the
+ *  config schema's passthrough fields. Narrowing this list would silently reject
+ *  legitimate user configs. */
+export const PROVIDER_IDS: readonly string[] = PROVIDERS.map((p) => p.id);
+
 /**
- * The 15 ids the user can actually pick from a dropdown. The two `custom-*`
- * slots are admin-only and configured separately when a custom endpoint is
- * provisioned, so they're excluded from `PROVIDER_IDS` to keep consumer code
- * (CLI/Web UI options) from offering them as first-class choices.
+ * The 15 "primary" ids — the subset offered in CLI/Web UI dropdowns. Excludes the
+ * two `custom-*` tiers because those are admin-configured endpoints, not catalog
+ * choices. The CLI wizard and Web UI option lists should iterate this, not
+ * `PROVIDER_IDS` (which would expose admin-only entries to end users).
  */
-const PRIMARY_IDS: readonly string[] = [
-	"deepseek",
-	"doubao",
-	"minimax",
-	"kimi",
-	"stepfun",
-	"modelscope",
-	"dashscope",
-	"zhipu",
-	"longcat",
-	"openai",
-	"openrouter",
-	"together",
-	"groq",
-	"ollama",
-	"vllm",
-];
+export const PRIMARY_PROVIDER_IDS: readonly string[] = PROVIDERS
+	.filter((p) => p.tier !== "custom")
+	.map((p) => p.id);
 
 /** Static lookup table — O(1) getProviderMeta, no Map allocation per call. */
 const PROVIDERS_BY_ID: Record<string, ProviderMeta> = (() => {
@@ -82,8 +75,6 @@ const PROVIDERS_BY_ID: Record<string, ProviderMeta> = (() => {
 	}
 	return map;
 })();
-
-export const PROVIDER_IDS: readonly string[] = PRIMARY_IDS;
 
 export const CHINA_PROVIDER_IDS: readonly string[] = PROVIDERS
 	.filter((p) => p.tier === "china")

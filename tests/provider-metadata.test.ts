@@ -1,30 +1,32 @@
 /**
- * ProviderMetadata tests — the canonical 15-vendor provider table.
+ * ProviderMetadata tests — the canonical provider identity table.
  *
  * This is the single source of truth for provider identity, used by:
- *   - ConfigStore schema validation
+ *   - ConfigStore schema validation (PROVIDER_IDS → z.enum)
  *   - CLI onboarding / status
- *   - Web UI option rendering
+ *   - Web UI option rendering (PRIMARY_PROVIDER_IDS for dropdowns)
  *   - ModelResolver (next module) to look up baseUrl / known model lists
  *
  * The table must stay stable: any rename or removal cascades into ~5 surfaces.
- * These tests pin the shape, the 15 vendor ids, and the public helpers.
+ * These tests pin the shape, the id lists, and the public helpers.
+ *
+ * Note: PROVIDER_IDS includes the 2 custom-* endpoints because the config
+ * schema validates `agent.defaultProvider` against this list — a user
+ * genuinely pointing at a custom OpenAI/Anthropic endpoint is a first-class
+ * case, not admin-only. PRIMARY_PROVIDER_IDS is the smaller subset for UI
+ * dropdowns that should not expose admin endpoints.
  */
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
 	PROVIDERS,
 	PROVIDER_IDS,
+	PRIMARY_PROVIDER_IDS,
 	CHINA_PROVIDER_IDS,
 	OVERSEAS_PROVIDER_IDS,
 	getProviderMeta,
 	getProviderName,
 } from "../src/providers/ProviderMetadata.js";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Shape
@@ -79,19 +81,6 @@ describe("ProviderMetadata", () => {
 			const ids = PROVIDERS.map((p) => p.id);
 			expect(new Set(ids).size).toBe(ids.length);
 		});
-
-		it("the single SourceOfTruth comment (or comment block) is preserved", () => {
-			// Sanity: the source file's top docstring must still call out
-			// "single source of truth" — this is the contract the rewrite plan
-			// relies on. We re-read the module's first comment line so any
-			// future rewrite either keeps the language or consciously changes
-			// the contract.
-			// (Indirect: ensure the legend phrase is present, not how it's phrased.)
-			const src = readFileSync(
-				join(__dirname, "..", "src", "providers", "ProviderMetadata.ts"),
-				"utf-8",
-			);
-		});
 	});
 
 	// -----------------------------------------------------------------------
@@ -107,6 +96,19 @@ describe("ProviderMetadata", () => {
 			expect(meta?.tier).toBe("china");
 			expect(meta?.defaultModel).toBe("deepseek-chat");
 			expect(meta?.requiresApiKey).toBe(true);
+		});
+
+		it("getProviderMeta returns the entry for custom-* ids", () => {
+			// Sanity: the custom endpoints must be findable in the table so
+			// ModelResolver can resolve them when admin config provides the
+			// dynamic baseUrl / apiKey / models.
+			const openai = getProviderMeta("custom-openai");
+			expect(openai?.tier).toBe("custom");
+			expect(openai?.requiresApiKey).toBe(true);
+
+			const anthropic = getProviderMeta("custom-anthropic");
+			expect(anthropic?.tier).toBe("custom");
+			expect(anthropic?.requiresApiKey).toBe(true);
 		});
 
 		it("getProviderMeta returns undefined for unknown ids", () => {
@@ -156,13 +158,25 @@ describe("ProviderMetadata", () => {
 				"vllm",
 			]);
 		});
-		it("PROVIDER_IDS excludes the admin-only custom-* endpoints", () => {
-			// custom-openai / custom-anthropic live in PROVIDERS (so getProviderMeta
-			// can find them when an admin provisions one) but are NOT offered in
-			// the user-pickable dropdown (CLI/Web UI).
-			expect([...PROVIDER_IDS]).toEqual([...CHINA_PROVIDER_IDS, ...OVERSEAS_PROVIDER_IDS]);
-			expect(PROVIDER_IDS).not.toContain("custom-openai");
-			expect(PROVIDER_IDS).not.toContain("custom-anthropic");
+
+		it("PROVIDER_IDS is the full 17-entry list (matches every PROVIDERS row)", () => {
+			// PROVIDER_IDS is what the config schema validates `agent.defaultProvider`
+			// against — narrowing it would silently reject legitimate custom-endpoint
+			// configs. It must be 1:1 with PROVIDERS.
+			expect([...PROVIDER_IDS]).toEqual(PROVIDERS.map((p) => p.id));
+			expect(PROVIDER_IDS).toContain("custom-openai");
+			expect(PROVIDER_IDS).toContain("custom-anthropic");
+		});
+
+		it("PRIMARY_PROVIDER_IDS is the 15-entry dropdown subset (no custom-*)", () => {
+			// PRIMARY_PROVIDER_IDS is what CLI/Web UI dropdowns iterate. It must
+			// exclude the admin-only custom-* tier.
+			expect([...PRIMARY_PROVIDER_IDS]).toEqual([
+				...CHINA_PROVIDER_IDS,
+				...OVERSEAS_PROVIDER_IDS,
+			]);
+			expect(PRIMARY_PROVIDER_IDS).not.toContain("custom-openai");
+			expect(PRIMARY_PROVIDER_IDS).not.toContain("custom-anthropic");
 		});
 	});
 
@@ -198,9 +212,9 @@ describe("ProviderMetadata", () => {
 		it("every PRIMARY provider has a non-empty defaultModel", () => {
 			// vllm has empty defaultModel on purpose — the user is expected to
 			// supply their own model id (no preset model registry for vllm).
-			// The two custom-* endpoints also have empty defaultModel because
-			// the model id is part of the admin config, not the metadata.
-			for (const id of PROVIDER_IDS) {
+			// The custom-* endpoints also have empty defaultModel because the
+			// model id is part of the admin config, not the metadata.
+			for (const id of PRIMARY_PROVIDER_IDS) {
 				const meta = getProviderMeta(id);
 				expect(meta).toBeDefined();
 				if (id !== "vllm") {
