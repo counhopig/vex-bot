@@ -87,4 +87,49 @@ describe("Pipeline", () => {
     const p = new Pipeline();
     expect(await p.gatherPromptInjections(mockCtx())).toEqual([]);
   });
+
+  // -- interceptor error isolation -----------------------------------------
+
+  it("does not crash when an interceptor throws", async () => {
+    const p = new Pipeline();
+    p.registerInterceptor(async () => { throw new Error("boom"); });
+    p.registerInterceptor(async () => "second-works");
+
+    const result = await p.runInterceptors(mockCtx());
+    expect(result).toBe("second-works");
+  });
+
+  it("does not crash when an interceptor times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = new Pipeline();
+      p.registerInterceptor(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 60_000));
+        return "too-late";
+      });
+      p.registerInterceptor(async () => "fallback");
+
+      // Start the interceptors but don't await yet — we'll advance time
+      const resultPromise = p.runInterceptors(mockCtx());
+
+      // Advance past the 30s timeout
+      await vi.advanceTimersByTimeAsync(31_000);
+
+      const result = await resultPromise;
+      expect(result).toBe("fallback");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // -- injector error isolation --------------------------------------------
+
+  it("one throwing injector does not lose other injectors' results", async () => {
+    const p = new Pipeline();
+    p.registerPromptInjector(async () => { throw new Error("injector-boom"); });
+    p.registerPromptInjector(async () => "Injection B");
+
+    const injections = await p.gatherPromptInjections(mockCtx());
+    expect(injections).toEqual(["Injection B"]);
+  });
 });

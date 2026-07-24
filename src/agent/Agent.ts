@@ -86,17 +86,20 @@ export class Agent {
       };
     }
 
-    // 2. Build system prompt: persona → prompt injections
+    // 2. Build system prompt.
+    // Persona owns Section 1 exclusively — when persona is set there must be
+    // no competing DEFAULT_IDENTITY block after it. The old code ran both,
+    // which caused a real "bot forgot who it was" bug (2026-07-17 incident).
     const sections: string[] = [];
 
     if (this.persona) {
       const personaBlock = await this.persona.buildPrompt(ctx);
       if (personaBlock) {
-        sections.push("【Section 1: 角色身份】\n" + personaBlock);
+        sections.push(personaBlock);
       }
+    } else {
+      sections.push(DEFAULT_IDENTITY);
     }
-
-    sections.push("【Section 2: 行为准则】\n" + DEFAULT_IDENTITY);
 
     // 3. Gather prompt injections
     const injections = await this.pipeline.gatherPromptInjections(ctx);

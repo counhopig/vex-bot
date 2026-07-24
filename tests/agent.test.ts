@@ -76,6 +76,24 @@ describe("Agent", () => {
     expect(systemPrompt).toContain("你是一个 PandaBot。");
   });
 
+  // -- persona owns identity, no competing DEFAULT_IDENTITY -----------------
+
+  it("does NOT include DEFAULT_IDENTITY when persona is set (no competing identity)", async () => {
+    const pipeline = new Pipeline();
+    const chat = vi.fn().mockResolvedValue({ content: "ok" });
+    const config = createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "你是一个 PandaBot。" });
+    const persona = new Persona(config!, new PersonaStorage());
+
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, chat });
+    await agent.processMessage(mockCtx());
+
+    const systemPrompt = chat.mock.calls[0]![0];
+    // DEFAULT_IDENTITY must never appear when persona owns the identity
+    expect(systemPrompt).not.toContain(DEFAULT_IDENTITY);
+    // Only the persona's identity should be present
+    expect(systemPrompt).toContain("PandaBot");
+  });
+
   // -- interceptor short-circuit -------------------------------------------
 
   it("processMessage short-circuits when pipeline interceptor returns a string", async () => {
@@ -104,7 +122,7 @@ describe("Agent", () => {
     expect(chat).toHaveBeenCalledOnce();
     const [systemPrompt, messages] = chat.mock.calls[0]!;
     expect(messages).toEqual([{ role: "user", content: "hello" }]);
-    expect(systemPrompt).toContain("Section 1"); // persona section header
+    expect(systemPrompt).toContain("B"); // persona identity in prompt
   });
 
   // -- observers run -------------------------------------------------------

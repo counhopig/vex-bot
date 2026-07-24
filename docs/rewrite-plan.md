@@ -698,8 +698,8 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `agent/AgentRegistry.ts` | ✅ 完成 | TDD, 16 tests, tsc clean。Generic over entry type T, (userId,channelId) 复合键, 无 globalAgent, 并发构建共享 / idle-TTL / LRU / dispose-before-rebuild / reset / shutdown |
 | `config/ConfigStore.ts` + `config/resolvers/{YamlLoader,SqliteLoader}.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。Zod schema, YAML 加载验证, SQLite 用户配置读取, 3层 merge (defaults→YAML→SQLite), resolve(userId,channelId) |
 | `dispatcher/Dispatcher.ts` + `channels/ChannelAdapter.ts`（类型定义部分） | ✅ 完成 | TDD, 6 tests, tsc clean。dispatch(ctx) + dispatchSynthetic()，resolveUserId, ConfigStore+AgentRegistry+deliver 编排 |
-| `agent/Agent.ts` + `agent/Pipeline.ts` + `agent/persona/{Persona,PersonaConfig,PersonaStorage,PersonaBuilder}.ts` | ✅ 完成 | TDD, 27 tests (core+persona+pipeline+config), tsc clean。Agent: processMessage 编排 interceptor→persona→chat→observer. Pipeline: per-Agent 实例. Persona: opt-in, 无硬编码默认人格, buildPrompt/observeResponse. |
+| `agent/Agent.ts` + `agent/Pipeline.ts` + `agent/persona/{Persona,PersonaConfig,PersonaStorage,PersonaBuilder}.ts` | ✅ 完成 | TDD, 31 tests (+4 review fixes). Agent: persona-present → DEFAULT_IDENTITY 不注入 (2026-07-17 竞争人格 bug 修复). Pipeline: per-hook try/catch + 30s 超时 (拦截器错误隔离). Persona: opt-in, 无硬编码默认人格. |
 | `channels/ChannelRegistry.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。ChannelRegistryImpl: 平面 + per-user 双层查找，getChannelForUser 回退到 flat getChannel |
 | 其余模块 | 待开始 | 见第一部分完整清单 |
 
-下一步：`agent/Agent.ts` + `agent/persona/Persona.ts`（最大模块）。参考 `_archive/src/agents/agent.ts` 的 processMessage 流程和 `_archive/src/extensions/persona/index.ts` 的 buildPrompt/observeResponse。
+下一步：`outbound/OutboundDeliver.ts`——统一消息投递，通过 ChannelRegistry 找到目标频道并发送。然后 `agent/SystemPromptAssembler.ts`（吸收竞争人格修复，独立可测单元）。
