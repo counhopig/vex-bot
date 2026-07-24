@@ -173,7 +173,7 @@
 | 当前文件 | 操作 | 新位置/新文件名 | 说明 |
 |---|---|---|---|
 | `src/providers/index.ts` | 重写 | `src/providers/index.ts` | barrel |
-| `src/providers/metadata.ts` | 保留迁移 | `src/providers/ProviderMetadata.ts` | 15 供应商元数据表 |
+| `src/providers/metadata.ts` | 保留迁移 | `src/providers/ProviderMetadata.ts` | 17 供应商元数据表（15 primary + 2 custom-*；PROVIDER_IDS 17 与归档 config schema 验证契约一致，PRIMARY_PROVIDER_IDS 15 用于 UI drop-down） |
 | `src/providers/model-resolver.ts` | **保留统一设计，不拆分** | `src/providers/ModelResolver.ts` | 决定：不拆成每供应商一个 `XxxProvider.ts` 类。多数供应商是同构的 OpenAI-compatible 端点，统一 resolver 更合理；只需让它实现 `ProviderInterface` |
 | `src/providers/llm.ts` | 保留迁移 | `src/providers/llmComplete.ts` | 一次性 LLM 调用工具 |
 | `src/cli/fetch-patch.ts` | **重写，挪出 cli 目录** | `src/providers/fetch-compat.ts` | 非 ASCII 响应头补丁是 provider 层兼容问题，与 CLI 无关 |
@@ -703,4 +703,6 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `channels/ChannelRegistry.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。ChannelRegistryImpl: 平面 + per-user 双层查找，getChannelForUser 回退到 flat getChannel |
 | `outbound/OutboundDeliver.ts` | ✅ 完成 | TDD, 6 tests, tsc clean。通过 ChannelRegistry 投递(flat + per-user fallback)，sendWithTimeout 超时保护，error 不抛出（纯返回值）。 |
 | `providers/ProviderMetadata.ts` | ✅ 完成 | TDD, 16 tests, tsc clean。从 `_archive/src/providers/metadata.ts` 保留迁移但切断对已归档 `src/types/index.js` 的依赖。**复审修正后**：`PROVIDERS` 17 entries，`PROVIDER_IDS` 也是 17（与归档一致，是 config schema 验证 `agent.defaultProvider` 的枚举来源），`PRIMARY_PROVIDER_IDS` = 15（CLI/Web UI 下拉列表用，排除 custom-*）。ModelResolver 必须把 `custom-openai`/`custom-anthropic` 当作一等公民处理，带测试覆盖。 |
-下一步：`providers/ModelResolver.ts` —— 真正的模型/API 解析，下个模块。
+| `providers/ModelResolver.ts` | ✅ 完成 | TDD, 55 tests, tsc clean。Class-based lifecycle (init/reset) 替代 module-global 状态。`ProviderId = (typeof PROVIDER_IDS)[number]` 让 type 与 runtime table 锁钉。3 步解析路径保留：local registry → pi-ai getModel (openai/anthropic/groq/openrouter) → dynamic fallback (128000/8192 defaults)。**Custom-openai/custom-anthropic strict 路径**：不进行 dynamic fallback，只返回显式声明的 models[]，避免把不存在的 model 指向 proxy。Anthropic-version 头、preset headers 合并、china provider baseUrl 默认值、9 个 China 供应商的 preset model 表全部保留。 |
+
+下一步：`agent/AgentRuntime.ts` —— wire pi-coding-agent + ModelResolver 包出真正可调用的 LLM 引擎。
