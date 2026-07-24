@@ -115,6 +115,36 @@ describe("ModelResolver", () => {
 			expect(resolver.getAllRegisteredModels().some((m) => m.provider === "kimi")).toBe(true);
 		});
 
+		it("getAllRegisteredModels returns the actual modelId, not the providerId", () => {
+			// Regression: the registry key is `${providerId}:${modelId}`, so
+			// splitting on `:` and taking the first element returns the
+			// providerId again. The getter must discard the first element and
+			// take the second. This test asserts the value, not just length
+			// or .provider — catching the swapped-destructure bug.
+			resolver.init({ providers: { deepseek: chinaProvider() } });
+
+			const deepseek = resolver.getAllRegisteredModels().find((m) => m.provider === "deepseek");
+			expect(deepseek).toBeDefined();
+			expect(deepseek?.modelId).toBe("deepseek-chat");
+			// And the model id must not equal the provider id.
+			expect(deepseek?.modelId).not.toBe(deepseek?.provider);
+		});
+
+		it("getAllRegisteredModels preserves modelId for custom-openai entries", () => {
+			// Same destructure path — exercise it on a different key shape
+			// (custom-openai:<modelId>) to confirm the fix isn't deepseek-specific.
+			resolver.init({
+				providers: {
+					"custom-openai": customOpenAI("sk-test", [
+						{ id: "my-fast", name: "My Fast" },
+					]),
+				},
+			});
+			const entry = resolver.getAllRegisteredModels().find((m) => m.provider === "custom-openai");
+			expect(entry).toBeDefined();
+			expect(entry?.modelId).toBe("my-fast");
+		});
+
 		it("reset clears all state without requiring another init", () => {
 			resolver.init({ providers: { deepseek: chinaProvider() } });
 			expect(resolver.getAllRegisteredModels().length).toBeGreaterThan(0);

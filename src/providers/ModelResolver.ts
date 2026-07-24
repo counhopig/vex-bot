@@ -271,7 +271,7 @@ export class ModelResolver {
 	getAllRegisteredModels(): Array<{ provider: string; modelId: string; model: Model<Api> }> {
 		const result: Array<{ provider: string; modelId: string; model: Model<Api> }> = [];
 		for (const [key, resolved] of this.registry) {
-			const [modelId] = key.split(":", 2);
+			const [, modelId] = key.split(":", 2);
 			if (modelId) {
 				result.push({
 					provider: resolved.providerId,
