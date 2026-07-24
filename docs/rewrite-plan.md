@@ -699,7 +699,7 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `config/ConfigStore.ts` + `config/resolvers/{YamlLoader,SqliteLoader}.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。Zod schema, YAML 加载验证, SQLite 用户配置读取, 3层 merge (defaults→YAML→SQLite), resolve(userId,channelId) |
 | `dispatcher/Dispatcher.ts` + `channels/ChannelAdapter.ts`（类型定义部分） | ✅ 完成 | TDD, 6 tests, tsc clean。dispatch(ctx) + dispatchSynthetic()，resolveUserId, ConfigStore+AgentRegistry+deliver 编排 |
 | `agent/Agent.ts` / `agent/persona/Persona.ts` | 待开始 | 最大的一块，建议拆多轮 TDD |
-| `channels/ChannelRegistry.ts` | 待开始 | |
+| `channels/ChannelRegistry.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。ChannelRegistryImpl: 平面 + per-user 双层查找，getChannelForUser 回退到 flat getChannel |
 | 其余模块 | 待开始 | 见第一部分完整清单 |
 
-下一步：`channels/ChannelRegistry.ts`——`getChannelForUser` 命中 per-user 实例、未命中回退默认实例。然后 `agent/Agent.ts` + `agent/persona/Persona.ts`（最大模块）。
+下一步：`agent/Agent.ts` + `agent/persona/Persona.ts`（最大模块）。参考 `_archive/src/agents/agent.ts` 的 processMessage 流程和 `_archive/src/extensions/persona/index.ts` 的 buildPrompt/observeResponse。
