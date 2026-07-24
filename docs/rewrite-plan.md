@@ -699,7 +699,8 @@ CronService.onTimer(job)   // job.ownerId = "counhopig"
 | `config/ConfigStore.ts` + `config/resolvers/{YamlLoader,SqliteLoader}.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。Zod schema, YAML 加载验证, SQLite 用户配置读取, 3层 merge (defaults→YAML→SQLite), resolve(userId,channelId) |
 | `dispatcher/Dispatcher.ts` + `channels/ChannelAdapter.ts`（类型定义部分） | ✅ 完成 | TDD, 6 tests, tsc clean。dispatch(ctx) + dispatchSynthetic()，resolveUserId, ConfigStore+AgentRegistry+deliver 编排 |
 | `agent/Agent.ts` + `agent/Pipeline.ts` + `agent/persona/{Persona,PersonaConfig,PersonaStorage,PersonaBuilder}.ts` | ✅ 完成 | TDD, 31 tests (+4 review fixes). Agent: persona-present → DEFAULT_IDENTITY 不注入 (2026-07-17 竞争人格 bug 修复). Pipeline: per-hook try/catch + 30s 超时 (拦截器错误隔离). Persona: opt-in, 无硬编码默认人格. |
+| `agent/SystemPromptAssembler.ts` | ✅ 完成 | TDD, 7 tests, tsc clean。5段式 prompt 组装，persona vs DEFAULT_IDENTITY 互斥分支，Agent.ts 已重构使用。 |
 | `channels/ChannelRegistry.ts` | ✅ 完成 | TDD, 9 tests, tsc clean。ChannelRegistryImpl: 平面 + per-user 双层查找，getChannelForUser 回退到 flat getChannel |
 | `outbound/OutboundDeliver.ts` | ✅ 完成 | TDD, 6 tests, tsc clean。通过 ChannelRegistry 投递(flat + per-user fallback)，sendWithTimeout 超时保护，error 不抛出（纯返回值）。 |
 
-下一步（待定）：见第一部分完整清单——`agent/SystemPromptAssembler.ts`（吸收竞争人格修复）、`tools/`、`providers/` 等。
+下一步：`providers/`（ProviderMetadata + ModelResolver）—— AgentRuntime 依赖模型解析和 API key 管理。
