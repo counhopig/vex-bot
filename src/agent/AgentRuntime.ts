@@ -26,6 +26,7 @@ import { getChildLogger } from "../utils/logger.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import type { ChatResponse, ChatUsage } from "./messages.js";
 import type { Model, Api } from "@mariozechner/pi-ai";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 
 const logger = getChildLogger("agent-runtime");
 
@@ -44,6 +45,8 @@ export interface AgentRuntimeConfig {
   maxTokens?: number;
   workingDirectory?: string;
   sessionDir?: string;
+  /** Custom tool definitions applied to every new session. */
+  customTools?: ToolDefinition[];
 }
 
 export interface AgentRuntimeReply {
@@ -242,7 +245,11 @@ export class AgentRuntime {
       modelProviderForKey: String(model.provider),
     });
     this.sessions.set(sessionKey, session);
-    logger.debug({ sessionKey, customToolCount: 0 }, "New session created");
+    logger.debug({ sessionKey, customToolCount: this.config.customTools?.length ?? 0 }, "New session created");
+    // Apply stored custom tools to the new session so the LLM can use them.
+    if (this.config.customTools && this.config.customTools.length > 0) {
+      session.agent.setTools(this.config.customTools);
+    }
     return session;
   }
 
