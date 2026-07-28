@@ -22,6 +22,7 @@ import type { EffectiveConfig } from "../config/EffectiveConfig.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import { Pipeline } from "./Pipeline.js";
 import type { Persona } from "./persona/Persona.js";
+import { assembleSystemPrompt, DEFAULT_IDENTITY } from "./SystemPromptAssembler.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("agent");
@@ -47,13 +48,6 @@ export interface AgentDependencies {
   persona: Persona | null;
   chat: ChatFn;
 }
-
-// ---------------------------------------------------------------------------
-// Default identity (used when persona is null / disabled)
-// ---------------------------------------------------------------------------
-
-export const DEFAULT_IDENTITY =
-  "You are a helpful AI assistant. Be concise, accurate, and polite.";
 
 // ---------------------------------------------------------------------------
 // Agent
@@ -86,31 +80,23 @@ export class Agent {
       };
     }
 
-    // 2. Build system prompt.
-    // Persona owns Section 1 exclusively — when persona is set there must be
-    // no competing DEFAULT_IDENTITY block after it. The old code ran both,
-    // which caused a real "bot forgot who it was" bug (2026-07-17 incident).
-    const sections: string[] = [];
+    // 2. Build system prompt via SystemPromptAssembler.
+    // Persona owns Section 1 exclusively — assembleSystemPrompt handles the
+    // mutually-exclusive persona-vs-DEFAULT_IDENTITY branching.
+    const personaBlock = this.persona ? await this.persona.buildPrompt(ctx) : undefined;
 
-    if (this.persona) {
-      const personaBlock = await this.persona.buildPrompt(ctx);
-      if (personaBlock) {
-        sections.push(personaBlock);
-      }
-    } else {
-      sections.push(DEFAULT_IDENTITY);
-    }
+    const systemPrompt = assembleSystemPrompt({
+      persona: personaBlock || undefined,
+    });
 
-    // 3. Gather prompt injections
+    // 3. Gather prompt injections (appended after the base system prompt)
     const injections = await this.pipeline.gatherPromptInjections(ctx);
-    for (const inj of injections) {
-      sections.push(inj);
-    }
-
-    const systemPrompt = sections.join("\n\n---\n\n");
+    const finalPrompt = injections.length > 0
+      ? systemPrompt + "\n\n---\n\n" + injections.join("\n\n---\n\n")
+      : systemPrompt;
 
     // 4. Call LLM
-    const response = await this.deps.chat(systemPrompt, [
+    const response = await this.deps.chat(finalPrompt, [
       { role: "user", content: ctx.content },
     ]);
 

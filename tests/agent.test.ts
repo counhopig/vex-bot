@@ -6,7 +6,8 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { Agent, DEFAULT_IDENTITY } from "../src/agent/Agent.js";
+import { Agent } from "../src/agent/Agent.js";
+import { DEFAULT_IDENTITY } from "../src/agent/SystemPromptAssembler.js";
 import { Pipeline } from "../src/agent/Pipeline.js";
 import { Persona } from "../src/agent/persona/Persona.js";
 import { createPersonaConfig } from "../src/agent/persona/PersonaConfig.js";

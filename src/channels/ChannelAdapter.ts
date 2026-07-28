@@ -44,3 +44,51 @@ export interface SendResult {
   messageId?: string;
   error?: string;
 }
+
+export interface ChannelMeta {
+  id: ChannelId;
+  name: string;
+  description: string;
+  capabilities: ChannelCapabilities;
+}
+
+export interface ChannelCapabilities {
+  chatTypes: ChatType[];
+  supportsMedia: boolean;
+  supportsReply: boolean;
+  supportsMention: boolean;
+  supportsReaction: boolean;
+  supportsThread: boolean;
+  supportsEdit: boolean;
+  maxMessageLength: number;
+}
+
+export interface ChannelAdapter {
+  readonly id: ChannelId;
+  readonly meta: ChannelMeta;
+
+  initialize(): Promise<void>;
+  shutdown(): Promise<void>;
+
+  sendMessage(message: OutboundMessage): Promise<SendResult>;
+  replyToContext(ctx: InboundMessageContext, text: string): Promise<SendResult>;
+
+  isHealthy(): Promise<boolean>;
+
+  /** Registers the single callback Dispatcher uses to receive messages from this channel. */
+  onMessage(handler: (ctx: InboundMessageContext) => Promise<void>): void;
+}
+
+export interface ChannelRegistry {
+  register(channel: ChannelAdapter): void;
+  unregister(channelId: ChannelId): void;
+  getChannel(channelId: ChannelId): ChannelAdapter | undefined;
+  getAllChannels(): ChannelAdapter[];
+
+  /** Per-user dynamic instances (e.g. a user's own WeChat login), scoped
+   *  on top of the flat registry above. Falls back to getChannel() when
+   *  no per-user instance is registered. */
+  registerForUser(userId: string, channelId: ChannelId, channel: ChannelAdapter): void;
+  unregisterForUser(userId: string, channelId: ChannelId): void;
+  getChannelForUser(userId: string, channelId: ChannelId): ChannelAdapter | undefined;
+}

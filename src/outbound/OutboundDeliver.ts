@@ -7,6 +7,12 @@
  *
  * This is the downstream half of the Dispatcher's deliver callback — the
  * Dispatcher calls deliver() which this module implements.
+ *
+ * Note: unlike the archived outbound module (which defaulted to throwing on
+ * failure unless bestEffort: true), this implementation always returns errors
+ * as values and never throws. Dispatcher's deliver callback should not crash
+ * message dispatch over a downstream delivery failure; the response is already
+ * produced, delivery is fire-and-forget from the dispatch perspective.
  */
 
 import type { ChannelRegistry, ChannelId, OutboundMessage, SendResult } from "../channels/ChannelAdapter.js";
