@@ -1,5 +1,6 @@
 /**
- * Agent tests — processMessage orchestrates persona, pipeline, and chat.
+ * Agent tests — processMessage orchestrates persona, pipeline, and the
+ * per-Agent AgentRuntime.
  *
  * Architecture doc (§3): "An Agent instance owns its Persona, Tools, Skills,
  * Memory, and Pipeline. No process-global state bleeding across instances."
@@ -12,6 +13,7 @@ import { Pipeline } from "../src/agent/Pipeline.js";
 import { Persona } from "../src/agent/persona/Persona.js";
 import { createPersonaConfig } from "../src/agent/persona/PersonaConfig.js";
 import { PersonaStorage } from "../src/agent/persona/PersonaStorage.js";
+import type { AgentRuntime, AgentRuntimeReply } from "../src/agent/AgentRuntime.js";
 import type { InboundMessageContext } from "../src/channels/ChannelAdapter.js";
 
 // ---------------------------------------------------------------------------
@@ -41,6 +43,15 @@ function dummyConfig(userId = "u1", channelId = "webchat") {
   };
 }
 
+/** Build a fake AgentRuntime that records chat() calls and returns a
+ *  canned reply. Mirrors the real AgentRuntime's public surface. */
+function fakeRuntime(reply: AgentRuntimeReply = { content: "Hello back", provider: "openai", model: "gpt-4" }) {
+  const chat = vi.fn().mockResolvedValue(reply);
+  const shutdown = vi.fn().mockResolvedValue(undefined);
+  const runtime = { chat, shutdown } as unknown as AgentRuntime;
+  return { runtime, chat, shutdown };
+}
+
 // ---------------------------------------------------------------------------
 // Suite
 // ---------------------------------------------------------------------------
@@ -50,13 +61,13 @@ describe("Agent", () => {
 
   it("processMessage uses DEFAULT_IDENTITY when persona is null", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn().mockResolvedValue({ content: "Hello back" });
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, chat });
+    const { runtime, chat } = fakeRuntime();
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
 
     await agent.processMessage(mockCtx());
 
-    // Extract the system prompt passed to chat
-    const systemPrompt = chat.mock.calls[0]![0];
+    // Extract the system prompt passed to runtime.chat
+    const systemPrompt = chat.mock.calls[0]![0] as string;
     expect(systemPrompt).toContain(DEFAULT_IDENTITY);
     expect(systemPrompt).not.toContain("小忆");
   });
@@ -65,14 +76,14 @@ describe("Agent", () => {
 
   it("processMessage includes persona buildPrompt when persona is set", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn().mockResolvedValue({ content: "ok" });
+    const { runtime, chat } = fakeRuntime();
     const config = createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "你是一个 PandaBot。" });
     const persona = new Persona(config!, new PersonaStorage());
 
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, chat });
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, runtime });
     await agent.processMessage(mockCtx());
 
-    const systemPrompt = chat.mock.calls[0]![0];
+    const systemPrompt = chat.mock.calls[0]![0] as string;
     expect(systemPrompt).toContain("PandaBot");
     expect(systemPrompt).toContain("你是一个 PandaBot。");
   });
@@ -81,17 +92,15 @@ describe("Agent", () => {
 
   it("does NOT include DEFAULT_IDENTITY when persona is set (no competing identity)", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn().mockResolvedValue({ content: "ok" });
+    const { runtime, chat } = fakeRuntime();
     const config = createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "你是一个 PandaBot。" });
     const persona = new Persona(config!, new PersonaStorage());
 
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, chat });
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, runtime });
     await agent.processMessage(mockCtx());
 
-    const systemPrompt = chat.mock.calls[0]![0];
-    // DEFAULT_IDENTITY must never appear when persona owns the identity
+    const systemPrompt = chat.mock.calls[0]![0] as string;
     expect(systemPrompt).not.toContain(DEFAULT_IDENTITY);
-    // Only the persona's identity should be present
     expect(systemPrompt).toContain("PandaBot");
   });
 
@@ -100,10 +109,10 @@ describe("Agent", () => {
   it("processMessage short-circuits when pipeline interceptor returns a string", async () => {
     const pipeline = new Pipeline();
     pipeline.registerInterceptor(async () => "intercepted!");
-    const chat = vi.fn();
+    const { runtime, chat } = fakeRuntime();
     const persona = new Persona(createPersonaConfig({ persona_name: "B", persona_base_prompt: "." })!, new PersonaStorage());
 
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, chat });
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, runtime });
     const response = await agent.processMessage(mockCtx());
 
     expect(response.content).toBe("intercepted!");
@@ -112,18 +121,38 @@ describe("Agent", () => {
 
   // -- full flow -----------------------------------------------------------
 
-  it("processMessage calls chat with system prompt and user message", async () => {
+  it("processMessage calls runtime.chat with system prompt and ctx", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn().mockResolvedValue({ content: "Hi there" });
+    const { runtime, chat } = fakeRuntime({ content: "Hi there", provider: "openai", model: "gpt-4" });
     const persona = new Persona(createPersonaConfig({ persona_name: "B", persona_base_prompt: "." })!, new PersonaStorage());
 
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, chat });
-    await agent.processMessage(mockCtx());
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, runtime });
+    const ctx = mockCtx();
+    await agent.processMessage(ctx);
 
     expect(chat).toHaveBeenCalledOnce();
-    const [systemPrompt, messages] = chat.mock.calls[0]!;
-    expect(messages).toEqual([{ role: "user", content: "hello" }]);
+    const [systemPrompt, passedCtx] = chat.mock.calls[0]!;
+    expect(passedCtx).toBe(ctx);
     expect(systemPrompt).toContain("B"); // persona identity in prompt
+  });
+
+  it("propagates the reply's provider, model, and usage to AgentResponse", async () => {
+    const pipeline = new Pipeline();
+    const { runtime } = fakeRuntime({
+      content: "ok",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    });
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
+    const response = await agent.processMessage(mockCtx());
+
+    expect(response).toEqual({
+      content: "ok",
+      provider: "deepseek",
+      model: "deepseek-chat",
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    });
   });
 
   // -- observers run -------------------------------------------------------
@@ -132,9 +161,9 @@ describe("Agent", () => {
     const pipeline = new Pipeline();
     const observer = vi.fn().mockResolvedValue(undefined);
     pipeline.registerObserver(observer);
-    const chat = vi.fn().mockResolvedValue({ content: "response" });
+    const { runtime } = fakeRuntime({ content: "response" });
 
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, chat });
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
     const ctx = mockCtx();
     await agent.processMessage(ctx);
 
@@ -143,20 +172,25 @@ describe("Agent", () => {
 
   // -- error propagation ---------------------------------------------------
 
-  it("propagates errors from chat", async () => {
+  it("propagates errors from runtime.chat", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn().mockRejectedValue(new Error("LLM error"));
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, chat });
+    const { runtime } = fakeRuntime();
+    (runtime.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("LLM error"));
+
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
 
     await expect(agent.processMessage(mockCtx())).rejects.toThrow("LLM error");
   });
 
   // -- shutdown ------------------------------------------------------------
 
-  it("shutdown resolves without error", async () => {
+  it("shutdown forwards to runtime.shutdown", async () => {
     const pipeline = new Pipeline();
-    const chat = vi.fn();
-    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, chat });
-    await expect(agent.shutdown()).resolves.toBeUndefined();
+    const { runtime, shutdown } = fakeRuntime();
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
+
+    await agent.shutdown();
+
+    expect(shutdown).toHaveBeenCalledOnce();
   });
 });

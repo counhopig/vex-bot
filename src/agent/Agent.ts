@@ -8,13 +8,14 @@
  *   create(effectiveConfig) → Agent {
  *     persona: Persona | null      // null = bare tool executor
  *     pipeline: Pipeline           // per-Agent instance
+ *     runtime: AgentRuntime        // per-Agent LLM wrapper
  *   }
  *
  * processMessage() orchestrates:
  *   1. Run pipeline interceptors (short-circuit on first match)
  *   2. Build system prompt from persona
  *   3. Gather prompt injections
- *   4. Call LLM via injected chat function
+ *   4. Call LLM via runtime.chat(systemPrompt, ctx)
  *   5. Run pipeline observers
  */
 
@@ -22,7 +23,8 @@ import type { EffectiveConfig } from "../config/EffectiveConfig.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import { Pipeline } from "./Pipeline.js";
 import type { Persona } from "./persona/Persona.js";
-import { assembleSystemPrompt, DEFAULT_IDENTITY } from "./SystemPromptAssembler.js";
+import { assembleSystemPrompt } from "./SystemPromptAssembler.js";
+import type { AgentRuntime, AgentRuntimeReply } from "./AgentRuntime.js";
 import { getChildLogger } from "../utils/logger.js";
 
 const logger = getChildLogger("agent");
@@ -38,15 +40,10 @@ export interface AgentResponse {
   model: string;
 }
 
-export type ChatFn = (
-  systemPrompt: string,
-  messages: Array<{ role: string; content: string }>,
-) => Promise<{ content: string }>;
-
 export interface AgentDependencies {
   pipeline: Pipeline;
   persona: Persona | null;
-  chat: ChatFn;
+  runtime: AgentRuntime;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,14 +53,16 @@ export interface AgentDependencies {
 export class Agent {
   readonly persona: Persona | null;
   readonly pipeline: Pipeline;
+  private readonly runtime: AgentRuntime;
 
   constructor(
     private readonly ownerId: string,
     private readonly config: EffectiveConfig,
-    private readonly deps: AgentDependencies,
+    deps: AgentDependencies,
   ) {
     this.persona = deps.persona;
     this.pipeline = deps.pipeline;
+    this.runtime = deps.runtime;
   }
 
   async processMessage(ctx: InboundMessageContext): Promise<AgentResponse> {
@@ -95,23 +94,22 @@ export class Agent {
       ? systemPrompt + "\n\n---\n\n" + injections.join("\n\n---\n\n")
       : systemPrompt;
 
-    // 4. Call LLM
-    const response = await this.deps.chat(finalPrompt, [
-      { role: "user", content: ctx.content },
-    ]);
+    // 4. Call LLM via the per-Agent AgentRuntime
+    const reply: AgentRuntimeReply = await this.runtime.chat(finalPrompt, ctx);
 
     // 5. Run pipeline observers
-    await this.pipeline.runObservers(ctx, response.content);
+    await this.pipeline.runObservers(ctx, reply.content);
 
     return {
-      content: response.content,
-      provider: this.config.agent.defaultProvider,
-      model: this.config.agent.defaultModel,
+      content: reply.content,
+      provider: reply.provider,
+      model: reply.model,
+      ...(reply.usage ? { usage: reply.usage } : {}),
     };
   }
 
   async shutdown(): Promise<void> {
     logger.debug("Agent shutting down");
-    // Cleanup owned resources
+    await this.runtime.shutdown();
   }
 }
