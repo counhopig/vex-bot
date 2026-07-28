@@ -15,6 +15,16 @@
  * provider id doesn't match the user's configured provider id (e.g.
  * a custom-anthropic config that resolves to a Model with
  * provider: "anthropic").
+ *
+ * The PiAgent adapter exposes a `setBaseSystemPrompt` method that
+ * pokes the SDK's private `_baseSystemPrompt` field. That field is
+ * the value `session.prompt()`'s before_agent_start extension hook
+ * uses to overwrite the agent's system prompt on every turn when
+ * custom tools are present (see
+ * node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js
+ * around the "in case previous turn had modifications" comment). The
+ * SDK does not expose a setter for it; this is the same workaround
+ * the archive's _archive/src/agents/runtime.ts used.
  */
 
 import * as os from "os";
@@ -28,14 +38,9 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import type { Model, Api } from "@mariozechner/pi-ai";
 import type { PiSession, PiAgent, PiSessionStats } from "./AgentRuntime.js";
+import { getChildLogger } from "../utils/logger.js";
 
-const logger = {
-  debug(msg: string, meta?: unknown) {
-    if (process.env.VEX_DEBUG) {
-      console.log(JSON.stringify({ level: "debug", module: "create-pi-session", msg, ...((meta as object) ?? {}) }));
-    }
-  },
-};
+const logger = getChildLogger("create-pi-session");
 
 export interface RealPiSessionDeps {
   model: Model<Api>;
@@ -46,37 +51,46 @@ export interface RealPiSessionDeps {
   modelProviderForKey: string;
 }
 
-/** Wrap a pi-coding-agent Agent into the AgentRuntime's PiAgent shape. */
-function adaptAgent(agent: unknown): PiAgent {
-  const a = agent as {
-    setSystemPrompt: (v: string) => void;
-    setTools: (t: unknown[]) => void;
-    waitForIdle: () => Promise<void>;
+/** Pi-coding-agent's AgentSession shape we need to read for the
+ *  _baseSystemPrompt sync. _baseSystemPrompt is a private field with
+ *  no public setter; we declare the minimum surface we read here. */
+interface RawAgentSession {
+  agent: {
+    setSystemPrompt(v: string): void;
+    setTools(t: unknown[]): void;
+    waitForIdle(): Promise<void>;
   };
+  prompt: (text: string) => Promise<void>;
+  getLastAssistantText: () => string | undefined;
+  getSessionStats: () => unknown;
+  dispose: () => void;
+  subscribe: (listener: (event: unknown) => void) => () => void;
+}
+
+/** Wrap a pi-coding-agent Agent into the AgentRuntime's PiAgent shape. */
+function adaptAgent(rawSession: RawAgentSession): PiAgent {
   return {
-    setSystemPrompt: (v) => a.setSystemPrompt(v),
-    setTools: (t) => a.setTools(t),
-    waitForIdle: () => a.waitForIdle(),
+    setSystemPrompt: (v) => rawSession.agent.setSystemPrompt(v),
+    setTools: (t) => rawSession.agent.setTools(t),
+    waitForIdle: () => rawSession.agent.waitForIdle(),
+    // _baseSystemPrompt has no public setter. The cast is the documented
+    // boundary crossing — pi-coding-agent's class field is private; we
+    // sync it via the runtime contract, not the public API.
+    setBaseSystemPrompt: (v) => {
+      (rawSession as unknown as { _baseSystemPrompt: string })._baseSystemPrompt = v;
+    },
   };
 }
 
 /** Wrap a pi-coding-agent AgentSession into the AgentRuntime's PiSession shape. */
-function adaptSession(rawSession: unknown): PiSession {
-  const s = rawSession as {
-    agent: unknown;
-    prompt: (text: string) => Promise<void>;
-    getLastAssistantText: () => string | undefined;
-    getSessionStats: () => unknown;
-    dispose: () => void;
-    subscribe: (listener: (event: unknown) => void) => () => void;
-  };
+function adaptSession(rawSession: RawAgentSession): PiSession {
   return {
-    agent: adaptAgent(s.agent),
-    prompt: (text) => s.prompt(text),
-    getLastAssistantText: () => s.getLastAssistantText(),
-    getSessionStats: () => s.getSessionStats() as PiSessionStats,
-    dispose: () => s.dispose(),
-    subscribe: (listener) => s.subscribe(listener),
+    agent: adaptAgent(rawSession),
+    prompt: (text) => rawSession.prompt(text),
+    getLastAssistantText: () => rawSession.getLastAssistantText(),
+    getSessionStats: () => rawSession.getSessionStats() as PiSessionStats,
+    dispose: () => rawSession.dispose(),
+    subscribe: (listener) => rawSession.subscribe(listener),
   };
 }
 
@@ -146,7 +160,7 @@ export async function createDefaultPiSession(deps: RealPiSessionDeps): Promise<P
     tools: [],
   });
 
-  logger.debug("Default pi session created", { sessionFile, modelProviderForKey });
+  logger.debug({ sessionFile, modelProviderForKey }, "Default pi session created");
 
-  return adaptSession(rawSession);
+  return adaptSession(rawSession as unknown as RawAgentSession);
 }

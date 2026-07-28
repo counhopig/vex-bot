@@ -61,6 +61,17 @@ export interface PiAgent {
   setSystemPrompt(text: string): void;
   setTools(tools: unknown[]): void;
   waitForIdle(): Promise<void>;
+
+  /**
+   * Sync pi-coding-agent's private `_baseSystemPrompt` field. The SDK's
+   * `session.prompt()` method silently overwrites the agent's system prompt
+   * with `_baseSystemPrompt` on every turn when custom tools are present
+   * (see node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js,
+   * the `else { this.agent.setSystemPrompt(this._baseSystemPrompt); }` branch
+   * in the before_agent_start extension hook). Without this sync, the
+   * agent's identity gets dropped on every turn.
+   */
+  setBaseSystemPrompt(text: string): void;
 }
 
 /** Subset of the pi-coding-agent AgentSession that the runtime touches. */
@@ -135,9 +146,14 @@ export class AgentRuntime {
 
   // -- public API -----------------------------------------------------------
 
-  /** Non-streaming chat. Sets the system prompt for this turn, then drives
-   *  the underlying pi session through one user turn and returns the
-   *  assistant's final text + token usage. */
+  /** Non-streaming chat. Syncs the per-turn system prompt via setBaseSystemPrompt
+   *  (which pokes pi-coding-agent's private `_baseSystemPrompt` field), then
+   *  drives one user turn. We call setBaseSystemPrompt, NOT setSystemPrompt:
+   *  when custom tools are present, session.prompt()'s before_agent_start
+   *  hook silently overwrites the agent's system prompt with `_baseSystemPrompt`
+   *  (see node_modules/@mariozechner/pi-coding-agent/dist/core/agent-session.js
+   *  line ~738). Without this sync, the assembled prompt would be discarded
+   *  every turn. */
   async chat(systemPrompt: string, ctx: InboundMessageContext): Promise<AgentRuntimeReply> {
     const sessionKey = this.sessionKey(ctx);
     const release = await this.lockSession(sessionKey);
@@ -147,10 +163,10 @@ export class AgentRuntime {
         throw new Error(`Cannot resolve model: ${this.config.provider}/${this.config.model}`);
       }
       const session = await this.getOrCreateSession(sessionKey, model);
-      // The Agent layer assembles the system prompt per turn (base + persona +
-      // pipeline injections). Setting it here — not at session creation —
-      // means the next prompt() call sees the right prompt for this turn.
-      session.agent.setSystemPrompt(systemPrompt);
+      // The Agent layer assembles a fresh system prompt each turn (base +
+      // persona + pipeline injections). The base-prompt sync keeps that
+      // value intact through the SDK's per-turn reset.
+      session.agent.setBaseSystemPrompt(systemPrompt);
       await session.prompt(ctx.content);
       await session.agent.waitForIdle();
       return this.buildReply(session);

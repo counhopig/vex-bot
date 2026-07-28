@@ -6,7 +6,14 @@
  * createPiSession factory is injected so each test can supply a fake
  * session object exposing the same surface (`prompt`, `agent.waitForIdle`,
  * `getLastAssistantText`, `getSessionStats`, `agent.setSystemPrompt`,
- * `agent.setTools`, `agent.streamFn`, `dispose`).
+ * `agent.setBaseSystemPrompt`, `agent.setTools`, `agent.streamFn`, `dispose`).
+ *
+ * The fake session models pi-coding-agent's reset behavior: when
+ * custom tools are present, `session.prompt()`'s before_agent_start
+ * extension hook overwrites the agent's system prompt with the
+ * private `_baseSystemPrompt` field. Tests that exercise this
+ * path use `__promptsAsSeenByModel` to assert what the LLM actually
+ * saw, not just what AgentRuntime set.
  *
  * ModelResolver is also injected. Tests that need a specific provider
  * shape construct one inline; the canonical ModelResolver has its own
@@ -29,11 +36,18 @@ import type { Model } from "@mariozechner/pi-ai";
 // Test doubles
 // ---------------------------------------------------------------------------
 
+type PromptAsSeenByModel = { userContent: string; systemPromptAsSeen: string };
+
 type TrackingSession = PiSession & {
   __promptCalls: string[];
   __setSystemPromptCalls: string[];
+  __setBaseSystemPromptCalls: string[];
   __setToolsCalls: unknown[];
   __disposed: boolean[];
+  /** What the LLM actually saw on each prompt() call after the
+   *  pi-coding-agent reset. The fake models this by snapshotting
+   *  the most recent setBaseSystemPrompt value at prompt() time. */
+  __promptsAsSeenByModel: PromptAsSeenByModel[];
 };
 
 function makeFakeModel(provider: string, id = "fake-model"): Model<"openai-completions"> {
@@ -58,12 +72,25 @@ function makeFakeSession(opts: {
 } = {}): TrackingSession {
   const promptCalls: string[] = [];
   const setSystemPromptCalls: string[] = [];
+  const setBaseSystemPromptCalls: string[] = [];
   const setToolsCalls: unknown[] = [];
   const disposed: boolean[] = [];
+  const promptsAsSeenByModel: PromptAsSeenByModel[] = [];
+
+  // pi-coding-agent's _baseSystemPrompt is the field session.prompt() reads
+  // during the reset (see node_modules/.../core/agent-session.js line 738-739).
+  // The fake models this: setBaseSystemPrompt updates the value, and prompt()
+  // snapshots whatever was last set there as what the LLM sees — regardless
+  // of any setSystemPrompt() call in between.
+  let lastBasePrompt = "";
 
   const agent: PiAgent = {
     setSystemPrompt(text) {
       setSystemPromptCalls.push(text);
+    },
+    setBaseSystemPrompt(text) {
+      lastBasePrompt = text;
+      setBaseSystemPromptCalls.push(text);
     },
     setTools(tools) {
       setToolsCalls.push(tools);
@@ -77,6 +104,7 @@ function makeFakeSession(opts: {
     agent,
     async prompt(text: string) {
       promptCalls.push(text);
+      promptsAsSeenByModel.push({ userContent: text, systemPromptAsSeen: lastBasePrompt });
       if (opts.promptGate) await opts.promptGate.promise;
     },
     getLastAssistantText() {
@@ -105,8 +133,10 @@ function makeFakeSession(opts: {
   }, {
     __promptCalls: promptCalls,
     __setSystemPromptCalls: setSystemPromptCalls,
+    __setBaseSystemPromptCalls: setBaseSystemPromptCalls,
     __setToolsCalls: setToolsCalls,
     __disposed: disposed,
+    __promptsAsSeenByModel: promptsAsSeenByModel,
   });
 
   return session;
@@ -357,7 +387,14 @@ describe("AgentRuntime", () => {
   });
 
   describe("system prompt lifecycle", () => {
-    it("sets the system prompt on the session before each turn", async () => {
+    it("syncs _baseSystemPrompt before each turn (regression for pi-coding-agent's prompt() reset)", async () => {
+      // The fake models pi-coding-agent's behavior: prompt()'s
+      // before_agent_start hook overwrites the agent's system prompt with
+      // _baseSystemPrompt when custom tools are present. If AgentRuntime
+      // only calls setSystemPrompt, the LLM sees the value at
+      // construction time, not the per-turn assembled value. setBaseSystemPrompt
+      // is the documented sync path (matches the archive's
+      // `(session as any)._baseSystemPrompt = prompt` workaround).
       const fakeSession = makeFakeSession();
       const createPiSession: CreatePiSessionFn = async () => fakeSession;
       const runtime = new AgentRuntime(makeConfig(), {
@@ -365,13 +402,15 @@ describe("AgentRuntime", () => {
         createPiSession,
       });
 
-      await runtime.chat("TURN 1", makeContext());
-      await runtime.chat("TURN 2", makeContext());
-      await runtime.chat("TURN 3", makeContext());
+      await runtime.chat("TURN-1-PROMPT", makeContext({ content: "u1" }));
+      await runtime.chat("TURN-2-PROMPT", makeContext({ content: "u2" }));
+      await runtime.chat("TURN-3-PROMPT", makeContext({ content: "u3" }));
 
-      // One setSystemPrompt call per turn — the Agent layer assembles a fresh
-      // system prompt each turn (base + persona + pipeline injections).
-      expect(fakeSession.__setSystemPromptCalls).toEqual(["TURN 1", "TURN 2", "TURN 3"]);
+      // What the LLM actually saw on each prompt() call. The fake
+      // models the reset behavior, so the right value is whatever
+      // AgentRuntime set via setBaseSystemPrompt most recently.
+      expect(fakeSession.__promptsAsSeenByModel.map((p) => p.systemPromptAsSeen))
+        .toEqual(["TURN-1-PROMPT", "TURN-2-PROMPT", "TURN-3-PROMPT"]);
     });
 
     it("passes the user content from ctx.content into session.prompt", async () => {
