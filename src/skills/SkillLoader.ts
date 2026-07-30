@@ -12,6 +12,7 @@ import { join, basename, dirname } from "path";
 import { homedir } from "os";
 import { glob } from "glob";
 import { parse as parseYaml } from "yaml";
+import { expandHomePath } from "../utils/path.js";
 import type { SkillEntry, SkillFrontmatter, SkillSource, SkillsConfig, SkillEligibility } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -247,13 +248,13 @@ export async function loadAllSkills(
   // 1. Bundled
   allSkills.push(...(await loadSkillsFromDirectory(dirs.bundled, "bundled")));
 
-  // 2. User (config override wins)
-  const userDir = config?.userDir ? config.userDir : dirs.user;
+  // 2. User (config override wins, ~ expansion handled)
+  const userDir = config?.userDir ? expandHomePath(config.userDir) : dirs.user;
   allSkills.push(...(await loadSkillsFromDirectory(userDir, "user")));
 
-  // 3. Workspace (config override wins)
+  // 3. Workspace (config override wins, ~ expansion handled)
   const workspaceDir = config?.workspaceDir
-    ? config.workspaceDir
+    ? expandHomePath(config.workspaceDir)
     : dirs.workspace;
   allSkills.push(
     ...(await loadSkillsFromDirectory(workspaceDir, "workspace")),

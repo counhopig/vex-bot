@@ -134,3 +134,40 @@ name: clean
     expect(r!.content).toBe("trimmed content with surrounding whitespace");
   });
 });
+
+describe("loadAllSkills — config tilde expansion", () => {
+  let loadAllSkills: (config?: any) => Promise<any[]>;
+
+  beforeAll(async () => {
+    ({ loadAllSkills } = await import("../src/skills/SkillLoader.js"));
+  });
+
+  it("expands ~/ in config.userDir to homedir() so a skill under $HOME is found", async () => {
+    // Create a real SKILL.md under $HOME and verify loadAllSkills picks it up
+    // via the ~-expanded userDir path. If tilde expansion is missing, the
+    // loader scans CWD/~/... and never finds the skill.
+    const fs = await import("fs/promises");
+    const path = await import("path");
+    const os = await import("os");
+    const userDir = path.join(os.homedir(), "__vex_test_skills__");
+    const skillDir = path.join(userDir, "tilde-test");
+    const skillFile = path.join(skillDir, "SKILL.md");
+    await fs.mkdir(skillDir, { recursive: true });
+    try {
+      await fs.writeFile(
+        skillFile,
+        "---\nname: tilde-test\n---\nTilde expanded.\n",
+        "utf-8",
+      );
+
+      const entries = await loadAllSkills({
+        userDir: "~/__vex_test_skills__",
+        workspaceDir: "/tmp/__vex_nonexistent_workspace__",
+      });
+      const names = entries.map((e: any) => e.frontmatter.name);
+      expect(names).toContain("tilde-test");
+    } finally {
+      await fs.rm(userDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});
