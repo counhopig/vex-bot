@@ -474,3 +474,108 @@ describe("AgentRuntime", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// wrapErrorAwareTool — converts isError:true tool results into thrown Errors
+// (ported from _archive/src/agents/runtime.ts: wrapErrorAwareTool)
+// ---------------------------------------------------------------------------
+
+describe("wrapErrorAwareTool", () => {
+  let wrapErrorAwareTool: (t: any) => any;
+  let wrapErrorAwareTools: (tools: any[]) => any[];
+
+  beforeAll(async () => {
+    const mod = await import("../src/agent/AgentRuntime.js");
+    wrapErrorAwareTool = mod.wrapErrorAwareTool;
+    wrapErrorAwareTools = mod.wrapErrorAwareTools;
+  });
+
+  it("throws when tool result has isError: true", async () => {
+    const failing = {
+      name: "failing",
+      label: "Failing",
+      description: "A failing tool",
+      parameters: {},
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "something broke" }],
+        details: { status: "error", error: "fail" },
+        isError: true,
+      }),
+    };
+
+    const wrapped = wrapErrorAwareTool(failing);
+    await expect(wrapped.execute("id", {}, undefined, undefined, {}))
+      .rejects.toThrow("something broke");
+  });
+
+  it("passes through successful results unchanged", async () => {
+    const ok = {
+      name: "ok",
+      label: "OK",
+      description: "A working tool",
+      parameters: {},
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "done" }],
+        details: { status: "success" },
+      }),
+    };
+
+    const wrapped = wrapErrorAwareTool(ok);
+    const result = await wrapped.execute("id", {}, undefined, undefined, {});
+    expect(result.content[0].text).toBe("done");
+  });
+
+  it("uses JSON-formatted error text when no plain text content", async () => {
+    const badTool = {
+      name: "bad",
+      label: "Bad",
+      description: "Bad",
+      parameters: {},
+      execute: async () => ({
+        content: [],
+        details: { error: "silent" },
+        isError: true,
+      }),
+    };
+
+    const wrapped = wrapErrorAwareTool(badTool);
+    await expect(wrapped.execute("id", {}, undefined, undefined, {}))
+      .rejects.toThrow("Tool execution failed");
+  });
+
+  it("wrapErrorAwareTools wraps an entire array", async () => {
+    const badTool = {
+      name: "bad",
+      label: "Bad",
+      description: "Bad",
+      parameters: {},
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "fail" }],
+        details: {},
+        isError: true,
+      }),
+    };
+
+    const goodTool = {
+      name: "good",
+      label: "Good",
+      description: "Good",
+      parameters: {},
+      execute: async () => ({
+        content: [{ type: "text" as const, text: "ok" }],
+        details: {},
+      }),
+    };
+
+    const wrapped = wrapErrorAwareTools([badTool, goodTool]);
+    expect(wrapped).toHaveLength(2);
+
+    // bad tool throws
+    await expect(wrapped[0]!.execute("id", {}, undefined, undefined, {}))
+      .rejects.toThrow();
+
+    // good tool passes through
+    const r = await wrapped[1]!.execute("id", {}, undefined, undefined, {});
+    expect(r.content[0].text).toBe("ok");
+  });
+});

@@ -115,6 +115,7 @@ export type CreatePiSessionFn = (args: {
   apiKey?: string;
   providerForKey: string;
   modelProviderForKey: string;
+  customTools?: ToolDefinition[];
 }) => Promise<PiSession>;
 
 /** Subset of ModelResolver the runtime needs. The real class implements
@@ -243,12 +244,16 @@ export class AgentRuntime {
       apiKey,
       providerForKey: this.config.provider,
       modelProviderForKey: String(model.provider),
+      customTools: this.config.customTools,
     });
     this.sessions.set(sessionKey, session);
     logger.debug({ sessionKey, customToolCount: this.config.customTools?.length ?? 0 }, "New session created");
     // Apply stored custom tools to the new session so the LLM can use them.
+    // Wrap every tool with error-aware semantics: if a tool returns
+    // { isError: true } in its result, convert it into a thrown Error so
+    // pi-coding-agent reports it as a proper tool failure to the LLM.
     if (this.config.customTools && this.config.customTools.length > 0) {
-      session.agent.setTools(this.config.customTools);
+      session.agent.setTools(wrapErrorAwareTools(this.config.customTools));
     }
     return session;
   }
@@ -268,4 +273,60 @@ export class AgentRuntime {
       usage,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Tool wrappers (ported from _archive/src/agents/runtime.ts)
+// ---------------------------------------------------------------------------
+
+type ErrorAwareToolResult = { isError?: boolean; content: Array<{ type: string; text?: string }> };
+
+function hasToolErrorFlag(
+  result: unknown,
+): result is ErrorAwareToolResult {
+  return (
+    typeof result === "object" &&
+    result !== null &&
+    "isError" in result &&
+    (result as ErrorAwareToolResult).isError === true
+  );
+}
+
+function getToolErrorMessage(result: ErrorAwareToolResult): string {
+  const text = result.content
+    .filter((item) => item.type === "text")
+    .map((item) => item.text ?? "")
+    .join("\n")
+    .trim();
+  return text || "Tool execution failed";
+}
+
+/**
+ * Wrap a single tool definition so that when its execute() returns a
+ * result with `isError: true`, the wrapper throws an Error instead of
+ * returning the result. pi-coding-agent treats thrown Errors as tool
+ * failures (isError: true forwarded to LLM), while returned isError
+ * results may look like normal output.
+ */
+export function wrapErrorAwareTool(tool: ToolDefinition): ToolDefinition {
+  const original = tool.execute.bind(tool);
+  const execute: ToolDefinition["execute"] = async (
+    toolCallId,
+    params,
+    signal,
+    onUpdate,
+    ctx,
+  ) => {
+    const result = await original(toolCallId, params, signal, onUpdate, ctx);
+    if (hasToolErrorFlag(result)) {
+      throw new Error(getToolErrorMessage(result));
+    }
+    return result;
+  };
+  return { ...tool, execute };
+}
+
+/** Wrap an entire array of tool definitions with wrapErrorAwareTool. */
+export function wrapErrorAwareTools(tools: ToolDefinition[]): ToolDefinition[] {
+  return tools.map(wrapErrorAwareTool);
 }

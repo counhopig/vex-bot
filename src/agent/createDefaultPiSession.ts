@@ -49,6 +49,11 @@ export interface RealPiSessionDeps {
   apiKey?: string;
   providerForKey: string;
   modelProviderForKey: string;
+  /** Custom tool definitions passed to createAgentSession so the SDK's
+   *  _toolRegistry, hasCustomTools flag, and ExtensionRunner are all
+   *  correctly initialised. Tools are also set via agent.setTools()
+   *  in AgentRuntime.getOrCreateSession (dual path, matching archive). */
+  customTools?: ToolDefinition[];
 }
 
 /** Pi-coding-agent's AgentSession shape we need to read for the
@@ -108,6 +113,7 @@ export async function createDefaultPiSession(deps: RealPiSessionDeps): Promise<P
     apiKey,
     providerForKey,
     modelProviderForKey,
+    customTools,
   } = deps;
 
   // Independent SessionManager per session — the archive's per-session
@@ -145,10 +151,7 @@ export async function createDefaultPiSession(deps: RealPiSessionDeps): Promise<P
 
   const modelRegistry = new ModelRegistry(authStorage);
 
-  // No custom tools yet — the ToolRegistry module will hand these in
-  // once it lands. For now an empty list is fine; the Agent will
-  // surface "no tools available" if the LLM tries to call one.
-  const customToolDefinitions: ToolDefinition[] = [];
+  const customToolDefinitions = customTools ?? [];
 
   const { session: rawSession } = await createAgentSession({
     cwd: workingDirectory,
