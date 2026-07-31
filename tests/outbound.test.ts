@@ -14,6 +14,7 @@ import { describe, it, expect, vi } from "vitest";
 import { OutboundDeliver } from "../src/outbound/OutboundDeliver.js";
 import { ChannelRegistryImpl } from "../src/channels/ChannelRegistry.js";
 import type { ChannelAdapter, ChannelId, InboundMessageContext, OutboundMessage, SendResult, ChannelMeta } from "../src/channels/ChannelAdapter.js";
+import * as hooks from "../src/hooks/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -147,5 +148,40 @@ describe("OutboundDeliver", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("rate limited");
+  });
+
+  // -- hook wiring: emitMessageSending + emitMessageSent around the send -
+
+  it("emits message_sending before and message_sent after a successful send", async () => {
+    const sent = vi.spyOn(hooks, "emitMessageSending").mockImplementation(() => {});
+    const done = vi.spyOn(hooks, "emitMessageSent").mockImplementation(() => {});
+    const registry = new ChannelRegistryImpl();
+    registry.register(mockChannel("webchat", async () => ({ success: true, messageId: "m1" })));
+
+    const deliver = new OutboundDeliver(registry);
+    await deliver.sendText("webchat", "chat-1", "hi");
+
+    expect(sent).toHaveBeenCalledTimes(1);
+    expect(sent.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ channelId: "webchat", chatId: "chat-1", content: "hi" }),
+    );
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(done.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ channelId: "webchat", chatId: "chat-1", success: true }),
+    );
+    sent.mockRestore();
+    done.mockRestore();
+  });
+
+  it("emits message_sent with success=false on a channel failure", async () => {
+    const done = vi.spyOn(hooks, "emitMessageSent").mockImplementation(() => {});
+    const registry = new ChannelRegistryImpl();
+    registry.register(mockChannel("webchat", async () => ({ success: false, error: "boom" })));
+
+    const deliver = new OutboundDeliver(registry);
+    await deliver.sendText("webchat", "chat-1", "hi");
+
+    expect(done.mock.calls[0]?.[0].success).toBe(false);
+    done.mockRestore();
   });
 });

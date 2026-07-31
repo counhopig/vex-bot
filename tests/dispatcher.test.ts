@@ -11,6 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher, type DispatchOutboundMessage } from "../src/dispatcher/Dispatcher.js";
 import type { InboundMessageContext } from "../src/channels/ChannelAdapter.js";
+import * as hooks from "../src/hooks/index.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -138,5 +139,41 @@ describe("Dispatcher", () => {
 
     await expect(dispatcher.dispatch(mockCtx())).rejects.toThrow("registry error");
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  // -- hook wiring: emitMessageReceived on every dispatch entry -----------
+
+  it("emits message_received with the inbound context", async () => {
+    const spy = vi.spyOn(hooks, "emitMessageReceived").mockImplementation(() => {});
+    const mockAgent = { processMessage: vi.fn().mockResolvedValue({ content: "ok" }) };
+    configStore.resolve.mockResolvedValue({ userId: "user1", channelId: "webchat" });
+    agentRegistry.getOrCreate.mockResolvedValue(mockAgent);
+
+    const dispatcher = new Dispatcher(configStore as any, agentRegistry as any, deliver);
+    const ctx = mockCtx();
+    await dispatcher.dispatch(ctx);
+
+    expect(spy).toHaveBeenCalledWith(ctx);
+    spy.mockRestore();
+  });
+
+  it("emits message_received for dispatchSynthetic too", async () => {
+    const spy = vi.spyOn(hooks, "emitMessageReceived").mockImplementation(() => {});
+    const mockAgent = { processMessage: vi.fn().mockResolvedValue({ content: "ok" }) };
+    configStore.resolve.mockResolvedValue({ userId: "cron", channelId: "weixin" });
+    agentRegistry.getOrCreate.mockResolvedValue(mockAgent);
+
+    const dispatcher = new Dispatcher(configStore as any, agentRegistry as any, deliver);
+    const ctx = await dispatcher.dispatchSynthetic({
+      channelId: "weixin",
+      chatId: "wx-chat",
+      chatType: "direct",
+      senderId: "cron-system",
+      content: "synthetic",
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    // The dispatched ctx carries the synthesized messageId/timestamp
+    expect(spy.mock.calls[0]?.[0].messageId).toMatch(/^synthetic-/);
+    spy.mockRestore();
   });
 });

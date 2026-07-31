@@ -15,6 +15,7 @@ import { createPersonaConfig } from "../src/agent/persona/PersonaConfig.js";
 import { PersonaStorage } from "../src/agent/persona/PersonaStorage.js";
 import type { AgentRuntime, AgentRuntimeReply } from "../src/agent/AgentRuntime.js";
 import type { InboundMessageContext } from "../src/channels/ChannelAdapter.js";
+import * as hooks from "../src/hooks/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -192,5 +193,50 @@ describe("Agent", () => {
     await agent.shutdown();
 
     expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  // -- hook wiring: emitAgentStart + emitAgentEnd around runtime.chat ---
+
+  it("emits agent_start before runtime.chat and agent_end after", async () => {
+    const start = vi.spyOn(hooks, "emitAgentStart").mockImplementation(() => {});
+    const end = vi.spyOn(hooks, "emitAgentEnd").mockImplementation(() => {});
+    const pipeline = new Pipeline();
+    const { runtime } = fakeRuntime({ content: "done", provider: "openai", model: "gpt-4" });
+
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
+    await agent.processMessage(mockCtx());
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(start.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ provider: "openai", model: "gpt-4" }),
+    );
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(end.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-4",
+        response: "done",
+      }),
+    );
+    expect(end.mock.calls[0]?.[0].durationMs).toBeGreaterThanOrEqual(0);
+    start.mockRestore();
+    end.mockRestore();
+  });
+
+  it("emits agent_end even when runtime.chat throws (response empty, duration set)", async () => {
+    const start = vi.spyOn(hooks, "emitAgentStart").mockImplementation(() => {});
+    const end = vi.spyOn(hooks, "emitAgentEnd").mockImplementation(() => {});
+    const pipeline = new Pipeline();
+    const { runtime } = fakeRuntime();
+    (runtime.chat as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("LLM down"));
+
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
+    await expect(agent.processMessage(mockCtx())).rejects.toThrow("LLM down");
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(end).toHaveBeenCalledTimes(1);
+    expect(end.mock.calls[0]?.[0].response).toBe("");
+    start.mockRestore();
+    end.mockRestore();
   });
 });

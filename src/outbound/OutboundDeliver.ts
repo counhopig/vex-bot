@@ -17,6 +17,7 @@
 
 import type { ChannelRegistry, ChannelId, OutboundMessage, SendResult } from "../channels/ChannelAdapter.js";
 import { getChildLogger } from "../utils/logger.js";
+import { emitMessageSending, emitMessageSent } from "../hooks/index.js";
 
 const logger = getChildLogger("outbound");
 
@@ -82,12 +83,27 @@ export class OutboundDeliver {
     const message: OutboundMessage = { chatId, content };
     const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+    emitMessageSending({
+      channelId,
+      chatId,
+      content,
+      sessionKey: `${channelId}:${chatId}`,
+    });
+
     try {
       const result = await sendWithTimeout(
         channel.sendMessage(message),
         timeoutMs,
         `${channelId}:${chatId}`,
       );
+
+      emitMessageSent({
+        channelId,
+        chatId,
+        messageId: result.messageId,
+        success: result.success,
+        sessionKey: `${channelId}:${chatId}`,
+      });
 
       if (result.success) {
         logger.info({ channelId, chatId, messageId: result.messageId }, "Message delivered");
@@ -99,6 +115,14 @@ export class OutboundDeliver {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       logger.error({ channelId, chatId, error }, "Message delivery error");
+      // Channel threw — emit a message_sent event with success=false so
+      // observers still see the delivery attempt.
+      emitMessageSent({
+        channelId,
+        chatId,
+        success: false,
+        sessionKey: `${channelId}:${chatId}`,
+      });
       return { success: false, error };
     }
   }

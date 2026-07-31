@@ -26,6 +26,7 @@ import type { Persona } from "./persona/Persona.js";
 import { assembleSystemPrompt } from "./SystemPromptAssembler.js";
 import type { AgentRuntime, AgentRuntimeReply } from "./AgentRuntime.js";
 import { getChildLogger } from "../utils/logger.js";
+import { emitAgentStart, emitAgentEnd } from "../hooks/index.js";
 
 const logger = getChildLogger("agent");
 
@@ -94,18 +95,33 @@ export class Agent {
       ? systemPrompt + "\n\n---\n\n" + injections.join("\n\n---\n\n")
       : systemPrompt;
 
-    // 4. Call LLM via the per-Agent AgentRuntime
-    const reply: AgentRuntimeReply = await this.runtime.chat(finalPrompt, ctx);
+    emitAgentStart({
+      provider: this.config.agent.defaultProvider,
+      model: this.config.agent.defaultModel,
+      messages: [],
+    });
 
-    // 5. Run pipeline observers
-    await this.pipeline.runObservers(ctx, reply.content);
-
-    return {
-      content: reply.content,
-      provider: reply.provider,
-      model: reply.model,
-      ...(reply.usage ? { usage: reply.usage } : {}),
-    };
+    const startMs = Date.now();
+    let reply: AgentRuntimeReply | undefined;
+    try {
+      // 4. Call LLM via the per-Agent AgentRuntime
+      reply = await this.runtime.chat(finalPrompt, ctx);
+      // 5. Run pipeline observers
+      await this.pipeline.runObservers(ctx, reply.content);
+      return {
+        content: reply.content,
+        provider: reply.provider,
+        model: reply.model,
+        ...(reply.usage ? { usage: reply.usage } : {}),
+      };
+    } finally {
+      emitAgentEnd({
+        provider: reply?.provider ?? this.config.agent.defaultProvider,
+        model: reply?.model ?? this.config.agent.defaultModel,
+        response: reply?.content ?? "",
+        durationMs: Date.now() - startMs,
+      });
+    }
   }
 
   async shutdown(): Promise<void> {

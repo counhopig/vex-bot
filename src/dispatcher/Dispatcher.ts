@@ -21,6 +21,7 @@ import type { ConfigStore } from "../config/ConfigStore.js";
 import type { AgentRegistry } from "../agent/AgentRegistry.js";
 import type { InboundMessageContext, ChannelId } from "../channels/ChannelAdapter.js";
 import { getChildLogger } from "../utils/logger.js";
+import { emitMessageReceived } from "../hooks/index.js";
 
 const logger = getChildLogger("dispatcher");
 
@@ -55,6 +56,7 @@ export class Dispatcher {
    * Resolves userId → config → agent → process → deliver.
    */
   async dispatch(ctx: InboundMessageContext): Promise<void> {
+    emitMessageReceived(ctx);
     const userId = this.resolveUserId(ctx);
     logger.debug({ userId, channelId: ctx.channelId, content: ctx.content.slice(0, 100) }, "Dispatching message");
 
