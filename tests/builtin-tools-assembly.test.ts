@@ -32,10 +32,10 @@ describe("createBuiltinTools assembly", () => {
     expect(names).toContain("weather");
   });
 
-  it("omits weather when no config section is provided", () => {
+  it("includes weather even with no config section (wttr default needs no API key)", () => {
     const tools = createBuiltinTools({ weather: undefined });
     const names = tools.map((t) => t.name);
-    expect(names).not.toContain("weather");
+    expect(names).toContain("weather");
   });
 
   it("includes memory tools by default even without a manager (they degrade to disabled)", () => {

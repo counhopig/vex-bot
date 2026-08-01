@@ -101,10 +101,9 @@ export function createBuiltinTools(
     allowedPaths: options?.image?.allowedPaths ?? options?.filesystem?.allowedPaths,
   }));
 
-  // Weather tool (enabled when a config section is provided)
-  if (options?.weather) {
-    tools.push(createWeatherTool(options.weather));
-  }
+  // Weather tool (always available; wttr default needs no API key, so
+  // zero-config works — matches archive's unconditional inclusion).
+  tools.push(createWeatherTool(options?.weather));
 
   // Browser (opt-in, requires playwright-core)
   if (options?.enableBrowser) {
