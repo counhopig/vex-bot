@@ -3,13 +3,15 @@
  *
  * Ported from _archive/src/tools/builtin/memory.ts. Key changes:
  *   - Uses Tool type from ../types.js (not AgentTool from pi-agent-core).
- *   - MemoryManager imported as type-only (the module may not exist yet).
+ *   - MemoryManager imported type-only from the real module (see below).
  *   - When manager is undefined, every tool returns { status: "disabled" }.
  *   - 5-param execute (match ToolDefinition, last 3 prefixed with _).
  */
 
 import { Type, type Static } from "@sinclair/typebox";
 import type { Tool } from "../types.js";
+import type { MemoryManager } from "../../memory/MemoryManager.js";
+import type { MemoryEntry } from "../../memory/types.js";
 import {
   jsonResult,
   errorResult,
@@ -17,41 +19,6 @@ import {
   readNumberParam,
   readStringArrayParam,
 } from "../common.js";
-
-// ---------------------------------------------------------------------------
-// MemoryManager — type-only import (not yet ported in the new tree)
-// ---------------------------------------------------------------------------
-
-interface MemoryEntry {
-  id: string;
-  content: string;
-  metadata: {
-    type?: string;
-    tags?: string[];
-    timestamp: number;
-  };
-  score?: number;
-}
-
-interface MemoryManager {
-  recall(
-    query: string,
-    limit: number,
-  ): Promise<MemoryEntry[]>;
-  remember(
-    content: string,
-    meta: {
-      type?: string;
-      tags?: string[];
-      source?: string;
-    },
-  ): Promise<string>;
-  list(filter?: {
-    type?: string;
-    tags?: string[];
-  }): Promise<MemoryEntry[]>;
-  forget(id: string): Promise<boolean>;
-}
 
 // ---------------------------------------------------------------------------
 // Options
