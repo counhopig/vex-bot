@@ -138,11 +138,17 @@ export interface WebChatChannelOptions {
 /** A client-facing view exposed to injected method handlers. */
 export interface WsClientView {
   readonly id: string;
-  readonly user: PublicWebUser | null;
+  /** Mutable: a handler (e.g. weixin.qr.status confirmed, weixin.unbind) can
+   *  rebind the client to a new user identity and the change takes effect for
+   *  subsequent requests on this connection. */
+  user: PublicWebUser | null;
   sessionKey: string | null;
   sessionId: string | null;
   /** Push an event frame to this client's connection. */
   sendEvent(event: string, payload?: unknown): void;
+  /** Register a cleanup function called when this client disconnects
+   *  (e.g. the log-stream unsubscribe). */
+  onDisconnect(cleanup: () => void): void;
 }
 
 /** Handler for a non-chat WS method. Returns the res payload. */
@@ -158,6 +164,8 @@ interface WsClient {
   sessionId: string | null;
   user: PublicWebUser | null;
   lastPing: number;
+  /** Cleanups registered by injected handlers (e.g. log-stream unsubscribe). */
+  cleanups: Array<() => void>;
 }
 
 export class WebChatChannel implements ChannelAdapter {
@@ -255,6 +263,7 @@ export class WebChatChannel implements ChannelAdapter {
       sessionId: null,
       user,
       lastPing: Date.now(),
+      cleanups: [],
     };
     this.clients.set(clientId, client);
     logger.info({ clientId, userId: user?.id }, "Client connected");
@@ -265,6 +274,14 @@ export class WebChatChannel implements ChannelAdapter {
       this.handleMessage(client, data.toString());
     });
     ws.on("close", () => {
+      for (const cleanup of client.cleanups) {
+        try {
+          cleanup();
+        } catch (error) {
+          logger.error({ clientId, error }, "Client cleanup failed");
+        }
+      }
+      client.cleanups = [];
       this.clients.delete(clientId);
       logger.info({ clientId, userId: client.user?.id }, "Client disconnected");
     });
@@ -314,12 +331,34 @@ export class WebChatChannel implements ChannelAdapter {
         default: {
           const handler = this.handlers?.[method];
           if (handler) {
+            // Live view: sessionKey/sessionId/user are getters/setters over
+            // the internal client so a handler (e.g. sessions.restore,
+            // weixin.qr.status) can rebind the connection and the change
+            // takes effect for subsequent chat.send calls.
             const view: WsClientView = {
               id: client.id,
-              user: client.user,
-              sessionKey: client.sessionKey,
-              sessionId: client.sessionId,
+              get user() {
+                return client.user;
+              },
+              set user(value: PublicWebUser | null) {
+                client.user = value;
+              },
+              get sessionKey() {
+                return client.sessionKey;
+              },
+              set sessionKey(value: string | null) {
+                client.sessionKey = value;
+              },
+              get sessionId() {
+                return client.sessionId;
+              },
+              set sessionId(value: string | null) {
+                client.sessionId = value;
+              },
               sendEvent: (event, payload) => this.sendEvent(client.ws, event, payload),
+              onDisconnect: (cleanup) => {
+                client.cleanups.push(cleanup);
+              },
             };
             result = await handler(view, params);
             break;
@@ -458,5 +497,10 @@ export class WebChatChannel implements ChannelAdapter {
   /** Uptime in ms since initialize — used by status.get. */
   get uptime(): number {
     return Date.now() - this.startTime;
+  }
+
+  /** Connected client count — used by status.get. */
+  get clientCount(): number {
+    return this.clients.size;
   }
 }
