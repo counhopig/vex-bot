@@ -98,19 +98,29 @@ describe("buildAgentFactory tool wiring", () => {
     expect(opts.enableMemory).toBe(true);
   });
 
-  it("defaults the memory directory per-user when effective.memory has no directory", async () => {
-    const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
-      cron: fakeCronService(),
-    });
-    await factory("u42", "webchat", effectiveConfig({ memory: { enabled: true } }));
+  it("defaults the memory directory per-user when effective.memory has no directory (or is absent entirely)", async () => {
+    // Two cases, one expectation: an explicit memory section without a
+    // directory AND a completely absent memory section both fall back to the
+    // per-user default directory. The absent case previously produced an
+    // "enabled but permanently inert" tool set (memoryEnabled true, but no
+    // manager constructed) — this asserts the manager is real in both cases.
+    for (const memory of [
+      { enabled: true },       // explicit section, no directory
+      undefined,               // no memory section at all
+    ]) {
+      createBuiltinToolsMock.mockClear();
+      const factory = buildAgentFactory(fakeModelResolver(), {
+        weather: undefined,
+        cron: fakeCronService(),
+      });
+      await factory("u42", "webchat", effectiveConfig({ memory }));
 
-    const opts = createBuiltinToolsMock.mock.calls[0]![0] as {
-      memoryManager?: MemoryManager & { store?: { directory?: string } };
-    };
-    // The per-user memory directory must be isolated by userId.
-    const dir = (opts.memoryManager as unknown as { store: { directory: string } }).store.directory;
-    expect(dir).toBe(join(homedir(), ".vex", "memory", "u42"));
+      const opts = createBuiltinToolsMock.mock.calls[0]![0] as {
+        memoryManager?: MemoryManager & { store?: { directory?: string } };
+      };
+      const dir = (opts.memoryManager as unknown as { store: { directory: string } }).store.directory;
+      expect(dir).toBe(join(homedir(), ".vex", "memory", "u42"));
+    }
   });
 
   it("disables memory tools when effective.memory.enabled is false", async () => {
@@ -147,20 +157,5 @@ describe("buildAgentFactory tool wiring", () => {
     const opts = createBuiltinToolsMock.mock.calls[0]![0] as { cronService?: unknown; enableCron?: boolean };
     expect(opts.cronService).toBe(cron);
     expect(opts.enableCron).toBe(true);
-  });
-
-  it("still builds an agent when memory is absent entirely (graceful degrade, no throw)", async () => {
-    const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
-      cron: fakeCronService(),
-    });
-    const agent = await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
-
-    expect(agent).toBeDefined();
-    const opts = createBuiltinToolsMock.mock.calls[0]![0] as { memoryManager?: unknown; enableMemory?: boolean };
-    // No memory config → no manager, but tools stay enabled so the tool
-    // modules' own "disabled without instance" degrade path applies.
-    expect(opts.memoryManager).toBeUndefined();
-    expect(opts.enableMemory).toBe(true);
   });
 });

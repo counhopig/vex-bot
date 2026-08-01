@@ -107,14 +107,17 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
       : null;
 
     // Per-user MemoryManager from effective.memory (per-user resolved by
-    // ConfigStore); directory isolated per user. Absent/disabled config →
-    // no manager (tools degrade to "disabled", a tested tool behavior).
+    // ConfigStore); directory isolated per user. `memoryEnabled` defaults to
+    // true when the section is absent (matching how every sibling section in
+    // EffectiveConfig gets a real default from BUILT_IN_DEFAULTS), so an
+    // omitted `memory:` block still yields a working manager — not an
+    // "enabled but permanently inert" tool set.
     const memoryCfg = effective.memory;
     const memoryEnabled = memoryCfg ? memoryCfg.enabled !== false : true;
-    const memoryManager = memoryCfg && memoryEnabled
+    const memoryManager = memoryEnabled
       ? createMemoryManager({
           enabled: memoryEnabled,
-          directory: memoryCfg.directory ?? join(homedir(), ".vex", "memory", userId),
+          directory: memoryCfg?.directory ?? join(homedir(), ".vex", "memory", userId),
         })
       : undefined;
 
