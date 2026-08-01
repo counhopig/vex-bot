@@ -1,9 +1,12 @@
 /**
- * Personal WeChat channel — iLink OC API client + QR login + qr rendering.
- *
- * The channel adapter (WeChatChannel) lands in part 2 of the web/ module;
- * this barrel exports the client/login layer for now.
+ * Personal WeChat channel — adapter, iLink OC API client, QR login, qr.
  */
+
+export {
+  WeChatChannel,
+  createWeChatChannel,
+  type WeixinConfig,
+} from "./WeChatChannel.js";
 
 export {
   WeChatClient,
