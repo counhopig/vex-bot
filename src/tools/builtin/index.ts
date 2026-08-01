@@ -27,6 +27,12 @@ import { createFilesystemTools, type FilesystemToolsOptions } from "./filesystem
 import { createBashTools, type BashToolOptions } from "./bash.js";
 import { createBrowserTool, disposeAllBrowsers, disposeBrowserOwner } from "./browser.js";
 import { disposeOwnerSessions, GLOBAL_OWNER_KEY } from "./process-registry.js";
+import { createMemoryTools, type MemoryToolsOptions } from "./memory.js";
+import { createWeatherTool, type WeatherToolOptions } from "./weather.js";
+import { createCronTools, type CronToolsOptions } from "./cron.js";
+import { createImageAnalyzeTool, type ImageAnalyzeToolOptions } from "./image.js";
+import type { MemoryManager } from "../../memory/MemoryManager.js";
+import type { CronService } from "../../cron/service.js";
 
 // ---------------------------------------------------------------------------
 // Lazy-loadable optional tools (import type only — these modules depend on
@@ -35,11 +41,11 @@ import { disposeOwnerSessions, GLOBAL_OWNER_KEY } from "./process-registry.js";
 
 /** Options for building the built-in tool set. */
 export interface BuiltinToolsOptions {
-  image?: Record<string, unknown>;
+  image?: ImageAnalyzeToolOptions;
   filesystem?: FilesystemToolsOptions;
   bash?: BashToolOptions;
-  memory?: Record<string, unknown>;
-  weather?: Record<string, unknown>;
+  memory?: MemoryToolsOptions;
+  weather?: WeatherToolOptions;
   sharelink?: Record<string, unknown>;
   enableBrowser?: boolean;
   enableFilesystem?: boolean;
@@ -48,9 +54,9 @@ export interface BuiltinToolsOptions {
   enableMemory?: boolean;
   enableCron?: boolean;
   /** MemoryManager instance (optional — tools become "disabled" without it). */
-  memoryManager?: unknown;
+  memoryManager?: MemoryManager;
   /** CronService instance (optional). */
-  cronService?: unknown;
+  cronService?: CronService;
   /** Owner key isolating the background-process registry per user. */
   owner?: string;
 }
@@ -89,13 +95,33 @@ export function createBuiltinTools(
     // process-tool.ts not yet ported — skip for now
   }
 
+  // Image analyze tool (always available; gated on vision model availability)
+  tools.push(createImageAnalyzeTool({
+    ...options?.image,
+    allowedPaths: options?.image?.allowedPaths ?? options?.filesystem?.allowedPaths,
+  }));
+
+  // Weather tool (enabled when a config section is provided)
+  if (options?.weather) {
+    tools.push(createWeatherTool(options.weather));
+  }
+
   // Browser (opt-in, requires playwright-core)
   if (options?.enableBrowser) {
     tools.push(createBrowserTool(owner));
   }
 
-  // Image analyze, weather, memory, cron, sharelink tools — ported by
-  // separate sub-tickets; add them here once their modules land.
+  // Memory tools (enabled by default; without a MemoryManager instance the
+  // tools degrade to "disabled" — a tested behavior, not an error).
+  if (options?.enableMemory !== false) {
+    tools.push(...createMemoryTools({ manager: options?.memoryManager }));
+  }
+
+  // Cron tools (enabled by default; without a CronService instance the tools
+  // degrade to "disabled" — a tested behavior, not an error).
+  if (options?.enableCron !== false) {
+    tools.push(...createCronTools({ service: options?.cronService }));
+  }
 
   return tools;
 }

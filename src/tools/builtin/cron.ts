@@ -11,60 +11,8 @@
 import { Type, type Static } from "@sinclair/typebox";
 import type { Tool } from "../types.js";
 import { jsonResult, errorResult } from "../common.js";
-
-// ---------------------------------------------------------------------------
-// CronService — type-only (not yet ported in the new tree)
-// ---------------------------------------------------------------------------
-
-interface CronSchedule {
-  kind: "at" | "every" | "cron";
-  atMs?: number;
-  everyMs?: number;
-  expr?: string;
-  tz?: string;
-}
-
-interface CronJob {
-  id: string;
-  name: string;
-  schedule: CronSchedule;
-  enabled: boolean;
-  state: {
-    nextRunAtMs: number | null;
-    lastRunAtMs: number | null;
-  };
-  payload: {
-    kind: "systemEvent" | "agentTurn";
-    message: string;
-    model?: string;
-    timeoutSeconds?: number;
-    deliver?: boolean;
-    channel?: string;
-    to?: string;
-  };
-}
-
-interface CronJobCreate {
-  name: string;
-  schedule: CronSchedule;
-  payload: {
-    kind: "systemEvent" | "agentTurn";
-    message: string;
-    [key: string]: unknown;
-  };
-}
-
-interface CronService {
-  list(opts?: { includeDisabled?: boolean }): CronJob[];
-  add(job: CronJobCreate): CronJob;
-  remove(jobId: string): boolean;
-  run(jobId: string): Promise<{ status: "ok" | "not_found" | "error"; error?: string }>;
-  get(jobId: string): CronJob | undefined;
-  update(
-    jobId: string,
-    updates: { name?: string; enabled?: boolean },
-  ): CronJob | undefined;
-}
+import type { CronJob, CronJobCreate, CronSchedule } from "../../cron/types.js";
+import type { CronService } from "../../cron/service.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
