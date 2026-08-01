@@ -207,6 +207,24 @@ describe("WebServer", () => {
     await h.close();
   });
 
+  it("serves the WebChat page through an injected staticHandler", async () => {
+    // Wire the real handleStaticRequest (part 6d) into the bootstrap — the
+    // same path cli/ will take. webAuth disabled so "/" is not redirected.
+    const { handleStaticRequest } = await import("../src/web/index.js");
+    const options = makeOptions();
+    const h = await startServer({
+      ...options,
+      staticHandler: (req, res) =>
+        handleStaticRequest(req, res, { config: options.config, auth: options.auth }),
+    });
+    const res = await fetch(`http://127.0.0.1:${h.port}/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("<!DOCTYPE html>");
+    expect(html).toContain("/assets/marked.min.js");
+    await h.close();
+  });
+
   it("registers the WebChat channel in the channel registry", async () => {
     const options = makeOptions();
     const h = await startServer(options);
