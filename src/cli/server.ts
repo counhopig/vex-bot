@@ -24,6 +24,9 @@ import { createPersonaConfig } from "../agent/persona/PersonaConfig.js";
 import { createDefaultPiSession, defaultSessionDir } from "../agent/createDefaultPiSession.js";
 import { createBuiltinTools } from "../tools/builtin/index.js";
 import { createMemoryManager } from "../memory/index.js";
+import { loadAllSkills } from "../skills/SkillLoader.js";
+import { SkillRegistry } from "../skills/SkillRegistry.js";
+import { buildPrompt as buildSkillsPrompt } from "../skills/SkillInjector.js";
 import { Dispatcher } from "../dispatcher/Dispatcher.js";
 import { WebServer } from "../web/server.js";
 import { handleStaticRequest } from "../web/static/index.js";
@@ -121,6 +124,20 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
         })
       : undefined;
 
+    // Per-user skills: load the user's skill dirs into a fresh SkillRegistry
+    // and assemble the skills section of the system prompt. Absent/disabled
+    // skills config → skillsPrompt is undefined (section omitted). Re-scans
+    // on every agent build — simplest correct behavior, no caching.
+    const skillsCfg = effective.skills;
+    let skillsPrompt: string | undefined;
+    if (skillsCfg && skillsCfg.enabled !== false) {
+      const registry = new SkillRegistry();
+      const entries = await loadAllSkills(skillsCfg);
+      await registry.load(entries);
+      const prompt = buildSkillsPrompt(registry);
+      skillsPrompt = prompt || undefined;
+    }
+
     const runtime = new AgentRuntime(
       {
         model: effective.agent.defaultModel,
@@ -141,7 +158,7 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
       },
       { modelResolver, createPiSession: createDefaultPiSession },
     );
-    return new Agent(userId, effective, { pipeline: new Pipeline(), persona, runtime });
+    return new Agent(userId, effective, { pipeline: new Pipeline(), persona, runtime, skillsPrompt });
   };
 }
 

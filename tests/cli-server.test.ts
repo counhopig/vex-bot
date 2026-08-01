@@ -25,12 +25,24 @@ vi.mock("../src/tools/builtin/index.js", async (importOriginal) => {
   };
 });
 
+// Spy on loadAllSkills so buildAgentFactory's skill wiring is testable
+// without touching the filesystem.
+const loadAllSkillsMock = vi.fn();
+vi.mock("../src/skills/SkillLoader.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/skills/SkillLoader.js")>();
+  return {
+    ...actual,
+    loadAllSkills: (config: unknown) => loadAllSkillsMock(config),
+  };
+});
+
 import { buildAgentFactory } from "../src/cli/server.js";
 import { createBuiltinTools } from "../src/tools/builtin/index.js";
 import type { ModelResolver } from "../src/providers/ModelResolver.js";
 import type { EffectiveConfig } from "../src/config/EffectiveConfig.js";
 import type { CronService } from "../src/cron/service.js";
 import type { MemoryManager } from "../src/memory/MemoryManager.js";
+import type { SkillEntry } from "../src/skills/types.js";
 
 /** Minimal ModelResolver stub — buildAgentFactory only stores it. */
 function fakeModelResolver(): ModelResolver {
@@ -71,6 +83,8 @@ function effectiveConfig(overrides?: Partial<EffectiveConfig>): EffectiveConfig 
 
 beforeEach(() => {
   createBuiltinToolsMock.mockClear();
+  loadAllSkillsMock.mockClear();
+  loadAllSkillsMock.mockResolvedValue([]);
 });
 
 describe("buildAgentFactory tool wiring", () => {
@@ -157,5 +171,69 @@ describe("buildAgentFactory tool wiring", () => {
     const opts = createBuiltinToolsMock.mock.calls[0]![0] as { cronService?: unknown; enableCron?: boolean };
     expect(opts.cronService).toBe(cron);
     expect(opts.enableCron).toBe(true);
+  });
+
+  it("loads skills from effective.skills and passes the assembled prompt to the Agent", async () => {
+    const fakeSkill: SkillEntry = {
+      frontmatter: { name: "greeting", title: "Greeting" },
+      content: "Say hi.",
+      filePath: "/tmp/skills/greeting/SKILL.md",
+      source: "user",
+    };
+    loadAllSkillsMock.mockResolvedValue([fakeSkill]);
+
+    const factory = buildAgentFactory(fakeModelResolver(), {
+      weather: undefined,
+      cron: fakeCronService(),
+    });
+    const agent = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      skills: { enabled: true, userDir: "/tmp/skills" },
+    }));
+
+    expect(loadAllSkillsMock).toHaveBeenCalledTimes(1);
+    expect(loadAllSkillsMock).toHaveBeenCalledWith({ enabled: true, userDir: "/tmp/skills" });
+    expect(agent.skillsPrompt).toContain("# Available Skills");
+    expect(agent.skillsPrompt).toContain("Skill: Greeting");
+  });
+
+  it("leaves skillsPrompt undefined when effective.skills is absent", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), {
+      weather: undefined,
+      cron: fakeCronService(),
+    });
+    const agent = await factory("u1", "webchat", effectiveConfig({ memory: undefined, skills: undefined }));
+
+    expect(loadAllSkillsMock).not.toHaveBeenCalled();
+    expect(agent.skillsPrompt).toBeUndefined();
+  });
+
+  it("leaves skillsPrompt undefined when effective.skills.enabled is false", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), {
+      weather: undefined,
+      cron: fakeCronService(),
+    });
+    const agent = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      skills: { enabled: false, userDir: "/tmp/skills" },
+    }));
+
+    expect(loadAllSkillsMock).not.toHaveBeenCalled();
+    expect(agent.skillsPrompt).toBeUndefined();
+  });
+
+  it("does not crash when effective.skills is enabled but no skills load (prompt omitted)", async () => {
+    loadAllSkillsMock.mockResolvedValue([]);
+    const factory = buildAgentFactory(fakeModelResolver(), {
+      weather: undefined,
+      cron: fakeCronService(),
+    });
+    const agent = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      skills: { enabled: true, userDir: "/tmp/empty-skills" },
+    }));
+
+    expect(loadAllSkillsMock).toHaveBeenCalledTimes(1);
+    expect(agent.skillsPrompt).toBeUndefined();
   });
 });

@@ -45,6 +45,9 @@ export interface AgentDependencies {
   pipeline: Pipeline;
   persona: Persona | null;
   runtime: AgentRuntime;
+  /** Pre-assembled skills section for the system prompt ("" or undefined =
+   *  section omitted). Built by the bootstrap from the user's skill dirs. */
+  skillsPrompt?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,6 +57,7 @@ export interface AgentDependencies {
 export class Agent {
   readonly persona: Persona | null;
   readonly pipeline: Pipeline;
+  readonly skillsPrompt?: string;
   private readonly runtime: AgentRuntime;
 
   constructor(
@@ -64,6 +68,7 @@ export class Agent {
     this.persona = deps.persona;
     this.pipeline = deps.pipeline;
     this.runtime = deps.runtime;
+    this.skillsPrompt = deps.skillsPrompt;
   }
 
   async processMessage(ctx: InboundMessageContext): Promise<AgentResponse> {
@@ -87,6 +92,7 @@ export class Agent {
 
     const systemPrompt = assembleSystemPrompt({
       persona: personaBlock || undefined,
+      skills: this.skillsPrompt,
     });
 
     // 3. Gather prompt injections (appended after the base system prompt)

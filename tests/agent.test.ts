@@ -105,6 +105,38 @@ describe("Agent", () => {
     expect(systemPrompt).toContain("PandaBot");
   });
 
+  // -- skills section ------------------------------------------------------
+
+  it("injects the skills section into the system prompt when skillsPrompt is provided", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, chat } = fakeRuntime();
+    const agent = new Agent("u1", dummyConfig(), {
+      pipeline,
+      persona: null,
+      runtime,
+      skillsPrompt: "# Available Skills\n\n## Skill: Greeting\n\nSay hi.",
+    });
+
+    await agent.processMessage(mockCtx());
+
+    const systemPrompt = chat.mock.calls[0]![0] as string;
+    expect(systemPrompt).toContain("【技能模板】");
+    expect(systemPrompt).toContain("# Available Skills");
+    expect(systemPrompt).toContain("Skill: Greeting");
+  });
+
+  it("omits the skills section when skillsPrompt is undefined", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, chat } = fakeRuntime();
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona: null, runtime });
+
+    await agent.processMessage(mockCtx());
+
+    const systemPrompt = chat.mock.calls[0]![0] as string;
+    expect(systemPrompt).not.toContain("【技能模板】");
+    expect(systemPrompt).not.toContain("Available Skills");
+  });
+
   // -- interceptor short-circuit -------------------------------------------
 
   it("processMessage short-circuits when pipeline interceptor returns a string", async () => {
