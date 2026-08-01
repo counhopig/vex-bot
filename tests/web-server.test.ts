@@ -246,6 +246,43 @@ describe("WebServer", () => {
     await h.close();
   });
 
+  it("wires a configured titleGenerator through to the WebChat channel", async () => {
+    const complete = vi.fn(async () => ({ text: "会话标题" }));
+    const options = makeOptions({ titleGenerator: { provider: "deepseek", model: "deepseek-chat", complete } });
+    // Route the mocked dispatcher's reply back through the real WebChatChannel,
+    // matching how OutboundDeliver → channel.sendMessage works for real.
+    (options.dispatcher.dispatch as ReturnType<typeof vi.fn>).mockImplementation(async (ctx: InboundMessageContext) => {
+      const channel = options.registry.getChannel("webchat")!;
+      await channel.sendMessage({ chatId: ctx.chatId, content: `echo: ${ctx.content}` });
+    });
+    const h = await startServer(options);
+    const ws = await new Promise<import("ws").default>((resolve, reject) => {
+      const client = new (require("ws"))(`ws://127.0.0.1:${h.port}/ws`) as import("ws").default;
+      client.on("open", () => resolve(client));
+      client.on("error", reject);
+    });
+
+    ws.send(JSON.stringify({ type: "req", id: "c1", method: "chat.send", params: { message: "记一下待办" } }));
+
+    const titleEvent = await new Promise<{ payload: { label: string } }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for session.title")), 2000);
+      ws.on("message", function onMsg(data: Buffer) {
+        const frame = JSON.parse(data.toString());
+        if (frame?.type === "event" && frame?.event === "session.title") {
+          clearTimeout(timer);
+          ws.off("message", onMsg);
+          resolve(frame);
+        }
+      });
+    });
+
+    expect(titleEvent.payload.label).toBe("会话标题");
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    ws.close();
+    await h.close();
+  });
+
   it("restores persisted per-user WeChat logins at startup", async () => {
     const credentialStore = {
       list: vi.fn(() => [{ userId: "u1", token: "tok", accountId: "acc", baseUrl: "https://example" }]),

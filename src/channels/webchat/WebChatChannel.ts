@@ -30,6 +30,7 @@ import type {
 import type { WebAuthStore, PublicWebUser } from "../../web/routes/auth.js";
 import type { FileSessionStore } from "../../sessions/store.js";
 import type { TranscriptMessage } from "../../sessions/types.js";
+import { generateSessionTitle, type LlmCompleteLike } from "../../sessions/title.js";
 
 const logger = getChildLogger("webchat");
 
@@ -131,6 +132,17 @@ export interface WebChatChannelOptions {
    * payload.
    */
   handlers?: Record<string, WsMethodHandler>;
+  /**
+   * Auto-titles a session's sidebar label from its first exchange (archive
+   * parity: _archive/src/web/websocket.ts's maybeGenerateTitle). Optional —
+   * when absent, sessions keep their derived fallback label (the frontend
+   * falls back to a truncated sessionKey) and no LLM call is made. The
+   * bootstrap wires this from ModelResolver + the system's default
+   * provider/model, matching the archive's choice of a fixed system model
+   * rather than the per-user resolved one (titling is a cheap, unpersonalized
+   * summary, not part of the conversation).
+   */
+  titleGenerator?: { provider: string; model: string; complete: LlmCompleteLike };
   heartbeatIntervalMs?: number;
   clientTimeoutMs?: number;
 }
@@ -166,6 +178,10 @@ interface WsClient {
   lastPing: number;
   /** Cleanups registered by injected handlers (e.g. log-stream unsubscribe). */
   cleanups: Array<() => void>;
+  /** The user text from the chat.send currently in flight, stashed here so
+   *  sendMessage() (called later, from a separate Dispatcher → Outbound call
+   *  chain) can pair it with the assistant's reply for maybeGenerateTitle. */
+  pendingUserText: string | null;
 }
 
 export class WebChatChannel implements ChannelAdapter {
@@ -191,6 +207,7 @@ export class WebChatChannel implements ChannelAdapter {
   private readonly sessionStore: FileSessionStore;
   private readonly dispatch: (ctx: InboundMessageContext) => Promise<void>;
   private readonly handlers?: Record<string, WsMethodHandler>;
+  private readonly titleGenerator?: { provider: string; model: string; complete: LlmCompleteLike };
   private readonly heartbeatIntervalMs: number;
   private readonly clientTimeoutMs: number;
 
@@ -198,6 +215,9 @@ export class WebChatChannel implements ChannelAdapter {
   private clients = new Map<string, WsClient>();
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private startTime = Date.now();
+  /** Sessions with a title generation currently in flight — guards against
+   *  duplicate LLM calls when a reply is slower than the next chat.send. */
+  private titleInFlight = new Set<string>();
 
   constructor(options: WebChatChannelOptions) {
     this.server = options.server;
@@ -205,6 +225,7 @@ export class WebChatChannel implements ChannelAdapter {
     this.sessionStore = options.sessionStore;
     this.dispatch = options.dispatch;
     this.handlers = options.handlers;
+    this.titleGenerator = options.titleGenerator;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? 30_000;
     this.clientTimeoutMs = options.clientTimeoutMs ?? 60_000;
   }
@@ -264,6 +285,7 @@ export class WebChatChannel implements ChannelAdapter {
       user,
       lastPing: Date.now(),
       cleanups: [],
+      pendingUserText: null,
     };
     this.clients.set(clientId, client);
     logger.info({ clientId, userId: user?.id }, "Client connected");
@@ -398,6 +420,7 @@ export class WebChatChannel implements ChannelAdapter {
     await this.ensureSession(client);
 
     const { message } = params;
+    client.pendingUserText = message;
     const messageId = generateId("msg");
     const stableSenderId = client.sessionKey!.replace("webchat:", "");
 
@@ -462,7 +485,44 @@ export class WebChatChannel implements ChannelAdapter {
     };
     await this.sessionStore.appendTranscript(client.sessionId, client.sessionKey!, assistantMessage);
 
+    // Auto-title the session from its first exchange (detached; never blocks
+    // the reply). No-op once the session already has a label, or if no
+    // titleGenerator was injected.
+    const userText = client.pendingUserText;
+    client.pendingUserText = null;
+    if (userText) {
+      void this.maybeGenerateTitle(client, userText, message.content);
+    }
+
     return { success: true };
+  }
+
+  /** Generate a sidebar title for a session from its first exchange. Runs at
+   *  most once per session (guarded by the label + titleInFlight), and
+   *  pushes a session.title event so the sidebar updates live. Archive
+   *  parity: _archive/src/web/websocket.ts's maybeGenerateTitle. */
+  private async maybeGenerateTitle(client: WsClient, userText: string, assistantText: string): Promise<void> {
+    const sessionKey = client.sessionKey;
+    if (!this.titleGenerator || !sessionKey || this.titleInFlight.has(sessionKey)) return;
+
+    const existing = await this.sessionStore.get(sessionKey);
+    if (!existing || existing.label) return;
+
+    this.titleInFlight.add(sessionKey);
+    try {
+      const label = await generateSessionTitle(
+        { provider: this.titleGenerator.provider, model: this.titleGenerator.model, userText, assistantText },
+        this.titleGenerator.complete,
+      );
+      if (!label) return;
+      await this.sessionStore.setLabel(sessionKey, label);
+      this.sendEvent(client.ws, "session.title", { sessionKey, label });
+      logger.debug({ clientId: client.id, sessionKey, label }, "WebChat session titled");
+    } catch (error) {
+      logger.debug({ error, sessionKey }, "WebChat session title generation failed");
+    } finally {
+      this.titleInFlight.delete(sessionKey);
+    }
   }
 
   async replyToContext(ctx: InboundMessageContext, text: string): Promise<SendResult> {

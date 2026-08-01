@@ -39,6 +39,7 @@ import { createWeChatChannel, type WeChatChannel } from "../channels/wechat/WeCh
 import type { ChannelRegistry } from "../channels/ChannelAdapter.js";
 import { WebChatChannel } from "../channels/webchat/WebChatChannel.js";
 import type { WsMethodHandler } from "../channels/webchat/WebChatChannel.js";
+import type { LlmCompleteLike } from "../sessions/title.js";
 import { createSessionHandlers } from "./routes/sessions.js";
 import { createLogStreamHandlers } from "./routes/log-stream-handlers.js";
 import { createWeixinLoginHandlers } from "./routes/weixin-login.js";
@@ -157,6 +158,9 @@ export interface WebServerOptions {
    * (src/web/static). When absent, non-API GETs fall through to 404.
    */
   staticHandler?: (req: IncomingMessage, res: ServerResponse) => boolean;
+  /** Auto-titles a WebChat session's sidebar label from its first exchange.
+   *  Passed straight through to WebChatChannel; absent means no auto-titling. */
+  titleGenerator?: { provider: string; model: string; complete: LlmCompleteLike };
   /** WebChat heartbeat interval (ms), default 30000. */
   heartbeatIntervalMs?: number;
   /** WebChat client timeout (ms), default 60000. */
@@ -286,6 +290,7 @@ export class WebServer {
       sessionStore,
       dispatch: (ctx) => dispatcher.dispatch(ctx),
       handlers,
+      titleGenerator: this.options.titleGenerator,
       heartbeatIntervalMs: this.options.heartbeatIntervalMs,
       clientTimeoutMs: this.options.clientTimeoutMs,
     });

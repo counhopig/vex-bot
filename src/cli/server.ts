@@ -37,7 +37,45 @@ import type { SystemConfig } from "../web/routes/config.js";
 import type { EffectiveConfig } from "../config/EffectiveConfig.js";
 import type { WeixinConfig } from "../channels/wechat/WeChatChannel.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
+import type { LlmCompleteLike } from "../sessions/title.js";
 import { resolveConfigPath } from "./config.js";
+
+/**
+ * Build the WebChat session-title generator (archive parity:
+ * _archive/src/web/websocket.ts's maybeGenerateTitle used the system's
+ * default provider/model, not the per-user resolved one — titling is a
+ * cheap, unpersonalized summary, not part of the conversation). Returns
+ * undefined when no provider has an API key configured, so title
+ * generation silently stays off rather than failing every turn.
+ */
+function createTitleGenerator(
+  modelResolver: ModelResolver,
+  config: SystemConfig,
+): { provider: string; model: string; complete: LlmCompleteLike } | undefined {
+  const agent = (config.agent ?? {}) as Record<string, unknown>;
+  const provider = typeof agent.defaultProvider === "string" ? agent.defaultProvider : undefined;
+  const model = typeof agent.defaultModel === "string" ? agent.defaultModel : undefined;
+  if (!provider || !model || !modelResolver.isProviderAvailable(provider)) return undefined;
+
+  const complete: LlmCompleteLike = async (opts) => {
+    const { completeSimple } = await import("@mariozechner/pi-ai");
+    const resolved = modelResolver.resolveModel(opts.provider, opts.model);
+    if (!resolved) throw new Error(`Cannot resolve model: ${opts.provider}/${opts.model}`);
+    const apiKey = modelResolver.getApiKeyForProvider(opts.provider);
+    const message = await completeSimple(
+      resolved,
+      { messages: [{ role: "user", content: opts.prompt, timestamp: Date.now() }] },
+      { temperature: opts.temperature, maxTokens: opts.maxTokens, apiKey },
+    );
+    const text = message.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("");
+    return { text };
+  };
+
+  return { provider, model, complete };
+}
 
 /**
  * Build a per-(user, channel) Agent from its EffectiveConfig.
@@ -120,6 +158,7 @@ export async function startWebServer(config: SystemConfig): Promise<WebServer> {
     credentialStore,
     getWeixinConfig: () => (config.channels?.weixin as WeixinConfig | undefined),
     staticHandler: (req, res) => handleStaticRequest(req, res, { config, auth }),
+    titleGenerator: createTitleGenerator(modelResolver, config),
   });
 
   await server.initialize();

@@ -304,6 +304,62 @@ describe("WebChatChannel", () => {
     await h.close();
   });
 
+  it("auto-titles a session from its first exchange and pushes a session.title event", async () => {
+    const complete = vi.fn(async () => ({ text: "记账需求讨论" }));
+    const h = makeHarness({
+      titleGenerator: { provider: "deepseek", model: "deepseek-chat", complete },
+    });
+    await start(h);
+    const ws = await connect(h.port);
+
+    ws.send(JSON.stringify({ type: "req", id: "c3", method: "chat.send", params: { message: "帮我记一下账" } }));
+    await waitForDelta(ws);
+
+    const titleEvent = await new Promise<{ payload: { sessionKey: string; label: string } }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for session.title")), 2000);
+      ws.on("message", function onMsg(data) {
+        const frame = JSON.parse(data.toString());
+        if (frame?.type === "event" && frame?.event === "session.title") {
+          clearTimeout(timer);
+          ws.off("message", onMsg);
+          resolve(frame);
+        }
+      });
+    });
+
+    expect(titleEvent.payload.label).toBe("记账需求讨论");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete.mock.calls[0]![0]).toMatchObject({ provider: "deepseek", model: "deepseek-chat" });
+
+    const sessions = await h.sessionStore.list();
+    expect(sessions[0]!.label).toBe("记账需求讨论");
+
+    ws.close();
+    await h.close();
+  });
+
+  it("does not call the title generator again once a session already has a label", async () => {
+    const complete = vi.fn(async () => ({ text: "标题" }));
+    const h = makeHarness({
+      titleGenerator: { provider: "deepseek", model: "deepseek-chat", complete },
+    });
+    await start(h);
+    const ws = await connect(h.port);
+
+    ws.send(JSON.stringify({ type: "req", id: "c4", method: "chat.send", params: { message: "第一条" } }));
+    await waitForDelta(ws);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    ws.send(JSON.stringify({ type: "req", id: "c5", method: "chat.send", params: { message: "第二条" } }));
+    await waitForDelta(ws);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(complete).toHaveBeenCalledTimes(1);
+
+    ws.close();
+    await h.close();
+  });
+
   it("chat.cancel reports cancelled:false when nothing is in flight", async () => {
     const h = makeHarness();
     await start(h);
