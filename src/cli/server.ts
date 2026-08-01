@@ -23,6 +23,7 @@ import { Persona } from "../agent/persona/Persona.js";
 import { createPersonaConfig } from "../agent/persona/PersonaConfig.js";
 import { createDefaultPiSession, defaultSessionDir } from "../agent/createDefaultPiSession.js";
 import { createBuiltinTools } from "../tools/builtin/index.js";
+import { createMemoryManager } from "../memory/index.js";
 import { Dispatcher } from "../dispatcher/Dispatcher.js";
 import { WebServer } from "../web/server.js";
 import { handleStaticRequest } from "../web/static/index.js";
@@ -38,6 +39,7 @@ import type { EffectiveConfig } from "../config/EffectiveConfig.js";
 import type { WeixinConfig } from "../channels/wechat/WeChatChannel.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import type { LlmCompleteLike } from "../sessions/title.js";
+import type { WeatherToolOptions } from "../tools/builtin/weather.js";
 import { resolveConfigPath } from "./config.js";
 
 /**
@@ -78,17 +80,44 @@ function createTitleGenerator(
 }
 
 /**
- * Build a per-(user, channel) Agent from its EffectiveConfig.
- * Each Agent owns its Pipeline, Persona, and AgentRuntime (no process-global
- * state — principle #5); the runtime resolves models through a shared
- * ModelResolver initialized from the system provider config.
+ * System-level dependencies the per-agent builder needs beyond its own
+ * EffectiveConfig: the process-wide CronService (cron tools are wired to it)
+ * and the system weather section (weather is not per-user — EffectiveConfig
+ * is user-scoped and deliberately omits it).
  */
-function buildAgentFactory(modelResolver: ModelResolver) {
+export interface BuildAgentSystemDeps {
+  /** Process-wide CronService shared by every agent's cron tools. */
+  cron: CronService;
+  /** System-level weather config section (optional). */
+  weather?: WeatherToolOptions;
+}
+
+/**
+ * Build a per-(user, channel) Agent from its EffectiveConfig.
+ * Each Agent owns its Pipeline, Persona, AgentRuntime, and a per-user
+ * MemoryManager (no process-global state — principle #5); the runtime
+ * resolves models through a shared ModelResolver initialized from the
+ * system provider config.
+ */
+export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAgentSystemDeps) {
   return async (userId: string, channelId: string, config: unknown): Promise<Agent> => {
     const effective = config as EffectiveConfig;
     const persona = effective.persona
       ? new Persona(createPersonaConfig(effective.persona as Record<string, unknown>)!)
       : null;
+
+    // Per-user MemoryManager from effective.memory (per-user resolved by
+    // ConfigStore); directory isolated per user. Absent/disabled config →
+    // no manager (tools degrade to "disabled", a tested tool behavior).
+    const memoryCfg = effective.memory;
+    const memoryEnabled = memoryCfg ? memoryCfg.enabled !== false : true;
+    const memoryManager = memoryCfg && memoryEnabled
+      ? createMemoryManager({
+          enabled: memoryEnabled,
+          directory: memoryCfg.directory ?? join(homedir(), ".vex", "memory", userId),
+        })
+      : undefined;
+
     const runtime = new AgentRuntime(
       {
         model: effective.agent.defaultModel,
@@ -98,7 +127,14 @@ function buildAgentFactory(modelResolver: ModelResolver) {
         maxTokens: effective.agent.maxTokens,
         workingDirectory: effective.agent.workingDirectory ?? process.cwd(),
         sessionDir: defaultSessionDir(),
-        customTools: createBuiltinTools({ owner: `${userId}:${channelId}` }),
+        customTools: createBuiltinTools({
+          owner: `${userId}:${channelId}`,
+          memoryManager,
+          weather: system.weather,
+          cronService: system.cron,
+          enableMemory: memoryEnabled,
+          enableCron: true,
+        }),
       },
       { modelResolver, createPiSession: createDefaultPiSession },
     );
@@ -128,14 +164,22 @@ export async function startWebServer(config: SystemConfig): Promise<WebServer> {
   const configStore = new ConfigStore({ yamlLoader: new YamlLoader(configPath) });
   const registry = new ChannelRegistryImpl();
   const outbound = new OutboundDeliver(registry);
-  const agentRegistry = new AgentRegistry<Agent>({ factory: buildAgentFactory(modelResolver) });
-  const dispatcher = new Dispatcher(configStore, agentRegistry, async (msg) => {
-    await outbound.sendText(msg.channelId, msg.ctx.chatId, msg.text, { webUserId: msg.webUserId });
-  });
 
   // Cron: process-wide scheduler bound to Dispatcher.dispatchSynthetic.
+  // Declared before the AgentRegistry so buildAgentFactory can hand the same
+  // CronService to every agent's cron tools; `dispatcher` is late-bound below
+  // (the executor only touches it when a job fires, after startup completes).
+  let dispatcher: Dispatcher;
   const cron = new CronService({
     executeJob: createCronExecutor({ dispatch: (ctx: InboundMessageContext) => dispatcher.dispatchSynthetic(ctx) }).executeJob,
+  });
+
+  const weather = config.weather as WeatherToolOptions | undefined;
+  const agentRegistry = new AgentRegistry<Agent>({
+    factory: buildAgentFactory(modelResolver, { cron, weather }),
+  });
+  dispatcher = new Dispatcher(configStore, agentRegistry, async (msg) => {
+    await outbound.sendText(msg.channelId, msg.ctx.chatId, msg.text, { webUserId: msg.webUserId });
   });
   cron.start();
 
