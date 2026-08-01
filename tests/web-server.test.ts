@@ -274,6 +274,33 @@ describe("WebServer", () => {
     await h.close();
   });
 
+  it("drops empty-content inbound messages before dispatch (archive empty-guard parity)", async () => {
+    const dispatch = vi.fn(async () => {});
+    const options = makeOptions({
+      dispatcher: { dispatch, dispatchSynthetic: vi.fn(async () => {}) } as unknown as WebServerOptions["dispatcher"],
+      getWeixinConfig: () => ({ baseUrl: "https://ilink.example", enabled: true }),
+    });
+    const h = await startServer(options);
+
+    // WeChatChannel.extractTextContent can produce "" for unrecognized message
+    // item types; the archive's handleMessage dropped those before the agent.
+    const weixinChannel = options.registry.getChannel("weixin");
+    const handler = (weixinChannel as unknown as { messageHandler?: (c: InboundMessageContext) => Promise<void> }).messageHandler;
+    expect(handler).toBeDefined();
+    const emptyCtx: InboundMessageContext = {
+      channelId: "weixin" as const,
+      messageId: "msg-empty",
+      chatId: "wx:o9cq",
+      chatType: "direct" as const,
+      senderId: "o9cq",
+      content: "",
+      timestamp: 1,
+    };
+    await handler!(emptyCtx);
+    expect(dispatch).not.toHaveBeenCalled();
+    await h.close();
+  });
+
   it("shutdown runs the channel + registry teardown steps", async () => {
     const options = makeOptions();
     const agentShutdown = vi.fn(async () => {});

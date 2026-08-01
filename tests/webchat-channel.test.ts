@@ -218,6 +218,35 @@ describe("WebChatChannel", () => {
     await h.close();
   });
 
+  it("chat.send carries the authenticated user's webUserId top-level so Dispatcher resolves per-user config/agent", async () => {
+    const auth = new WebAuthStore({ dbPath: path.join(tmpDir(), "auth.sqlite"), enabled: true });
+    await auth.createUser("alice", "password123");
+    const { session } = await auth.login("alice", "password123");
+
+    const h = makeHarness({ auth });
+    await start(h);
+
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const client = new WebSocket(`ws://127.0.0.1:${h.port}/ws`, { headers: { cookie: `vexsid=${session.id}` } });
+      client.on("open", () => resolve(client));
+      client.on("error", reject);
+    });
+
+    ws.send(JSON.stringify({ type: "req", id: "c1", method: "chat.send", params: { message: "hi" } }));
+    await waitForDelta(ws);
+
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    const ctx = h.dispatch.mock.calls[0][0] as InboundMessageContext;
+    // The top-level webUserId (not just raw.__webUserId) is what
+    // Dispatcher.resolveUserId reads — without it the user's config/persona
+    // settings never apply and each tab mints its own Agent.
+    expect(ctx.webUserId).toBe(session.userId);
+    expect((ctx.raw as { __webUserId?: string } | undefined)?.__webUserId).toBe(session.userId);
+
+    ws.close();
+    await h.close();
+  });
+
   it("chat.send dispatches an InboundMessageContext and delivers a chat.delta", async () => {
     const h = makeHarness();
     await start(h);

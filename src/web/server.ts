@@ -308,6 +308,13 @@ export class WebServer {
 
   /** Dedupe + dispatch an inbound channel message (WeChat single-user path). */
   private async handleChannelMessage(context: InboundMessageContext): Promise<void> {
+    if (!context.content.trim()) {
+      logger.debug(
+        { channelId: context.channelId, chatId: context.chatId, senderId: context.senderId, messageId: context.messageId },
+        "Skipping empty message",
+      );
+      return;
+    }
     if (this.dedup.isDuplicate(`${context.channelId}:${context.messageId}`)) {
       logger.debug({ channelId: context.channelId, messageId: context.messageId }, "Skipping duplicate message");
       return;
@@ -366,6 +373,13 @@ export class WebServer {
 
   /** Tag a user-scoped WeChat message with the owning web user, then dedupe + dispatch. */
   private async handleUserWeixinMessage(userId: string, context: InboundMessageContext): Promise<void> {
+    if (!context.content.trim()) {
+      logger.debug(
+        { userId, channelId: context.channelId, chatId: context.chatId, senderId: context.senderId, messageId: context.messageId },
+        "Skipping empty message",
+      );
+      return;
+    }
     if (this.dedup.isDuplicate(`${context.channelId}:${userId}:${context.messageId}`)) {
       logger.debug({ userId, messageId: context.messageId }, "Skipping duplicate user message");
       return;

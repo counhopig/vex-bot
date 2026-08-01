@@ -418,6 +418,12 @@ export class WebChatChannel implements ChannelAdapter {
       senderName: "WebChat User",
       content: message,
       timestamp: Date.now(),
+      // The top-level webUserId is what Dispatcher.resolveUserId reads to key
+      // per-user config/persona/agent resolution (a browser tab must share the
+      // user's Agent, not mint a fresh one per clientId). The raw.__webUserId
+      // tag mirrors the archive's convention for pipeline extensions that
+      // resolve the owning web user from ctx.raw.
+      webUserId: client.user?.id,
       raw: client.user ? { __webUserId: client.user.id } : undefined,
     };
 
