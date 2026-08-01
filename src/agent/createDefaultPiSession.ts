@@ -70,6 +70,22 @@ interface RawAgentSession {
   getSessionStats: () => unknown;
   dispose: () => void;
   subscribe: (listener: (event: unknown) => void) => () => void;
+  /** All messages including custom types (agent-session.js `get messages()`). */
+  messages: Array<{ role: string; stopReason?: string; errorMessage?: string }>;
+}
+
+/** Error text from the last assistant message, when that turn ended with
+ *  stopReason "error" (see node_modules/@mariozechner/pi-coding-agent/dist/
+ *  core/agent-session.js, the `stopReason === "error"` branches around line
+ *  1880/1926). getLastAssistantText() can't see this: an errored message's
+ *  content array is empty, so the extracted text is "" either way. */
+function getLastAssistantError(rawSession: RawAgentSession): string | undefined {
+  for (let i = rawSession.messages.length - 1; i >= 0; i--) {
+    const message = rawSession.messages[i];
+    if (message?.role !== "assistant") continue;
+    return message.stopReason === "error" ? message.errorMessage || "Unknown error" : undefined;
+  }
+  return undefined;
 }
 
 /** Wrap a pi-coding-agent Agent into the AgentRuntime's PiAgent shape. */
@@ -93,6 +109,7 @@ function adaptSession(rawSession: RawAgentSession): PiSession {
     agent: adaptAgent(rawSession),
     prompt: (text) => rawSession.prompt(text),
     getLastAssistantText: () => rawSession.getLastAssistantText(),
+    getLastAssistantError: () => getLastAssistantError(rawSession),
     getSessionStats: () => rawSession.getSessionStats() as PiSessionStats,
     dispose: () => rawSession.dispose(),
     subscribe: (listener) => rawSession.subscribe(listener),

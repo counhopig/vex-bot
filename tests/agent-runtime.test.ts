@@ -67,6 +67,7 @@ function makeFakeModel(provider: string, id = "fake-model"): Model<"openai-compl
 
 function makeFakeSession(opts: {
   lastText?: string;
+  lastError?: string;
   tokens?: { input: number; output: number; total: number };
   promptGate?: { promise: Promise<void>; resolve: () => void };
 } = {}): TrackingSession {
@@ -109,6 +110,9 @@ function makeFakeSession(opts: {
     },
     getLastAssistantText() {
       return "lastText" in opts ? opts.lastText : "fake reply";
+    },
+    getLastAssistantError() {
+      return opts.lastError;
     },
     getSessionStats(): PiSessionStats {
       const t = opts.tokens ?? { input: 10, output: 5, total: 15 };
@@ -243,6 +247,27 @@ describe("AgentRuntime", () => {
       const reply = await runtime.chat("SYSTEM", makeContext());
 
       expect(reply.content).toBe("");
+    });
+
+    it("surfaces a visible error message when the turn ended in a provider error, instead of an empty reply", async () => {
+      // pi-coding-agent's own session ends a failed turn with an assistant
+      // message whose content is empty but stopReason is "error" — getLastAssistantText()
+      // returns undefined for that message (empty text), so without this the
+      // user gets a silent empty chat bubble with zero indication anything failed.
+      const fakeSession = makeFakeSession({
+        lastText: undefined,
+        lastError: "402 调用失败：Token 额度不足",
+      });
+      const createPiSession: CreatePiSessionFn = async () => fakeSession;
+      const runtime = new AgentRuntime(makeConfig({ provider: "longcat", model: "LongCat-2.0" }), {
+        modelResolver: makeModelResolver(makeFakeModel("longcat", "LongCat-2.0")),
+        createPiSession,
+      });
+
+      const reply = await runtime.chat("SYSTEM", makeContext());
+
+      expect(reply.content).not.toBe("");
+      expect(reply.content).toContain("402 调用失败：Token 额度不足");
     });
   });
 

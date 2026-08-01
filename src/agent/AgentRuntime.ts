@@ -82,6 +82,13 @@ export interface PiSession {
   agent: PiAgent;
   prompt(text: string): Promise<void>;
   getLastAssistantText(): string | undefined;
+  /**
+   * Error message from the last assistant message, when that turn ended
+   * with stopReason "error" (pi-coding-agent leaves the message's content
+   * empty in that case, so getLastAssistantText() alone can't distinguish
+   * "the model genuinely said nothing" from "the API call failed").
+   */
+  getLastAssistantError(): string | undefined;
   getSessionStats(): PiSessionStats;
   dispose(): void;
   subscribe(listener: (event: unknown) => void): () => void;
@@ -260,6 +267,11 @@ export class AgentRuntime {
 
   private buildReply(session: PiSession): AgentRuntimeReply {
     const lastText = session.getLastAssistantText() ?? "";
+    // A failed turn (rate limit, quota, network error, ...) leaves
+    // getLastAssistantText() empty with no indication anything went wrong —
+    // the reply would otherwise deliver silently as a blank message. Surface
+    // the provider's own error text instead of dropping it.
+    const content = lastText || this.formatErrorReply(session.getLastAssistantError());
     const stats = session.getSessionStats();
     const usage: ChatUsage = {
       promptTokens: stats.tokens.input,
@@ -267,11 +279,17 @@ export class AgentRuntime {
       totalTokens: stats.tokens.total,
     };
     return {
-      content: lastText,
+      content,
       provider: this.config.provider,
       model: this.config.model,
       usage,
     };
+  }
+
+  private formatErrorReply(error: string | undefined): string {
+    if (!error) return "";
+    logger.warn({ provider: this.config.provider, model: this.config.model, error }, "Turn ended in a provider error");
+    return `⚠️ 抱歉，AI 服务调用失败：${error}`;
   }
 }
 
