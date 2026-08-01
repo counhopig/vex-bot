@@ -240,12 +240,33 @@ export class WebAuthStore {
   /** Decide whether the session cookie should carry Secure: forced by the
    *  constructor option when set, otherwise auto-detected from the request
    *  (req.secure / x-forwarded-proto). */
-  private shouldUseSecureCookie(req: Request): boolean {
+  shouldUseSecureCookie(req: Request): boolean {
     if (typeof this._secureCookies === "boolean") return this._secureCookies;
     if (req.secure) return true;
     const forwardedProto = req.headers["x-forwarded-proto"];
     const proto = Array.isArray(forwardedProto) ? forwardedProto[0] : forwardedProto;
     return (proto ?? "").split(",")[0]?.trim() === "https";
+  }
+
+  /** True when no user exists yet — self-service registration is allowed only
+   *  for bootstrapping the first (admin) account. */
+  needsBootstrapAdmin(): boolean {
+    return this.countWebUsers() === 0;
+  }
+
+  /** Throw HttpError(429) when the key has exceeded the brute-force limit. */
+  checkLoginRateLimit(rateKey: string): void {
+    assertLoginAllowed(this.loginFailures, rateKey, Date.now());
+  }
+
+  /** Record a failed login attempt for the key (10 failures / 5 min window). */
+  recordLoginFailure(rateKey: string): void {
+    recordLoginFailure(this.loginFailures, rateKey, Date.now());
+  }
+
+  /** Clear the failure counter for a key after a successful login. */
+  clearLoginFailures(rateKey: string): void {
+    this.loginFailures.delete(rateKey);
   }
 
   // ---------------------------------------------------------------------
@@ -617,10 +638,7 @@ export function installWebAuthRoutes(store: WebAuthStore): WebAuthRoutes {
   }
 
   function shouldUseSecureCookie(req: Request): boolean {
-    // Reuse the store's decision logic: its option overrides auto-detection.
-    return (store as unknown as {
-      shouldUseSecureCookie: (r: Request) => boolean;
-    }).shouldUseSecureCookie(req);
+    return store.shouldUseSecureCookie(req);
   }
 
   return {
@@ -630,7 +648,7 @@ export function installWebAuthRoutes(store: WebAuthStore): WebAuthRoutes {
         // (which becomes admin) or when the operator has explicitly opted into
         // open registration. Otherwise an admin must create the account, so a
         // publicly reachable instance can't be claimed by the first stranger.
-        const isBootstrap = store["countWebUsers"]() === 0;
+        const isBootstrap = store.needsBootstrapAdmin();
         if (!isBootstrap && !store.allowRegistration) {
           res.status(403).json({ error: "Registration is disabled. Ask an administrator to create your account." });
           return;
@@ -663,17 +681,17 @@ export function installWebAuthRoutes(store: WebAuthStore): WebAuthRoutes {
       try {
         const credentials = getCredentials(req.body);
         const rateKey = `${req.ip ?? "unknown"}|${credentials.username.trim().toLowerCase()}`;
-        assertLoginAllowed(store["loginFailures"], rateKey, Date.now());
+        store.checkLoginRateLimit(rateKey);
         let login;
         try {
           login = await store.login(credentials.username, credentials.password);
         } catch (error) {
           if (error instanceof HttpError && error.status === 401) {
-            recordLoginFailure(store["loginFailures"], rateKey, Date.now());
+            store.recordLoginFailure(rateKey);
           }
           throw error;
         }
-        store["loginFailures"].delete(rateKey);
+        store.clearLoginFailures(rateKey);
         store.setLoginCookie(res, login.session, shouldUseSecureCookie(req));
         res.json({ user: login.user });
       } catch (error) {
