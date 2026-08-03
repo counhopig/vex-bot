@@ -177,6 +177,11 @@ describe("static web assets", () => {
     expect(controlHtml).toContain('"Users": "用户"');
     expect(controlHtml).toContain("Console Connection");
     expect(controlHtml).not.toContain("Received WebSocket message:");
+    expect(controlHtml).toContain('class="settings-workspace"');
+    expect(controlHtml).toContain('data-settings-target="tab-agent"');
+    expect(controlHtml).toContain("Save Changes");
+    expect(controlHtml).not.toContain('id="view-config"');
+    expect(controlHtml).not.toContain('id="config-save-btn"');
 
     const normalSession = await auth.login("normal", "password123");
     const normalRes = createResponse();

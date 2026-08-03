@@ -358,9 +358,6 @@ ${COMMON_CSS}${CONTROL_CSS}
         <span>Users</span>
       </div>
       <div class="nav-section">Configuration</div>
-      <div class="nav-item" data-view="config">
-        <span>Config</span>
-      </div>
       <div class="nav-item" data-view="settings">
         <span>Settings</span>
       </div>
@@ -527,23 +524,38 @@ ${COMMON_CSS}${CONTROL_CSS}
         </div>
       </div>
 
-      <!-- Config view -->
-      <div class="view" id="view-config">
-        <div class="page-header">
-          <h1 class="page-title">Configuration Management</h1>
-          <p class="page-desc">Visually configure model providers, channels, and system settings</p>
+      <!-- Unified settings workspace -->
+      <div class="view" id="view-settings">
+        <div class="settings-page-header">
+          <div>
+            <h1 class="page-title">Settings</h1>
+            <p class="page-desc">Manage models, channels, capabilities, and runtime settings</p>
+          </div>
+          <div class="settings-actions">
+            <span class="settings-dirty" id="settings-dirty">All changes saved</span>
+            <button class="btn btn-secondary" id="settings-refresh-btn" onclick="runWithLoading('settings-refresh-btn', discardAndReloadSettings)">Discard &amp; Reload</button>
+            <button class="btn btn-primary" id="settings-save-btn" onclick="runWithLoading('settings-save-btn', saveSettingsWorkspace)" disabled>Save Changes</button>
+          </div>
         </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="btn btn-secondary" id="config-refresh-btn" onclick="runWithLoading('config-refresh-btn', loadConfig)">Refresh Config</button>
-          <button class="btn btn-primary" id="config-save-btn" onclick="runWithLoading('config-save-btn', saveAllConfig)">Save All Changes</button>
-        </div>
-        <div id="config-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;">
-          <button class="config-tab active" data-tab="agent">Agent</button>
-          <button class="config-tab" data-tab="providers">Model Providers</button>
-          <button class="config-tab" data-tab="channels">Channels</button>
-          <button class="config-tab" data-tab="server">Server</button>
-          <button class="config-tab" data-tab="memory">Memory</button>
-        </div>
+        <div id="settings-save-result" class="save-result"></div>
+        <div class="settings-workspace">
+          <nav id="settings-tabs" class="settings-nav" aria-label="Settings sections">
+            <span class="settings-nav-label">Core</span>
+            <button class="settings-nav-item active" data-settings-target="tab-agent">Agent &amp; Model</button>
+            <button class="settings-nav-item" data-settings-target="tab-providers">Providers</button>
+            <button class="settings-nav-item" data-settings-target="tab-channels">Channels</button>
+            <button class="settings-nav-item" data-settings-target="tab-memory">Memory</button>
+            <span class="settings-nav-label">Capabilities</span>
+            <button class="settings-nav-item" data-settings-target="settings-tab-persona">Persona</button>
+            <button class="settings-nav-item" data-settings-target="settings-tab-extensions">Extensions</button>
+            <button class="settings-nav-item" data-settings-target="settings-tab-weather">Weather</button>
+            <button class="settings-nav-item" data-settings-target="settings-tab-skills">Skills</button>
+            <span class="settings-nav-label">System</span>
+            <button class="settings-nav-item" data-settings-target="tab-server">Runtime</button>
+            <button class="settings-nav-item" data-settings-target="settings-tab-sessions">Sessions</button>
+            <button class="settings-nav-item" data-settings-target="settings-tab-geek">Advanced YAML</button>
+          </nav>
+          <div class="settings-panels">
 
         <!-- Agent config -->
         <div class="config-content active" id="tab-agent">
@@ -676,31 +688,8 @@ ${COMMON_CSS}${CONTROL_CSS}
           </div>
         </div>
 
-        <!-- Save result -->
-        <div id="save-result" class="save-result"></div>
-      </div>
-
-      <!-- Settings view -->
-      <div class="view" id="view-settings">
-        <div class="page-header">
-          <h1 class="page-title">Settings</h1>
-          <p class="page-desc">Edit bot persona, extensions, weather, skills, sessions, and raw config</p>
-        </div>
-        <div style="display:flex;gap:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="btn btn-secondary" id="settings-refresh-btn" onclick="runWithLoading('settings-refresh-btn', loadSettings)">Refresh Settings</button>
-          <button class="btn btn-primary" id="settings-save-btn" onclick="runWithLoading('settings-save-btn', saveAllSettings)">Save Settings</button>
-        </div>
-        <div id="settings-tabs" style="display:flex;gap:0.5rem;border-bottom:1px solid var(--border);padding-bottom:0.5rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-          <button class="config-tab active" data-settings-tab="persona">Bot / Persona</button>
-          <button class="config-tab" data-settings-tab="extensions">Extensions</button>
-          <button class="config-tab" data-settings-tab="weather">Weather</button>
-          <button class="config-tab" data-settings-tab="skills">Skills</button>
-          <button class="config-tab" data-settings-tab="sessions">Sessions</button>
-          <button class="config-tab" data-settings-tab="geek">Geek (Raw JSON)</button>
-        </div>
-
         <!-- Persona tab -->
-        <div class="config-content active" id="settings-tab-persona">
+        <div class="config-content" id="settings-tab-persona">
           <div class="form-section">
             <h3 class="form-section-title">Bot Persona</h3>
             <div class="form-group">
@@ -723,6 +712,9 @@ ${COMMON_CSS}${CONTROL_CSS}
               <label>Base Prompt</label>
               <textarea id="persona-base-prompt" class="form-input" rows="4" placeholder="Core persona prompt injected into the system message"></textarea>
             </div>
+            <details class="settings-advanced">
+              <summary>Advanced persona behavior</summary>
+              <div class="settings-advanced-body">
             <div class="form-row">
               <div class="form-group">
                 <label class="checkbox-label">
@@ -857,6 +849,8 @@ ${COMMON_CSS}${CONTROL_CSS}
                 </label>
               </div>
             </div>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -1094,8 +1088,8 @@ ${COMMON_CSS}${CONTROL_CSS}
           </div>
         </div>
 
-        <!-- Settings save result -->
-        <div id="settings-save-result" class="save-result"></div>
+          </div>
+        </div>
       </div>
 
       <!-- Logs view -->

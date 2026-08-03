@@ -306,6 +306,82 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
     .page-desc {
       color: var(--text-secondary);
     }
+    .settings-page-header {
+      position: sticky;
+      top: -2rem;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+      margin: -2rem -2rem 1.5rem;
+      padding: 1.5rem 2rem 1rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .settings-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .settings-dirty {
+      color: var(--text-muted);
+      font-size: 0.8125rem;
+      white-space: nowrap;
+    }
+    .settings-dirty.pending { color: var(--warning); font-weight: 600; }
+    .settings-workspace {
+      display: grid;
+      grid-template-columns: 190px minmax(0, 760px);
+      gap: 2rem;
+      align-items: start;
+    }
+    .settings-nav {
+      position: sticky;
+      top: 6rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.125rem;
+    }
+    .settings-nav-label {
+      margin: 1rem 0 0.375rem;
+      padding: 0 0.75rem;
+      color: var(--text-muted);
+      font-size: 0.6875rem;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .settings-nav-label:first-child { margin-top: 0; }
+    .settings-nav-item {
+      width: 100%;
+      padding: 0.625rem 0.75rem;
+      border: 0;
+      border-radius: 0.375rem;
+      background: transparent;
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: 0.875rem;
+      text-align: left;
+      cursor: pointer;
+    }
+    .settings-nav-item:hover { background: var(--bg-card); color: var(--text); }
+    .settings-nav-item.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+    .settings-nav-item:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+    .settings-panels { min-width: 0; }
+    .settings-advanced {
+      margin-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .settings-advanced summary {
+      padding: 1rem 0;
+      color: var(--text-secondary);
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .settings-advanced-body { padding-top: 0.5rem; }
     /* Cards */
     .cards {
       display: grid;
@@ -877,6 +953,7 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
     /* Responsive */
     @media (max-width: 900px) {
       .cards { grid-template-columns: 1fr; }
+      .settings-workspace { grid-template-columns: 160px minmax(0, 1fr); gap: 1rem; }
     }
     @media (max-width: 768px) {
       .topbar { display: flex; }
@@ -908,13 +985,31 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
         color: var(--text-muted);
       }
       .main-content { padding: 1.25rem 1rem; }
+      .settings-page-header {
+        position: static;
+        align-items: flex-start;
+        flex-direction: column;
+        margin: -1.25rem -1rem 1rem;
+        padding: 1.25rem 1rem 1rem;
+      }
+      .settings-actions { width: 100%; justify-content: flex-start; }
+      .settings-workspace { display: block; }
+      .settings-nav {
+        position: static;
+        flex-direction: row;
+        gap: 0.375rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        overflow-x: auto;
+      }
+      .settings-nav-label { display: none; }
+      .settings-nav-item { width: auto; flex: 0 0 auto; white-space: nowrap; }
       .page-header { margin-bottom: 1.25rem; }
       .form-row { grid-template-columns: 1fr; }
       .table-header { flex-wrap: wrap; gap: 0.5rem; }
       th, td { padding: 0.75rem 1rem; white-space: nowrap; }
       .modal { width: 94%; }
       .config-tab, .config-tabs button { white-space: nowrap; }
-      #config-tabs, #settings-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     }
     @media (max-width: 480px) {
       .card-value { font-size: 1.5rem; }

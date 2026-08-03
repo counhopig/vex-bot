@@ -628,8 +628,10 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         i18n.setLang(select.value);
         applyI18n();
         refreshStatus();
-        if (currentConfig) populateConfigForm(currentConfig);
-        if (currentSettings) populateSettingsForm(currentSettings);
+        if (currentConfig) {
+          populateConfigForm(currentConfig);
+          populateSettingsForm(currentConfig);
+        }
       });
       sidebar?.appendChild(select);
     }
@@ -642,13 +644,8 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.getElementById('view-' + item.dataset.view).classList.add('active');
 
-        // Auto-load config when switching to config page
-        if (item.dataset.view === 'config' && ws?.readyState === WebSocket.OPEN) {
-          loadConfig();
-        }
-        // Auto-load settings when switching to settings page
         if (item.dataset.view === 'settings' && ws?.readyState === WebSocket.OPEN) {
-          loadSettings();
+          if (!currentConfig || !settingsDirty) loadSettingsWorkspace();
         }
         if (item.dataset.view === 'sessions' && ws?.readyState === WebSocket.OPEN) {
           refreshSessions();
@@ -1085,46 +1082,73 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     document.getElementById('log-level-filter')?.addEventListener('change', renderLogView);
     document.getElementById('log-module-filter')?.addEventListener('input', renderLogView);
 
-    // ===== Configuration Management =====
+    // ===== Unified settings workspace =====
     let currentConfig = null;
     let pendingProviders = {};  // Temporary provider data storage
+    let settingsDirty = false;
 
-    // Config tab switching
-    document.querySelectorAll('#config-tabs .config-tab').forEach(tab => {
+    document.querySelectorAll('#settings-tabs [data-settings-target]').forEach(tab => {
       tab.addEventListener('click', () => {
-        document.querySelectorAll('#config-tabs .config-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('#settings-tabs [data-settings-target]').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-        document.querySelectorAll('#view-config .config-content').forEach(c => c.classList.remove('active'));
-        const content = document.getElementById('tab-' + tab.dataset.tab);
+        document.querySelectorAll('#view-settings .config-content').forEach(c => c.classList.remove('active'));
+        const content = document.getElementById(tab.dataset.settingsTarget);
         if (content) content.classList.add('active');
       });
     });
 
-    // Load config
-    async function loadConfig() {
+    function setSettingsDirty(dirty) {
+      settingsDirty = dirty;
+      const status = document.getElementById('settings-dirty');
+      const saveButton = document.getElementById('settings-save-btn');
+      if (status) {
+        status.textContent = t(dirty ? 'Unsaved changes' : 'All changes saved');
+        status.classList.toggle('pending', dirty);
+      }
+      if (saveButton) saveButton.disabled = !dirty;
+    }
+
+    document.getElementById('view-settings')?.addEventListener('input', () => setSettingsDirty(true));
+    document.getElementById('view-settings')?.addEventListener('change', () => setSettingsDirty(true));
+    window.addEventListener('beforeunload', (event) => {
+      if (!settingsDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+
+    async function discardAndReloadSettings() {
+      if (settingsDirty) {
+        const confirmed = await confirmDialog({
+          title: t('Discard changes?'),
+          message: t('Your unsaved settings will be lost.'),
+          confirmText: t('Discard'),
+        });
+        if (!confirmed) return;
+      }
+      await loadSettingsWorkspace();
+    }
+
+    async function loadSettingsWorkspace() {
       try {
         if (ws?.readyState !== WebSocket.OPEN) {
-          console.warn('WebSocket not connected, waiting...');
-          // Wait for connection then load
           const { promise, resolve } = Promise.withResolvers();
           const check = () => {
-            if (ws?.readyState === WebSocket.OPEN) {
-              resolve();
-            } else {
-              setTimeout(check, 500);
-            }
+            if (ws?.readyState === WebSocket.OPEN) resolve();
+            else setTimeout(check, 500);
           };
           check();
           await promise;
         }
         currentConfig = await request('config.get');
+        pendingProviders = {};
         populateConfigForm(currentConfig);
-        hideSaveResult();
-        addLog('info', 'Config loaded');
+        populateSettingsForm(currentConfig);
+        hideSettingsSaveResult();
+        setSettingsDirty(false);
+        addLog('info', 'Settings loaded');
       } catch (e) {
-        console.error('Failed to load config:', e);
-        addLog('error', 'Failed to load config: ' + e.message);
-        showSaveResult('error', t('Failed to load config') + ': ' + e.message);
+        addLog('error', 'Failed to load settings: ' + e.message);
+        showSettingsSaveResult('error', t('Failed to load settings') + ': ' + e.message);
       }
     }
 
@@ -1301,6 +1325,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       // keeps the existing key (server merges it back).
       if (apiKey) entry.apiKey = apiKey;
       pendingProviders[type] = entry;
+      setSettingsDirty(true);
 
       hideAddProviderModal();
       if (currentConfig) {
@@ -1347,6 +1372,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       if (!ok) return;
 
       pendingProviders[id] = { id: id, hasApiKey: false };
+      setSettingsDirty(true);
       const mergedProviders = { ...currentConfig.providers };
       delete mergedProviders[id];
       populateProvidersForm(mergedProviders);
@@ -1354,12 +1380,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       showToast('success', t('Provider removed (click Save to apply changes)'));
     }
 
-    // Save all config
-    async function saveAllConfig() {
-      try {
-        hideSaveResult();
-
-        // Build config object
+    function collectCoreConfig() {
         const configToSave = {};
 
         // Agent config
@@ -1462,43 +1483,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           };
         }
 
-        // Save
-        const result = await request('config.save', configToSave);
-
-        if (result.success) {
-          showSaveResult(result.requiresRestart ? 'warning' : 'success', result.message);
-          // Clear pending
-          pendingProviders = {};
-          // Reload config
-          await loadConfig();
-          addLog('info', result.message);
-        } else {
-          showSaveResult('error', result.message || 'Save failed');
-        }
-
-      } catch (e) {
-        addLog('error', 'Failed to save config: ' + e.message);
-        showSaveResult('error', t('Failed to save config') + ': ' + e.message);
-      }
-    }
-
-    // Show save result (inline banner + floating toast so it's visible when scrolled)
-    function showSaveResult(type, message) {
-      const resultEl = document.getElementById('save-result');
-      resultEl.textContent = message;
-      resultEl.className = 'save-result show ' + type;
-      showToast(type, message);
-      // Hide after 5 seconds
-      setTimeout(() => {
-        hideSaveResult();
-      }, 5000);
-    }
-
-    // Hide save result
-    function hideSaveResult() {
-      const resultEl = document.getElementById('save-result');
-      resultEl.className = 'save-result';
-      resultEl.textContent = '';
+        return configToSave;
     }
 
     // ===== WeChat QR Login =====
@@ -1579,40 +1564,6 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           console.error('QR poll error:', e);
         }
       }, 2000);
-    }
-
-    // ===== Settings (Persona / Extensions / Skills / Sessions / Geek) =====
-    let currentSettings = null;
-
-    document.querySelectorAll('#settings-tabs [data-settings-tab]').forEach(tab => {
-      tab.addEventListener('click', () => {
-        document.querySelectorAll('#settings-tabs [data-settings-tab]').forEach(t => t.classList.remove('active'));
-        tab.classList.add('active');
-        document.querySelectorAll('#view-settings .config-content').forEach(c => c.classList.remove('active'));
-        const content = document.getElementById('settings-tab-' + tab.dataset.settingsTab);
-        if (content) content.classList.add('active');
-      });
-    });
-
-    async function loadSettings() {
-      try {
-        if (ws?.readyState !== WebSocket.OPEN) {
-          const { promise, resolve } = Promise.withResolvers();
-          const check = () => {
-            if (ws?.readyState === WebSocket.OPEN) resolve();
-            else setTimeout(check, 500);
-          };
-          check();
-          await promise;
-        }
-        currentSettings = await request('config.get');
-        populateSettingsForm(currentSettings);
-        hideSettingsSaveResult();
-        addLog('info', 'Settings loaded');
-      } catch (e) {
-        addLog('error', 'Failed to load settings: ' + e.message);
-        showSettingsSaveResult('error', t('Failed to load settings') + ': ' + e.message);
-      }
     }
 
     function populateSettingsForm(config) {
@@ -1839,14 +1790,15 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       return payload;
     }
 
-    async function saveAllSettings() {
+    async function saveSettingsWorkspace() {
       try {
         hideSettingsSaveResult();
-        const payload = collectSettings();
+        const payload = { ...collectCoreConfig(), ...collectSettings() };
         const result = await request('config.save', payload);
         if (result.success) {
           showSettingsSaveResult(result.requiresRestart ? 'warning' : 'success', result.message);
-          await loadSettings();
+          pendingProviders = {};
+          await loadSettingsWorkspace();
           addLog('info', result.message);
         } else {
           showSettingsSaveResult('error', result.message || 'Save failed');
