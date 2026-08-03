@@ -289,7 +289,6 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
     }
     .nav-item:hover { background: var(--bg); color: var(--text); }
     .nav-item.active { background: var(--primary-soft); color: var(--primary); font-weight: 500; box-shadow: inset 3px 0 0 var(--primary); }
-    .nav-item-icon { font-size: 1.125rem; }
     /* Main content */
     .main-content {
       flex: 1;
@@ -333,16 +332,6 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       font-size: 0.875rem;
       font-weight: 500;
       color: var(--text-secondary);
-    }
-    .card-icon {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 1.75rem;
-      height: 1.75rem;
-      color: var(--text-secondary);
-      font-size: 1.25rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     .card-value {
       font-size: 2rem;
@@ -463,7 +452,6 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       padding: 3rem;
       color: var(--text-secondary);
     }
-    .empty-state-icon { font-size: 3rem; margin-bottom: 1rem; }
     /* Model cards */
     .model-card {
       background: var(--bg-card);

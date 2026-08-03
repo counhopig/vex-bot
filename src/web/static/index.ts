@@ -349,46 +349,36 @@ ${COMMON_CSS}${CONTROL_CSS}
       </div>
       <div class="nav-section">Monitor</div>
       <div class="nav-item active" data-view="overview">
-        <span class="nav-item-icon">▦</span>
         <span>Overview</span>
       </div>
       <div class="nav-item" data-view="sessions">
-        <span class="nav-item-icon">○</span>
         <span>Sessions</span>
       </div>
       <div class="nav-item" data-view="users">
-        <span class="nav-item-icon">◎</span>
         <span>Users</span>
       </div>
       <div class="nav-section">Configuration</div>
       <div class="nav-item" data-view="config">
-        <span class="nav-item-icon">⚙</span>
         <span>Config</span>
       </div>
       <div class="nav-item" data-view="settings">
-        <span class="nav-item-icon">⌁</span>
         <span>Settings</span>
       </div>
       <div class="nav-item" data-view="providers">
-        <span class="nav-item-icon">◇</span>
         <span>Model Providers</span>
       </div>
       <div class="nav-item" data-view="channels">
-        <span class="nav-item-icon">▣</span>
         <span>Channels</span>
       </div>
       <div class="nav-section">Tools</div>
       <div class="nav-item" data-view="logs">
-        <span class="nav-item-icon">≡</span>
         <span>Logs</span>
       </div>
       <div style="flex:1"></div>
       <a href="/" class="nav-item">
-        <span class="nav-item-icon">○</span>
         <span>Back to Chat</span>
       </a>
       <button class="nav-item" id="control-logout-btn" type="button" style="border:0;width:100%;background:transparent;text-align:left;">
-        <span class="nav-item-icon">⏻</span>
         <span>Logout</span>
       </button>
     </aside>
@@ -404,7 +394,6 @@ ${COMMON_CSS}${CONTROL_CSS}
           <div class="card">
             <div class="card-header">
               <span class="card-title">Console Connection</span>
-              <span class="card-icon">↔</span>
             </div>
             <div id="connection-status">
               <span class="status-badge offline"><span class="status-dot"></span>Connecting</span>
@@ -413,7 +402,6 @@ ${COMMON_CSS}${CONTROL_CSS}
           <div class="card">
             <div class="card-header">
               <span class="card-title">Uptime</span>
-              <span class="card-icon">◷</span>
             </div>
             <div class="card-value" id="uptime">--</div>
             <div class="card-label">since startup</div>
@@ -421,7 +409,6 @@ ${COMMON_CSS}${CONTROL_CSS}
           <div class="card">
             <div class="card-header">
               <span class="card-title">WebSocket Connections</span>
-              <span class="card-icon">◎</span>
             </div>
             <div class="card-value" id="session-count">0</div>
             <div class="card-label">Current browser clients</div>
@@ -429,7 +416,6 @@ ${COMMON_CSS}${CONTROL_CSS}
           <div class="card">
             <div class="card-header">
               <span class="card-title">Default Model</span>
-              <span class="card-icon">◇</span>
             </div>
             <div class="card-value card-value-model" id="default-model">${defaultModel}</div>
             <div class="card-label" id="default-provider">${defaultProvider}</div>
@@ -486,7 +472,6 @@ ${COMMON_CSS}${CONTROL_CSS}
         </div>
         <div class="cards" id="providers-list">
           <div class="empty-state">
-            <div class="empty-state-icon">◇</div>
             <p>Loading...</p>
           </div>
         </div>

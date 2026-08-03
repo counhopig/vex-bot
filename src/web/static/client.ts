@@ -773,7 +773,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const container = document.getElementById('providers-list');
 
       if (providers.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">◇</div><p>' + t('No providers configured') + '</p></div>';
+        container.innerHTML = '<div class="empty-state"><p>' + t('No providers configured') + '</p></div>';
         return;
       }
 
