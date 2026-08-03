@@ -20,7 +20,8 @@
     "start:gateway": "tsx src/cli/index.ts start",
     "cli": "node dist/cli/index.js",
     "lint": "tsc --noEmit",
-    "test": "vitest",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "pack:dry-run": "npm pack --dry-run --json",
     "pack:smoke": "npm run build && npm run pack:dry-run",
     "prepublishOnly": "npm run pack:smoke"
@@ -80,6 +81,6 @@
     "vitest": "^2.1.1"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=24.0.0"
   }
 }

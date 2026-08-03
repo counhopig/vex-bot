@@ -4,11 +4,11 @@ General-Purpose AI Agent Framework — Persona-Driven, Multi-Channel, Tool-Nativ
 
 [![version](https://img.shields.io/badge/version-1.15.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 
 Vex is a TypeScript ESM agent framework built on `@mariozechner/pi-coding-agent` and `@mariozechner/pi-ai`. It connects to personal WeChat, runs in the browser via a server-rendered WebChat UI, and supports Chinese LLM providers alongside OpenAI/Anthropic-compatible APIs. Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0).
 
-> **🚧 Undergoing a full architecture rewrite.** This README describes the target design in [`docs/architecture.md`](docs/architecture.md) and the per-module plan in [`docs/rewrite-plan.md`](docs/rewrite-plan.md). The legacy implementation in [`_archive/`](_archive/) is the actually-runnable state. Several modules listed below (CLI, `src/web/`, `src/tools/`, `src/skills/`, `src/cron/`, `src/plugins/`, `src/browser/`) are not yet rebuilt in the new tree. `vex start` will not work against `main` until the rewrite lands.
+> The full architecture rewrite is complete on this branch. The legacy implementation remains in [`_archive/`](_archive/) for historical reference only; new runtime code lives under [`src/`](src/). See [`docs/rewrite-summary.md`](docs/rewrite-summary.md) for the rewrite record and known follow-up items.
 
 **Vex is not just a chatbot.** It's a general agent framework where **Persona defines identity**, tools provide capabilities, and a unified Dispatcher routes every message — regardless of channel — through the same pipeline.
 
@@ -21,7 +21,7 @@ Vex is built on three pillars:
 | Pillar | Role |
 |--------|------|
 | **Persona** | The agent's identity. Who it is, how it behaves, what it remembers. The system prompt starts here. |
-| **Tools** | What the agent can do. File I/O, bash, browser, web search, memory — 25+ built-in. |
+| **Tools** | What the agent can do. File I/O, bash, browser, web search, memory — 13 built-in tools plus plugins. |
 | **Channels** | Where messages come from and go to. WeChat, WebChat, CLI. Pure I/O, no business logic. |
 
 ```
@@ -42,14 +42,14 @@ Every message takes the same path. Every agent has a Persona. No shortcuts, no d
 - **Multi-channel** — personal WeChat (iLink OC API long-polling), WebChat (WebSocket SPA), CLI
 - **Multi-user** — each user gets their own Agent, Persona state, Memory, Sessions, and WeChat account; zero cross-user state leakage
 - **Chinese model coverage** — DeepSeek, MiniMax, Kimi (Moonshot), Doubao (ByteDance), Zhipu, LongCat, StepFun, ModelScope, DashScope, plus custom OpenAI/Anthropic-compatible providers and Western backends (OpenAI, Ollama, OpenRouter, Together, Groq, Azure OpenAI, vLLM)
-- **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, memory management, and system utilities
+- **13 built-in tools** — file read/write, bash execution, web search/fetch, browser automation, memory management, cron, weather, image analysis, and system utilities
 - **CJK-native memory** — TF-IDF long-term memory with bigram tokenization for Chinese, Japanese, and Korean
 - **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected at runtime
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
 - **Cron scheduling** — `at`, `every`, and standard cron expressions; triggers agent turns on schedule
 - **Playwright browser automation** — screenshots, form filling, web interaction via headless Chromium
 - **Event hook system** — 8 event types with registration and unsubscribe support
-- **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001)
+- **Docker support** — published GHCR image, multi-stage build (`node:24-alpine`), non-root user (`vex:vex`, UID/GID 1001)
 - **YAML + SQLite config** — system defaults in YAML, per-user overrides in SQLite, resolved at runtime
 
 ---
@@ -71,7 +71,7 @@ flowchart TD
 
     subgraph Agent
         PS[Persona<br/>identity · style · emotion<br/>profile · history · memory]
-        TL[Tools<br/>25+ built-in]
+        TL[Tools<br/>13 built-in + plugins]
         SK[Skills<br/>SKILL.md injection]
         MM[Memory<br/>CJK-aware TF-IDF]
         PL[Pipeline<br/>intercept · observe]
@@ -91,14 +91,14 @@ flowchart TD
 | Tools | `src/tools/` | LLM-callable capabilities, scoped per Agent |
 | Skills | `src/skills/` | SKILL.md parsing and prompt injection |
 | Memory | `src/memory/` | CJK-aware TF-IDF long-term memory, per-user scoped |
-| Pipeline | `src/pipeline/` | Per-Agent message interceptors and response observers |
+| Pipeline | `src/agent/Pipeline.ts` | Per-Agent message interceptors and response observers |
 | Channels | `src/channels/` | Protocol adapters (WeChat OC API, WebSocket), pure I/O |
 | Outbound | `src/outbound/` | Cross-channel unified message delivery |
 | Config | `src/config/` | YAML loading + Zod validation, merged with SQLite overrides |
 | Providers | `src/providers/` | LLM model resolution, API key management |
 | Cron | `src/cron/` | at/every/cron schedule dispatching |
 | Plugins | `src/plugins/` | 3-tier auto-discovery + lifecycle management |
-| Browser | `src/browser/` | Playwright headless browser automation |
+| Browser tool | `src/tools/builtin/browser.ts` | Playwright headless browser automation |
 | Hooks | `src/hooks/` | Event hook system |
 | Sessions | `src/sessions/` | JSONL session persistence, per-user scoped |
 | Web UI | `src/web/` | Server-rendered WebChat + control panel + auth |
@@ -243,22 +243,20 @@ logging:
 │   ├── agent/           # Agent core: Persona, Tools, Skills, Memory, Pipeline
 │   ├── dispatcher/      # Message routing: resolve (user, channel) → Agent
 │   ├── channels/        # Protocol adapters: WeChat (iLink OC), WebChat (WebSocket)
-│   ├── tools/           # Tool registration, validation, execution (25 built-in)
+│   ├── tools/           # Tool registration, validation, execution (13 built-in)
 │   ├── memory/          # CJK-aware TF-IDF long-term memory, per-user
 │   ├── skills/          # SKILL.md parsing and prompt injection
-│   ├── pipeline/        # Per-Agent interceptors and observers
 │   ├── providers/       # LLM model resolution (pi-ai wrapper)
 │   ├── config/          # YAML config loading + Zod validation + SQLite merge
 │   ├── outbound/        # Cross-channel unified message delivery
 │   ├── cron/            # at/every/cron scheduling
 │   ├── plugins/         # 3-tier plugin discovery (bundled/global/workspace)
 │   ├── web/             # Server-rendered WebChat SPA + control panel + auth
-│   ├── browser/         # Playwright headless browser automation
 │   ├── hooks/           # Event hook system (8 event types)
 │   ├── sessions/        # JSONL session persistence
 │   ├── cli/             # Commander.js CLI (9 subcommands)
-│   ├── types/           # Shared TypeScript types
-│   └── utils/           # Logger, crypto helpers
+│   ├── vendor/          # Vendored dependencies used directly by the runtime
+│   └── utils/           # Logger, path helpers
 ├── skills/              # Built-in skills
 ├── tests/               # Vitest tests
 ├── docs/                # Documentation
@@ -277,8 +275,11 @@ npm run build
 # Dev mode (TSX auto-restart)
 npm run dev
 
-# Tests
+# Tests (non-watch)
 npm test
+
+# Tests in watch mode
+npm run test:watch
 
 # Start Gateway directly (bypass CLI)
 npm run start:gateway
@@ -288,9 +289,9 @@ npm run start:gateway
 
 - **Strict TypeScript**: `noUncheckedIndexedAccess`, `noImplicitReturns`, `noFallthroughCasesInSwitch` enabled
 - **ESM only**: `"type": "module"`, NodeNext module resolution, `.js` extensions in imports
-- **Zod validation**: all config schemas defined as Zod objects in `src/config/index.ts`
+- **Zod validation**: config schemas are defined in `src/config/schema.ts`
 - **Pino logging**: `getChildLogger("moduleName")` pattern for structured, namespaced loggers
-- **Node >= 18**: minimum supported runtime
+- **Node >= 24**: minimum supported runtime
 
 ---
 
