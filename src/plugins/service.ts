@@ -23,11 +23,13 @@
  */
 
 import { getChildLogger } from "../utils/logger.js";
+import { loadPlugins, type LoadResult } from "./loader.js";
 import type { Tool } from "../tools/types.js";
 import type { HookEventType, HookHandler } from "../hooks/types.js";
 import type {
   LoadedPlugin,
   PluginApi,
+  PluginCandidate,
   PluginDefinition,
   PluginMeta,
   PluginOrigin,
@@ -129,6 +131,17 @@ export class PluginService {
       { pluginId: definition.meta.id, name: definition.meta.name },
       "Plugin registered",
     );
+  }
+
+  /**
+   * Load candidate plugins (e.g. from a discovery scan) into this
+   * service's registry. Thin bridge over the class-free `loadPlugins`:
+   * the registry is private, so bootstrap code hands candidates here
+   * instead of populating the map directly. Returns a per-id outcome
+   * report; never throws for a broken plugin.
+   */
+  async loadFromCandidates(candidates: PluginCandidate[]): Promise<LoadResult> {
+    return loadPlugins(candidates, this.#deps, this.#registry);
   }
 
   /**

@@ -38,7 +38,12 @@ import {
   definePlugin,
   defineToolPlugin,
 } from "../src/plugins/index.js";
-import type { LoadedPlugin, PluginDefinition, PluginMeta } from "../src/plugins/types.js";
+import type {
+  LoadedPlugin,
+  PluginCandidate,
+  PluginDefinition,
+  PluginMeta,
+} from "../src/plugins/types.js";
 import type { EffectiveConfig } from "../src/config/EffectiveConfig.js";
 import { ToolRegistry } from "../src/tools/ToolRegistry.js";
 import { EventBus } from "../src/hooks/EventBus.js";
@@ -155,6 +160,83 @@ describe("plugins/service", () => {
       );
       await svc.activateAll();
       expect(start).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("loadFromCandidates", () => {
+    let dir = "";
+
+    beforeEach(() => {
+      dir = mkdtempSync(join(tmpdir(), "vex-plugin-candidates-"));
+    });
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    function candidateFor(entryPath: string, id: string): PluginCandidate {
+      return { id, origin: "config", entryPath, directory: dir };
+    }
+
+    it("loads filesystem candidates into the service's own registry and exposes their tools", async () => {
+      const entry = join(dir, "plug.js");
+      writeFileSync(
+        entry,
+        [
+          "module.exports = {",
+          "  meta: { id: 'plug', name: 'Plug', version: '1.0.0' },",
+          "  register: (api) => api.registerTool({",
+          "    name: 'plug-tool',",
+          "    description: 'from plugin',",
+          "    parameters: { type: 'object', properties: {} },",
+          "    execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),",
+          "  }),",
+          "};",
+        ].join("\n"),
+      );
+      const deps = baseDeps();
+      const svc = new PluginService(deps);
+
+      const result = await svc.loadFromCandidates([candidateFor(entry, "plug")]);
+
+      expect(result.loaded).toEqual(["plug"]);
+      expect(result.failed).toEqual([]);
+      expect(svc.isLoaded("plug")).toBe(true);
+      expect(deps.toolRegistry.get("plug-tool")).toBeDefined();
+    });
+
+    it("reports broken modules as failed without throwing", async () => {
+      const entry = join(dir, "broken.js");
+      writeFileSync(entry, "throw new Error('boom');\n");
+      const svc = new PluginService(baseDeps());
+
+      const result = await svc.loadFromCandidates([candidateFor(entry, "broken")]);
+
+      expect(result.loaded).toEqual([]);
+      expect(result.failed).toEqual([
+        { id: "broken", error: "Failed to load module" },
+      ]);
+      expect(svc.isLoaded("broken")).toBe(false);
+    });
+
+    it("lets the caller activate the loaded plugins afterwards", async () => {
+      const entry = join(dir, "svc.js");
+      writeFileSync(
+        entry,
+        [
+          "module.exports = {",
+          "  meta: { id: 'svc', name: 'Svc', version: '1.0.0' },",
+          "  activate: () => {},",
+          "};",
+        ].join("\n"),
+      );
+      const svc = new PluginService(baseDeps());
+      await svc.loadFromCandidates([candidateFor(entry, "svc")]);
+
+      const result = await svc.activateAll();
+
+      expect(result.activated).toEqual(["svc"]);
+      expect(svc.isActivated("svc")).toBe(true);
     });
   });
 

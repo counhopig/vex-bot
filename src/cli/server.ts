@@ -23,10 +23,14 @@ import { Persona } from "../agent/persona/Persona.js";
 import { createPersonaConfig } from "../agent/persona/PersonaConfig.js";
 import { createDefaultPiSession, defaultSessionDir } from "../agent/createDefaultPiSession.js";
 import { createBuiltinTools } from "../tools/builtin/index.js";
+import { ToolRegistry } from "../tools/ToolRegistry.js";
 import { createMemoryManager } from "../memory/index.js";
 import { loadAllSkills } from "../skills/SkillLoader.js";
 import { SkillRegistry } from "../skills/SkillRegistry.js";
 import { buildPrompt as buildSkillsPrompt } from "../skills/SkillInjector.js";
+import { PluginService } from "../plugins/service.js";
+import { discoverPlugins } from "../plugins/discovery.js";
+import { defaultBus } from "../hooks/index.js";
 import { Dispatcher } from "../dispatcher/Dispatcher.js";
 import { WebServer } from "../web/server.js";
 import { handleStaticRequest } from "../web/static/index.js";
@@ -138,6 +142,26 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
       skillsPrompt = prompt || undefined;
     }
 
+    // Per-(user, channel) plugin runtime: one PluginService per Agent,
+    // owning a fresh ToolRegistry so plugin tools are scoped to this agent
+    // (principle #5 — no state bleeding across instances), the shared
+    // defaultBus for app-wide hook broadcasts, per-user state dirs, and the
+    // same per-user MemoryManager the builtin memory tools use. Discovery is
+    // system-level (bundled → global → workspace); there is no per-user
+    // plugin code dir concept this round. Plugin tools are merged into the
+    // runtime's customTools alongside the builtin set.
+    const pluginToolRegistry = new ToolRegistry();
+    const pluginService = new PluginService({
+      toolRegistry: pluginToolRegistry,
+      eventBus: defaultBus,
+      config: effective,
+      memoryManager,
+      getStateDir: (pluginId) => join(homedir(), ".vex", "plugins", userId, pluginId),
+    });
+    const candidates = await discoverPlugins();
+    await pluginService.loadFromCandidates(candidates);
+    await pluginService.activateAll();
+
     const runtime = new AgentRuntime(
       {
         model: effective.agent.defaultModel,
@@ -147,18 +171,21 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
         maxTokens: effective.agent.maxTokens,
         workingDirectory: effective.agent.workingDirectory ?? process.cwd(),
         sessionDir: defaultSessionDir(),
-        customTools: createBuiltinTools({
-          owner: `${userId}:${channelId}`,
-          memoryManager,
-          weather: system.weather,
-          cronService: system.cron,
-          enableMemory: memoryEnabled,
-          enableCron: true,
-        }),
+        customTools: [
+          ...createBuiltinTools({
+            owner: `${userId}:${channelId}`,
+            memoryManager,
+            weather: system.weather,
+            cronService: system.cron,
+            enableMemory: memoryEnabled,
+            enableCron: true,
+          }),
+          ...pluginToolRegistry.getAll(),
+        ],
       },
       { modelResolver, createPiSession: createDefaultPiSession },
     );
-    return new Agent(userId, effective, { pipeline: new Pipeline(), persona, runtime, skillsPrompt });
+    return new Agent(userId, effective, { pipeline: new Pipeline(), persona, runtime, skillsPrompt, pluginService });
   };
 }
 

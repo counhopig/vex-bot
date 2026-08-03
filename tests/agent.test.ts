@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { Agent } from "../src/agent/Agent.js";
+import type { AgentPluginService } from "../src/agent/Agent.js";
 import { DEFAULT_IDENTITY } from "../src/agent/SystemPromptAssembler.js";
 import { Pipeline } from "../src/agent/Pipeline.js";
 import { Persona } from "../src/agent/persona/Persona.js";
@@ -225,6 +226,23 @@ describe("Agent", () => {
     await agent.shutdown();
 
     expect(shutdown).toHaveBeenCalledOnce();
+  });
+
+  it("shutdown tears down the plugin service before the runtime", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, shutdown: runtimeShutdown } = fakeRuntime();
+    const pluginShutdown = vi.fn().mockResolvedValue(undefined);
+    const agent = new Agent("u1", dummyConfig(), {
+      pipeline,
+      persona: null,
+      runtime,
+      pluginService: { shutdown: pluginShutdown } as AgentPluginService,
+    });
+
+    await agent.shutdown();
+
+    expect(pluginShutdown).toHaveBeenCalledTimes(1);
+    expect(runtimeShutdown).toHaveBeenCalledTimes(1);
   });
 
   // -- hook wiring: emitAgentStart + emitAgentEnd around runtime.chat ---

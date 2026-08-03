@@ -41,6 +41,13 @@ export interface AgentResponse {
   model: string;
 }
 
+/** Minimal surface the Agent needs from the per-(user, channel) plugin
+ *  orchestrator — lets the Agent tear it down without coupling to the
+ *  plugins module. */
+export interface AgentPluginService {
+  shutdown(): Promise<void>;
+}
+
 export interface AgentDependencies {
   pipeline: Pipeline;
   persona: Persona | null;
@@ -48,6 +55,8 @@ export interface AgentDependencies {
   /** Pre-assembled skills section for the system prompt ("" or undefined =
    *  section omitted). Built by the bootstrap from the user's skill dirs. */
   skillsPrompt?: string;
+  /** Per-(user, channel) plugin orchestrator, torn down with this Agent. */
+  pluginService?: AgentPluginService;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +67,7 @@ export class Agent {
   readonly persona: Persona | null;
   readonly pipeline: Pipeline;
   readonly skillsPrompt?: string;
+  private readonly pluginService?: AgentPluginService;
   private readonly runtime: AgentRuntime;
 
   constructor(
@@ -69,6 +79,7 @@ export class Agent {
     this.pipeline = deps.pipeline;
     this.runtime = deps.runtime;
     this.skillsPrompt = deps.skillsPrompt;
+    this.pluginService = deps.pluginService;
   }
 
   async processMessage(ctx: InboundMessageContext): Promise<AgentResponse> {
@@ -132,6 +143,12 @@ export class Agent {
 
   async shutdown(): Promise<void> {
     logger.debug("Agent shutting down");
+    // Tear down the plugin runtime first (stops plugin services, fires
+    // cleanup/unsubscribe), then the LLM runtime. AgentRegistry disposes
+    // entries through this single choke point for every reason
+    // (shutdown/reset/idle/overflow), so plugin resources cannot leak on
+    // mid-process eviction.
+    await this.pluginService?.shutdown();
     await this.runtime.shutdown();
   }
 }
