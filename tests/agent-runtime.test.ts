@@ -304,6 +304,29 @@ describe("AgentRuntime", () => {
       expect(sessions[0]?.sessionFile).toContain("webchat_room-7");
     });
 
+    it("roots the session file under config.sessionDir, not workingDirectory", async () => {
+      // Regression: getOrCreateSession() built sessionFile from workingDirectory
+      // (the agent's tool-execution cwd, e.g. `${cwd}/bash tool runs here`)
+      // instead of config.sessionDir (where persisted pi-coding-agent session
+      // JSONL files belong, matching FileSessionStore's ~/.vex/sessions/).
+      // makeConfig() below sets the two to visibly different paths so a fix
+      // that reads the wrong field fails this test.
+      const sessions: { sessionFile: string }[] = [];
+      const createPiSession: CreatePiSessionFn = async (args) => {
+        sessions.push({ sessionFile: args.sessionFile });
+        return makeFakeSession();
+      };
+      const runtime = new AgentRuntime(
+        makeConfig({ workingDirectory: "/tmp/agent-cwd", sessionDir: "/tmp/agent-sessions" }),
+        { modelResolver: makeModelResolver(makeFakeModel("fake")), createPiSession },
+      );
+
+      await runtime.chat("SYSTEM", makeContext());
+
+      expect(sessions[0]?.sessionFile).toMatch(/^\/tmp\/agent-sessions\//);
+      expect(sessions[0]?.sessionFile).not.toContain("/tmp/agent-cwd");
+    });
+
     it("reuses an existing session for the same key, creates a new one for a different key", async () => {
       const sessions: TrackingSession[] = [];
       const createPiSession: CreatePiSessionFn = async () => {

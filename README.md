@@ -1,82 +1,115 @@
 # Vex
 
-Lightweight AI Chatbot Framework for the Chinese AI Ecosystem
+General-Purpose AI Agent Framework — Persona-Driven, Multi-Channel, Tool-Native
 
 [![version](https://img.shields.io/badge/version-1.15.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 
-Vex is a TypeScript ESM chatbot framework built on `@mariozechner/pi-coding-agent` and `@mariozechner/pi-ai`. It connects to personal WeChat, runs in the browser via a server-rendered WebChat UI, and supports Chinese LLM providers alongside OpenAI/Anthropic-compatible APIs. Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only, and rebranded as Vex.
+Vex is a TypeScript ESM agent framework built on `@mariozechner/pi-coding-agent` and `@mariozechner/pi-ai`. It connects to personal WeChat, runs in the browser via a server-rendered WebChat UI, and supports Chinese LLM providers alongside OpenAI/Anthropic-compatible APIs. Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0).
+
+> **🚧 Undergoing a full architecture rewrite.** This README describes the target design in [`docs/architecture.md`](docs/architecture.md) and the per-module plan in [`docs/rewrite-plan.md`](docs/rewrite-plan.md). The legacy implementation in [`_archive/`](_archive/) is the actually-runnable state. Several modules listed below (CLI, `src/web/`, `src/tools/`, `src/skills/`, `src/cron/`, `src/plugins/`, `src/browser/`) are not yet rebuilt in the new tree. `vex start` will not work against `main` until the rewrite lands.
+
+**Vex is not just a chatbot.** It's a general agent framework where **Persona defines identity**, tools provide capabilities, and a unified Dispatcher routes every message — regardless of channel — through the same pipeline.
+
+---
+
+## Design
+
+Vex is built on three pillars:
+
+| Pillar | Role |
+|--------|------|
+| **Persona** | The agent's identity. Who it is, how it behaves, what it remembers. The system prompt starts here. |
+| **Tools** | What the agent can do. File I/O, bash, browser, web search, memory — 25+ built-in. |
+| **Channels** | Where messages come from and go to. WeChat, WebChat, CLI. Pure I/O, no business logic. |
+
+```
+Message → Dispatcher → Agent { Persona + Tools + Memory + Skills } → Outbound
+                           ↑
+                     EffectiveConfig(user, channel)
+                           ↑
+              YAML (system) + SQLite (user override)
+```
+
+Every message takes the same path. Every agent has a Persona. No shortcuts, no divergence.
 
 ---
 
 ## Features
 
+- **Persona-first architecture** — identity, reply style, emotion, profile building, memory directives are core components, not afterthought extensions
+- **Multi-channel** — personal WeChat (iLink OC API long-polling), WebChat (WebSocket SPA), CLI
+- **Multi-user** — each user gets their own Agent, Persona state, Memory, Sessions, and WeChat account; zero cross-user state leakage
 - **Chinese model coverage** — DeepSeek, MiniMax, Kimi (Moonshot), Doubao (ByteDance), Zhipu, LongCat, StepFun, ModelScope, DashScope, plus custom OpenAI/Anthropic-compatible providers and Western backends (OpenAI, Ollama, OpenRouter, Together, Groq, Azure OpenAI, vLLM)
-- **Personal WeChat** — connects to personal WeChat accounts via the iLink OC API long-polling channel for sending/receiving messages and files
-- **WebChat UI** — built-in WebSocket-driven browser chat interface, server-rendered with no frontend build step
-- **Control panel** — browser control surface for config editing, WeChat QR login, service status, and live backend logs
-- **Web login protection** — local username/password registration and login backed by SQLite; the first registered user becomes admin and can manage other accounts
-- **Multi-user backend** — each Web user gets its own `Agent`, memory, sessions, persona state, and Weixin account via `UserRuntimeManager`; cross-user state cannot bleed
-- **Persona extension** — private persona state, emotion/effects/todos, and background user-profile extraction from chat history
+- **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, memory management, and system utilities
+- **CJK-native memory** — TF-IDF long-term memory with bigram tokenization for Chinese, Japanese, and Korean
+- **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected at runtime
 - **3-tier plugin architecture** — bundled (`dist/`) → user-level (`~/.vex/`) → workspace (`./.vex/`) auto-discovery with lifecycle hooks
-- **25+ built-in tools** — file read/write, bash execution, web search/scrape, browser automation, cron job management, memory access, sub-agent delegation, and system utilities
-- **TF-IDF long-term memory** — automatic memory storage with TF-IDF retrieval injected into the agent context
-- **Cron scheduling** — supports `at`, `every`, and standard cron expressions; triggers agent turns and system events on schedule
-- **Playwright browser automation** — screenshots, form filling, and web interaction via headless Chromium
-- **Skills injection** — SKILL.md system (YAML frontmatter + Markdown body) parsed and injected into the agent system prompt at runtime
-- **Event hook system** — 8 event types with registration and unsubscribe support for extending agent behavior
-- **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001), Compose files included
-- **YAML config** — a single `config.local.yaml` format for all application configuration
+- **Cron scheduling** — `at`, `every`, and standard cron expressions; triggers agent turns on schedule
+- **Playwright browser automation** — screenshots, form filling, web interaction via headless Chromium
+- **Event hook system** — 8 event types with registration and unsubscribe support
+- **Docker support** — published GHCR image, multi-stage build (`node:20-alpine`), non-root user (`vex:vex`, UID/GID 1001)
+- **YAML + SQLite config** — system defaults in YAML, per-user overrides in SQLite, resolved at runtime
+
+---
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    WX[WeChat<br/>iLink OC API] --> GW
-    WC[WebChat<br/>WebSocket + SPA] --> GW
+    WX[WeChat<br/>iLink OC API] --> DP
+    WC[WebChat<br/>WebSocket + SPA] --> DP
+    CLI[CLI] --> DP
 
-    GW[Gateway<br/>Express + WebSocket] --> URM
-    GW --> AG
+    DP[Dispatcher<br/>resolve user, channel, config] --> AR
+    DP --> CF
 
-    URM[UserRuntimeManager<br/>per-Web-user Agent + MemoryManager] --> AG
+    CF[Config Store<br/>YAML + SQLite<br/>→ EffectiveConfig] --> AR
 
-    AG[Agent<br/>processMessage / processMessageStream<br/>wraps pi-coding-agent AgentRuntime] --> TO
-    AG --> SK
-    AG --> ME
-    AG --> CR
-    AG --> OB
+    AR[Agent Registry<br/>getOrCreate] --> AG
 
-    subgraph Subsystems
-        TO[Tools<br/>25+ built-in]
+    subgraph Agent
+        PS[Persona<br/>identity · style · emotion<br/>profile · history · memory]
+        TL[Tools<br/>25+ built-in]
         SK[Skills<br/>SKILL.md injection]
-        ME[Memory<br/>TF-IDF, scoped per user]
-        CR[Cron<br/>at / every / cron]
-        OB[Outbound<br/>message delivery]
-        EX[Extensions<br/>persona · sharelink · skill learner]
+        MM[Memory<br/>CJK-aware TF-IDF]
+        PL[Pipeline<br/>intercept · observe]
     end
 
-    AG --> PR[LLM Providers<br/>DeepSeek · Kimi · MiniMax<br/>Doubao · Zhipu · LongCat · etc.<br/>pi-ai abstraction]
-    AG --> EX
+    AG --> LLM[LLM Providers<br/>pi-ai abstraction<br/>DeepSeek · Kimi · MiniMax · etc.]
+    AG --> OB[Outbound<br/>unified delivery]
+    OB --> WX
+    OB --> WC
 ```
 
-| Subsystem | Location | Role |
-|-----------|----------|------|
-| Tools | `src/tools/` | Tool registration, validation, and execution engine |
-| Skills | `src/skills/` | SKILL.md YAML+Markdown parsing and injection |
-| Memory | `src/memory/` | TF-IDF vectorized long-term memory, scoped per Web user under `users/{userId}/` |
-| Cron | `src/cron/` | at/every/cron schedule dispatching |
+| Module | Location | Role |
+|--------|----------|------|
+| Dispatcher | `src/dispatcher/` | Single entry point: resolve (user, channel) → Agent |
+| Agent | `src/agent/` | Core: Persona + Tools + Skills + Memory + Pipeline |
+| Persona | `src/agent/persona/` | Identity, emotion, profile facts, memory directives — system prompt base |
+| Tools | `src/tools/` | LLM-callable capabilities, scoped per Agent |
+| Skills | `src/skills/` | SKILL.md parsing and prompt injection |
+| Memory | `src/memory/` | CJK-aware TF-IDF long-term memory, per-user scoped |
+| Pipeline | `src/pipeline/` | Per-Agent message interceptors and response observers |
+| Channels | `src/channels/` | Protocol adapters (WeChat OC API, WebSocket), pure I/O |
 | Outbound | `src/outbound/` | Cross-channel unified message delivery |
-| Extensions | `src/extensions/` | Built-in pipeline extensions: Persona, ShareLink, Skill Learner |
+| Config | `src/config/` | YAML loading + Zod validation, merged with SQLite overrides |
+| Providers | `src/providers/` | LLM model resolution, API key management |
+| Cron | `src/cron/` | at/every/cron schedule dispatching |
 | Plugins | `src/plugins/` | 3-tier auto-discovery + lifecycle management |
 | Browser | `src/browser/` | Playwright headless browser automation |
-| Hooks | `src/hooks/` | 8 event type hook system |
-| Sessions | `src/sessions/` | JSONL session persistence, scoped per Web user under `users/{userId}/` |
-| User runtime | `src/agents/user-runtime.ts` | `UserRuntimeManager` owns per-Web-user `Agent` and `MemoryManager` instances |
+| Hooks | `src/hooks/` | Event hook system |
+| Sessions | `src/sessions/` | JSONL session persistence, per-user scoped |
+| Web UI | `src/web/` | Server-rendered WebChat + control panel + auth |
+
+> See [Architecture Document](./docs/architecture.md) for detailed module contracts, data flow, and design decisions.
+
+---
 
 ## Quick Start
 
-### Install locally with npm
+### Install
 
 ```bash
 npm install -g vex-bot
@@ -89,126 +122,141 @@ vex --version
 vex onboard
 ```
 
-The interactive configuration wizard walks you through: model providers (Chinese models, custom OpenAI/Anthropic endpoints), communication channels (personal WeChat), agent parameters (default model, temperature, max tokens), server port, and memory settings.
+The interactive configuration wizard walks you through: model providers, channels (personal WeChat), agent parameters, server port, and persona settings.
 
-The config file is stored at `~/.vex/config.local.yaml`. Vex only reads YAML config files.
+Config is stored at `~/.vex/config.local.yaml`. Per-user overrides are stored in SQLite (`web_user_settings`) and managed via the Web control panel.
 
 ### Start
 
 ```bash
-# Full startup (WebChat + WeChat channel)
+# Full startup (WebChat + WeChat)
 vex start
 
-# WebChat only (no channel configuration required)
+# WebChat only
 vex start --web-only
 ```
 
-Once running, open `http://localhost:PORT` in a browser to access the WebChat interface. Health check: `GET /health`.
+Open `http://localhost:PORT` for the WebChat interface. Health check: `GET /health`.
 
-### Deploy with Docker
+### Docker
 
 ```bash
 docker compose up -d
 ```
 
-The default Compose file pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only mode, and persists state in the `vex-data` volume. For production, mount `config.local.yaml` into `/app/config.local.yaml`.
+Pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only, persists state in `vex-data` volume. Mount `config.local.yaml` into `/app/config.local.yaml` for production.
 
-For contributor builds from the local Dockerfile, use:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d --build
-```
+---
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `vex onboard` | Interactive configuration wizard (models, channels, server, agent, memory) |
-| `vex start` | Start the Gateway service (`--web-only` for WebChat only, `-p` to set port) |
-| `vex status` | Check service status and health |
-| `vex logs` | View logs (`-f` to tail, `-n` for line count, `--level` for severity filter) |
-| `vex chat` | Terminal chat test (`-m` for model, `-p` for provider) |
-| `vex check` | Validate configuration completeness |
-| `vex models` | List configured available models |
-| `vex kill` | Stop the running Vex service |
-| `vex restart` | Restart the service |
+| `vex onboard` | Interactive configuration wizard |
+| `vex start` | Start gateway (`--web-only` for WebChat only, `-p` for port) |
+| `vex status` | Service status and health |
+| `vex logs` | View logs (`-f` tail, `-n` lines, `--level` filter) |
+| `vex chat` | Terminal chat test (`-m` model, `-p` provider) |
+| `vex check` | Validate configuration |
+| `vex models` | List configured models |
+| `vex kill` | Stop running service |
+| `vex restart` | Restart service |
+
+---
 
 ## Configuration
 
-`config.local.yaml` structure:
+`config.local.yaml`:
 
 ```yaml
+# ── Persona (core: defines the agent's identity) ──
+persona:
+  persona_name: PandaBot
+  persona_base_prompt: |
+    你是一个友好、专业、乐于助人的 AI 助手。
+    耐心细致，逻辑清晰，善于分析问题。
+  persona_reply_style: |
+    用自然流畅的中文回复，适度使用 emoji。
+    简洁但不简略，详细但不啰嗦。
+  emotion_enabled: true
+  profile_building_enabled: true
+  profile_building_trigger_turns: 5
+
+# ── Model Providers ──
 providers:
   deepseek:
     apiKey: sk-xxx
-  kimi:
-    apiKey: sk-xxx
   minimax:
     apiKey: xxx
+  longcat:
+    apiKey: ak-xxx
   custom-openai:
     baseUrl: https://api.example.com/v1
     apiKey: sk-xxx
     models:
       - id: qwen2.5-72b
         name: Qwen 2.5 72B
-  custom-anthropic:
-    baseUrl: https://api.example.com
-    apiKey: sk-xxx
-    models:
-      - id: claude-3-5-sonnet
-        name: Claude 3.5 Sonnet
+
+# ── Channels ──
 channels:
   weixin:
     enabled: true
+
+# ── Agent ──
 agent:
-  defaultProvider: deepseek
-  defaultModel: deepseek-chat
+  defaultProvider: longcat
+  defaultModel: LongCat-2.0
   temperature: 0.7
   maxTokens: 4096
   workingDirectory: /path/to/workspace
+
+# ── Server ──
 server:
   port: 3000
   host: 0.0.0.0
-logging:
-  level: info
-  pretty: true
-webAuth:
-  enabled: true
-  database: ~/.vex/web-auth.sqlite
-  # secureCookies: true   # optional; auto-detected per request when omitted
+
+# ── Memory ──
 memory:
   enabled: true
   embeddingProvider: deepseek
-persona:
+
+# ── Web Auth ──
+webAuth:
   enabled: true
-  profile_building_enabled: true
-  profile_building_trigger_turns: 5
+  database: ~/.vex/web-auth.sqlite
+
+# ── Logging ──
+logging:
+  level: info
+  pretty: true
 ```
 
-Config loading is YAML-only: Vex loads `config.local.yaml` from the current directory, then `~/.vex/config.local.yaml`, and falls back to built-in defaults for missing fields.
+**Config resolution**: System defaults → `config.local.yaml` → SQLite `web_user_settings` (user overrides). Per-user overrides are set via the Web control panel and stored in the database automatically.
+
+---
 
 ## Project Structure
+
 ```
 .
 ├── src/
-│   ├── agents/          # Agent orchestration + session management (pi-coding-agent wrapper) + per-user runtime manager
-│   ├── gateway/         # Express HTTP/WS server, route dispatch
-│   ├── channels/        # Platform adapters: personal WeChat (iLink OC API)
-│   ├── tools/           # Tool registration, validation, execution engine (25 built-in tools)
-│   ├── skills/          # SKILL.md injection system (YAML frontmatter + Markdown)
-│   ├── plugins/         # 3-tier plugin auto-discovery (bundled/global/workspace)
-│   ├── extensions/      # Built-in pipeline extensions (Persona, ShareLink, Skill Learner)
-│   ├── memory/          # TF-IDF long-term memory with embedding
-│   ├── cron/            # Scheduling: at/every/cron expressions
+│   ├── agent/           # Agent core: Persona, Tools, Skills, Memory, Pipeline
+│   ├── dispatcher/      # Message routing: resolve (user, channel) → Agent
+│   ├── channels/        # Protocol adapters: WeChat (iLink OC), WebChat (WebSocket)
+│   ├── tools/           # Tool registration, validation, execution (25 built-in)
+│   ├── memory/          # CJK-aware TF-IDF long-term memory, per-user
+│   ├── skills/          # SKILL.md parsing and prompt injection
+│   ├── pipeline/        # Per-Agent interceptors and observers
+│   ├── providers/       # LLM model resolution (pi-ai wrapper)
+│   ├── config/          # YAML config loading + Zod validation + SQLite merge
 │   ├── outbound/        # Cross-channel unified message delivery
-│   ├── web/             # Server-rendered WebChat SPA (inline HTML/CSS/JS)
-│   ├── sessions/        # Session persistence (memory/file, JSONL transcripts)
+│   ├── cron/            # at/every/cron scheduling
+│   ├── plugins/         # 3-tier plugin discovery (bundled/global/workspace)
+│   ├── web/             # Server-rendered WebChat SPA + control panel + auth
 │   ├── browser/         # Playwright headless browser automation
 │   ├── hooks/           # Event hook system (8 event types)
-│   ├── providers/       # Model resolution layer (pi-ai wrapper)
-│   ├── config/          # YAML config loading + Zod validation
-│   ├── cli/             # Commander.js CLI (9 subcommands, onboard wizard)
-│   ├── commands/        # Chat command framework
+│   ├── sessions/        # JSONL session persistence
+│   ├── cli/             # Commander.js CLI (9 subcommands)
 │   ├── types/           # Shared TypeScript types
 │   └── utils/           # Logger, crypto helpers
 ├── skills/              # Built-in skills
@@ -218,20 +266,18 @@ Config loading is YAML-only: Vex loads `config.local.yaml` from the current dire
 └── Dockerfile
 ```
 
+---
+
 ## Development
 
 ```bash
-# Install from source for development
 npm install
 npm run build
 
-# Development mode (TSX with auto-restart)
+# Dev mode (TSX auto-restart)
 npm run dev
 
-# Build
-npm run build
-
-# Run tests
+# Tests
 npm test
 
 # Start Gateway directly (bypass CLI)
@@ -246,8 +292,11 @@ npm run start:gateway
 - **Pino logging**: `getChildLogger("moduleName")` pattern for structured, namespaced loggers
 - **Node >= 18**: minimum supported runtime
 
+---
+
 ## Documentation
 
+- [Architecture](./docs/architecture.md) — design philosophy, module contracts, data flow, migration path
 - [User Manual](./docs/user-manual.md)
 - [Developer Guide](./docs/developer-guide.md)
 - [API Reference](./docs/api-reference.md)

@@ -22,7 +22,10 @@
  *     the full module is testable without hitting any real provider.
  */
 
+import { join } from "path";
+import { homedir } from "os";
 import { getChildLogger } from "../utils/logger.js";
+import { expandHomePath } from "../utils/path.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import type { ChatResponse, ChatUsage } from "./messages.js";
 import type { Model, Api } from "@mariozechner/pi-ai";
@@ -241,7 +244,17 @@ export class AgentRuntime {
     }
 
     const workingDirectory = this.config.workingDirectory ?? process.cwd();
-    const sessionFile = `${workingDirectory}/.vex/sessions/${sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl`;
+    // sessionDir is where pi-coding-agent's own session JSONL persists
+    // (matches FileSessionStore's ~/.vex/sessions/) -- distinct from
+    // workingDirectory, which is only the agent's tool-execution cwd
+    // (bash/filesystem tools). Regression: this used to build sessionFile
+    // from workingDirectory, so sessions landed under whatever directory the
+    // process happened to be launched from instead of the documented,
+    // stable ~/.vex/sessions/ default.
+    const sessionDir = this.config.sessionDir
+      ? expandHomePath(this.config.sessionDir)
+      : join(homedir(), ".vex", "sessions");
+    const sessionFile = join(sessionDir, `${sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_")}.jsonl`);
 
     const apiKey = this.deps.modelResolver.getApiKeyForProvider(this.config.provider);
     const session = await this.deps.createPiSession({
