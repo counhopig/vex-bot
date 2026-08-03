@@ -1,203 +1,154 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-07-03
-**Commit:** 3d0a4fb
-**Branch:** main
+**Updated:** 2026-08-03
+**Branch:** `rewrite/full-architecture`
+
+**Start here, then go deeper:** `docs/rewrite-summary.md` (what happened and why — the full story of the rewrite this file describes) → `docs/architecture.md` (target architecture spec, module boundaries, core design principles) → `docs/rewrite-plan.md` (exhaustive per-module process record, if you need commit-level detail).
 
 ## OVERVIEW
 
-Vex (`vex-bot`) — lightweight AI chatbot framework for Chinese ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via iLink OC API. ~25k lines / 101 .ts source files. TypeScript ESM only. npm package + CLI binary.
+Vex (`vex-bot`) — lightweight AI chatbot framework for the Chinese LLM/communication ecosystem. Built on `@mariozechner/pi-coding-agent` (agent runtime) + `@mariozechner/pi-ai` (LLM abstraction). Connects to personal WeChat via the iLink OC API, plus a server-rendered WebChat SPA. TypeScript ESM only. npm package + CLI binary.
 
-Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0), stripped to weixin-only and rebranded as Vex.
+**This is a from-scratch architecture rewrite**, not the original codebase — the pre-rewrite implementation is archived read-only in `_archive/` (git history preserved via `git mv`) and must never be imported from new code. If you're reading old blog posts, old commit messages, or a stale doc that mentions `src/agents/`, `src/gateway/`, `src/extensions/`, `src/commands/`, or `src/browser/` — those directories don't exist anymore. See `docs/rewrite-summary.md` for exactly what changed and why.
+
+**Core design principle, load-bearing across the whole codebase**: no process-global state bleeding across instances. Nearly everything that used to be a module-level singleton or `let` in `_archive/` is now a class instantiated per (user, channel) or per-Agent. The one deliberate exception is `hooks/`'s `defaultBus` (EventBus) — hook *subscription* is broadcast semantics, not per-user state, and archive documents this as intentional.
 
 ## STRUCTURE
 
 ```
 .
 ├── src/
-│   ├── agents/        # Agent orchestration + session management (pi-coding-agent wrapper)
-│   ├── gateway/       # Express HTTP/WS server, route dispatch
-│   ├── channels/      # Platform adapters: personal WeChat (iLink OC API)
-│   ├── tools/         # Tool registration, validation, execution engine + 25 built-in tools
-│   ├── skills/        # SKILL.md injection system (YAML frontmatter + Markdown)
-│   ├── plugins/       # Auto-discovery plugin system (3-tier: bundled/global/workspace)
-│   ├── extensions/    # Built-in pipeline extensions: Persona, ShareLink, Skill Learner
-│   ├── memory/        # Long-term memory with TF-IDF embedding
-│   ├── cron/          # Scheduling: at/every/cron, agentTurn + systemEvent types
-│   ├── outbound/      # Unified cross-channel message delivery
-│   ├── web/           # Server-rendered WebChat SPA (inline HTML/CSS/JS, no frontend build)
-│   ├── sessions/      # Session persistence (memory/file, JSONL transcript)
-│   ├── browser/       # Playwright headless browser automation
-│   ├── hooks/         # Event hook system (8 event types)
-│   ├── providers/     # Model resolution layer (pi-ai wrapper)
-│   ├── config/        # YAML config loading + Zod validation
-│   ├── cli/           # Commander.js CLI (onboard, start, logs, status, etc.)
-│   ├── commands/      # Chat command framework
-│   ├── types/         # Shared TypeScript types
-│   └── utils/         # Logger, crypto helpers
-├── skills/            # Built-in skills (greeting, clawhub)
-├── tests/             # Vitest tests (26 files)
-├── docs/              # Documentation
-└── .github/           # CI: npm publish on release
+│   ├── agent/          # Agent orchestration: Agent, AgentRuntime, AgentRegistry, Pipeline, persona/, SystemPromptAssembler
+│   ├── channels/        # ChannelAdapter interface, ChannelRegistry, WeChat + WebChat adapters (channels/wechat/, channels/webchat/)
+│   ├── cli/             # Commander CLI: index.ts (commands), server.ts (buildAgentFactory + startWebServer bootstrap), config.ts, models.ts, check.ts, chat.ts, onboard.ts
+│   ├── config/          # ConfigStore + resolvers (YamlLoader/SqliteLoader), EffectiveConfig (per-user resolved config, BUILT_IN_DEFAULTS)
+│   ├── cron/            # CronService/CronStore/schedule/executor — multi-tenant via CronJob.ownerId
+│   ├── dispatcher/      # Dispatcher — the single inbound-message entry point (dispatch/dispatchSynthetic)
+│   ├── hooks/           # HookEvent types + class-based EventBus (defaultBus is the one intentional shared singleton)
+│   ├── memory/          # MemoryManager/JsonMemoryStore (per-Agent), tokenizer/ (CJK-native)
+│   ├── outbound/        # OutboundDeliver — routes replies back through ChannelRegistry
+│   ├── plugins/         # PluginService (per-(user,channel)), discovery (3-tier: bundled/global/workspace), loader
+│   ├── providers/       # ModelResolver, ProviderMetadata (PROVIDER_IDS derived, not hardcoded), fetch-compat
+│   ├── sessions/        # FileSessionStore (per-user), title.ts (session auto-titling)
+│   ├── skills/          # SkillLoader/SkillRegistry/SkillInjector — feeds Agent's system prompt "skills" section
+│   ├── tools/           # ToolRegistry + tools/builtin/* (13 built-in tools: filesystem, bash, browser, memory, weather, cron, image, web, etc.)
+│   ├── utils/           # logger.ts (pino, lazy child-logger proxy — see CONVENTIONS), path.ts (expandHomePath/isPathInside)
+│   ├── vendor/          # Vendored deps (e.g. qrcodegen.ts, no third-party call)
+│   └── web/             # WebServer bootstrap, routes/ (auth, config, sessions, admin, weixin-login, log-stream), static/ (inline SPA templates)
+├── _archive/            # Read-only pre-rewrite reference. NEVER import from here. Historical bug-fix comments are gold; the code around them is not.
+├── tests/               # Vitest, flat directory, 59 files, `<module>.test.ts` naming
+├── docs/                # architecture.md, rewrite-plan.md, rewrite-summary.md, user-manual.md; developer-guide.md/api-reference.md are STALE (pre-rewrite, unfixed as of this writing)
+└── .github/workflows/   # CI: npm publish on release
 ```
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Message processing pipeline | `src/agents/agent.ts` → `src/agents/runtime.ts` | Agent.processMessage → AgentRuntime.chat/chatStream |
-| Server startup | `src/gateway/server.ts` | Gateway class: Express + WS + channel init |
-| CLI commands | `src/cli/index.ts` | Commander.js, 9 subcommands, onboard wizard |
-| Add new channel | `src/channels/` | See `src/channels/AGENTS.md` |
-| Add new tool | `src/tools/` | See `src/tools/AGENTS.md` |
-| Config schema | `src/config/index.ts` | Zod schemas, loadConfig, validateRequiredConfig |
-| Model providers | `src/providers/model-resolver.ts` | Provider presets, model mapping |
-| System prompt | `src/agents/system-prompt.ts` | Prompt assembly with skills/memory injection |
-| Plugin API | `src/plugins/index.ts` | definePlugin, PluginApi, 3-tier loading |
-| Built-in extensions | `src/extensions/` | Persona, ShareLink, Skill Learner pipeline integrations |
-| Persona auto profile | `src/extensions/persona/index.ts` | Background user-profile extraction every N observed replies |
-| Type definitions | `src/types/index.ts` | All shared interfaces: VexConfig, channels, messages |
-| WebChat UI | `src/web/static.ts` | Login page plus inline HTML/CSS/JS template strings |
-| Web UI auth | `src/web/auth.ts` | SQLite-backed browser users, admin roles, login sessions, per-user Weixin login records |
-| Session persistence | `src/sessions/store.ts` | MemoryStore and FileStore (JSONL) |
-| Memory system | `src/memory/manager.ts` | MemoryManager: store/query/list, TF-IDF |
-| Cron scheduling | `src/cron/service.ts` | CronService: scheduling loop, job execution |
-| Outbound delivery | `src/outbound/index.ts` | deliverOutboundPayloads, deliverMessage |
-| Multi-user runtime | `src/agents/user-runtime.ts` | `UserRuntimeManager`: one `Agent` + `MemoryManager` per authenticated Web user; scoped session/memory dirs under `users/{userId}/` |
+| Message processing pipeline | `src/dispatcher/Dispatcher.ts` → `src/agent/Agent.ts` → `src/agent/AgentRuntime.ts` | `Dispatcher.dispatch(ctx)` → `Agent.processMessage` → `AgentRuntime.chat` (non-streaming; the new `Agent` has no streaming method) |
+| Server startup / dependency wiring | `src/cli/server.ts` | `startWebServer()` constructs everything (ModelResolver, ConfigStore, AgentRegistry, Dispatcher, CronService, WebServer...); `buildAgentFactory()` is the per-(user,channel) Agent constructor — **this is the file to check first if a module seems "built but not doing anything"** |
+| CLI commands | `src/cli/index.ts` | Commander: start/models/check/chat/onboard/kill/restart/status/logs |
+| Add a new channel | `src/channels/` | Implement `ChannelAdapter` (`src/channels/ChannelAdapter.ts`); register via `ChannelRegistry` |
+| Add a new tool | `src/tools/builtin/` | Export a `createXTool(...)`, then **wire it into `src/tools/builtin/index.ts`'s `createBuiltinTools()`** — this exact gap (tool built but never called from the assembler) was the single most common defect class found in this codebase; see `docs/rewrite-summary.md` §5 |
+| Config schema | `src/config/EffectiveConfig.ts` (resolved per-user shape) + `src/web/routes/config.ts` (`SystemConfig`, the raw/system-level shape the control panel edits) | **Two separate config types/pipelines** — don't conflate them. `ConfigStore.resolve(userId, channelId)` produces `EffectiveConfig`; `cli/config.ts`'s `loadConfig()` produces `SystemConfig` |
+| Model providers | `src/providers/ModelResolver.ts` | Class-based: `init/resolveModel/getApiKeyForProvider/isProviderAvailable/getAllRegisteredModels`. Case-sensitive model-id matching — a mismatched-case id silently falls through to a fallback resolver that can guess the wrong API protocol (known issue, unfixed) |
+| System prompt assembly | `src/agent/SystemPromptAssembler.ts` | 5-section assembler (persona/environment/toolRules/skills/...); `Agent.ts`'s `processMessage` is the only call site — check it directly to see which sections are actually populated |
+| Plugin API | `src/plugins/index.ts`, `src/plugins/service.ts` | `definePlugin`/`defineToolPlugin`, `PluginService` (per-(user,channel) instance, constructed in `buildAgentFactory`) |
+| Skills injection | `src/skills/SkillInjector.ts` (`buildPrompt`) + `src/agent/Agent.ts` (`skillsPrompt` field) | Bootstrap loads skills once per Agent build and pre-assembles the prompt string — the Agent never imports the skills module directly |
+| WebChat UI | `src/web/static/index.ts` (`handleStaticRequest`) + `src/web/static/{client,styles,i18n}.ts` (inline template strings, ported verbatim from archive) | Server-rendered, no frontend build step |
+| Web UI auth | `src/web/routes/auth.ts` | `WebAuthStore`: SQLite-backed users, timing-safe login, rate limiting, first-user-becomes-admin |
+| Session persistence | `src/sessions/store.ts` (`FileSessionStore`) | Per-user instance, default `~/.vex/sessions/`. **Distinct from** `AgentRuntime`'s own pi-coding-agent session JSONL files (`config.sessionDir`, same default dir but a different persistence layer — see the sessionDir bug in `docs/rewrite-summary.md` §4 if these ever seem to disagree) |
+| Memory system | `src/memory/MemoryManager.ts` | Per-Agent instance (constructed in `buildAgentFactory`), vector+keyword hybrid recall, CJK-aware tokenization |
+| Cron scheduling | `src/cron/service.ts` (`CronService`) | Process-wide scheduler (constructed once in `startWebServer`), multi-tenant via `CronJob.ownerId`, dispatches through an injected callback (never imports Agent/AgentRegistry directly) |
+| Outbound delivery | `src/outbound/OutboundDeliver.ts` | Routes through `ChannelRegistry` (flat + per-user fallback), timeout-protected, never throws |
+
 ## CODE MAP
 
 | Symbol | Type | Location | Role |
 |--------|------|----------|------|
-| `Gateway` | Class | `src/gateway/server.ts` | Express server, channel init, WS setup |
-| `Agent` | Class | `src/agents/agent.ts` | Message loop, tool calling, session restore |
-| `AgentRuntime` | Class | `src/agents/runtime.ts` | Session management, chat/chatStream (pi-coding-agent wrapper) |
-| `AgentOptions` | Interface | `src/agents/agent.ts` | Agent config: model, provider, systemPrompt, maxTokens, etc. |
-| `VexConfig` | Interface | `src/types/index.ts` | Full config shape: providers, channels, agent, server, logging |
-| `InboundMessageContext` | Interface | `src/types/index.ts` | Normalized inbound message from any channel |
-| `registerPlugin` | Function | `src/plugins/index.ts` | Plugin registration with lifecycle (register/activate/cleanup) |
-| `definePlugin` | Function | `src/plugins/index.ts` | Plugin definition helper |
-| `loadConfig` | Function | `src/config/index.ts` | YAML file loading → merge → Zod validation |
-| `createAgentRuntime` | Function | `src/agents/runtime.ts` | Factory: VexConfig → AgentRuntime |
-| `createAgent` | Function | `src/agents/agent.ts` | Factory: VexConfig → Agent (with tools, skills, memory, cron) |
-| `VexError` | Class | `src/types/index.ts` | Base error with code + details |
-| `ProviderError` | Class | `src/types/index.ts` | Provider-specific errors |
-| `ChannelError` | Class | `src/types/index.ts` | Channel-specific errors |
-| `UserRuntimeManager` | Class | `src/agents/user-runtime.ts` | Per-Web-user `Agent` + `MemoryManager` factory and registry |
+| `WebServer` | Class | `src/web/server.ts` | Express + WS bootstrap, channel lifecycle |
+| `startWebServer` | Function | `src/cli/server.ts` | Top-level composition: constructs every dependency and starts `WebServer` |
+| `buildAgentFactory` | Function | `src/cli/server.ts` | Returns the per-(user, channel) Agent constructor passed to `AgentRegistry` |
+| `Agent` | Class | `src/agent/Agent.ts` | Owns Pipeline, Persona, AgentRuntime, skillsPrompt, pluginService; `processMessage`/`shutdown` |
+| `AgentRuntime` | Class | `src/agent/AgentRuntime.ts` | pi-coding-agent wrapper: per-sessionKey lock-serialized sessions, `chat()`, `getLastAssistantError()` (error surfacing) |
+| `AgentRegistry<T>` | Class | `src/agent/AgentRegistry.ts` | Generic (userId,channelId)-keyed cache: concurrent-build sharing, idle-TTL, LRU, dispose paths (shutdown/reset/idle/overflow) |
+| `Dispatcher` | Class | `src/dispatcher/Dispatcher.ts` | `dispatch(ctx)` / `dispatchSynthetic(ctx)` — resolves userId → config → agent → deliver |
+| `EffectiveConfig` | Interface | `src/config/EffectiveConfig.ts` | Per-(user,channel) resolved config; `BUILT_IN_DEFAULTS` for tier-1 defaults |
+| `SystemConfig` | Interface | `src/web/routes/config.ts` | Raw system-level config shape the control panel edits (superset, not per-user) |
+| `InboundMessageContext` / `ChannelAdapter` | Interface | `src/channels/ChannelAdapter.ts` | Normalized inbound message; the interface every channel implements |
+| `ModelResolver` | Class | `src/providers/ModelResolver.ts` | `init/resolveModel/getApiKeyForProvider/isProviderAvailable/getAllRegisteredModels` |
+| `PluginService` | Class | `src/plugins/service.ts` | `registerPlugin/loadFromCandidates/activateAll/unregisterPlugin/shutdown` |
+| `MemoryManager` | Class | `src/memory/MemoryManager.ts` | `remember/recall/get/forget/list/clearAll/formatForContext` |
+| `FileSessionStore` | Class | `src/sessions/store.ts` | Per-user session/transcript persistence, atomic writes |
+| `CronService` | Class | `src/cron/service.ts` | Process-wide scheduler, multi-tenant via `ownerId` |
+| `WebAuthStore` | Class | `src/web/routes/auth.ts` | SQLite-backed web user auth |
+| `getChildLogger` | Function | `src/utils/logger.ts` | Returns a lazy proxy — see CONVENTIONS below, do not eagerly bind |
 
 ## CONVENTIONS
 
-- **Strict TypeScript everywhere**: `noUncheckedIndexedAccess`, `noImplicitReturns`, `noFallthroughCasesInSwitch` enabled
-- **ESM only**: `"type": "module"`, NodeNext resolution, `.js` extension required in imports
-- **Barrel exports**: Every module has `index.ts` re-exporting `*` from submodules
-- **Chinese comments with English identifiers**: JSDoc in Chinese, code in English
-- **Zod for config validation**: All config schemas defined as Zod objects in `src/config/index.ts`
-- **YAML config format**: Application config is YAML-only (`config.local.yaml`)
-- **Config hierarchy**: CWD `config.local.yaml`, then `~/.vex/config.local.yaml`; later files override earlier fields
-- **Logger via pino**: `getChildLogger("moduleName")` pattern, child loggers named after module; `logging.pretty` colorizes console output while file logs stay JSON
-- **Node >= 18**: Uses `homedir()` from `os`, `readFileSync` from `fs`, ESM top-level await
-- **No external frontend**: WebChat is server-rendered HTML embedded in `static.ts`, marked.js loaded via CDN
-- **Web UI auth storage**: Browser login/registration uses SQLite via `better-sqlite3`, defaulting to `~/.vex/web-auth.sqlite`; first registered user becomes `admin`
-- **Multi-user backend by default**: `webAuth.enabled: true` (default) routes WebChat and Weixin through `UserRuntimeManager`; per-user settings persist in the `web_user_settings` SQLite table; per-user memory/session dirs are namespaced. Setting `webAuth.enabled: false` reverts to the legacy single-user backend.
-- **Owner-scoped extensions, not global singletons**: the pipeline registries (`src/pipeline/index.ts`) are process-global and keyed by name, so extensions (Persona, Skill Learner) register their callbacks **once** and keep per-owner state in a `Map<ownerId, runtime>`, resolving the owner from `ctx` via `__webUserId` at call time. `initExtensions`/`initPersona`/`initSkillLearner` take an `ownerId`; `UserRuntimeManager` passes it as the Web user id and calls `disposeExtensions(ownerId)` when a runtime is reset/evicted. Any new stateful extension must follow this pattern rather than module-level globals. Inbound `webchat` contexts are tagged with `__webUserId` in `websocket.ts` so extensions resolve to the same runtime as the per-user `Agent`.
-- **No formatter configured**: `lint` script is a TypeScript type gate (`tsc --noEmit`)
+- **Strict TypeScript everywhere**: `strict`, `noUncheckedIndexedAccess`, `noImplicitReturns`, `noFallthroughCasesInSwitch` enabled (verify against `tsconfig.json`, don't trust this doc if it drifts)
+- **ESM only**: `"type": "module"`, NodeNext resolution, `.js` extension required in imports (even for `.ts` files)
+- **No process-global state** (see OVERVIEW): if you're about to write `let x` or a module-level `Map` that holds per-user data, it almost certainly belongs on a class instance instead. This is the single most-cited principle across the whole rewrite's review history.
+- **Logger via pino, lazily bound**: `const logger = getChildLogger("moduleName")` at module top-level is safe and expected (nearly every file does this) — `getChildLogger` returns a proxy that resolves the *current* root logger on every call, not the one active at import time. This exists because `cli/server.ts`'s `setLogger(createLogger({level: config.logging.level, ...}))` runs after all modules have already imported and bound their `const logger`; if `getChildLogger` bound eagerly, the configured log level/format would never take effect (this was a real, shipped bug — see `docs/rewrite-summary.md` §4).
+- **TDD discipline throughout the rewrite**: every module was built red→green, and every review round independently re-ran `tsc`/`vitest` rather than trusting a "tests pass" claim. If you're extending this codebase, match that discipline — the review history is full of defects that automated tests alone didn't catch until someone read the actual diff or ran the real thing.
+- **Two separate config pipelines, don't conflate them**: `EffectiveConfig` (per-user, via `ConfigStore.resolve`) vs `SystemConfig` (system-level, via `cli/config.ts`'s `loadConfig` and `web/routes/config.ts`). A field existing in one doesn't mean it's in the other — `weather` and `webAuth` live only in `SystemConfig`, for instance.
+- **YAML config format**: `config.local.yaml`, resolved from an explicit `--config` path, then CWD, then `~/.vex/config.local.yaml`.
+- **Chinese comments are fine in docs/planning; code comments are English-only, one-line, WHY not WHAT.**
 
 ## CHANGE HYGIENE
 
-- **Every code/config/behavior change must include a documentation/version review**: before finishing any modification, addition, or removal, check whether README, `docs/`, relevant `AGENTS.md`, `CHANGELOG.md`, package version metadata, and visible examples/config snippets need updates. Update them in the same change when affected; if no update is needed, be ready to state why.
+- Before finishing any change, check whether `docs/rewrite-summary.md`, `docs/rewrite-plan.md`, or this file need updating. If a module's wiring status changes (e.g. you connect something that was previously dormant), update `docs/rewrite-summary.md` §8 (known lingering gaps) — that section exists specifically to stop this exact class of bug (a module built but never actually called from the assembly point) from recurring silently.
+- **Verify claims, don't trust them.** This codebase's entire review history is built on the discipline of independently re-running tests, reading actual diffs instead of descriptions, and diffing against `_archive/` for specific behavioral claims rather than accepting "matches archive" at face value. Several real defects were only caught this way (see `docs/rewrite-summary.md` for examples). Apply the same standard to any future change.
 
 ## ANTI-PATTERNS
 
-- **NEVER import `.ts` extensions** — must use `.js` extensions (NodeNext resolution)
-- **NEVER add a frontend build system** — WebChat is intentionally server-rendered inline
-- **NEVER use `package-lock.json` versions from devDependencies in production** — Docker uses `npm ci --omit=dev`
+- **NEVER import from `_archive/`** — read it for reference/historical context, never import it
+- **NEVER add a module-level singleton for per-user/per-channel state** — the one sanctioned exception is `hooks/`'s `defaultBus`, and that's because hook subscription is genuinely broadcast semantics
+- **NEVER assume a `tools/builtin/*` factory function is actually wired up** — check `tools/builtin/index.ts`'s `createBuiltinTools()` body directly; declaring an option in `BuiltinToolsOptions` doesn't mean the function uses it (this was true for memory/weather/cron/image tools for a long stretch of this rewrite)
+- **NEVER assume a module with passing tests is connected to the running system** — `memory/`, `skills/`, and `plugins/` all had full test suites and passed review while being completely dormant (zero call sites outside their own module) until a dedicated integration pass found and fixed it
+- **NEVER use `.ts` extensions in imports** — NodeNext resolution requires `.js`
 - **NEVER use `any` or `@ts-ignore`** — strict mode is enforced project-wide
-- **NEVER check in `config.local.yaml`** — gitignored, for local overrides only
-
-## UNIQUE STYLES
-
-- CLI binary + library in same package: `"main": "dist/index.js"` (import) + `"bin": {"vex": "./dist/cli/index.js"}` (global)
-- 3-tier resource loading for plugins and skills: built-in → user-level (`~/.vex/`) → workspace (`./.vex/`)
-- Docker uses non-root user `vex:vex` (UID/GID 1001)
-- Health check: `GET /health` returns `{"status":"ok","timestamp":"..."}`
-- CLI `onboard` wizard is ~700 lines of inline readline prompts in `cli/index.ts`
-- Only supported channel is personal WeChat via iLink OC API (QR code login + long-polling)
-- ChannelId type is `"weixin" | "webchat"`
 
 ## BUILD & CI
 
 | Stage | Detail |
 |-------|--------|
-| **Build** | `tsc` (NodeNext module, ES2022 target) → copy `src/web/assets` to `dist/web/assets` |
-| **CI trigger** | GitHub Release `created` event → verify gates → npm publish → GHCR image publish |
-| **CI runner** | ubuntu-latest, Node 20 |
-| **Tests in CI** | `npm test -- --run` |
-| **Type gate in CI** | `npm run lint` (`tsc --noEmit`) |
-| **Docker** | Multi-stage `node:20-alpine`: builder → production. Non-root `vex:vex` (1001:1001). CLI as ENTRYPOINT |
-| **docker-compose** | Default published-image compose (`--web-only`, 512M mem limit) + dev compose for local Dockerfile builds |
-| **Artifacts** | `dist/`, `skills/`, `package*.json` only. No Docker image push to registry |
-| **Missing** | No Makefile |
+| **Build** | `npm run build` = `clean` (rm dist/) → `tsc` → `scripts/copy-web-assets.mjs` (copies `src/web/static/assets` → `dist/web/static/assets`) |
+| **Dev** | `npm run dev` = `tsx watch src/cli/index.ts` |
+| **Test** | `npm test` = `vitest` |
+| **Lint/type gate** | `npm run lint` = `tsc --noEmit` (no formatter configured) |
+| **CI** | `.github/workflows/release.yml` — not re-verified against the new `src/` layout in this pass, check directly if touching CI |
+| **Docker** | `Dockerfile` exists — not re-verified against the new layout in this pass |
 
 ## TEST INFRASTRUCTURE
 
-- **Framework**: Vitest 2.x, `globals: true`, `environment: "node"`
-- **Location**: `tests/` directory (flat, 26 files). NOT colocated with source. Zero `__tests__/` dirs in `src/`
-- **Naming**: `<module>.test.ts` (e.g., `config.test.ts`, `hooks.test.ts`)
-- **Mock pattern**: `vi.mock()` hoisted at top, `.js` extension in paths, NO shared mock helpers — every file self-contained
-- **Logger mock** (appears in many files): same shape, copy-pasted per file
-- **Fixtures**: temp dirs under `os.tmpdir()` created in `beforeEach`, cleaned in `afterEach`. No fixture files
-- **Coverage excludes**: `src/cli/**`, `src/web/**`
-- **Untested**: CLI, WebChat UI, gateway Express server, WeChat channel adapter, chat commands
-- **Frontend QA**: Do not run browser/UI/visual frontend tests unless the user explicitly asks for them. Use TypeScript, unit tests, build, and backend/CLI smoke checks for default verification.
-- **No** snapshots, `.only`, `.skip`, custom matchers
+- **Framework**: Vitest, flat `tests/` directory (59 files as of this writing), NOT colocated with source
+- **Naming**: `<module>.test.ts`, e.g. `agent-runtime.test.ts`, `cli-server.test.ts`, `webchat-channel.test.ts`
+- **Real integration over mocking where feasible**: the strongest tests in this codebase write real fixture files to temp dirs and exercise real code paths (e.g. `plugins-service.test.ts` writes and dynamically imports real CJS plugin modules; `webchat-channel.test.ts` opens real WebSocket connections over a real HTTP server) rather than asserting against mocked call shapes. When a heavy dependency genuinely needs mocking (ConfigStore, AgentRegistry in `web-server.test.ts`), the surrounding real components (WebAuthStore, FileSessionStore, ChannelRegistry) stay real.
+- **Fixtures**: temp dirs under `os.tmpdir()`, created in `beforeEach`/cleaned in `afterEach`
 
-## CROSS-CUTTING CONCERNS
+## KNOWN GAPS (verify current status in `docs/rewrite-summary.md` §8 before relying on this list — it decays faster than the rest of this file)
 
-| Issue | Files Affected | Risk |
-|-------|---------------|------|
-| **`ChatMessage` name collision** | `src/types/index.ts` vs `src/web/types.ts` | Incompatible shapes — shared has `tool_calls`, web has `id`/`timestamp` |
-| **Hardcoded provider IDs** | `src/cli/index.ts`, `src/web/static.ts`, `src/web/websocket.ts` | 15 provider IDs hardcoded in 3 places — adding a provider requires 3-file edit |
-| **No file locking for config writes** | `src/cli/index.ts:onboard` + `src/web/websocket.ts:saveConfig` + `src/channels/weixin/adapter.ts:persistToken` | Concurrent writes to the same runtime-selected config file can race |
-| **`require()` in ESM module** | `src/plugins/index.ts` (lines 240-241, 300-301), `src/agents/system-prompt.ts` (line 91) | Will fail on strict ESM Node.js |
-| **Plugin auto-discovery not wired** | `src/plugins/service.ts` exists but never called from `Gateway` | Bundled/global/workspace plugins not auto-loaded on `vex start` |
-| **Unused utils** | `src/utils/index.ts` — 10/13 functions never imported internally | Dead code: `retry`, `delay`, `truncate`, `safeJsonParse`, `deepMerge`, etc. exist only in public barrel |
+- `ModelResolver`'s fallback path silently guesses a wrong API protocol for a case-mismatched model id, instead of failing clearly or matching case-insensitively.
+- `tool_start`/`tool_end` hooks are declared in `hooks/types.ts` but nothing emits them — a plugin registering these hooks will silently never fire. Needs `PiAgent.setBeforeToolCall`/`setAfterToolCall` wired to pi-coding-agent's own hooks.
+- `docs/developer-guide.md` and `docs/api-reference.md` are pre-rewrite and describe a codebase structure that no longer exists (`src/agents/`, `src/gateway/`, etc.). Not yet regenerated.
 
 ## COMMANDS
 
 ```bash
-npm run build          # tsc → dist/ + copied Web UI assets
-npm run dev            # tsx watch (auto-restart)
-npm test               # vitest
-npm start              # Production start (from dist)
-npm run start:gateway  # Dev: bypass CLI, start gateway directly
-vex onboard           # Interactive config wizard
-vex start --web-only  # WebChat only, no channel platforms
-vex logs -f           # Tail follow logs
-```
-
-## AGENTS.md HIERARCHY
-
-```
-./AGENTS.md                       (root — you are here)
-├── src/channels/AGENTS.md        Channel adapter layer
-├── src/tools/AGENTS.md           Tool system + 25 built-in tools
-├── src/agents/AGENTS.md          Agent orchestration core
-├── src/web/AGENTS.md             WebSocket protocol + WebChat SPAs
-├── src/plugins/AGENTS.md         3-tier plugin discovery system
-├── src/cron/AGENTS.md            Scheduling engine
-├── src/memory/AGENTS.md          Long-term memory system
-├── src/skills/AGENTS.md          SKILL.md injection system
-└── src/browser/AGENTS.md         Playwright browser automation
+npm run build              # tsc → dist/ + copied web assets
+npm run dev                 # tsx watch (auto-restart)
+npm test                    # vitest
+npx tsx src/cli/index.ts start --web-only   # run without building, WebChat-only (still honors channels.weixin if configured — see below)
+vex onboard                 # interactive config wizard (after global install / npm link)
+vex start --web-only        # NOTE: --web-only only relaxes the "must configure a channel" startup check — it does NOT disable a configured WeChat channel
+vex logs -f                 # tail follow logs
 ```
 
 ## NOTES
 
-- The agent engine is `@mariozechner/pi-coding-agent` — understand its API before modifying `src/agents/runtime.ts`
-- pi-coding-agent provides: `createAgentSession`, `AgentSession`, `SessionManager`, `AuthStorage`, `ModelRegistry`
-- WeChat channel uses iLink OC API long-polling, not WebSocket
-- Docker Compose health check depends on Express `/health` endpoint
-- Playwright (`playwright-core`) requires browser binaries: `npx playwright install chromium`
-- The `lint` script is a TypeScript type gate (`tsc --noEmit`); no formatter is configured
-- `src/cli/fetch-patch.ts` monkey-patches `globalThis.fetch` at CLI startup for non-ASCII headers (MiniMax/Zhipu)
-- `src/cli/index.ts:chat` bypasses Agent entirely — constructs `@mariozechner/pi-ai` messages directly
-- Config writes from CLI onboard, WebSocket saveConfig, and Weixin token persistence have no file locking
-- `src/web/static.ts` is 2303 lines — two inline SPAs with no separation of concerns
+- The agent engine is `@mariozechner/pi-coding-agent` — read its actual installed source (`node_modules/@mariozechner/pi-coding-agent/dist/`) before assuming its behavior, especially around system-prompt reset semantics (`session.prompt()` silently overwrites the system prompt with a private `_baseSystemPrompt` field whenever custom tools are present — `AgentRuntime.chat()`'s `setBaseSystemPrompt` call exists specifically to counter this).
+- WeChat channel uses iLink OC API long-polling, not WebSocket.
+- `PROVIDER_IDS` is derived (`PROVIDERS.map(p => p.id)`), not hardcoded in multiple places — this was a real bug in the archive that was fixed during the rewrite.
+- Two session-file concepts share the default `~/.vex/sessions/` directory on purpose: `FileSessionStore`'s transcript/index files and `AgentRuntime`'s pi-coding-agent conversation JSONL files. `FileSessionStore.recoverIndexFromTranscripts()` is specifically built to recognize both formats.
+- No sub-`AGENTS.md` files exist yet under `src/` (the pre-rewrite hierarchy referenced several; none were recreated). If this file grows unwieldy, splitting per-module knowledge bases following the old pattern is a reasonable next step, not yet done.
