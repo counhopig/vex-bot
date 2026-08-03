@@ -97,6 +97,8 @@ export interface SessionInfo {
 /** System status */
 export interface SystemStatus {
   version: string;
+  defaultProvider: string;
+  defaultModel: string;
   uptime: number;
   providers: Array<{
     id: string;

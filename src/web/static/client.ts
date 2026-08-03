@@ -262,7 +262,6 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
 
     function handleEvent(event, payload) {
       if (event === 'connected') {
-        console.log('Connected, clientId:', payload.clientId);
         // Server is ready, now load data
         const savedSessionKey = getSavedSessionKey();
         if (savedSessionKey) {
@@ -312,7 +311,6 @@ export const WEBCHAT_CLIENT_JS: string = `    const MASCOT_AVATAR = \`\${MASCOT_
     function request(method, params) {
       const { promise, resolve, reject } = Promise.withResolvers();
       const id = String(++requestId);
-      console.log(\`Sending request: \${method}, id: \${id}, params:\`, params);
       pendingRequests.set(id, { resolve, reject });
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'req', id, method, params }));
@@ -546,11 +544,11 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
         btn.type = 'button';
         btn.className = 'input-toggle-btn';
         btn.setAttribute('aria-label', 'Toggle visibility');
-        btn.textContent = '👁';
+        btn.textContent = '◉';
         btn.addEventListener('click', () => {
           const reveal = input.type === 'password';
           input.type = reveal ? 'text' : 'password';
-          btn.textContent = reveal ? '🙈' : '👁';
+          btn.textContent = reveal ? '○' : '◉';
         });
         wrap.appendChild(btn);
       });
@@ -698,21 +696,16 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       ws.onmessage = (event) => {
         try {
           const frame = JSON.parse(event.data);
-          console.log('Received WebSocket message:', frame);
           if (frame.type === 'res') {
             const pending = pendingRequests.get(frame.id);
             if (pending) {
               pendingRequests.delete(frame.id);
               if (frame.ok) {
-                console.log('Request succeeded:', frame.id, frame.payload);
                 pending.resolve(frame.payload);
               } else {
                 console.error('Request failed:', frame.id, frame.error);
                 pending.reject(new Error(frame.error?.message || 'Unknown error'));
               }
-            } else {
-              console.warn('No pending request found:', frame.id);
-            }
           } else if (frame.type === 'event') {
             if (frame.event === 'connected' && frame.payload) {
               currentUser = frame.payload.user || null;
@@ -753,14 +746,25 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
 
     function updateOverview(status) {
       document.getElementById('version').textContent = status.version || '--';
+      document.getElementById('default-model').textContent = status.defaultModel || '--';
+      document.getElementById('default-provider').textContent = status.defaultProvider || '--';
       document.getElementById('session-count').textContent = status.sessions || 0;
       document.getElementById('provider-count').textContent = (status.providers || []).length + ' ' + t('providers');
       document.getElementById('channel-count').textContent = (status.channels || []).length + ' ' + t('channels');
 
       const uptime = status.uptime || 0;
-      const hours = Math.floor(uptime / 3600000);
-      const mins = Math.floor((uptime % 3600000) / 60000);
-      document.getElementById('uptime').textContent = hours + 'h ' + mins + 'm';
+      const totalSeconds = Math.floor(uptime / 1000);
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const mins = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      document.getElementById('uptime').textContent = days > 0
+        ? days + 'd ' + hours + 'h'
+        : hours > 0
+          ? hours + 'h ' + mins + 'm'
+          : mins > 0
+            ? mins + 'm ' + seconds + 's'
+            : seconds + 's';
     }
 
     function updateProviders(status) {
@@ -768,7 +772,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const container = document.getElementById('providers-list');
 
       if (providers.length === 0) {
-        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">🤖</div><p>' + t('No providers configured') + '</p></div>';
+        container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">◇</div><p>' + t('No providers configured') + '</p></div>';
         return;
       }
 
@@ -877,31 +881,31 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       const tbody = document.getElementById('users-list');
       if (!tbody) return;
       if (currentUser && currentUser.role !== 'admin') {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Admin privileges required</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('Admin privileges required') + '</td></tr>';
         return;
       }
       try {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Loading users...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('Loading users...') + '</td></tr>';
         const result = await adminFetch('/api/admin/users');
         const users = result.users || [];
         if (users.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No users</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">' + t('No users') + '</td></tr>';
           return;
         }
         tbody.innerHTML = users.map(user => {
           const isSelf = currentUser && user.id === currentUser.id;
           const created = user.createdAt ? new Date(user.createdAt).toLocaleString() : '--';
-          const roleAction = user.role === 'admin' ? 'Make user' : 'Make admin';
+          const roleAction = user.role === 'admin' ? t('Make user') : t('Make admin');
           const nextRole = user.role === 'admin' ? 'user' : 'admin';
           return \`
             <tr>
               <td>\${escapeControlHtml(user.username)}</td>
-              <td><span class="status-badge \${user.role === 'admin' ? 'online' : 'offline'}">\${escapeControlHtml(user.role)}</span></td>
-              <td>\${user.hasWeixin ? escapeControlHtml(user.weixinAccountId || 'Connected') : '--'}</td>
+              <td><span class="status-badge \${user.role === 'admin' ? 'online' : 'offline'}">\${t(user.role)}</span></td>
+              <td>\${user.hasWeixin ? escapeControlHtml(user.weixinAccountId || t('Connected')) : '--'}</td>
               <td>\${escapeControlHtml(created)}</td>
               <td>
                 <button class="btn btn-secondary" data-user-role-id="\${escapeControlAttr(user.id)}" data-next-role="\${escapeControlAttr(nextRole)}" \${isSelf ? 'disabled' : ''}>\${roleAction}</button>
-                <button class="btn btn-danger" data-user-delete-id="\${escapeControlAttr(user.id)}" \${isSelf ? 'disabled' : ''}>Delete</button>
+                <button class="btn btn-danger" data-user-delete-id="\${escapeControlAttr(user.id)}" \${isSelf ? 'disabled' : ''}>\${t('Delete')}</button>
               </td>
             </tr>
           \`;
@@ -926,7 +930,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           body: JSON.stringify({ role }),
         });
         await refreshUsers();
-        showToast('success', 'User role updated');
+        showToast('success', t('User role updated'));
       } catch (e) {
         showToast('error', e.message);
       }
@@ -935,15 +939,15 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     async function deleteUser(userId) {
       if (!userId) return;
       const ok = await confirmDialog({
-        title: 'Delete user',
-        message: 'Delete this user and their login sessions?',
-        confirmText: 'Delete',
+        title: t('Delete user'),
+        message: t('Delete this user and their login sessions?'),
+        confirmText: t('Delete'),
       });
       if (!ok) return;
       try {
         await adminFetch('/api/admin/users/' + encodeURIComponent(userId), { method: 'DELETE' });
         await refreshUsers();
-        showToast('success', 'User deleted');
+        showToast('success', t('User deleted'));
       } catch (e) {
         showToast('error', e.message);
       }
@@ -1098,7 +1102,6 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
     // Load config
     async function loadConfig() {
       try {
-        console.log('Loading config...');
         if (ws?.readyState !== WebSocket.OPEN) {
           console.warn('WebSocket not connected, waiting...');
           // Wait for connection then load
@@ -1113,9 +1116,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
           check();
           await promise;
         }
-        console.log('Sending config.get request...');
         currentConfig = await request('config.get');
-        console.log('Config data received:', currentConfig);
         populateConfigForm(currentConfig);
         hideSaveResult();
         addLog('info', 'Config loaded');
@@ -1128,14 +1129,12 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
 
     // Populate form
     function populateConfigForm(config) {
-      console.log('populateConfigForm called, config:', config);
 
       // Agent config
       if (config.agent) {
         const providerSelect = document.getElementById('agent-provider');
         if (providerSelect) {
           providerSelect.value = config.agent.defaultProvider || 'deepseek';
-          console.log('Set provider value:', providerSelect.value);
         }
         document.getElementById('agent-model').value = config.agent.defaultModel || '';
         document.getElementById('agent-temperature').value = config.agent.temperature || '';

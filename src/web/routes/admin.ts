@@ -39,6 +39,8 @@ import type { WebAuthStore, UserConfigSettings, PublicWebUser } from "./auth.js"
 const logger = getChildLogger("ws-admin");
 
 export interface AdminHandlersOptions {
+  /** Application version reported by status.get. */
+  version: string;
   /** Resolve the current system config the control panel reads/edits. */
   getConfig: () => SystemConfig;
   /** Path of the runtime config file (for config.save). */
@@ -46,7 +48,7 @@ export interface AdminHandlersOptions {
   /** Authentication — isEnabled + per-user settings. */
   auth: WebAuthStore;
   /** Live provider list for status.get. */
-  getProviders: () => Array<{ id: string; name: string }>;
+  getProviders: () => Array<{ id: string; name: string; available: boolean }>;
   /** Live channel list for status.get. */
   getChannels: () => Array<{ id: string; name: string; connected: boolean }>;
   /** Server uptime in ms for status.get. */
@@ -64,6 +66,7 @@ export interface AdminHandlersOptions {
 
 export function createAdminHandlers(options: AdminHandlersOptions): Record<string, WsMethodHandler> {
   const {
+    version,
     getConfig,
     configPath,
     auth,
@@ -79,7 +82,8 @@ export function createAdminHandlers(options: AdminHandlersOptions): Record<strin
   /** Archive getSystemStatus: providers/channels with the "configured => connected"
    *  simplification, plus the per-user WeChat channel when configured. */
   function systemStatus(client: WsClientView): SystemStatus {
-    const providers = getProviders().map((p) => ({ id: p.id, name: p.name, available: true }));
+    const agent = getConfig().agent ?? {};
+    const providers = getProviders();
     const channels: SystemStatus["channels"] = getChannels().map((c) => ({
       id: c.id,
       name: c.name,
@@ -94,7 +98,9 @@ export function createAdminHandlers(options: AdminHandlersOptions): Record<strin
       });
     }
     return {
-      version: "1.0.0",
+      version,
+      defaultProvider: typeof agent.defaultProvider === "string" ? agent.defaultProvider : "",
+      defaultModel: typeof agent.defaultModel === "string" ? agent.defaultModel : "",
       uptime: getUptimeMs(),
       providers,
       channels,

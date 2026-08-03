@@ -335,7 +335,14 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       color: var(--text-secondary);
     }
     .card-icon {
-      font-size: 1.5rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.75rem;
+      height: 1.75rem;
+      color: var(--text-secondary);
+      font-size: 1.25rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     .card-value {
       font-size: 2rem;
@@ -346,6 +353,7 @@ export const CONTROL_CSS: string = `    * { margin: 0; padding: 0; box-sizing: b
       font-size: 0.875rem;
       color: var(--text-secondary);
     }
+    .card-value-model { font-size: 1rem; word-break: break-word; }
     /* Status indicator */
     .status-badge {
       display: inline-flex;

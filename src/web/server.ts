@@ -129,6 +129,10 @@ export function createKeyedSerializer(): <T>(key: string, task: () => Promise<T>
 // ---------------------------------------------------------------------------
 
 export interface WebServerOptions {
+  /** Application version exposed by the control-panel status endpoint. */
+  version: string;
+  /** Configured model providers and their current credential availability. */
+  getProviders: () => Array<{ id: string; name: string; available: boolean }>;
   /** System config the control panel reads/edits (server.port, webAuth, …). */
   config: SystemConfig;
   /** Path of the runtime config file (saveConfig / WeChat token persistence). */
@@ -272,10 +276,11 @@ export class WebServer {
         onUserWeixinUnbind: (userId) => this.deactivateUserWeixinChannel(userId),
       }),
       ...createAdminHandlers({
+        version: this.options.version,
         getConfig: () => config,
         configPath,
         auth,
-        getProviders: () => [],
+        getProviders: this.options.getProviders,
         getChannels: () => registry.getAllChannels().map((c) => ({ id: c.id, name: c.id, connected: true })),
         getUptimeMs: () => (this.webChat ? this.webChat.uptime : 0),
         getClientCount: () => (this.webChat ? this.webChat.clientCount : 0),

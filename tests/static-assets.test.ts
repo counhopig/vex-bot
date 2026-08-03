@@ -160,7 +160,11 @@ describe("static web assets", () => {
     );
     expect(adminHandled).toBe(true);
     expect(adminRes.statusCodeValue).toBe(200);
-    expect(String(adminRes.body)).toContain("Console");
+    const controlHtml = String(adminRes.body);
+    expect(controlHtml).toContain("Console");
+    expect(controlHtml).toContain('"Users": "用户"');
+    expect(controlHtml).toContain("Console Connection");
+    expect(controlHtml).not.toContain("Received WebSocket message:");
 
     const normalSession = await auth.login("normal", "password123");
     const normalRes = createResponse();

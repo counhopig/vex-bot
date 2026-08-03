@@ -13,6 +13,8 @@ import { homedir } from "os";
 import { YamlLoader } from "../config/resolvers/YamlLoader.js";
 import { ConfigStore } from "../config/ConfigStore.js";
 import { ModelResolver } from "../providers/ModelResolver.js";
+import { getProviderName } from "../providers/ProviderMetadata.js";
+import { VERSION } from "../version.js";
 import { ChannelRegistryImpl } from "../channels/ChannelRegistry.js";
 import { OutboundDeliver } from "../outbound/OutboundDeliver.js";
 import { AgentRegistry } from "../agent/AgentRegistry.js";
@@ -236,6 +238,12 @@ export async function startWebServer(config: SystemConfig): Promise<WebServer> {
   const credentialStore = new WeixinCredentialStore({ dbPath });
 
   const server = new WebServer({
+    version: VERSION,
+    getProviders: () => Object.keys(config.providers ?? {}).map((id) => ({
+      id,
+      name: getProviderName(id),
+      available: modelResolver.isProviderAvailable(id),
+    })),
     config,
     configPath,
     auth,

@@ -72,10 +72,11 @@ function makeAuth(overrides?: {
 
 function makeOptions(overrides?: Partial<AdminHandlersOptions>): AdminHandlersOptions {
   return {
-    getConfig: () => ({ agent: { defaultProvider: "deepseek" } }),
+    version: "1.15.0",
+    getConfig: () => ({ agent: { defaultProvider: "deepseek", defaultModel: "deepseek-chat" } }),
     configPath: path.join(tmpDir(), "config.local.yaml"),
     auth: makeAuth() as unknown as WebAuthStore,
-    getProviders: () => [{ id: "deepseek", name: "DeepSeek" }],
+    getProviders: () => [{ id: "deepseek", name: "DeepSeek", available: true }],
     getChannels: () => [{ id: "webchat", name: "webchat", connected: true }],
     getUptimeMs: () => 1234,
     getClientCount: () => 2,
@@ -88,12 +89,16 @@ describe("status.get", () => {
     const handlers = createAdminHandlers(makeOptions());
     const result = handlers["status.get"](makeView(), {}) as {
       version: string;
+      defaultProvider: string;
+      defaultModel: string;
       uptime: number;
       providers: Array<{ id: string; name: string; available: boolean }>;
       channels: Array<{ id: string; name: string; connected: boolean }>;
       sessions: number;
     };
-    expect(result.version).toBe("1.0.0");
+    expect(result.version).toBe("1.15.0");
+    expect(result.defaultProvider).toBe("deepseek");
+    expect(result.defaultModel).toBe("deepseek-chat");
     expect(result.uptime).toBe(1234);
     expect(result.providers).toEqual([{ id: "deepseek", name: "DeepSeek", available: true }]);
     expect(result.channels).toEqual([{ id: "webchat", name: "webchat", connected: true }]);

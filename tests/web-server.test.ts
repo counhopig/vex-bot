@@ -63,6 +63,8 @@ function makeDummyChannel(id: ChannelId): ChannelAdapter {
 function makeOptions(overrides?: Partial<WebServerOptions>): WebServerOptions {
   const auth = new WebAuthStore({ dbPath: path.join(tmpDir(), "auth.sqlite"), enabled: false });
   return {
+    version: "1.15.0",
+    getProviders: () => [{ id: "minimax", name: "MiniMax", available: true }],
     config: { server: { port: 0, host: "127.0.0.1" }, webAuth: { enabled: false } },
     configPath: path.join(tmpDir(), "config.local.yaml"),
     auth,
@@ -242,6 +244,33 @@ describe("WebServer", () => {
     });
     // A bare connection stays open (no auth rejection when webAuth disabled).
     expect(ws.readyState).toBe(1);
+    ws.close();
+    await h.close();
+  });
+
+  it("reports configured providers and the application version through status.get", async () => {
+    const h = await startServer(makeOptions());
+    const ws = await new Promise<import("ws").default>((resolve, reject) => {
+      const client = new (require("ws"))(`ws://127.0.0.1:${h.port}/ws`) as import("ws").default;
+      client.on("open", () => resolve(client));
+      client.on("error", reject);
+    });
+    const response = new Promise<{ payload: { version: string; providers: Array<{ id: string }> } }>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("timed out waiting for status.get")), 2000);
+      ws.on("message", function onMessage(data: Buffer) {
+        const frame = JSON.parse(data.toString()) as { type?: string; id?: string };
+        if (frame.type === "res" && frame.id === "status-1") {
+          clearTimeout(timer);
+          ws.off("message", onMessage);
+          resolve(frame as { payload: { version: string; providers: Array<{ id: string }> } });
+        }
+      });
+    });
+    ws.send(JSON.stringify({ type: "req", id: "status-1", method: "status.get", params: {} }));
+
+    await expect(response).resolves.toMatchObject({
+      payload: { version: "1.15.0", providers: [{ id: "minimax" }] },
+    });
     ws.close();
     await h.close();
   });
