@@ -18,7 +18,10 @@ import type { IncomingMessage, ServerResponse } from "http";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { Script } from "vm";
 import { handleStaticRequest } from "../src/web/static/index.js";
+import { CONTROL_CLIENT_JS, WEBCHAT_CLIENT_JS } from "../src/web/static/client.js";
+import { I18N_CLIENT_JS } from "../src/web/static/i18n.js";
 import type { SystemConfig } from "../src/web/routes/config.js";
 import { WebAuthStore } from "../src/web/routes/auth.js";
 
@@ -87,6 +90,13 @@ function serve(url: string, config: SystemConfig, auth?: WebAuthStore, cookie?: 
 }
 
 describe("static web assets", () => {
+  it("ships syntactically valid inline browser scripts", () => {
+    expect(() => new Script(I18N_CLIENT_JS + CONTROL_CLIENT_JS)).not.toThrow();
+    expect(() => new Script(
+      I18N_CLIENT_JS + WEBCHAT_CLIENT_JS.replace("${MASCOT_AVATAR_HTML}", '<img src="/assets/vex-mascot.png">'),
+    )).not.toThrow();
+  });
+
   it("serves the generated Vex mascot image", () => {
     const { res, handled } = serve("/assets/vex-mascot.png", openConfig);
     expect(handled).toBe(true);
@@ -117,6 +127,8 @@ describe("static web assets", () => {
     const { res } = serve("/", { ...openConfig, agent: { defaultModel: "m", defaultProvider: "deepseek" } });
     const html = String(res.body);
     expect(html).toContain("/assets/marked.min.js");
+    expect(html).toContain('rel="icon"');
+    expect(html).toContain('script data-cfasync="false"');
     expect(html).not.toContain("cdn.jsdelivr.net");
   });
 

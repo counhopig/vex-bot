@@ -82,11 +82,12 @@ function getEmbeddedHtml(config: SystemConfig): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="${MASCOT_IMAGE_PATH}">
   <title>${assistantName} - AI Assistant</title>
   <style>
 ${COMMON_CSS}${WEBCHAT_CSS}
   </style>
-  <script src="/assets/marked.min.js"></script>
+  <script data-cfasync="false" src="/assets/marked.min.js"></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -144,7 +145,7 @@ ${COMMON_CSS}${WEBCHAT_CSS}
     </main>
   </div>
 
-  <script>
+  <script data-cfasync="false">
 ${I18N_CLIENT_JS}
 ${WEBCHAT_CLIENT_JS.replace("${MASCOT_AVATAR_HTML}", MASCOT_IMG_SMALL)}
   </script>
@@ -159,6 +160,7 @@ function getLoginHtml(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="${MASCOT_IMAGE_PATH}">
   <title>Vex - Login</title>
   <style>
 ${COMMON_CSS}
@@ -266,7 +268,7 @@ ${WEBCHAT_CSS}
       <button class="auth-submit" id="auth-submit" type="submit">Login</button>
     </form>
   </main>
-  <script>
+  <script data-cfasync="false">
     const params = new URLSearchParams(location.search);
     const next = params.get('next') || '/';
     let mode = 'login';
@@ -322,6 +324,7 @@ function getControlHtml(config: SystemConfig): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/png" href="${MASCOT_IMAGE_PATH}">
   <title>${assistantName} - Console</title>
   <style>
 ${COMMON_CSS}${CONTROL_CSS}
@@ -1203,7 +1206,7 @@ ${COMMON_CSS}${CONTROL_CSS}
   <!-- Toast notifications -->
   <div class="toast-container" id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
-  <script>
+  <script data-cfasync="false">
 ${I18N_CLIENT_JS}
 ${CONTROL_CLIENT_JS}
   </script>

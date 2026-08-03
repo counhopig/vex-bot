@@ -706,6 +706,7 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
                 console.error('Request failed:', frame.id, frame.error);
                 pending.reject(new Error(frame.error?.message || 'Unknown error'));
               }
+            }
           } else if (frame.type === 'event') {
             if (frame.event === 'connected' && frame.payload) {
               currentUser = frame.payload.user || null;
