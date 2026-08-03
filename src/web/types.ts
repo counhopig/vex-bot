@@ -174,8 +174,6 @@ export interface LoggingConfigInfo {
 export interface MemoryConfigInfo {
   enabled?: boolean;
   directory?: string;
-  embeddingModel?: string;
-  embeddingProvider?: string;
 }
 
 /** Skills Configuration information */

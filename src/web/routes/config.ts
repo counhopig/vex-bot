@@ -115,13 +115,13 @@ export function getConfigInfo(config: SystemConfig): ConfigInfo {
     level: (config.logging?.level as ConfigInfo["logging"]["level"]) ?? "info",
   };
 
-  // Memory system configuration
+  // Memory system configuration. Embedding model/provider are deliberately
+  // not exposed: the runtime always uses the local SimpleEmbedding (Part 5
+  // of the runtime-config integration plan — no saveable-but-inert fields).
   const memory = config.memory
     ? {
         enabled: typeof config.memory.enabled === "boolean" ? config.memory.enabled : undefined,
         directory: typeof config.memory.directory === "string" ? config.memory.directory : undefined,
-        embeddingModel: typeof config.memory.embeddingModel === "string" ? config.memory.embeddingModel : undefined,
-        embeddingProvider: typeof config.memory.embeddingProvider === "string" ? config.memory.embeddingProvider : undefined,
       }
     : undefined;
 
@@ -241,7 +241,7 @@ function buildUserEffectiveConfig(config: SystemConfig, settings: UserConfigSett
       ? mergeSharelinkForEffectiveConfig(config.sharelink, settings.sharelink)
       : config.sharelink,
     weather: settings.weather ? { ...(config.weather ?? {}), ...settings.weather } : config.weather,
-    sessions: settings.sessions ? { ...(config.sessions ?? {}), ...settings.sessions } : config.sessions,
+    sessions: config.sessions,
   };
 }
 
@@ -263,14 +263,49 @@ function mergeSharelinkForEffectiveConfig(
 }
 
 export function extractUserConfigSettings(params: ConfigSaveParams): UserConfigSettings {
+  const pick = (
+    value: unknown,
+    keys: readonly string[],
+  ): Record<string, unknown> | undefined => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const source = value as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (source[key] !== undefined) result[key] = source[key];
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
+
+  // This is an authorization boundary, not just a type conversion. Values
+  // such as workingDirectory, bashEnvPassthrough and storage directories are
+  // system-owned even if a client crafts them into the websocket payload.
+  const agent = pick(params.agent, [
+    "defaultProvider", "defaultModel", "temperature", "maxTokens", "systemPrompt",
+  ]);
+  const memory = pick(params.memory, ["enabled"]);
+  const persona = pick(params.persona, [
+    "enabled", "persona_name", "relationship", "personality", "speaking_style",
+    "background", "user_nickname", "user_background", "preferences",
+  ]);
+  const skillLearner = pick(params.skillLearner, [
+    "enabled", "autoTriggerKeywords", "maxLearningTurns", "enableAutoLearn",
+    "enableProactiveSuggest", "proactiveThreshold", "autoDeployToSkills",
+  ]);
+  const sharelink = pick(params.sharelink, [
+    "enabled", "autoDetect", "responseMode", "llmShortContentThreshold",
+    "llmChunkSize", "bilibiliCookie",
+  ]);
+  const weather = pick(params.weather, [
+    "weather_provider", "caiyun_api_key", "caiyun_api_version", "default_location",
+    "wttr_base_url", "request_timeout_ms", "cache_ttl_ms",
+  ]);
   return {
-    ...(params.agent ? { agent: params.agent as unknown as Record<string, unknown> } : {}),
-    ...(params.memory ? { memory: params.memory as unknown as Record<string, unknown> } : {}),
-    ...(params.persona ? { persona: params.persona as unknown as Record<string, unknown> } : {}),
-    ...(params.skillLearner ? { skillLearner: params.skillLearner as unknown as Record<string, unknown> } : {}),
-    ...(params.sharelink ? { sharelink: params.sharelink as unknown as Record<string, unknown> } : {}),
-    ...(params.weather ? { weather: params.weather as unknown as Record<string, unknown> } : {}),
-    ...(params.sessions ? { sessions: params.sessions as unknown as Record<string, unknown> } : {}),
+    ...(agent ? { agent } : {}),
+    ...(memory ? { memory } : {}),
+    ...(persona ? { persona } : {}),
+    ...(skillLearner ? { skillLearner } : {}),
+    ...(sharelink ? { sharelink } : {}),
+    ...(weather ? { weather } : {}),
   };
 }
 

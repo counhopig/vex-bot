@@ -57,6 +57,9 @@ export interface AgentDependencies {
   skillsPrompt?: string;
   /** Per-(user, channel) plugin orchestrator, torn down with this Agent. */
   pluginService?: AgentPluginService;
+  /** Extra per-Agent resources needing teardown on shutdown (SkillLearner,
+   *  ShareLink, etc.). Kept generic so Agent stays decoupled from them. */
+  features?: Array<{ shutdown(): void | Promise<void> }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +71,7 @@ export class Agent {
   readonly pipeline: Pipeline;
   readonly skillsPrompt?: string;
   private readonly pluginService?: AgentPluginService;
+  private readonly features: Array<{ shutdown(): void | Promise<void> }>;
   private readonly runtime: AgentRuntime;
 
   constructor(
@@ -80,6 +84,7 @@ export class Agent {
     this.runtime = deps.runtime;
     this.skillsPrompt = deps.skillsPrompt;
     this.pluginService = deps.pluginService;
+    this.features = deps.features ?? [];
   }
 
   async processMessage(ctx: InboundMessageContext): Promise<AgentResponse> {
@@ -98,11 +103,13 @@ export class Agent {
 
     // 2. Build system prompt via SystemPromptAssembler.
     // Persona owns Section 1 exclusively — assembleSystemPrompt handles the
-    // mutually-exclusive persona-vs-DEFAULT_IDENTITY branching.
+    // mutually-exclusive persona-vs-DEFAULT_IDENTITY branching. The user's
+    // configured agent.systemPrompt follows identity as custom instructions.
     const personaBlock = this.persona ? await this.persona.buildPrompt(ctx) : undefined;
 
     const systemPrompt = assembleSystemPrompt({
       persona: personaBlock || undefined,
+      customInstructions: this.config.agent.systemPrompt,
       skills: this.skillsPrompt,
     });
 
@@ -144,11 +151,13 @@ export class Agent {
   async shutdown(): Promise<void> {
     logger.debug("Agent shutting down");
     // Tear down the plugin runtime first (stops plugin services, fires
-    // cleanup/unsubscribe), then the LLM runtime. AgentRegistry disposes
-    // entries through this single choke point for every reason
-    // (shutdown/reset/idle/overflow), so plugin resources cannot leak on
+    // cleanup/unsubscribe), then feature services (SkillLearner clears its
+    // in-memory learning sessions), then the LLM runtime. AgentRegistry
+    // disposes entries through this single choke point for every reason
+    // (shutdown/reset/idle/overflow), so per-Agent resources cannot leak on
     // mid-process eviction.
     await this.pluginService?.shutdown();
+    await Promise.allSettled(this.features.map((feature) => feature.shutdown()));
     await this.runtime.shutdown();
   }
 }

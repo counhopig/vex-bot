@@ -219,7 +219,11 @@ export class FileSessionStore {
       if (header.type !== "session") continue;
 
       const relativePath = path.relative(this.#storePath, transcriptPath);
-      const pathSessionKey = relativePath.split(path.sep)[0]?.replace(/\.jsonl$/, "");
+      const segments = relativePath.split(path.sep);
+      // pi sessions now nest per user (users/{userId}/{sanitizedKey}/...);
+      // the sanitized key is the segment after the user scope. Flat legacy
+      // files sit at the store root.
+      const pathSessionKey = (segments[0] === "users" ? segments[2] : segments[0])?.replace(/\.jsonl$/, "");
       const sessionId = header.sessionId ?? header.id;
       // pi-coding-agent's nested logs omit sessionKey and live in a directory
       // whose name is sanitizeSessionKey("<channel>:<sender>") — the ":"

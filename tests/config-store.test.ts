@@ -173,6 +173,48 @@ describe("ConfigStore", () => {
     }
   });
 
+  it("rejects system-owned path and environment fields from legacy user rows", async () => {
+    const dir = tmpDir();
+    try {
+      const yamlPath = writeYaml(dir, {
+        agent: { workingDirectory: "/srv/vex", bashEnvPassthrough: ["SAFE"] },
+        memory: { directory: "/srv/vex-memory" },
+        sessions: { directory: "/srv/vex-sessions" },
+      });
+      const store = new ConfigStore({ yamlLoader: new YamlLoader(yamlPath) });
+      const config = await store.resolve("u", "c", {
+        agent: { workingDirectory: "/etc", bashEnvPassthrough: ["SECRET"] },
+        memory: { directory: "/tmp/other-user" },
+        sessions: { directory: "/tmp/other-user" },
+      });
+
+      expect(config.agent.workingDirectory).toBe("/srv/vex");
+      expect(config.agent.bashEnvPassthrough).toEqual(["SAFE"]);
+      expect(config.memory?.directory).toBe("/srv/vex-memory");
+      expect(config.sessions?.directory).toBe("/srv/vex-sessions");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("inherits a system weather key when the user row contains a blank key", async () => {
+    const dir = tmpDir();
+    try {
+      const yamlPath = writeYaml(dir, {
+        weather: { weather_provider: "caiyun", caiyun_api_key: "system-key" },
+      });
+      const store = new ConfigStore({ yamlLoader: new YamlLoader(yamlPath) });
+      const config = await store.resolve("u", "c", {
+        weather: { caiyun_api_key: "", default_location: "深圳" },
+      });
+
+      expect(config.weather?.caiyunApiKey).toBe("system-key");
+      expect(config.weather?.defaultLocation).toBe("深圳");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // -- persona disabled by default (opt-in) --------------------------------
 
   it("does not set persona by default (opt-in)", async () => {
@@ -194,5 +236,50 @@ describe("ConfigStore", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // -- tier 3 auto-loading via injected UserConfigLoader -------------------
+
+  it("automatically loads user overrides through the injected loader", async () => {
+    const loader = {
+      load: (userId: string) =>
+        userId === "alice" ? { agent: { temperature: 0.2 } } : {},
+    };
+    const store = new ConfigStore({ yamlLoader: new YamlLoader("/nonexistent"), userConfigLoader: loader });
+    const config = await store.resolve("alice", "webchat");
+
+    expect(config.agent.temperature).toBe(0.2);
+  });
+
+  it("resolves different users independently without state bleed", async () => {
+    const loader = {
+      load: (userId: string) =>
+        userId === "alice" ? { persona: { persona_name: "AliceBot" } } : { persona: { persona_name: "BobBot" } },
+    };
+    const store = new ConfigStore({ yamlLoader: new YamlLoader("/nonexistent"), userConfigLoader: loader });
+    const alice = await store.resolve("alice", "webchat");
+    const bob = await store.resolve("bob", "webchat");
+
+    expect(alice.persona?.persona_name).toBe("AliceBot");
+    expect(bob.persona?.persona_name).toBe("BobBot");
+    // A second resolve for alice still returns alice's own values.
+    expect((await store.resolve("alice", "webchat")).persona?.persona_name).toBe("AliceBot");
+  });
+
+  it("applies the loader tier even for users with no settings row (synthetic owners)", async () => {
+    const loader = { load: () => ({}) };
+    const store = new ConfigStore({ yamlLoader: new YamlLoader("/nonexistent"), userConfigLoader: loader });
+    const config = await store.resolve("cron-owner", "weixin");
+
+    expect(config.agent.defaultProvider).toBe("deepseek");
+    expect(config.persona).toBeUndefined();
+  });
+
+  it("explicit overrides (test escape hatch) still win over the auto-loaded tier", async () => {
+    const loader = { load: () => ({ agent: { temperature: 0.2 } }) };
+    const store = new ConfigStore({ yamlLoader: new YamlLoader("/nonexistent"), userConfigLoader: loader });
+    const config = await store.resolve("u", "c", { agent: { temperature: 0.9 } });
+
+    expect(config.agent.temperature).toBe(0.9);
   });
 });

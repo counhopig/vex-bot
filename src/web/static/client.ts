@@ -1643,11 +1643,6 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       setValue('settings-skills-disabled', Array.isArray(sk.disabled) ? sk.disabled.join(', ') : '');
       setValue('settings-skills-only', Array.isArray(sk.only) ? sk.only.join(', ') : '');
 
-      const se = config.sessions || {};
-      setValue('sessions-type', se.type || 'memory');
-      setValue('sessions-directory', se.directory);
-      setValue('sessions-ttl-ms', se.ttlMs);
-
       setValue('settings-raw-yaml', '');
       setRawError('');
     }
@@ -1775,12 +1770,8 @@ export const CONTROL_CLIENT_JS: string = `    let ws = null;
       };
       payload.skills = skills;
 
-      const sessions = {
-        type: getValue('sessions-type') || undefined,
-        directory: getValue('sessions-directory') || undefined,
-        ttlMs: numOrUndef('sessions-ttl-ms'),
-      };
-      payload.sessions = sessions;
+      // Sessions store settings are intentionally not exposed: persistence is
+      // file-only and the per-user directory is derived safely at runtime.
 
       const raw = getValue('settings-raw-yaml').trim();
       if (raw) {

@@ -99,7 +99,10 @@ export async function isRealPathAllowed(
   allowedPaths: string[],
 ): Promise<boolean> {
   const real = await resolveRealPath(filePath);
-  return isPathAllowed(real, allowedPaths);
+  const realAllowedPaths = await Promise.all(
+    allowedPaths.map((allowed) => resolveRealPath(allowed)),
+  );
+  return isPathAllowed(real, realAllowedPaths);
 }
 
 function formatSize(bytes: number): string {

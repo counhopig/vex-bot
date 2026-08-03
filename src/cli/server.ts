@@ -7,11 +7,16 @@
  * provider construction, per-user Agent building, and process lifecycle).
  */
 
-import { join } from "path";
+import { join, resolve } from "path";
 import { homedir } from "os";
+import { createHash } from "crypto";
+import { existsSync, lstatSync } from "fs";
 
 import { YamlLoader } from "../config/resolvers/YamlLoader.js";
+import { SqliteLoader } from "../config/resolvers/SqliteLoader.js";
 import { ConfigStore } from "../config/ConfigStore.js";
+import { toWeatherToolOptions } from "../config/weather.js";
+import { expandHomePath, isPathInside } from "../utils/path.js";
 import { ModelResolver } from "../providers/ModelResolver.js";
 import { getProviderName } from "../providers/ProviderMetadata.js";
 import { VERSION } from "../version.js";
@@ -23,13 +28,19 @@ import { AgentRuntime } from "../agent/AgentRuntime.js";
 import { Pipeline } from "../agent/Pipeline.js";
 import { Persona } from "../agent/persona/Persona.js";
 import { createPersonaConfig } from "../agent/persona/PersonaConfig.js";
-import { createDefaultPiSession, defaultSessionDir } from "../agent/createDefaultPiSession.js";
+import { createDefaultPiSession } from "../agent/createDefaultPiSession.js";
 import { createBuiltinTools } from "../tools/builtin/index.js";
 import { ToolRegistry } from "../tools/ToolRegistry.js";
 import { createMemoryManager } from "../memory/index.js";
 import { loadAllSkills } from "../skills/SkillLoader.js";
 import { SkillRegistry } from "../skills/SkillRegistry.js";
 import { buildPrompt as buildSkillsPrompt } from "../skills/SkillInjector.js";
+import { SkillLearner } from "../skills/learner/index.js";
+import {
+  createShareLinkTool,
+  createShareLinkInterceptor,
+  type ShareLinkConfig,
+} from "../tools/builtin/sharelink/index.js";
 import { PluginService } from "../plugins/service.js";
 import { discoverPlugins } from "../plugins/discovery.js";
 import { defaultBus } from "../hooks/index.js";
@@ -48,7 +59,7 @@ import type { EffectiveConfig } from "../config/EffectiveConfig.js";
 import type { WeixinConfig } from "../channels/wechat/WeChatChannel.js";
 import type { InboundMessageContext } from "../channels/ChannelAdapter.js";
 import type { LlmCompleteLike } from "../sessions/title.js";
-import type { WeatherToolOptions } from "../tools/builtin/weather.js";
+import type { Tool } from "../tools/types.js";
 import { resolveConfigPath } from "./config.js";
 
 /**
@@ -90,15 +101,80 @@ function createTitleGenerator(
 
 /**
  * System-level dependencies the per-agent builder needs beyond its own
- * EffectiveConfig: the process-wide CronService (cron tools are wired to it)
- * and the system weather section (weather is not per-user — EffectiveConfig
- * is user-scoped and deliberately omits it).
+ * EffectiveConfig: the process-wide CronService (cron tools are wired to it).
+ * Weather is resolved per-user from EffectiveConfig now — it must not be
+ * captured once at startup (see runtime-config-integration-fix-plan Part 3).
  */
 export interface BuildAgentSystemDeps {
   /** Process-wide CronService shared by every agent's cron tools. */
   cron: CronService;
-  /** System-level weather config section (optional). */
-  weather?: WeatherToolOptions;
+}
+
+function safeUserPathSegment(userId: string): string {
+  if (/^[A-Za-z0-9_-]+$/.test(userId)) return userId;
+  return `user-${createHash("sha256").update(userId).digest("hex").slice(0, 24)}`;
+}
+
+function containsSymlink(parentPath: string, childPath: string): boolean {
+  const relative = childPath.slice(parentPath.length).split(/[\\/]+/).filter(Boolean);
+  let current = parentPath;
+  for (const segment of relative) {
+    current = join(current, segment);
+    if (existsSync(current) && lstatSync(current).isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve the pi-coding-agent JSONL session directory for a user. Defaults to
+ * a deterministic per-user scoped directory under ~/.vex/sessions/users/.
+ * A configured directory (system YAML only — the panel no longer exposes
+ * per-user session settings) is honored only when it resolves inside the
+ * user's own root; anything else falls back to the default so a bad override
+ * can never cause cross-user storage access (design decision 6).
+ */
+export function resolveUserSessionDir(userId: string, configuredDir?: string): string {
+  const userRoot = join(homedir(), ".vex", "sessions", "users", safeUserPathSegment(userId));
+  if (!configuredDir) return userRoot;
+  const expanded = resolve(configuredDir.replace(/^~(?=$|\/)/, homedir()));
+  return isPathInside(userRoot, expanded) && !containsSymlink(userRoot, expanded)
+    ? expanded
+    : userRoot;
+}
+
+/** Deploy target for learner-saved skills: the user skills dir the runtime
+ *  loads SKILL.md files from (skills.userDir, else the ~/.vex/skills default). */
+function resolveUserSkillsDir(userId: string, skills: EffectiveConfig["skills"]): string {
+  const base = skills?.userDir ? expandHomePath(skills.userDir) : join(homedir(), ".vex", "skills");
+  return join(base, "users", safeUserPathSegment(userId));
+}
+
+/** Shared LLM text-completion helper for per-Agent features (ShareLink
+ *  summarization, SkillLearner markdown generation). Uses the agent's own
+ *  provider/model; returns undefined when the model is unavailable so
+ *  features degrade to deterministic fallbacks instead of failing every turn. */
+function createLlmCompleter(
+  modelResolver: ModelResolver,
+  provider: string,
+  model: string,
+): ((opts: { prompt: string }) => Promise<{ text: string }>) | undefined {
+  if (!provider || !model || !modelResolver.isProviderAvailable(provider)) return undefined;
+  return async (opts) => {
+    const { completeSimple } = await import("@mariozechner/pi-ai");
+    const resolved = modelResolver.resolveModel(provider, model);
+    if (!resolved) throw new Error(`Cannot resolve model: ${provider}/${model}`);
+    const apiKey = modelResolver.getApiKeyForProvider(provider);
+    const message = await completeSimple(
+      resolved,
+      { messages: [{ role: "user", content: opts.prompt, timestamp: Date.now() }] },
+      { temperature: 0.7, maxTokens: 2048, apiKey },
+    );
+    const text = message.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("");
+    return { text };
+  };
 }
 
 /**
@@ -111,9 +187,14 @@ export interface BuildAgentSystemDeps {
 export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAgentSystemDeps) {
   return async (userId: string, channelId: string, config: unknown): Promise<Agent> => {
     const effective = config as EffectiveConfig;
-    const persona = effective.persona
-      ? new Persona(createPersonaConfig(effective.persona as Record<string, unknown>)!)
-      : null;
+    // Persona is opt-in AND gateable: a section with enabled: false must not
+    // instantiate persona state (broken-gate fix). createPersonaConfig never
+    // returns null for a truthy record, but the type doesn't know that — the
+    // explicit null check removes the unsafe non-null assertion.
+    const personaRaw = effective.persona as Record<string, unknown> | undefined;
+    const personaEnabled = personaRaw ? personaRaw.enabled !== false : false;
+    const personaConfig = createPersonaConfig(personaRaw);
+    const persona = personaEnabled && personaConfig ? new Persona(personaConfig) : null;
 
     // Per-user MemoryManager from effective.memory (per-user resolved by
     // ConfigStore); directory isolated per user. `memoryEnabled` defaults to
@@ -126,7 +207,11 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
     const memoryManager = memoryEnabled
       ? createMemoryManager({
           enabled: memoryEnabled,
-          directory: memoryCfg?.directory ?? join(homedir(), ".vex", "memory", userId),
+          directory: join(
+            memoryCfg?.directory ? expandHomePath(memoryCfg.directory) : join(homedir(), ".vex", "memory"),
+            "users",
+            safeUserPathSegment(userId),
+          ),
         })
       : undefined;
 
@@ -138,7 +223,10 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
     let skillsPrompt: string | undefined;
     if (skillsCfg && skillsCfg.enabled !== false) {
       const registry = new SkillRegistry();
-      const entries = await loadAllSkills(skillsCfg);
+      const entries = await loadAllSkills({
+        ...skillsCfg,
+        userDir: resolveUserSkillsDir(userId, skillsCfg),
+      });
       await registry.load(entries);
       const prompt = buildSkillsPrompt(registry);
       skillsPrompt = prompt || undefined;
@@ -158,11 +246,66 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
       eventBus: defaultBus,
       config: effective,
       memoryManager,
-      getStateDir: (pluginId) => join(homedir(), ".vex", "plugins", userId, pluginId),
+      getStateDir: (pluginId) => join(homedir(), ".vex", "plugins", safeUserPathSegment(userId), pluginId),
     });
     const candidates = await discoverPlugins();
     await pluginService.loadFromCandidates(candidates);
     await pluginService.activateAll();
+
+    // Per-(user, channel) pipeline. SkillLearner's interceptor is registered
+    // first (it owns explicit /skill commands); ShareLink's auto-detect
+    // follows. Feature LLM calls use the user's own provider/model.
+    const pipeline = new Pipeline();
+    const featureComplete = createLlmCompleter(
+      modelResolver,
+      effective.agent.defaultProvider,
+      effective.agent.defaultModel,
+    );
+
+    // ShareLink: per-user tool + auto-detect interceptor, gated on the
+    // per-user config section (absent/disabled = feature off).
+    let sharelinkTool: Tool | undefined;
+    const sharelinkRaw = effective.sharelink;
+    if (sharelinkRaw && (sharelinkRaw as ShareLinkConfig).enabled !== false) {
+      const shareConfig = sharelinkRaw as unknown as ShareLinkConfig;
+      sharelinkTool = createShareLinkTool({ config: shareConfig, complete: featureComplete });
+      pipeline.registerInterceptor(
+        createShareLinkInterceptor({ config: shareConfig, complete: featureComplete }),
+      );
+    }
+
+    // SkillLearner: per-Agent service with per-user state dir + deploy target;
+    // zero module-global state (the archive's process-global storage/runtimes
+    // are instance fields now). Absent/disabled config = feature off.
+    let skillLearner: SkillLearner | undefined;
+    const skillLearnerCfg = effective.skillLearner as Record<string, unknown> | undefined;
+    if (skillLearnerCfg && skillLearnerCfg.enabled !== false) {
+      const learner = new SkillLearner({
+        config: {
+          autoTriggerKeywords: Array.isArray(skillLearnerCfg?.autoTriggerKeywords)
+            ? (skillLearnerCfg.autoTriggerKeywords as string[])
+            : [],
+          maxLearningTurns:
+            typeof skillLearnerCfg?.maxLearningTurns === "number"
+              ? skillLearnerCfg.maxLearningTurns
+              : 20,
+          enableAutoLearn: skillLearnerCfg?.enableAutoLearn !== false,
+          enableProactiveSuggest: skillLearnerCfg?.enableProactiveSuggest !== false,
+          proactiveThreshold:
+            typeof skillLearnerCfg?.proactiveThreshold === "number"
+              ? skillLearnerCfg.proactiveThreshold
+              : 3,
+          autoDeployToSkills: skillLearnerCfg?.autoDeployToSkills !== false,
+        },
+        ownerId: userId,
+        stateDir: join(homedir(), ".vex", "skilllearner", safeUserPathSegment(userId)),
+        memoryManager,
+        skillsDir: resolveUserSkillsDir(userId, effective.skills),
+        complete: featureComplete,
+      });
+      skillLearner = learner;
+      pipeline.registerInterceptor((ctx) => learner.interceptor(ctx));
+    }
 
     const runtime = new AgentRuntime(
       {
@@ -172,23 +315,48 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
         temperature: effective.agent.temperature,
         maxTokens: effective.agent.maxTokens,
         workingDirectory: effective.agent.workingDirectory ?? process.cwd(),
-        sessionDir: defaultSessionDir(),
+        // Per-user session dir for pi-coding-agent's JSONL logs; a configured
+        // directory is honored only inside the user's own root (design
+        // decision 6 — a user override must never reach another user's files).
+        sessionDir: resolveUserSessionDir(userId, effective.sessions?.directory),
         customTools: [
           ...createBuiltinTools({
             owner: `${userId}:${channelId}`,
             memoryManager,
-            weather: system.weather,
+            weather: toWeatherToolOptions(effective.weather),
+            bash: { envPassthrough: effective.agent.bashEnvPassthrough },
             cronService: system.cron,
             enableMemory: memoryEnabled,
             enableCron: true,
           }),
+          ...(sharelinkTool ? [sharelinkTool] : []),
           ...pluginToolRegistry.getAll(),
         ],
       },
       { modelResolver, createPiSession: createDefaultPiSession },
     );
-    return new Agent(userId, effective, { pipeline: new Pipeline(), persona, runtime, skillsPrompt, pluginService });
+    return new Agent(userId, effective, {
+      pipeline,
+      persona,
+      runtime,
+      skillsPrompt,
+      pluginService,
+      features: skillLearner ? [skillLearner] : [],
+    });
   };
+}
+
+/**
+ * Build the tier-3-aware ConfigStore: system YAML at configPath overlaid with
+ * per-user overrides read from the auth database. The control panel writes
+ * user settings to that same database, so a saved setting is a runtime
+ * setting (see docs/runtime-config-integration-fix-plan.md Part 1).
+ */
+export function createConfigStore(configPath: string, dbPath: string): ConfigStore {
+  return new ConfigStore({
+    yamlLoader: new YamlLoader(configPath),
+    userConfigLoader: new SqliteLoader({ dbPath }),
+  });
 }
 
 /** Start the full WebServer; resolves the SIGINT/SIGTERM shutdown path. */
@@ -210,7 +378,7 @@ export async function startWebServer(config: SystemConfig): Promise<WebServer> {
   // Core infrastructure
   const modelResolver = new ModelResolver();
   modelResolver.init({ providers: config.providers as ModelResolverInit });
-  const configStore = new ConfigStore({ yamlLoader: new YamlLoader(configPath) });
+  const configStore = createConfigStore(configPath, dbPath);
   const registry = new ChannelRegistryImpl();
   const outbound = new OutboundDeliver(registry);
 
@@ -223,9 +391,8 @@ export async function startWebServer(config: SystemConfig): Promise<WebServer> {
     executeJob: createCronExecutor({ dispatch: (ctx: InboundMessageContext) => dispatcher.dispatchSynthetic(ctx) }).executeJob,
   });
 
-  const weather = config.weather as WeatherToolOptions | undefined;
   const agentRegistry = new AgentRegistry<Agent>({
-    factory: buildAgentFactory(modelResolver, { cron, weather }),
+    factory: buildAgentFactory(modelResolver, { cron }),
   });
   dispatcher = new Dispatcher(configStore, agentRegistry, async (msg) => {
     await outbound.sendText(msg.channelId, msg.ctx.chatId, msg.text, { webUserId: msg.webUserId });

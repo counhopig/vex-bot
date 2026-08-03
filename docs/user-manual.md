@@ -216,7 +216,7 @@ persona:
 | First Web user | There is no fixed default admin password. The first registered Web user gets role `admin`; admins can manage all other accounts in the Control Panel Users view. |
 | `memory.enabled` | Whether the agent remembers cross-session information |
 | `memory.directory` | Where memory files are stored |
-| `sessions.directory` | Where session transcripts (JSONL format) are stored |
+| `sessions.directory` | System-level hint for session transcripts. At runtime the pi-coding-agent JSONL session directory is derived per user under `~/.vex/sessions/users/{userId}/` (a configured directory is honored only when it stays inside that user's root). Per-user session settings are not exposed in the Control Panel. |
 | `skills` | Controls SKILL.md injection; `disabled` and `only` take skill name arrays |
 | `persona.profile_building_enabled` | Enables background user-profile extraction from recent chat history |
 | `persona.profile_building_trigger_turns` | Runs profile extraction every N observed assistant replies; default 5 |
@@ -434,10 +434,10 @@ When `webAuth.enabled` is `true` (the default), Vex is a multi-user backend. Eac
 
 - **Login identity and role** — every Web account has a username, password, role (`admin` or `user`), and an `active`/`disabled` status. The first registered Web user is automatically promoted to `admin`. There is no fixed default password.
 - **Per-Web-user Weixin** — each Web user can scan their own QR code and own one Weixin account at a time. Inbound Weixin messages are routed to that user's `Agent`; one user's Weixin connection cannot bleed into another user's chat history.
-- **Per-user runtime settings** — agent model defaults, temperature, max tokens, system prompt, memory enable, persona flags, skill learner, sharelink, weather tool, and session directory are stored in the `web_user_settings` SQLite table. Editing these settings in the Control Panel saves to your row only.
+- **Per-user runtime settings** — agent model defaults, temperature, max tokens, system prompt, memory enable, persona flags, skill learner, sharelink, and weather are stored in the `web_user_settings` SQLite table and resolved into the running Agent on your next message (config save resets your runtime). Paths, bash environment passthrough, providers, channels, and session settings remain system/admin-owned.
 - **Per-user memory** — long-term memory files live under `~/.vex/memory/users/{userId}/`. Persona profile keys are namespaced by your Web user id, so the same Weixin sender id under different Vex accounts cannot collide.
 - **Per-user sessions** — WebChat sessions and per-Weixin-contact sessions live under `~/.vex/sessions/users/{userId}/`. You cannot see or reset another user's sessions.
-- **Per-user extensions** — the Persona and Skill Learner extensions keep separate state per Web user, so persona memories/profiles and learned skills are written to your own memory store and never bleed into another user's. Idle user runtimes (and their extension state) are evicted from memory after a period of inactivity and rebuilt on next use.
+- **Per-user extensions** — the Persona and Skill Learner extensions keep separate state per Web user. Learned skills deploy under `~/.vex/skills/users/{userId}/` by default, and active learning sessions resume after an idle runtime rebuild or restart. ShareLink parsing is configured per user and bilibili cookie values stay redacted.
 
 ### Single-user compatibility mode
 
@@ -493,6 +493,24 @@ The control panel can subscribe to backend logs in real time. It shows a recent 
 ### Persona auto profile
 
 When `persona.enabled` and `persona.profile_building_enabled` are true, Vex observes normal chat replies and runs a background profile extraction every `persona.profile_building_trigger_turns` turns. The task uses the configured default agent provider/model, writes deduplicated profile facts into Persona storage, and also mirrors accepted facts into long-term memory with Persona tags. Extraction failures are logged and do not block the user-facing reply.
+
+### Skill Learner (agent commands)
+
+The Skill Learner lets you teach the agent reusable skills by example. Enable it in the Control Panel (Extensions tab), then chat with the agent:
+
+| Command | Meaning |
+|---|---|
+| `/skill_learn` | Start a learning session; the following messages are captured as teaching material |
+| `/skill_save [名称]` | Generate a SKILL.md from the captured messages and save it (deployed to `~/.vex/skills/` when auto-deploy is on) |
+| `/skill_cancel` | Abort the current learning session |
+| `/skill_status` | Show whether a learning session is active and how many messages are recorded |
+| `/skill_list` | List saved skills |
+| `/skill_view <名称>` | Show a skill's markdown |
+| `/skill_delete <名称>` | Delete a saved skill |
+| `/skill_export <名称>` | Print a skill's markdown for copying |
+| `/skill_help` | List the available commands |
+
+Chinese aliases are accepted (`/学习技能`, `/保存技能`, `/取消学习`, `/学习状态`, etc.). When auto-learn keywords are configured, a message containing a keyword starts a learning session automatically.
 
 ### WeChat QR login
 
@@ -771,12 +789,13 @@ vex logs --list
 
 ### Session files
 
-Session transcripts are stored as JSONL files (one JSON object per line) under `~/.vex/sessions/`. Each contact or channel gets its own session file.
+Session transcripts are stored as JSONL files (one JSON object per line) under `~/.vex/sessions/`. WebChat transcripts live at the store root; the agent's pi-coding-agent conversation logs live per user under `~/.vex/sessions/users/{userId}/`. Each contact or channel gets its own session file.
 
 You can inspect them with a text editor or command-line tools:
 
 ```bash
 cat ~/.vex/sessions/*.jsonl | tail -20
+cat ~/.vex/sessions/users/*/webchat_*.jsonl 2>/dev/null | tail -20
 ```
 
 ### Common debugging scenarios

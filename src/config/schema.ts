@@ -56,7 +56,10 @@ const LoggingConfigSchema = z.object({
 });
 
 const SessionStoreConfigSchema = z.object({
-  type: z.enum(["memory", "file"]).optional().default("memory"),
+  // Only file persistence is implemented. "memory" was a legacy schema value
+  // that claimed a mode the runtime never had; it is coerced to "file" at
+  // resolution so saved settings can't silently lie about behavior.
+  type: z.enum(["memory", "file"]).optional().default("file"),
   directory: z.string().optional(),
   ttlMs: z.number().optional(),
 });
@@ -64,8 +67,6 @@ const SessionStoreConfigSchema = z.object({
 const MemoryConfigSchema = z.object({
   enabled: z.boolean().optional().default(true),
   directory: z.string().optional(),
-  embeddingModel: z.string().optional(),
-  embeddingProvider: z.string().optional(),
 });
 
 const SkillsConfigSchema = z.object({

@@ -9,18 +9,15 @@
  */
 
 import Database from "better-sqlite3";
+import { getChildLogger } from "../../utils/logger.js";
+import type { UserConfigLoader } from "../UserConfigLoader.js";
+import type { UserConfigSettings } from "../UserConfigLoader.js";
 
-export interface UserConfigSettings {
-  agent?: Record<string, unknown>;
-  memory?: Record<string, unknown>;
-  persona?: Record<string, unknown>;
-  skillLearner?: Record<string, unknown>;
-  sharelink?: Record<string, unknown>;
-  weather?: Record<string, unknown>;
-  sessions?: Record<string, unknown>;
-}
+const logger = getChildLogger("sqlite-loader");
 
-export class SqliteLoader {
+export type { UserConfigSettings } from "../UserConfigLoader.js";
+
+export class SqliteLoader implements UserConfigLoader {
   private readonly dbPath: string;
 
   constructor(options: { dbPath: string }) {
@@ -40,8 +37,15 @@ export class SqliteLoader {
 
       if (!row) return {};
 
-      const parsed = JSON.parse(row.settings_json) as UserConfigSettings;
-      if (parsed && typeof parsed === "object") return parsed;
+      try {
+        const parsed = JSON.parse(row.settings_json) as UserConfigSettings;
+        if (parsed && typeof parsed === "object") return parsed;
+      } catch (error) {
+        // A corrupt row must not brick the user's runtime — YAML/defaults
+        // stand in until the next save overwrites it. Logged so the failure
+        // is observable, not silent.
+        logger.warn({ error, userId }, "Corrupt user settings row; falling back to YAML");
+      }
       return {};
     } catch {
       // DB not yet created, file not found, or table missing — not an error.

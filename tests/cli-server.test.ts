@@ -66,7 +66,8 @@ vi.mock("../src/plugins/discovery.js", async (importOriginal) => {
   };
 });
 
-import { buildAgentFactory } from "../src/cli/server.js";
+import { buildAgentFactory, createConfigStore } from "../src/cli/server.js";
+import { WebAuthStore } from "../src/web/routes/auth.js";
 import { createBuiltinTools } from "../src/tools/builtin/index.js";
 import type { ModelResolver } from "../src/providers/ModelResolver.js";
 import type { EffectiveConfig } from "../src/config/EffectiveConfig.js";
@@ -126,7 +127,6 @@ beforeEach(() => {
 describe("buildAgentFactory tool wiring", () => {
   it("constructs a per-user MemoryManager from effective.memory and passes it to createBuiltinTools", async () => {
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     const agent = await factory("u1", "webchat", effectiveConfig({
@@ -160,7 +160,6 @@ describe("buildAgentFactory tool wiring", () => {
     ]) {
       createBuiltinToolsMock.mockClear();
       const factory = buildAgentFactory(fakeModelResolver(), {
-        weather: undefined,
         cron: fakeCronService(),
       });
       await factory("u42", "webchat", effectiveConfig({ memory }));
@@ -169,13 +168,12 @@ describe("buildAgentFactory tool wiring", () => {
         memoryManager?: MemoryManager & { store?: { directory?: string } };
       };
       const dir = (opts.memoryManager as unknown as { store: { directory: string } }).store.directory;
-      expect(dir).toBe(join(homedir(), ".vex", "memory", "u42"));
+      expect(dir).toBe(join(homedir(), ".vex", "memory", "users", "u42"));
     }
   });
 
   it("disables memory tools when effective.memory.enabled is false", async () => {
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     await factory("u1", "webchat", effectiveConfig({ memory: { enabled: false } }));
@@ -184,22 +182,27 @@ describe("buildAgentFactory tool wiring", () => {
     expect(opts.enableMemory).toBe(false);
   });
 
-  it("passes system weather config through to createBuiltinTools", async () => {
-    const weather = { defaultLocation: "Beijing" };
-    const factory = buildAgentFactory(fakeModelResolver(), {
-      weather,
-      cron: fakeCronService(),
-    });
-    await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
+  it("builds the weather tool from the per-user effective weather section (not a startup capture)", async () => {
+    // Two users, two locations: the factory must read effective.weather,
+    // which ConfigStore resolves per user (YAML + SQLite overlay).
+    for (const [userId, location] of [["u1", "Beijing"], ["u2", "Shanghai"]] as const) {
+      createBuiltinToolsMock.mockClear();
+      const factory = buildAgentFactory(fakeModelResolver(), {
+        cron: fakeCronService(),
+      });
+      await factory(userId, "webchat", effectiveConfig({
+        memory: undefined,
+        weather: { provider: "wttr", defaultLocation: location },
+      }));
 
-    const opts = createBuiltinToolsMock.mock.calls[0]![0] as { weather?: unknown };
-    expect(opts.weather).toEqual(weather);
+      const opts = createBuiltinToolsMock.mock.calls[0]![0] as { weather?: { provider?: string; defaultLocation?: string } };
+      expect(opts.weather).toEqual({ provider: "wttr", defaultLocation: location });
+    }
   });
 
   it("passes the process CronService through with enableCron on", async () => {
     const cron = fakeCronService();
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron,
     });
     await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
@@ -219,7 +222,6 @@ describe("buildAgentFactory tool wiring", () => {
     loadAllSkillsMock.mockResolvedValue([fakeSkill]);
 
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     const agent = await factory("u1", "webchat", effectiveConfig({
@@ -228,14 +230,16 @@ describe("buildAgentFactory tool wiring", () => {
     }));
 
     expect(loadAllSkillsMock).toHaveBeenCalledTimes(1);
-    expect(loadAllSkillsMock).toHaveBeenCalledWith({ enabled: true, userDir: "/tmp/skills" });
+    expect(loadAllSkillsMock).toHaveBeenCalledWith({
+      enabled: true,
+      userDir: "/tmp/skills/users/u1",
+    });
     expect(agent.skillsPrompt).toContain("# Available Skills");
     expect(agent.skillsPrompt).toContain("Skill: Greeting");
   });
 
   it("leaves skillsPrompt undefined when effective.skills is absent", async () => {
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     const agent = await factory("u1", "webchat", effectiveConfig({ memory: undefined, skills: undefined }));
@@ -246,7 +250,6 @@ describe("buildAgentFactory tool wiring", () => {
 
   it("leaves skillsPrompt undefined when effective.skills.enabled is false", async () => {
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     const agent = await factory("u1", "webchat", effectiveConfig({
@@ -261,7 +264,6 @@ describe("buildAgentFactory tool wiring", () => {
   it("does not crash when effective.skills is enabled but no skills load (prompt omitted)", async () => {
     loadAllSkillsMock.mockResolvedValue([]);
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
     const agent = await factory("u1", "webchat", effectiveConfig({
@@ -315,7 +317,6 @@ describe("buildAgentFactory plugin wiring", () => {
   it("loads system-discovered plugins per (user, channel) and merges their tools into the AgentRuntime customTools", async () => {
     discoverPluginsMock.mockResolvedValue([toolPluginCandidate("wired")]);
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
 
@@ -333,7 +334,6 @@ describe("buildAgentFactory plugin wiring", () => {
   it("scopes the plugin state dir per user", async () => {
     discoverPluginsMock.mockResolvedValue([toolPluginCandidate("wired")]);
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
 
@@ -351,7 +351,6 @@ describe("buildAgentFactory plugin wiring", () => {
   it("builds a working agent when discovery finds no plugins (plugin section omitted)", async () => {
     discoverPluginsMock.mockResolvedValue([]);
     const factory = buildAgentFactory(fakeModelResolver(), {
-      weather: undefined,
       cron: fakeCronService(),
     });
 
@@ -363,5 +362,179 @@ describe("buildAgentFactory plugin wiring", () => {
     const names = config.customTools?.map((t) => t.name) ?? [];
     expect(names).not.toContain("wired-tool");
     expect(names.length).toBeGreaterThan(0);
+  });
+});
+
+describe("createConfigStore composition", () => {
+  const mkTemp = () => mkdtempSync(join(tmpdir(), "vex-configstore-"));
+  const rmTemp = (dir: string) => rmSync(dir, { recursive: true, force: true });
+
+  it("wires SqliteLoader to the same auth DB path the control panel writes (save → resolve round-trip)", async () => {
+    const dir = mkTemp();
+    try {
+      const dbPath = join(dir, "web-auth.sqlite");
+      const auth = new WebAuthStore({ dbPath, enabled: true });
+      const user = await auth.createUser("alice", "password-123");
+      auth.saveUserConfigSettings(user.id, { persona: { persona_name: "PandaBot" } });
+      auth.close();
+
+      // createConfigStore composes YamlLoader + SqliteLoader on that dbPath.
+      const store = createConfigStore(join(dir, "config.local.yaml"), dbPath);
+      const config = await store.resolve(user.id, "webchat");
+
+      expect(config.persona?.persona_name).toBe("PandaBot");
+    } finally {
+      rmTemp(dir);
+    }
+  });
+
+  it("falls back to YAML/defaults for users with no saved settings", async () => {
+    const dir = mkTemp();
+    try {
+      const dbPath = join(dir, "web-auth.sqlite");
+      const auth = new WebAuthStore({ dbPath, enabled: true });
+      await auth.createUser("alice", "password-123");
+      auth.close();
+
+      const store = createConfigStore(join(dir, "config.local.yaml"), dbPath);
+      const config = await store.resolve("alice", "webchat");
+
+      expect(config.persona).toBeUndefined();
+      expect(config.agent.defaultModel).toBe("deepseek-chat");
+    } finally {
+      rmTemp(dir);
+    }
+  });
+});
+
+describe("buildAgentFactory runtime-config wiring", () => {
+  function mockCtx(content: string): import("../src/channels/ChannelAdapter.js").InboundMessageContext {
+    return {
+      channelId: "webchat",
+      messageId: `msg-${Date.now()}`,
+      chatId: "webchat:u1",
+      chatType: "direct",
+      senderId: "u1",
+      webUserId: "u1",
+      content,
+      timestamp: Date.now(),
+    };
+  }
+
+  const baseAgent = {
+    defaultModel: "deepseek-chat",
+    defaultProvider: "deepseek",
+    temperature: 0.7,
+    maxTokens: 4096,
+  };
+
+  it("honors persona.enabled === false (no persona state instantiated)", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const agent = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      persona: { enabled: false, persona_name: "GhostBot" },
+    }));
+    expect(agent.persona).toBeNull();
+  });
+
+  it("instantiates persona when enabled is true or absent", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const enabled = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      persona: { enabled: true, persona_name: "PandaBot" },
+    }));
+    const absent = await factory("u2", "webchat", effectiveConfig({ memory: undefined }));
+    expect(enabled.persona).not.toBeNull();
+    expect(absent.persona).toBeNull();
+  });
+
+  it("passes only the configured bash envPassthrough names to the bash tool", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      agent: { ...baseAgent, bashEnvPassthrough: ["MY_TOKEN", "CI"] },
+    }));
+    const opts = createBuiltinToolsMock.mock.calls[0]![0] as { bash?: { envPassthrough?: string[] } };
+    expect(opts.bash?.envPassthrough).toEqual(["MY_TOKEN", "CI"]);
+  });
+
+  it("does not pass a bash envPassthrough when none is configured", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
+    const opts = createBuiltinToolsMock.mock.calls[0]![0] as { bash?: { envPassthrough?: string[] } };
+    expect(opts.bash?.envPassthrough ?? []).toEqual([]);
+  });
+
+  it("scopes the pi JSONL session dir per user by default", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
+    expect(agentRuntimeConfigs[0]!.sessionDir).toBe(join(homedir(), ".vex", "sessions", "users", "u1"));
+  });
+
+  it("honors a configured session dir only when it stays inside the user root", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const inside = join(homedir(), ".vex", "sessions", "users", "u1", "custom");
+    agentRuntimeConfigs.length = 0;
+    await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      sessions: { directory: inside },
+    }));
+    expect(agentRuntimeConfigs[0]!.sessionDir).toBe(inside);
+
+    agentRuntimeConfigs.length = 0;
+    await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      sessions: { directory: "/etc/evil" },
+    }));
+    expect(agentRuntimeConfigs[0]!.sessionDir).toBe(join(homedir(), ".vex", "sessions", "users", "u1"));
+  });
+
+  it("wires SkillLearner + ShareLink into the per-agent pipeline and tool set", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const agent = await factory("u1", "webchat", effectiveConfig({
+      memory: undefined,
+      skillLearner: { enabled: true, autoTriggerKeywords: ["记住"] },
+      sharelink: { enabled: true, autoDetect: true, responseMode: "simple" },
+    }));
+
+    // SkillLearner command is intercepted and short-circuits before any LLM call.
+    const reply = await agent.processMessage(mockCtx("/skill_learn"));
+    expect(reply.content).toContain("已进入技能学习模式");
+
+    // ShareLink tool is present in the runtime customTools.
+    const cfg = agentRuntimeConfigs[0]!;
+    const names = cfg.customTools?.map((t) => t.name) ?? [];
+    expect(names).toContain("sharelink_parse");
+    await agent.shutdown();
+  });
+
+  it("leaves ShareLink/SkillLearner off when their config sections are absent", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const agent = await factory("u1", "webchat", effectiveConfig({ memory: undefined }));
+
+    const names = agentRuntimeConfigs[0]!.customTools?.map((t) => t.name) ?? [];
+    expect(names).not.toContain("sharelink_parse");
+    await agent.shutdown();
+  });
+
+  it("does not deploy SkillLearner state across users (separate state dirs)", async () => {
+    const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+    const agentA = await factory("uA", "webchat", effectiveConfig({
+      memory: undefined,
+      skillLearner: { enabled: true },
+    }));
+    const agentB = await factory("uB", "webchat", effectiveConfig({
+      memory: undefined,
+      skillLearner: { enabled: true },
+    }));
+
+    const replyA = await agentA.processMessage(mockCtx("/skill_learn"));
+    expect(replyA.content).toContain("已进入技能学习模式");
+    // Agent B has no active session — its status command reports no session.
+    const replyB = await agentB.processMessage(mockCtx("/skill_status"));
+    expect(replyB.content).not.toContain("正在学习中");
+
+    await agentA.shutdown();
+    await agentB.shutdown();
   });
 });

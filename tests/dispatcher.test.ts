@@ -10,6 +10,8 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Dispatcher, type DispatchOutboundMessage } from "../src/dispatcher/Dispatcher.js";
+import { ConfigStore } from "../src/config/ConfigStore.js";
+import { YamlLoader } from "../src/config/resolvers/YamlLoader.js";
 import type { InboundMessageContext } from "../src/channels/ChannelAdapter.js";
 import * as hooks from "../src/hooks/index.js";
 
@@ -175,5 +177,60 @@ describe("Dispatcher", () => {
     // The dispatched ctx carries the synthesized messageId/timestamp
     expect(spy.mock.calls[0]?.[0].messageId).toMatch(/^synthetic-/);
     spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration: Dispatcher + real ConfigStore + real AgentRegistry
+// ---------------------------------------------------------------------------
+
+describe("Dispatcher integration with ConfigStore tier-3 auto-load", () => {
+  it("hands the factory the SQLite-overlaid config without Dispatcher performing the merge", async () => {
+    // A real ConfigStore with an injected user loader (stand-in for
+    // SqliteLoader) — the Dispatcher must NOT know about SQLite at all.
+    const loader = {
+      load: (userId: string) =>
+        userId === "u1" ? { persona: { persona_name: "PandaBot" }, agent: { temperature: 0.2 } } : {},
+    };
+    const store = new ConfigStore({
+      yamlLoader: new YamlLoader("/nonexistent/config.yaml"),
+      userConfigLoader: loader,
+    });
+
+    // A real AgentRegistry whose factory records the exact config it receives.
+    const received: Array<{ userId: string; config: unknown }> = [];
+    const registry = new (await import("../src/agent/AgentRegistry.js")).AgentRegistry<{
+      processMessage(ctx: InboundMessageContext): Promise<{ content: string }>;
+      shutdown(): Promise<void>;
+    }>({
+      factory: async (userId, _channelId, config) => {
+        received.push({ userId, config });
+        return {
+          processMessage: async () => ({ content: "hello" }),
+          shutdown: async () => {},
+        };
+      },
+    });
+
+    const delivered: string[] = [];
+    const dispatcher = new Dispatcher(store, registry, async (msg) => {
+      delivered.push(msg.text);
+    });
+
+    await dispatcher.dispatch(mockCtx({ senderId: "u1", content: "hi" }));
+
+    expect(received).toHaveLength(1);
+    const resolved = received[0]!.config as {
+      userId: string;
+      persona?: Record<string, unknown>;
+      agent: { temperature: number };
+    };
+    // The config handed to the factory carries the user overrides…
+    expect(resolved.userId).toBe("u1");
+    expect(resolved.persona?.persona_name).toBe("PandaBot");
+    expect(resolved.agent.temperature).toBe(0.2);
+    // …and the Dispatcher itself never saw the loader (it only calls resolve).
+    expect(delivered).toEqual(["hello"]);
+    await registry.shutdown();
   });
 });

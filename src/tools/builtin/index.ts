@@ -46,7 +46,6 @@ export interface BuiltinToolsOptions {
   bash?: BashToolOptions;
   memory?: MemoryToolsOptions;
   weather?: WeatherToolOptions;
-  sharelink?: Record<string, unknown>;
   enableBrowser?: boolean;
   enableFilesystem?: boolean;
   enableBash?: boolean;

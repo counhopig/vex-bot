@@ -1057,19 +1057,11 @@ ${COMMON_CSS}${CONTROL_CSS}
             <div class="form-group">
               <label>Store Type</label>
               <select id="sessions-type" class="form-input">
-                <option value="memory">memory</option>
                 <option value="file">file</option>
               </select>
-              <p class="form-hint">Changing the store type requires a restart to take effect</p>
+              <p class="form-hint">Session persistence is file-based. The per-user session directory is derived safely under ~/.vex/sessions/users/ at runtime.</p>
             </div>
-            <div class="form-group">
-              <label>Directory (file store)</label>
-              <input type="text" id="sessions-directory" class="form-input" placeholder="~/.vex/sessions" />
-            </div>
-            <div class="form-group">
-              <label>Session TTL (ms)</label>
-              <input type="number" id="sessions-ttl-ms" class="form-input" min="0" />
-            </div>
+            <p class="form-hint" style="color: var(--warning);">Directory and TTL settings are not configurable in this build. Set <code>sessions.directory</code> via the Raw YAML editor if needed (validated to stay inside the user's own root).</p>
           </div>
         </div>
 

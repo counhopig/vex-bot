@@ -138,6 +138,60 @@ describe("Agent", () => {
     expect(systemPrompt).not.toContain("Available Skills");
   });
 
+  // -- custom instructions (agent.systemPrompt) -----------------------------
+
+  it("includes agent.systemPrompt as custom instructions exactly once", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, chat } = fakeRuntime();
+    const config = { ...dummyConfig(), agent: { ...dummyConfig().agent, systemPrompt: "Always answer in Chinese." } };
+    const agent = new Agent("u1", config, { pipeline, persona: null, runtime });
+
+    await agent.processMessage(mockCtx());
+
+    const systemPrompt = chat.mock.calls[0]![0] as string;
+    // Exactly one occurrence (section label + content) — no duplication from
+    // persona or runtime defaults.
+    expect(systemPrompt.match(/Always answer in Chinese\./g)).toHaveLength(1);
+    expect(systemPrompt).toContain("【自定义指令】");
+    // Identity section still present (DEFAULT_IDENTITY, since persona is null).
+    expect(systemPrompt).toContain(DEFAULT_IDENTITY);
+  });
+
+  it("sits between persona identity and the environment section when both exist", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, chat } = fakeRuntime();
+    const config = { ...dummyConfig(), agent: { ...dummyConfig().agent, systemPrompt: "Custom rule." } };
+    const persona = new Persona(createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "." })!, new PersonaStorage());
+    const agent = new Agent("u1", config, { pipeline, persona, runtime });
+
+    await agent.processMessage(mockCtx());
+
+    const systemPrompt = chat.mock.calls[0]![0] as string;
+    const personaIdx = systemPrompt.indexOf("PandaBot");
+    const customIdx = systemPrompt.indexOf("Custom rule.");
+    expect(personaIdx).toBeGreaterThanOrEqual(0);
+    expect(customIdx).toBeGreaterThan(personaIdx);
+  });
+
+  // -- feature disposal -----------------------------------------------------
+
+  it("shutdown disposes registered features before the runtime", async () => {
+    const pipeline = new Pipeline();
+    const { runtime, shutdown: runtimeShutdown } = fakeRuntime();
+    const featureShutdown = vi.fn().mockResolvedValue(undefined);
+    const agent = new Agent("u1", dummyConfig(), {
+      pipeline,
+      persona: null,
+      runtime,
+      features: [{ shutdown: featureShutdown }],
+    });
+
+    await agent.shutdown();
+
+    expect(featureShutdown).toHaveBeenCalledTimes(1);
+    expect(runtimeShutdown).toHaveBeenCalledTimes(1);
+  });
+
   // -- interceptor short-circuit -------------------------------------------
 
   it("processMessage short-circuits when pipeline interceptor returns a string", async () => {

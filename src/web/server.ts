@@ -335,8 +335,11 @@ export class WebServer {
   /** Reset a user's runtime after a config save (config.save → onResetUser). */
   private async resetUserRuntime(userId: string): Promise<void> {
     // Config.save originates from the control panel (webchat channel); reset
-    // that user's agent so the new settings take effect immediately.
+    // that user's agents on every channel so the next message rebuilds with
+    // the new effective config wherever it arrives (webchat or their own
+    // WeChat channel).
     await this.options.agentRegistry.reset(userId, "webchat");
+    await this.options.agentRegistry.reset(userId, "weixin");
     logger.debug({ userId }, "User runtime reset after config save");
   }
 

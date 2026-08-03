@@ -537,11 +537,27 @@ describe("web/routes/config extract*", () => {
     expect(user.skillLearner).toBeDefined();
     expect(user.sharelink).toBeDefined();
     expect(user.weather).toBeDefined();
-    expect(user.sessions).toBeDefined();
+    expect(user.sessions).toBeUndefined();
     expect(user.providers).toBeUndefined();
     expect(user.channels).toBeUndefined();
     expect(user.server).toBeUndefined();
     expect(user.logging).toBeUndefined();
+  });
+
+  it("drops crafted system-owned fields from personal settings", () => {
+    const user = extractUserConfigSettings({
+      agent: {
+        defaultModel: "safe-model",
+        workingDirectory: "/etc",
+        bashEnvPassthrough: ["SECRET"],
+      },
+      memory: { enabled: true, directory: "/tmp/other-user" },
+      sessions: { type: "file", directory: "/tmp/other-user" },
+    } as unknown as ConfigSaveParams);
+
+    expect(user.agent).toEqual({ defaultModel: "safe-model" });
+    expect(user.memory).toEqual({ enabled: true });
+    expect(user.sessions).toBeUndefined();
   });
 
   it("extracts system-owned sections from a save payload", () => {

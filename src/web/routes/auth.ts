@@ -94,7 +94,6 @@ export interface UserConfigSettings {
   skillLearner?: Record<string, unknown>;
   sharelink?: Record<string, unknown>;
   weather?: Record<string, unknown>;
-  sessions?: Record<string, unknown>;
 }
 
 export interface WebAuthStoreOptions {
@@ -571,7 +570,6 @@ export class WebAuthStore {
       ...(patch.skillLearner ? { skillLearner: { ...existing.skillLearner, ...patch.skillLearner } } : {}),
       ...(patch.sharelink ? { sharelink: this.mergeSharelinkSettings(existing.sharelink, patch.sharelink) } : {}),
       ...(patch.weather ? { weather: { ...existing.weather, ...patch.weather } } : {}),
-      ...(patch.sessions ? { sessions: { ...existing.sessions, ...patch.sessions } } : {}),
     };
   }
 

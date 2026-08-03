@@ -11,6 +11,8 @@
  *   3. SQLite web_user_settings (user-level overrides, per-field)
  */
 
+import type { EffectiveWeatherConfig } from "./weather.js";
+
 export interface EffectiveConfig {
   readonly userId: string;
   readonly channelId: string;
@@ -36,8 +38,6 @@ export interface EffectiveConfig {
   memory?: {
     enabled?: boolean;
     directory?: string;
-    embeddingModel?: string;
-    embeddingProvider?: string;
   };
   skills?: {
     enabled?: boolean;
@@ -47,6 +47,20 @@ export interface EffectiveConfig {
     only?: string[];
   };
   persona?: Record<string, unknown>; // absent = disabled (opt-in)
+  /** Normalized (camelCase) per-user weather section; snake_case sources are
+   *  converted by ConfigStore at the EffectiveConfig boundary. */
+  weather?: EffectiveWeatherConfig;
+  /** Per-user session settings. Only `file` persistence exists; directory is
+   *  honored with path-containment validation (see buildAgentFactory). */
+  sessions?: {
+    type?: "file";
+    directory?: string;
+    ttlMs?: number;
+  };
+  /** Per-user ShareLink extension settings (camelCase, panel shape). */
+  sharelink?: Record<string, unknown>;
+  /** Per-user SkillLearner extension settings (camelCase, panel shape). */
+  skillLearner?: Record<string, unknown>;
   webAuth?: {
     enabled?: boolean;
     database?: string;

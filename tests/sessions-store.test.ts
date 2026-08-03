@@ -370,6 +370,41 @@ describe("sessions/store", () => {
       expect(list[0]?.model).toBe("LongCat-2.0");
       expect(list[0]?.provider).toBe("longcat");
     });
+
+    it("rebuilds from a per-user nested AgentRuntime log (users/{userId}/{key}/...)", async () => {
+      // buildAgentFactory now scopes pi JSONL per user:
+      // ~/.vex/sessions/users/{userId}/{sanitizedKey}/... — recovery must skip
+      // the users/{userId} prefix when reconstructing the canonical key.
+      const sessionDir = path.join(testDir, "users", "user_abc", "webchat_u1");
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sessionDir, "2026-07-02T08-50-43-724Z_runtime-session.jsonl"),
+        [
+          JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "runtime-nested",
+            timestamp: "2026-07-02T08:50:43.724Z",
+            cwd: "/workspace",
+          }),
+          JSON.stringify({
+            type: "message",
+            id: "msg-user",
+            timestamp: "2026-07-02T08:50:43.735Z",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "hi" }],
+            },
+          }),
+        ].join("\n") + "\n",
+      );
+      const fresh = new FileSessionStore(testDir);
+      const list = await fresh.list();
+      expect(list).toHaveLength(1);
+      expect(list[0]?.sessionKey).toBe("webchat:u1");
+      expect(list[0]?.sessionId).toBe("runtime-nested");
+      expect(list[0]?.messageCount).toBe(1);
+    });
   });
 
   describe("transcript append", () => {

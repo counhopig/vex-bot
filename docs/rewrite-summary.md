@@ -118,6 +118,7 @@
 
 ## 8. 已知遗留项（不阻塞，记录防止遗忘）
 
+- **~~运行时配置断线（2026-08-03）~~ 已修复（2026-08-03，见 `docs/runtime-config-integration-fix-plan.md`）**：认证控制台保存的用户级设置此前只展示不生效——生产 `Dispatcher` 调用 `ConfigStore.resolve(userId, channelId)` 时不加载 SQLite tier。本次修复接入 SQLite tier，并在保存及解析边界使用 personal 字段白名单；`workingDirectory`、`bashEnvPassthrough`、memory/session/skills 路径保持 system-owned。Memory、pi JSONL、Skill Learner 状态及技能部署均由服务端派生到 `users/{userId}` 目录；活动学习会话可跨 Agent 重建恢复并清理过期数据。Weather 空白 key 继承系统 key；ShareLink 的 b23.tv 解析使用严格域名和重定向验证。Persona、自定义指令、Weather、ShareLink 与 Skill Learner 均已接入逐用户运行时。控制面板字段的消费方或「不支持」分类见 `tests/config-runtime-matrix.test.ts`。
 - `ModelResolver` 对大小写不匹配的模型 id 静默猜错 API 协议，而不是报错或大小写不敏感匹配。
 - `tool_start`/`tool_end` hook 一直没人 emit——当初说"等 plugins/ 落地再接"，现在 plugins/ 真的接上了，但这两个事件依然没人触发，插件作者注册这两个 hook 会静默不生效。
 - `developer-guide.md`/`api-reference.md` 是重写前的旧文档（标注 `b7bf46a`），路径和类结构已经完全对不上新代码库，本次重写没有同步更新（用户已确认暂不处理）。

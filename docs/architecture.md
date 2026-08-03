@@ -364,25 +364,29 @@ The system prompt is rebuilt fresh each turn because Persona state changes (hist
 │  【用户画像】                                          │
 │    - [姓名] 用户名字是 counhopig                       │
 │    - [职业] 用户在香港工作                             │
-├─ Section 2: ENVIRONMENT ──────────────────────────────┤
+├─ Section 2: CUSTOM INSTRUCTIONS ──────────────────────┤
+│  (agent.systemPrompt — user-authored instructions)     │
+│  Ordering: identity → custom instructions → environment│
+├─ Section 3: ENVIRONMENT ──────────────────────────────┤
 │  <environment>                                        │
 │  Working directory: /home/counhopig/.vex/workspace/... │
 │  Platform: linux-x64                                  │
 │  Shell: zsh                                           │
 │  Current time (Asia/Shanghai): 2026-07-22 15:30:00    │
 │  </environment>                                       │
-├─ Section 3: TOOL RULES ──────────────────────────────┤
+├─ Section 4: TOOL RULES ──────────────────────────────┤
 │  ## Tool Usage Rules                                  │
 │  ... file ops, bash, browser, memory guides ...       │
-├─ Section 4: SKILLS ──────────────────────────────────┤
+├─ Section 5: SKILLS ──────────────────────────────────┤
 │  (injected skill content)                             │
-├─ Section 5: OUTPUT FORMAT ───────────────────────────┤
+├─ Section 6: OUTPUT FORMAT ───────────────────────────┤
 │  ## Output Format                                     │
 │  Use Markdown, be concise, code over description      │
 └───────────────────────────────────────────────────────┘
 ```
 
 **Key rule**: Persona is Section 1. Always. The LLM sees identity first, capabilities second.
+`agent.systemPrompt` follows identity as Section 2 (custom instructions) and precedes the environment/tool-rules sections.
 
 ---
 
@@ -406,7 +410,9 @@ EffectiveConfig resolve(userId: string, channelId: string):
        ...
      }
 
-  3. Overlay SQLite web_user_settings (user-level):
+  3. Overlay SQLite web_user_settings (user-level), loaded automatically via
+     the injected UserConfigLoader (SqliteLoader in production) — the same
+     database the control panel writes to:
      {
        persona: { persona_name: "PandaBot", ... },  // from web panel
        skillLearner: { enabled: false },
@@ -414,10 +420,21 @@ EffectiveConfig resolve(userId: string, channelId: string):
      }
      User overrides win on a per-field basis.
 
-  4. Apply channel-specific adjustments:
+  4. Normalize at the EffectiveConfig boundary:
+     - weather section: snake_case (YAML/UI) → typed camelCase
+       (EffectiveWeatherConfig) so runtime tools receive typed options
+     - memory.embeddingModel/Provider: stripped (no runtime consumer; the
+       local SimpleEmbedding is fixed)
+     - sessions.type: coerced to "file" (the only implemented persistence)
+
+  5. Apply channel-specific adjustments:
      - Scoped working directory
-     - Scoped memory/session directories
+     - Scoped memory/session directories (per-user, isPathInside-validated)
 ```
+
+The tier-3 loader keeps `ConfigStore.resolve()` the single source of truth —
+the Dispatcher never learns about SQLite or WebAuthStore (integration plan
+design decision 2).
 
 ---
 

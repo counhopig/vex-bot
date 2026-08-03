@@ -18,6 +18,8 @@
 import type { EffectiveConfig } from "./EffectiveConfig.js";
 import { BUILT_IN_DEFAULTS } from "./EffectiveConfig.js";
 import type { YamlLoader } from "./resolvers/YamlLoader.js";
+import type { UserConfigLoader } from "./UserConfigLoader.js";
+import { normalizeWeatherSection } from "./weather.js";
 
 // ---------------------------------------------------------------------------
 // Deep-merge helpers (purely data, no Zod runtime)
@@ -45,9 +47,11 @@ function mergeSection<T extends Record<string, unknown>>(
 
 export class ConfigStore {
   private readonly yamlLoader: YamlLoader;
+  private readonly userConfigLoader?: UserConfigLoader;
 
-  constructor(options: { yamlLoader: YamlLoader }) {
+  constructor(options: { yamlLoader: YamlLoader; userConfigLoader?: UserConfigLoader }) {
     this.yamlLoader = options.yamlLoader;
+    this.userConfigLoader = options.userConfigLoader;
   }
 
   /**
@@ -55,8 +59,10 @@ export class ConfigStore {
    *
    * @param userId - Web user ID (or synthetic ID for non-auth flows).
    * @param channelId - "webchat" | "weixin" | etc.
-   * @param sqliteOverrides - Optional user-level overrides from SQLite
-   *                          web_user_settings.settings_json.
+   * @param sqliteOverrides - Narrow test/migration escape hatch: explicit
+   *                          user-level overrides (web_user_settings shape).
+   *                          Production resolution never passes this — tier 3
+   *                          is loaded automatically from userConfigLoader.
    */
   async resolve(
     userId: string,
@@ -76,9 +82,19 @@ export class ConfigStore {
     const yamlData = this.yamlLoader.load();
     this.applyTo(config, yamlData);
 
-    // Tier 3: SQLite user-level overrides
+    // Tier 3: SQLite user-level overrides — loaded automatically for every
+    // dispatch when a loader is injected (the production path). Synthetic
+    // owners (cron, etc.) without a settings row resolve to {}.
+    if (this.userConfigLoader) {
+      const userSettings = this.userConfigLoader.load(userId);
+      if (userSettings && typeof userSettings === "object") {
+        this.applyUserTo(config, userSettings);
+      }
+    }
+
+    // Explicit overrides (tests only) apply on top of the auto-loaded tier.
     if (sqliteOverrides) {
-      this.applyTo(config, sqliteOverrides);
+      this.applyUserTo(config, sqliteOverrides);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-assertion
@@ -111,6 +127,34 @@ export class ConfigStore {
     }
   }
 
+  /** Apply an untrusted user layer after removing values that mean
+   *  "not configured". In particular, a blank weather secret must inherit
+   *  the system value instead of overwriting it before normalization. */
+  private applyUserTo(acc: Record<string, unknown>, layer: Record<string, unknown>): void {
+    const safeLayer = { ...layer };
+    if (safeLayer.agent && typeof safeLayer.agent === "object" && !Array.isArray(safeLayer.agent)) {
+      const agent = { ...(safeLayer.agent as Record<string, unknown>) };
+      delete agent.workingDirectory;
+      delete agent.bashEnvPassthrough;
+      safeLayer.agent = agent;
+    }
+    if (safeLayer.memory && typeof safeLayer.memory === "object" && !Array.isArray(safeLayer.memory)) {
+      const memory = { ...(safeLayer.memory as Record<string, unknown>) };
+      delete memory.directory;
+      safeLayer.memory = memory;
+    }
+    delete safeLayer.sessions;
+    delete safeLayer.skills;
+    if (safeLayer.weather && typeof safeLayer.weather === "object" && !Array.isArray(safeLayer.weather)) {
+      const weather = { ...(safeLayer.weather as Record<string, unknown>) };
+      for (const key of ["caiyun_api_key", "caiyunApiKey"]) {
+        if (typeof weather[key] === "string" && !weather[key].trim()) delete weather[key];
+      }
+      safeLayer.weather = weather;
+    }
+    this.applyTo(acc, safeLayer);
+  }
+
   /** Ensure all required EffectiveConfig fields are present after resolution. */
   private stampConfig(raw: Record<string, unknown>): Record<string, unknown> {
     // Agent defaults (any missing scalar gets the built-in default)
@@ -138,6 +182,28 @@ export class ConfigStore {
       pretty: (logging.pretty as boolean) ?? BUILT_IN_DEFAULTS.logging.pretty,
       ...logging,
     };
+
+    // Weather: normalize the raw (snake_case) section at the EffectiveConfig
+    // boundary so runtime tools receive typed camelCase options.
+    if (raw.weather !== undefined) {
+      raw.weather = normalizeWeatherSection(raw.weather as Record<string, unknown> | undefined);
+    }
+
+    // Memory: embedding model/provider have no runtime consumer (the local
+    // SimpleEmbedding is fixed). Strip legacy saved values so they cannot
+    // linger as saveable-but-inert fields (integration plan Part 5).
+    if (raw.memory !== undefined) {
+      const memory = raw.memory as Record<string, unknown>;
+      delete memory.embeddingModel;
+      delete memory.embeddingProvider;
+    }
+
+    // Sessions: only file persistence is implemented — a legacy "memory"
+    // value in YAML must not silently claim a mode that does not exist.
+    if (raw.sessions !== undefined) {
+      const sessions = raw.sessions as Record<string, unknown>;
+      if (sessions.type !== "file") sessions.type = "file";
+    }
 
     return raw;
   }
