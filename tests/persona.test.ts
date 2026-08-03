@@ -59,6 +59,45 @@ describe("Persona", () => {
     expect(prompt).toMatch(/当前时间|Current time|time|日期/);
   });
 
+  it.each([
+    [2, "深夜"],
+    [6, "早晨"],
+    [10, "上午"],
+    [12, "中午"],
+    [16, "下午"],
+    [18, "傍晚"],
+    [22, "夜间"],
+  ])("classifies local hour %i as %s", async (hour, expectedPeriod) => {
+    const config = createPersonaConfig({
+      persona_name: "Bot",
+      persona_base_prompt: "Be helpful.",
+      time_awareness_enabled: true,
+    });
+    const persona = new Persona(config!, new PersonaStorage());
+    const timestamp = new Date(2026, 7, 3, hour, 23).getTime();
+
+    const prompt = await persona.buildPrompt(mockCtx({ timestamp }));
+
+    expect(prompt).toContain(`当前时段: ${expectedPeriod}`);
+    expect(prompt).toContain("回复中的早晚、问候和作息描述必须与“当前时段”一致");
+    expect(prompt).toMatch(/时区: .+ \(UTC[+-]\d{2}:\d{2}\)/);
+  });
+
+  it("classifies 18:23 as evening rather than late night", async () => {
+    const config = createPersonaConfig({
+      persona_name: "PandaBot",
+      persona_base_prompt: "Be helpful.",
+      time_awareness_enabled: true,
+    });
+    const persona = new Persona(config!, new PersonaStorage());
+    const timestamp = new Date(2026, 7, 3, 18, 23).getTime();
+
+    const prompt = await persona.buildPrompt(mockCtx({ timestamp }));
+
+    expect(prompt).toContain("当前时段: 傍晚");
+    expect(prompt).not.toContain("当前时段: 深夜");
+  });
+
   it("buildPrompt does NOT contain hardcoded 小忆 or 温柔少女", async () => {
     const config = createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "你是一个 AI。" });
     const storage = new PersonaStorage();

@@ -10,6 +10,25 @@ import type { PersonaConfig } from "./PersonaConfig.js";
 import type { PersonaStorage } from "./PersonaStorage.js";
 import type { InboundMessageContext } from "../../channels/ChannelAdapter.js";
 
+function describeTimeOfDay(hour: number): string {
+  if (hour < 5) return "深夜";
+  if (hour < 9) return "早晨";
+  if (hour < 12) return "上午";
+  if (hour < 14) return "中午";
+  if (hour < 18) return "下午";
+  if (hour < 21) return "傍晚";
+  return "夜间";
+}
+
+function formatUtcOffset(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absolute = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(absolute / 60)).padStart(2, "0");
+  const minutes = String(absolute % 60).padStart(2, "0");
+  return `UTC${sign}${hours}:${minutes}`;
+}
+
 export function buildPersonaPrompt(
   config: PersonaConfig,
   storage: PersonaStorage,
@@ -29,9 +48,15 @@ export function buildPersonaPrompt(
   if (config.timeAwarenessEnabled) {
     const now = new Date(ctx.timestamp);
     const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(now);
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "system-local";
+    const timeOfDay = describeTimeOfDay(now.getHours());
     lines.push("");
     lines.push("【当前时间】");
-    lines.push(formatted);
+    lines.push(`${formatted} ${weekday}`);
+    lines.push(`时区: ${timezone} (${formatUtcOffset(now)})`);
+    lines.push(`当前时段: ${timeOfDay}`);
+    lines.push(`回复中的早晚、问候和作息描述必须与“当前时段”一致，不得把${timeOfDay}描述成其他时段。`);
   }
 
   if (config.emotionEnabled) {
