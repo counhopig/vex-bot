@@ -98,6 +98,26 @@ describe("Persona", () => {
     expect(prompt).not.toContain("当前时段: 深夜");
   });
 
+  it("normalizes Weixin Unix-second timestamps before deriving local time", async () => {
+    const config = createPersonaConfig({
+      persona_name: "PandaBot",
+      persona_base_prompt: "Be helpful.",
+      time_awareness_enabled: true,
+    });
+    const persona = new Persona(config!, new PersonaStorage());
+    const timestampSeconds = Math.floor(new Date(2026, 7, 4, 12, 3).getTime() / 1000);
+
+    const prompt = await persona.buildPrompt(mockCtx({
+      channelId: "weixin",
+      timestamp: timestampSeconds,
+    }));
+
+    expect(prompt).toContain("2026-08-04 12:03");
+    expect(prompt).toContain("当前时段: 中午");
+    expect(prompt).not.toContain("1970-");
+    expect(prompt).not.toContain("当前时段: 深夜");
+  });
+
   it("buildPrompt does NOT contain hardcoded 小忆 or 温柔少女", async () => {
     const config = createPersonaConfig({ persona_name: "PandaBot", persona_base_prompt: "你是一个 AI。" });
     const storage = new PersonaStorage();

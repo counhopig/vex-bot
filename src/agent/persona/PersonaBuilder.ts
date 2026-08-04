@@ -29,6 +29,10 @@ function formatUtcOffset(date: Date): string {
   return `UTC${sign}${hours}:${minutes}`;
 }
 
+function normalizeTimestampMs(timestamp: number): number {
+  return timestamp < 1e12 ? timestamp * 1000 : timestamp;
+}
+
 export function buildPersonaPrompt(
   config: PersonaConfig,
   storage: PersonaStorage,
@@ -46,7 +50,7 @@ export function buildPersonaPrompt(
   }
 
   if (config.timeAwarenessEnabled) {
-    const now = new Date(ctx.timestamp);
+    const now = new Date(normalizeTimestampMs(ctx.timestamp));
     const formatted = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(now);
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "system-local";
