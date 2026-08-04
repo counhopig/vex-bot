@@ -181,6 +181,16 @@ export class AgentRuntime {
       // persona + pipeline injections). The base-prompt sync keeps that
       // value intact through the SDK's per-turn reset.
       session.agent.setBaseSystemPrompt(systemPrompt);
+      logger.debug(
+        {
+          provider: this.config.provider,
+          model: this.config.model,
+          sessionKey,
+          systemPrompt,
+          userMessage: ctx.content,
+        },
+        "LLM request prompt",
+      );
       await session.prompt(ctx.content);
       await session.agent.waitForIdle();
       return this.buildReply(session);
