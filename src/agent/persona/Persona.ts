@@ -43,10 +43,29 @@ export class Persona {
     const senderName = ctx.senderName ?? ctx.senderId;
     this.storage.addHistory(`${senderName}: ${ctx.content}`);
     this.storage.addHistory(`assistant: ${replyText}`);
+
+    if (this.config.profileEnabled) {
+      const name = extractExplicitName(ctx.content);
+      if (name) this.storage.setProfileFact("姓名", name);
+    }
   }
 
   /** Get current state (for inspection/serialization). */
   getState(): PersonaState {
     return this.storage.getState();
   }
+}
+
+/** Only accept explicit first-person declarations; never infer identity. */
+function extractExplicitName(content: string): string | undefined {
+  const text = content.trim();
+  const patterns = [
+    /^(?:我叫|我的名字(?:叫|是)|请叫我)\s*([\p{L}\p{N}_·.-]{1,40})[。！!，,\s]*$/u,
+    /^my name is\s+([\p{L}\p{N}_·.-]{1,40})[.!\s]*$/iu,
+  ];
+  for (const pattern of patterns) {
+    const value = pattern.exec(text)?.[1]?.trim();
+    if (value) return value;
+  }
+  return undefined;
 }

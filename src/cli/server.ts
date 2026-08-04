@@ -27,6 +27,7 @@ import { Agent } from "../agent/Agent.js";
 import { AgentRuntime } from "../agent/AgentRuntime.js";
 import { Pipeline } from "../agent/Pipeline.js";
 import { Persona } from "../agent/persona/Persona.js";
+import { PersonaStorage } from "../agent/persona/PersonaStorage.js";
 import { createPersonaConfig } from "../agent/persona/PersonaConfig.js";
 import { createDefaultPiSession } from "../agent/createDefaultPiSession.js";
 import { createBuiltinTools } from "../tools/builtin/index.js";
@@ -194,7 +195,6 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
     const personaRaw = effective.persona as Record<string, unknown> | undefined;
     const personaEnabled = personaRaw ? personaRaw.enabled !== false : false;
     const personaConfig = createPersonaConfig(personaRaw);
-    const persona = personaEnabled && personaConfig ? new Persona(personaConfig) : null;
 
     // Per-user MemoryManager from effective.memory (per-user resolved by
     // ConfigStore); directory isolated per user. `memoryEnabled` defaults to
@@ -204,16 +204,23 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
     // "enabled but permanently inert" tool set.
     const memoryCfg = effective.memory;
     const memoryEnabled = memoryCfg ? memoryCfg.enabled !== false : true;
+    const memoryDirectory = join(
+      memoryCfg?.directory ? expandHomePath(memoryCfg.directory) : join(homedir(), ".vex", "memory"),
+      "users",
+      safeUserPathSegment(userId),
+    );
     const memoryManager = memoryEnabled
       ? createMemoryManager({
           enabled: memoryEnabled,
-          directory: join(
-            memoryCfg?.directory ? expandHomePath(memoryCfg.directory) : join(homedir(), ".vex", "memory"),
-            "users",
-            safeUserPathSegment(userId),
-          ),
+          directory: memoryDirectory,
         })
       : undefined;
+    const persona = personaEnabled && personaConfig
+      ? new Persona(
+          personaConfig,
+          new PersonaStorage(memoryEnabled ? join(memoryDirectory, "profile.json") : undefined),
+        )
+      : null;
 
     // Per-user skills: load the user's skill dirs into a fresh SkillRegistry
     // and assemble the skills section of the system prompt. Absent/disabled

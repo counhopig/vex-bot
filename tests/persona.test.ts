@@ -8,6 +8,9 @@ import { Persona } from "../src/agent/persona/Persona.js";
 import { createPersonaConfig } from "../src/agent/persona/PersonaConfig.js";
 import { PersonaStorage } from "../src/agent/persona/PersonaStorage.js";
 import type { InboundMessageContext } from "../src/channels/ChannelAdapter.js";
+import { join } from "path";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
 
 function mockCtx(overrides?: Partial<InboundMessageContext>): InboundMessageContext {
   return {
@@ -155,6 +158,34 @@ describe("Persona", () => {
     expect(state).toHaveProperty("emotion");
     expect(state).toHaveProperty("history");
     expect(state).toHaveProperty("profile");
+  });
+
+  it("persists an explicitly declared name and injects it after rebuild", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "vex-persona-profile-"));
+    const profileFile = join(directory, "profile.json");
+    const config = createPersonaConfig({ persona_name: "Bot", persona_base_prompt: "." });
+    try {
+      const first = new Persona(config!, new PersonaStorage(profileFile));
+      await first.observeResponse(mockCtx({ content: "我叫 Counhopig" }), "你好");
+
+      const rebuilt = new Persona(config!, new PersonaStorage(profileFile));
+      const prompt = await rebuilt.buildPrompt(mockCtx({ content: "我是谁" }));
+
+      expect(prompt).toContain("【用户画像】");
+      expect(prompt).toContain("[姓名] Counhopig");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not infer a name from questions or third-person statements", async () => {
+    const config = createPersonaConfig({ persona_name: "Bot", persona_base_prompt: "." });
+    const persona = new Persona(config!, new PersonaStorage());
+
+    await persona.observeResponse(mockCtx({ content: "我是谁" }), "不知道");
+    await persona.observeResponse(mockCtx({ content: "他叫 Counhopig" }), "好的");
+
+    expect(persona.getState().profile).toEqual({});
   });
 
   it("buildPrompt does not include persona identity when persona is disabled", async () => {
