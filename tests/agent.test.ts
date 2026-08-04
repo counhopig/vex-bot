@@ -258,6 +258,21 @@ describe("Agent", () => {
     expect(observer).toHaveBeenCalledWith(ctx, "response");
   });
 
+  it("processMessage lets Persona observe a successful turn", async () => {
+    const pipeline = new Pipeline();
+    const { runtime } = fakeRuntime({ content: "你好 ccloude" });
+    const persona = new Persona(
+      createPersonaConfig({ persona_name: "Bot", persona_base_prompt: "." })!,
+      new PersonaStorage(),
+    );
+    const agent = new Agent("u1", dummyConfig(), { pipeline, persona, runtime });
+
+    await agent.processMessage({ ...mockCtx(), content: "我叫 ccloude" });
+
+    expect(persona.getState().profile).toEqual({ 姓名: "ccloude" });
+    expect(persona.getState().history).toContain("u1: 我叫 ccloude");
+  });
+
   // -- error propagation ---------------------------------------------------
 
   it("propagates errors from runtime.chat", async () => {

@@ -130,7 +130,9 @@ export class Agent {
     try {
       // 4. Call LLM via the per-Agent AgentRuntime
       reply = await this.runtime.chat(finalPrompt, ctx);
-      // 5. Run pipeline observers
+      // 5. Persist Persona-owned post-turn state before optional observers.
+      await this.persona?.observeResponse(ctx, reply.content);
+      // 6. Run pipeline observers
       await this.pipeline.runObservers(ctx, reply.content);
       return {
         content: reply.content,
