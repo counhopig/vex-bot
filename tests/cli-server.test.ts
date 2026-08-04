@@ -182,6 +182,39 @@ describe("buildAgentFactory tool wiring", () => {
     expect(opts.enableMemory).toBe(false);
   });
 
+  it("injects persisted profile facts after an Agent is rebuilt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "vex-memory-prompt-"));
+    try {
+      const factory = buildAgentFactory(fakeModelResolver(), { cron: fakeCronService() });
+      const config = effectiveConfig({ memory: { enabled: true, directory } });
+      const firstAgent = await factory("u1", "webchat", config);
+      const firstOptions = createBuiltinToolsMock.mock.calls.at(-1)![0] as {
+        memoryManager: MemoryManager;
+      };
+      await firstOptions.memoryManager.remember("用户名字叫 Counhopig", {
+        type: "fact",
+        tags: ["身份"],
+      });
+      await firstAgent.shutdown();
+
+      const rebuiltAgent = await factory("u1", "webchat", config);
+      const injections = await rebuiltAgent.pipeline.gatherPromptInjections({
+        channelId: "webchat",
+        messageId: "m1",
+        chatId: "c1",
+        chatType: "direct",
+        senderId: "u1",
+        content: "我是谁",
+        timestamp: Date.now(),
+      });
+
+      expect(injections.join("\n")).toContain("用户名字叫 Counhopig");
+      await rebuiltAgent.shutdown();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("builds the weather tool from the per-user effective weather section (not a startup capture)", async () => {
     // Two users, two locations: the factory must read effective.weather,
     // which ConfigStore resolves per user (YAML + SQLite overlay).

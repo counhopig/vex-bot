@@ -97,7 +97,7 @@
 写了完整的 plan 交给写代码会话执行，全部走标准 TDD + 单独提交 + review 流程：
 
 - **Part 1**（`c1bd22e`+`6c883b3`）：把 memory/weather/cron/image 四类工具真正接进 `createBuiltinTools()`。审查发现 review 描述里"archive 对 weather 也是配置存在才加"这个说法是错的——直接读 archive 源码验证 weather 其实跟 image 一样无条件加载，修复后重提通过。
-- **Part 2**（`b784beb`+`1ce988b`）：`cli/server.ts` 构造 per-user `MemoryManager`，读取 `weather`/`CronService` 传给工具。审查发现"用户完全没写 `memory:` 段"这种情况下会出现"enableMemory:true 但 memoryManager:undefined"的自相矛盾状态（工具列表里挂着但永远拿不到实例）——跟 `EffectiveConfig` 其它字段（agent/server/logging）缺省时都有真默认值的原则不一致，修复后重提通过。
+- **Part 2**（`b784beb`+`1ce988b`）：`cli/server.ts` 构造 per-user `MemoryManager`，读取 `weather`/`CronService` 传给工具。审查发现"用户完全没写 `memory:` 段"这种情况下会出现"enableMemory:true 但 memoryManager:undefined"的自相矛盾状态（工具列表里挂着但永远拿不到实例）——跟 `EffectiveConfig` 其它字段（agent/server/logging）缺省时都有真默认值的原则不一致，修复后重提通过。后续线上 QA 又发现管理器只接到了工具、未接入 `Pipeline` 的 prompt injection，导致 `memory_store` 成功后下一轮 LLM 看不到记忆；现已自动注入语义召回结果及最近的 profile facts，并用 Agent 重建回归测试覆盖持久化召回。
 - **Part 3**（`2722480`）：把 `SkillLoader`/`SkillRegistry`/`SkillInjector` 接进 `Agent.ts` 的 system prompt 组装，填上第4节的技能槽位。一次通过。
 - **Part 4**（设计确认 + `4d06f91`）：`PluginService` 接入，工作量最大、涉及真实架构决策，要求先在 review-request 里回答 4 个设计问题（生命周期粒度、插件工具怎么进 Agent 工具列表、workspace 路径语义、shutdown 时机）再动手写代码。设计确认阶段发现一处可以简化的地方（`PluginService` 已有公开的 `activateAll()`，不需要再包一层），以及一处更强的论证（`AgentRegistry` 的四种 dispose 路径——shutdown/reset/idle/overflow——唯一的汇合点是 `Agent.shutdown()`，不只是"图方便"）。实现阶段一次通过。
 

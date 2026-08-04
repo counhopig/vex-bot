@@ -256,6 +256,20 @@ export function buildAgentFactory(modelResolver: ModelResolver, system: BuildAge
     // first (it owns explicit /skill commands); ShareLink's auto-detect
     // follows. Feature LLM calls use the user's own provider/model.
     const pipeline = new Pipeline();
+    if (memoryManager) {
+      pipeline.registerPromptInjector(async (ctx) => {
+        const recalled = await memoryManager.recall(ctx.content, 5);
+        // Stable profile facts (name, preferences, identity) must remain
+        // available even when a short query such as "Who am I?" has no
+        // lexical overlap with the stored wording.
+        const profileFacts = (await memoryManager.list({ type: "fact" }))
+          .sort((a, b) => b.metadata.timestamp - a.metadata.timestamp)
+          .slice(0, 5);
+        const unique = new Map(recalled.map((entry) => [entry.id, entry]));
+        for (const entry of profileFacts) unique.set(entry.id, entry);
+        return memoryManager.formatForContext([...unique.values()].slice(0, 8));
+      });
+    }
     const featureComplete = createLlmCompleter(
       modelResolver,
       effective.agent.defaultProvider,
