@@ -6,8 +6,11 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
+`src/` was rewritten from scratch on the `rewrite/full-architecture` branch (now merged) — TDD, class-based, no process-global state bleeding across instances. User-facing config format, CLI commands, and channel behavior are unchanged; the fixes and behavior changes below were carried forward into the new module layout (`AGENTS.md` has the module map). `_archive/` (the pre-rewrite reference copy) and `docs/` (architecture spec, user manual, rewrite process logs) have been removed from the tree — both are still recoverable from git history starting at commit `dfb0411` if needed. `AGENTS.md` is now the sole technical reference alongside this README.
+
 ### BREAKING
 
+- **Docker deployment is no longer supported.** `Dockerfile`, `docker-compose.yml`, `docker-compose.dev.yml`, and the CI job that published `ghcr.io/counhopig/vex-bot` images have been removed. Existing GHCR images won't receive further updates; install via `npm install -g vex-bot` instead.
 - **`server.host` now defaults to `127.0.0.1` (was `0.0.0.0`).** A fresh install is no longer reachable from other machines by default. If you relied on the old default for remote access, set `server.host: 0.0.0.0` in your config or pass `--host 0.0.0.0` to `vex start`. The Docker images already pass `--host 0.0.0.0` (the container is isolated; the published port mapping controls real exposure), so Docker deployments are unaffected.
 - **Self-service registration (`POST /api/auth/register`) is now closed by default.** The first account can always register (it bootstraps the admin); after that, accounts must be created by an admin via the new `POST /api/admin/users` endpoint, unless `webAuth.allowRegistration: true` is set.
 - **The bash tool no longer inherits the full process environment.** Spawned commands see only a base allowlist (PATH, HOME, locale, proxy variables, ...) so provider API keys in the process environment cannot be read by a single `bash` call. Extra variables must be opted in via `agent.bashEnvPassthrough: [..]`. The bypassable `blockedCommands` regex denylist was removed along with its option.
