@@ -1,11 +1,18 @@
 # Vex sample configuration.
 #
-# Copy this to one of the locations Vex loads (first found wins, later files
-# override earlier ones for fields they set):
-#   1. ./config.local.yaml          (current working directory)
-#   2. ~/.vex/config.local.yaml     (per-user)
+# Copy this to one of the locations Vex loads (first found wins):
+#   1. --config <path>              (explicit CLI flag)
+#   2. ./config.local.yaml          (current working directory)
+#   3. ~/.vex/config.local.yaml     (per-user)
 # Any field you omit falls back to the built-in default shown in [brackets].
 # Vex reads YAML only.
+#
+# This file is only tier 2 of 3 (system-level defaults). When `webAuth` is
+# enabled, `agent`/`memory`/`persona`/`sharelink`/`skillLearner`/`weather` can
+# each additionally be overridden per-user from the Control Panel (tier 3,
+# stored in SQLite, wins over what's set here). Every other section
+# (`skills`, `channels`, `server`, `providers`, `logging`, `webAuth`,
+# `sessions`) is system-only — there is no per-user override for it.
 
 # ── Model providers ─────────────────────────────────────────────────────────
 # Only configure the providers you actually use. Each Chinese/Western preset
@@ -18,7 +25,6 @@ providers:
   #   apiKey: sk-your-kimi-key
   # minimax:
   #   apiKey: your-minimax-key
-  #   groupId: your-group-id        # MiniMax only
   # custom-openai:
   #   baseUrl: https://api.example.com/v1
   #   apiKey: sk-xxx
@@ -32,7 +38,6 @@ agent:
   defaultModel: deepseek-chat        # [deepseek-chat]
   temperature: 0.7                   # [0.7]  range 0–2
   maxTokens: 4096                    # [4096]
-  enableFunctionCalling: true        # [true]
   # Identity/base prompt. Leave unset to use the neutral default; when the
   # persona extension is enabled it supplies the identity, so you usually leave
   # this blank and configure `persona` below instead.
@@ -81,14 +86,16 @@ memory:
 
 # ── Sessions ────────────────────────────────────────────────────────────────
 # sessions:
-#   type: file                       # [memory]  "file" persists JSONL transcripts
+#   type: file                       # [file]  only "file" (JSONL transcripts) is implemented
 #   directory: ~/.vex/sessions
 
 # ── Persona extension ───────────────────────────────────────────────────────
 # A private, stateful character with memory, emotion, and background user-profile
-# extraction. Keys are snake_case. Enabled by default.
+# extraction. Keys are snake_case. Opt-in: omitting this whole block disables
+# persona entirely, regardless of `enabled` below — you must keep the block
+# (even empty) to turn it on.
 persona:
-  enabled: true                      # [true]
+  enabled: true                      # [false if block is omitted, else true]
   persona_name: 小忆
   # persona_base_prompt: "你是一个温柔细腻、略带毒舌但内心柔软的助手。"
   # persona_reply_style: "自然口语化，2~4 句话，偶尔用 emoji。"
@@ -97,14 +104,18 @@ persona:
   profile_building_trigger_turns: 5  # [5]
 
 # ── Skills ──────────────────────────────────────────────────────────────────
+# Opt-in, same as persona: omitting this whole block disables skills entirely.
 skills:
-  enabled: true                      # [true]
+  enabled: true                      # [false if block is omitted, else true]
   # userDir: ~/.vex/skills
   # workspaceDir: ./.vex/skills
   # disabled: []
   # only: []
 
-# ── Other extensions (all default-on; uncomment to tune) ────────────────────
+# ── Other extensions ─────────────────────────────────────────────────────────
+# sharelink and skillLearner are opt-in, same pattern: uncommenting the block
+# (even empty) is what turns them on, `enabled` only matters once it's there.
+# weather has no on/off switch — it's always available; these keys just tune it.
 # sharelink:
 #   enabled: true
 #   autoDetect: false                # auto-summarize links pasted in chat

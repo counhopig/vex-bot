@@ -8,7 +8,7 @@ General-Purpose AI Agent Framework — Persona-Driven, Multi-Channel, Tool-Nativ
 
 Vex is a TypeScript ESM agent framework built on `@mariozechner/pi-coding-agent` and `@mariozechner/pi-ai`. It connects to personal WeChat, runs in the browser via a server-rendered WebChat UI, and supports Chinese LLM providers alongside OpenAI/Anthropic-compatible APIs. Forked from [OpenMozi](https://github.com/oujingzhou/openmozi) (Apache 2.0).
 
-> The full architecture rewrite is complete on this branch. The legacy implementation remains in [`_archive/`](_archive/) for historical reference only; new runtime code lives under [`src/`](src/). See [`docs/rewrite-summary.md`](docs/rewrite-summary.md) for the rewrite record and known follow-up items.
+> A full architecture rewrite is complete on this branch. All runtime code under [`src/`](src/) was re-implemented from scratch via TDD; a small number of security-critical routines (SSRF guards, timing-safe auth, path-traversal checks, atomic writes) were carried forward from the prior implementation rather than redesigned. The pre-rewrite tree is no longer kept in-tree — it's preserved in git history starting at commit `dfb0411` for anyone who needs to check provenance. See [`AGENTS.md`](AGENTS.md) for the technical deep dive (module map, conventions, known gaps).
 
 **Vex is not just a chatbot.** It's a general agent framework where **Persona defines identity**, tools provide capabilities, and a unified Dispatcher routes every message — regardless of channel — through the same pipeline.
 
@@ -49,7 +49,6 @@ Every message takes the same path. Every agent has a Persona. No shortcuts, no d
 - **Cron scheduling** — `at`, `every`, and standard cron expressions; triggers agent turns on schedule
 - **Playwright browser automation** — screenshots, form filling, web interaction via headless Chromium
 - **Event hook system** — 8 event types with registration and unsubscribe support
-- **Docker support** — published GHCR image, multi-stage build (`node:24-alpine`), non-root user (`vex:vex`, UID/GID 1001)
 - **YAML + SQLite config** — system defaults in YAML, per-user overrides in SQLite, resolved at runtime
 
 ---
@@ -103,7 +102,7 @@ flowchart TD
 | Sessions | `src/sessions/` | JSONL session persistence, per-user scoped |
 | Web UI | `src/web/` | Server-rendered WebChat + control panel + auth |
 
-> See [Architecture Document](./docs/architecture.md) for detailed module contracts, data flow, and design decisions.
+> See [`AGENTS.md`](AGENTS.md) for detailed module contracts, data flow, and design decisions.
 
 ---
 
@@ -137,14 +136,6 @@ vex start --web-only
 ```
 
 Open `http://localhost:PORT` for the WebChat interface. Health check: `GET /health`.
-
-### Docker
-
-```bash
-docker compose up -d
-```
-
-Pulls `ghcr.io/counhopig/vex-bot:latest`, starts WebChat-only, persists state in `vex-data` volume. Mount `config.local.yaml` into `/app/config.local.yaml` for production.
 
 ---
 
@@ -259,9 +250,7 @@ logging:
 │   └── utils/           # Logger, path helpers
 ├── skills/              # Built-in skills
 ├── tests/               # Vitest tests
-├── docs/                # Documentation
-├── docker-compose.yml
-└── Dockerfile
+└── config.example.yaml
 ```
 
 ---
@@ -297,10 +286,7 @@ npm run start:gateway
 
 ## Documentation
 
-- [Architecture](./docs/architecture.md) — design philosophy, module contracts, data flow, migration path
-- [User Manual](./docs/user-manual.md)
-- [Developer Guide](./docs/developer-guide.md)
-- [API Reference](./docs/api-reference.md)
+Everything beyond this README lives in [`AGENTS.md`](AGENTS.md) — module map, message-processing flow, conventions, and known gaps.
 
 ## License
 
