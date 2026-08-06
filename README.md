@@ -2,7 +2,7 @@
 
 General-Purpose AI Agent Framework — Persona-Driven, Multi-Channel, Tool-Native
 
-[![version](https://img.shields.io/badge/version-1.15.0-blue)](https://github.com/counhopig/vex-bot)
+[![version](https://img.shields.io/badge/version-2.0.0-blue)](https://github.com/counhopig/vex-bot)
 [![license](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![node](https://img.shields.io/badge/node-%3E%3D24-brightgreen)](https://nodejs.org)
 
@@ -61,8 +61,7 @@ flowchart TD
     WC[WebChat<br/>WebSocket + SPA] --> DP
     CLI[CLI] --> DP
 
-    DP[Dispatcher<br/>resolve user, channel, config] --> AR
-    DP --> CF
+    DP[Dispatcher<br/>resolve user, channel] --> CF
 
     CF[Config Store<br/>YAML + SQLite<br/>→ EffectiveConfig] --> AR
 

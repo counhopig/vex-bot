@@ -6,7 +6,9 @@ This project follows semantic versioning for npm package releases.
 
 ## [Unreleased]
 
-`src/` was rewritten from scratch on the `rewrite/full-architecture` branch (now merged) — TDD, class-based, no process-global state bleeding across instances. User-facing config format, CLI commands, and channel behavior are unchanged; the fixes and behavior changes below were carried forward into the new module layout (`AGENTS.md` has the module map). `_archive/` (the pre-rewrite reference copy) and `docs/` (architecture spec, user manual, rewrite process logs) have been removed from the tree — both are still recoverable from git history starting at commit `dfb0411` if needed. `AGENTS.md` is now the sole technical reference alongside this README.
+## [2.0.0] - 2026-08-06
+
+`src/` was rewritten from scratch on the `rewrite/full-architecture` branch (now merged) — TDD, class-based, no process-global state bleeding across instances. User-facing config format, CLI commands, and channel behavior are unchanged; the fixes and behavior changes below were carried forward into the new module layout (`AGENTS.md` has the module map). `_archive/` (the pre-rewrite reference copy) and `docs/` (architecture spec, user manual, rewrite process logs) have been removed from the tree — both are still recoverable from git history starting at commit `dfb0411` if needed. `AGENTS.md` is now the sole technical reference alongside this README. Bumped to 2.0.0 for the BREAKING changes below (semver major, per this project's versioning policy).
 
 ### BREAKING
 
