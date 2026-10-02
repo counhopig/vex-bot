@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import { WebSocket, WebSocketServer } from "ws";
 import { ConfigError } from "../config/load.js";
@@ -9,7 +8,7 @@ import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage } from "../protocol/messages.js";
-import type { WebAuth } from "./auth.js";
+import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
   host: string;
@@ -21,7 +20,6 @@ export interface GatewayOptions {
   config: { read: () => Promise<string>; save: (text: string) => Promise<void> };
   staticDir: string;
   log: Logger;
-  loginDelayMs?: number;
 }
 
 interface StaticEntry {
@@ -44,11 +42,12 @@ export class Gateway {
   private wss: WebSocketServer | undefined;
   private readonly clients = new Set<WebSocket>();
   private unsubscribe: (() => void) | undefined;
+  private loginLockedUntil = 0;
 
   constructor(private readonly opts: GatewayOptions) {}
 
   async start(): Promise<{ port: number }> {
-    const wss = new WebSocketServer({ noServer: true });
+    const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
     const server = createServer((req, res) => {
       this.handleHttp(req, res).catch((err: unknown) => {
         this.opts.log.error({ err }, "http request failed");
@@ -57,13 +56,28 @@ export class Gateway {
       });
     });
     server.on("upgrade", (req, socket, head) => {
-      const path = new URL(req.url ?? "/", "http://localhost").pathname;
-      if (path !== "/ws" || !this.isSameOrigin(req) || !this.opts.auth.isAuthorized(req.headers.cookie)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.on("error", (err) => this.opts.log.warn({ err }, "websocket upgrade socket error"));
+      try {
+        let path: string;
+        try {
+          path = new URL(req.url ?? "/", "http://localhost").pathname;
+        } catch {
+          socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+        const localHostRequired = !this.opts.auth.required && !isLoopback(req.headers.host ?? "");
+        if (localHostRequired || path !== "/ws" || !this.isSameOrigin(req) || !this.opts.auth.isAuthorized(req.headers.cookie)) {
+          const status = localHostRequired ? "403 Forbidden" : "401 Unauthorized";
+          socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`);
+          socket.destroy();
+          return;
+        }
+        wss.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws));
+      } catch (err) {
+        this.opts.log.warn({ err }, "websocket upgrade failed");
         socket.destroy();
-        return;
       }
-      wss.handleUpgrade(req, socket, head, (ws) => this.onConnection(ws));
     });
     this.unsubscribe = this.opts.bus.on((event) => this.onBusEvent(event));
     await new Promise<void>((resolve, reject) => {
@@ -93,6 +107,10 @@ export class Gateway {
   }
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!this.opts.auth.required && !isLoopback(req.headers.host ?? "")) {
+      res.writeHead(403).end();
+      return;
+    }
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     if (req.method === "POST" && path === "/api/login") {
       await this.handleLogin(req, res);
@@ -117,6 +135,11 @@ export class Gateway {
   }
 
   private async handleLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (Date.now() < this.loginLockedUntil) {
+      req.resume();
+      res.writeHead(429, { "Retry-After": "1" }).end();
+      return;
+    }
     let token = "";
     try {
       const parsed: unknown = JSON.parse(await readBody(req, 4096));
@@ -126,8 +149,12 @@ export class Gateway {
     } catch {
       // A malformed body is treated as an empty token.
     }
+    if (Date.now() < this.loginLockedUntil) {
+      res.writeHead(429, { "Retry-After": "1" }).end();
+      return;
+    }
     if (!this.opts.auth.checkToken(token)) {
-      await delay(this.opts.loginDelayMs ?? 1000);
+      this.loginLockedUntil = Date.now() + 1000;
       res.writeHead(401).end();
       return;
     }
@@ -147,6 +174,7 @@ export class Gateway {
 
   private onConnection(ws: WebSocket): void {
     this.clients.add(ws);
+    ws.on("error", (err) => this.opts.log.warn({ err }, "websocket error"));
     ws.on("close", () => this.clients.delete(ws));
     ws.on("message", (data) => {
       void this.onClientMessage(ws, data.toString());

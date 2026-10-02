@@ -9,10 +9,11 @@ export class TestClient {
     ws.on("message", (data) => this.messages.push(JSON.parse(data.toString()) as ServerMessage));
   }
 
-  static connect(url: string, options: { cookie?: string; origin?: string } = {}): Promise<TestClient> {
+  static connect(url: string, options: { cookie?: string; origin?: string; host?: string } = {}): Promise<TestClient> {
     return new Promise((resolve, reject) => {
       const headers: Record<string, string> = {};
       if (options.cookie) headers.Cookie = options.cookie;
+      if (options.host) headers.Host = options.host;
       const ws = new WebSocket(url, { headers, origin: options.origin });
       const client = new TestClient(ws);
       ws.once("open", () => resolve(client));
@@ -22,6 +23,14 @@ export class TestClient {
 
   send(message: ClientMessage): void {
     this.ws.send(JSON.stringify(message));
+  }
+
+  sendRaw(data: string): void {
+    this.ws.send(data);
+  }
+
+  onceClose(listener: (code: number) => void): void {
+    this.ws.once("close", (code) => listener(code));
   }
 
   waitFor(predicate: (m: ServerMessage) => boolean): Promise<ServerMessage> {

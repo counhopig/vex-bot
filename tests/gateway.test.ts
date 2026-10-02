@@ -1,8 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall, type FauxProviderHandle, type FauxResponseStep } from "@earendil-works/pi-ai";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import WebSocket from "ws";
 import { saveConfigText } from "../src/config/load.js";
 import { EventBus } from "../src/core/events.js";
 import { Session } from "../src/core/session.js";
@@ -76,19 +78,37 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
     staticDir,
     log: pino({ level: "silent" }),
-    loginDelayMs: 10,
   });
   const { port } = await gateway.start();
   return `127.0.0.1:${port}`;
 }
 
-async function connect(host: string, options: { cookie?: string; origin?: string } = {}): Promise<TestClient> {
+async function connect(host: string, options: { cookie?: string; origin?: string; host?: string } = {}): Promise<TestClient> {
   const client = await TestClient.connect(`ws://${host}/ws`, options);
   clients.push(client);
   return client;
 }
 
 const isType = <T extends ServerMessage["type"]>(type: T) => (m: ServerMessage): m is Extract<ServerMessage, { type: T }> => m.type === type;
+
+function requestWithHost(host: string, path: string, options: { method?: string; body?: string; headers?: Record<string, string> } = {}): Promise<number> {
+  const port = Number(host.slice(host.lastIndexOf(":") + 1));
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({
+      hostname: "127.0.0.1",
+      port,
+      path,
+      method: options.method ?? "GET",
+      headers: { ...options.headers, host: "evil.example" },
+    }, (res) => {
+      res.resume();
+      res.on("end", () => resolve(res.statusCode ?? 0));
+    });
+    req.on("error", reject);
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+}
 
 describe("Gateway HTTP", () => {
   it("serves the app without a token", async () => {
@@ -98,6 +118,17 @@ describe("Gateway HTTP", () => {
     expect(await res.text()).toContain("<title>Vex</title>");
     expect((await fetch(`http://${host}/app.js`)).headers.get("content-type")).toContain("javascript");
     expect((await fetch(`http://${host}/nope`)).status).toBe(404);
+  });
+
+  it("requires loopback Host headers without a token", async () => {
+    const host = await start();
+    expect(await requestWithHost(host, "/")).toBe(403);
+    expect(await requestWithHost(host, "/api/login", {
+      method: "POST",
+      body: JSON.stringify({ token: "anything" }),
+    })).toBe(403);
+    await expect(connect(host, { host: "evil.example" })).rejects.toThrow();
+    expect((await fetch(`http://${host}/`)).status).toBe(200);
   });
 
   it("guards pages and the socket with the token", async () => {
@@ -111,14 +142,25 @@ describe("Gateway HTTP", () => {
 
     const wrong = await fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "nope" }) });
     expect(wrong.status).toBe(401);
+    expect((await fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "secret" }) })).status).toBe(429);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     const right = await fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "secret" }) });
     expect(right.status).toBe(204);
     const cookie = right.headers.get("set-cookie")!.split(";")[0]!;
 
     expect((await fetch(`http://${host}/`, { headers: { cookie } })).status).toBe(200);
+    expect(await requestWithHost(host, "/", { headers: { cookie } })).toBe(200);
     await expect(connect(host)).rejects.toThrow();
-    const client = await connect(host, { cookie });
+    const client = await connect(host, { cookie, host: "remote.example" });
     await client.waitFor(isType("sessions"));
+  });
+
+  it("allows only one failed login attempt during each lockout window", async () => {
+    const host = await start({ token: "secret" });
+    const attempts = await Promise.all(Array.from({ length: 5 }, () =>
+      fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "wrong" }) }),
+    ));
+    expect(attempts.map((response) => response.status).sort()).toEqual([401, 429, 429, 429, 429]);
   });
 
   it("rejects cross-origin sockets", async () => {
@@ -126,6 +168,28 @@ describe("Gateway HTTP", () => {
     await expect(connect(host, { origin: "http://evil.example" })).rejects.toThrow();
     const client = await connect(host, { origin: `http://${host}` });
     await client.waitFor(isType("sessions"));
+  });
+
+  it("does not crash on a malformed WebSocket upgrade URL", async () => {
+    const host = await start();
+    const socket = new WebSocket(`ws://${host}//`);
+    await new Promise<void>((resolve) => {
+      socket.once("error", () => resolve());
+      socket.once("close", () => resolve());
+      socket.once("unexpected-response", (_request, response) => {
+        response.resume();
+        resolve();
+      });
+    });
+    expect((await fetch(`http://${host}/`)).status).toBe(200);
+  });
+
+  it("closes WebSocket clients that exceed the 4 MiB payload limit", async () => {
+    const host = await start();
+    const client = await connect(host);
+    const closed = new Promise<number>((resolve) => client.onceClose(resolve));
+    client.sendRaw("x".repeat(4 * 1024 * 1024 + 1));
+    expect(await closed).toBe(1009);
   });
 });
 
