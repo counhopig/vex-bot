@@ -340,7 +340,11 @@ agent 通过 `feel(mood: number, energy?: number, reason: string, hours?: number
 
 ## 12. 模型
 
-基于 pi-ai 的 `ModelResolver`：支持 DeepSeek、Kimi、MiniMax、StepFun 等国产模型预设，以及 `custom-openai` / `custom-anthropic` 兼容端点和 OpenRouter、Ollama 等动态模型提供方。模型 id 区分大小写，对有固定预设表的提供方，未声明的 id 解析失败而不猜测协议。
+基于 pi-ai 的模型注册表：
+
+- **内置提供方**（DeepSeek、Kimi、MiniMax、智谱、小米、OpenRouter 等 pi-ai 已收录的提供方）：在 `model.provider` / `model.id` 中直接引用。模型 id 区分大小写，未收录的 id 解析失败并列出可用 id，不猜测协议。
+- **自定义提供方**（StepFun、Ollama、自建代理等任意 OpenAI / Anthropic 兼容端点）：在 `providers.<名称>` 中声明 `api`（`openai-completions` 或 `anthropic-messages`）与 `baseUrl`，可选列出 `models`；列出时只接受列表中的 id，未列出时接受任意 id。
+- **API key**：优先取 `providers.<名称>.apiKey`，其次取 pi-ai 约定的环境变量（如 `DEEPSEEK_API_KEY`）。
 
 可分别为主对话与后台任务（压缩摘要、记忆整理、心跳、会话标题）指定模型。
 
@@ -351,11 +355,21 @@ agent 通过 `feel(mood: number, energy?: number, reason: string, hours?: number
 ```yaml
 model:
   provider: deepseek
-  id: deepseek-chat
+  id: deepseek-v4-pro
   thinking: off
 backgroundModel:          # 缺省与 model 相同
   provider: deepseek
-  id: deepseek-chat
+  id: deepseek-v4-flash
+providers:
+  deepseek:
+    apiKey: <key>
+  stepfun:
+    api: openai-completions
+    baseUrl: https://api.stepfun.com/v1
+    apiKey: <key>
+    models:
+      - id: step-2-16k
+        contextWindow: 16000
 wechat:
   enabled: true
   ownerId: <主人微信 id>
