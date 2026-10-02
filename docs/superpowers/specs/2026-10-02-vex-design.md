@@ -8,7 +8,7 @@ Vex 有随时间变化的情绪与作息：没人理会时会疲惫、想找人�
 
 Vex 的长期状态——人设、关于主人的认知、记忆、技能、主动检查清单——都以 Markdown 文件形式存放在工作区中，agent 用普通文件工具读写它们；`vexd` 额外提供检索索引、调度器与情绪状态。
 
-技术栈：TypeScript（ESM，strict），依赖 `@mariozechner/pi-ai`（模型抽象）、`@mariozechner/pi-agent-core`（agent 循环）、`better-sqlite3`（检索索引）、`croner`（时间规则）、`@modelcontextprotocol/sdk`（MCP 客户端），测试使用 Vitest。
+技术栈：TypeScript（ESM，strict），依赖 `@earendil-works/pi-ai` 1.x（模型抽象）、`@earendil-works/pi-agent-core` 1.x（agent 循环）、`better-sqlite3`（检索索引）、`croner`（时间规则）、`@modelcontextprotocol/sdk`（MCP 客户端），测试使用 Vitest。
 
 ## 2. 范围
 
@@ -342,7 +342,7 @@ agent 通过 `feel(mood: number, energy?: number, reason: string, hours?: number
 
 基于 pi-ai 的模型注册表：
 
-- **内置提供方**（DeepSeek、Kimi、MiniMax、智谱、小米、OpenRouter 等 pi-ai 已收录的提供方）：在 `model.provider` / `model.id` 中直接引用。模型 id 区分大小写，未收录的 id 解析失败并列出可用 id，不猜测协议。
+- **内置提供方**（DeepSeek、Kimi、MiniMax、智谱、千问、小米、OpenRouter 等 pi-ai 内置的提供方）：在 `model.provider` / `model.id` 中直接引用。模型 id 区分大小写，未收录的 id 解析失败并列出可用 id，不猜测协议。
 - **自定义提供方**（StepFun、Ollama、自建代理等任意 OpenAI / Anthropic 兼容端点）：在 `providers.<名称>` 中声明 `api`（`openai-completions` 或 `anthropic-messages`）与 `baseUrl`，可选列出 `models`；列出时只接受列表中的 id，未列出时接受任意 id。
 - **API key**：优先取 `providers.<名称>.apiKey`，其次取 pi-ai 约定的环境变量（如 `DEEPSEEK_API_KEY`）。
 
@@ -359,7 +359,7 @@ model:
   thinking: off
 backgroundModel:          # 缺省与 model 相同
   provider: deepseek
-  id: deepseek-v4-flash
+  id: deepseek-flash
 providers:
   deepseek:
     apiKey: <key>
