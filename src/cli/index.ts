@@ -20,6 +20,7 @@ const USAGE = [
   "  logs [-f]           查看日志（-f 持续输出）",
   "  onboard [--force]   生成初始配置",
 ].join("\n");
+const CLI_PATH = fileURLToPath(import.meta.url);
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -48,7 +49,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function runningPid(paths: VexPaths): Promise<number | undefined> {
-  const pid = await readPid(paths.pidFile);
+  const pid = await readPid(paths.pidFile, CLI_PATH);
   return pid !== undefined && isAlive(pid) ? pid : undefined;
 }
 
@@ -61,7 +62,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
   }
   const log = createLogger({ file: paths.logFile });
   const daemon = await startDaemon({ paths, config, log });
-  await writePid(paths.pidFile, process.pid);
+  await writePid(paths.pidFile, process.pid, CLI_PATH);
   console.log(`vexd 已启动：${daemon.url}`);
   return new Promise((resolve) => {
     const shutdown = () => {
@@ -94,7 +95,7 @@ async function startBackground(paths: VexPaths): Promise<number> {
   });
   child.unref();
   await out.close();
-  const started = await waitUntil(async () => (await readPid(paths.pidFile)) === child.pid, 15_000);
+  const started = await waitUntil(async () => (await runningPid(paths)) === child.pid, 15_000);
   if (!started) {
     console.error("vexd 未能启动，运行 vex logs 查看原因");
     return 1;
@@ -111,7 +112,7 @@ async function stop(paths: VexPaths): Promise<number> {
     return 0;
   }
   process.kill(pid, "SIGTERM");
-  const stopped = await waitUntil(() => !isAlive(pid), 10_000);
+  const stopped = await waitUntil(async () => (await runningPid(paths)) !== pid, 10_000);
   console.log(stopped ? "vexd 已停止" : `vexd 未在 10 秒内退出（pid ${pid}）`);
   return stopped ? 0 : 1;
 }

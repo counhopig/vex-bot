@@ -1,4 +1,6 @@
-import { realpath } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildChildEnv, createBashTool, truncateMiddle } from "../src/tools/bash.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -73,6 +75,25 @@ describe("bash tool", () => {
     setTimeout(() => controller.abort(), 200);
     await expect(tool.execute("1", { command: "sleep 30" }, controller.signal)).rejects.toThrow("命令已中断");
   });
+
+  it.skipIf(spawnSync("setsid", ["true"]).status !== 0).each(["timeout", "abort"])(
+    "settles on %s when an escaped descendant holds the output pipes",
+    async (reason) => {
+      const tool = createBashTool({ workspace: ws, envPassthrough: [] });
+      const controller = new AbortController();
+      const started = Date.now();
+      const abortTimer = reason === "abort" ? setTimeout(() => controller.abort(), 300) : undefined;
+      try {
+        const result = tool.execute("1", { command: "setsid sleep 30 & echo $! > escaped.pid; echo start; sleep 30", timeout: 1 }, controller.signal);
+        await expect(result).rejects.toThrow(reason === "timeout" ? /超时（1 秒）.*已终止\nstart/s : "命令已中断");
+        expect(Date.now() - started).toBeLessThan(2500);
+      } finally {
+        clearTimeout(abortTimer);
+        const pid = Number(await readFile(join(ws, "escaped.pid"), "utf8"));
+        try { process.kill(pid, "SIGKILL"); } catch { /* Already exited. */ }
+      }
+    },
+  );
 
   it("truncates huge output in the middle", async () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });

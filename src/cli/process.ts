@@ -1,18 +1,67 @@
+import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
 import { writeFileAtomic } from "../store/atomic.js";
 
-export async function readPid(file: string): Promise<number | undefined> {
+const execFileAsync = promisify(execFile);
+
+interface ProcessIdentity {
+  startTime: string;
+  command: string;
+}
+
+interface PidRecord {
+  pid: number;
+  cliPath: string;
+  identity: ProcessIdentity;
+}
+
+export async function readPid(file: string, cliPath?: string): Promise<number | undefined> {
   try {
-    const pid = Number((await readFile(file, "utf8")).trim());
-    return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+    const record: unknown = JSON.parse(await readFile(file, "utf8"));
+    if (!isPidRecord(record) || (cliPath !== undefined && record.cliPath !== resolve(cliPath))) return undefined;
+    const current = await processIdentity(record.pid);
+    return current?.startTime === record.identity.startTime && current.command === record.identity.command
+      ? record.pid
+      : undefined;
   } catch {
     return undefined;
   }
 }
 
-export async function writePid(file: string, pid: number): Promise<void> {
-  await writeFileAtomic(file, `${pid}\n`);
+export async function writePid(file: string, pid: number, cliPath = process.argv[1] ?? process.execPath): Promise<void> {
+  const identity = await processIdentity(pid);
+  if (!identity) throw new Error(`无法验证进程身份（pid ${pid}）`);
+  await writeFileAtomic(file, `${JSON.stringify({ pid, cliPath: resolve(cliPath), identity })}\n`);
+}
+
+async function processIdentity(pid: number): Promise<ProcessIdentity | undefined> {
+  try {
+    if (process.platform === "linux") {
+      const [stat, command] = await Promise.all([
+        readFile(`/proc/${pid}/stat`, "utf8"),
+        readFile(`/proc/${pid}/cmdline`, "utf8"),
+      ]);
+      const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+      const startTime = fields[19];
+      if (!startTime || !command || fields[0] === "Z") return undefined;
+      return { startTime, command };
+    }
+    const { stdout } = await execFileAsync("ps", ["-p", String(pid), "-o", "lstart=", "-o", "args="]);
+    const match = stdout.trim().match(/^(.{24})\s+(.+)$/);
+    return match?.[1] && match[2] ? { startTime: match[1], command: match[2] } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPidRecord(value: unknown): value is PidRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<PidRecord>;
+  return Number.isInteger(record.pid) && (record.pid ?? 0) > 0 && typeof record.cliPath === "string" &&
+    typeof record.identity?.startTime === "string" && typeof record.identity.command === "string";
 }
 
 export async function removePid(file: string): Promise<void> {
