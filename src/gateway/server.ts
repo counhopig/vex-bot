@@ -200,14 +200,20 @@ export class Gateway {
     const { sessions } = this.opts;
     switch (message.type) {
       case "open": {
-        const session = await sessions.get(webSessionKey(message.sessionId));
+        const key = webSessionKey(message.sessionId);
+        const session = await sessions.get(key);
+        sessions.assertAvailable(key);
         const { items, streaming } = session.history();
         send(ws, { type: "history", sessionId: message.sessionId, items, busy: session.busy, streaming });
         return;
       }
-      case "send":
-        (await sessions.get(webSessionKey(message.sessionId))).send(message.text);
+      case "send": {
+        const key = webSessionKey(message.sessionId);
+        const session = await sessions.get(key);
+        sessions.assertAvailable(key);
+        session.send(message.text);
         return;
+      }
       case "stop":
         (await sessions.get(webSessionKey(message.sessionId))).stop();
         return;

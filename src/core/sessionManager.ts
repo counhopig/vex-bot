@@ -24,6 +24,7 @@ export interface SessionManagerOptions {
 
 export class SessionManager {
   private readonly sessions = new Map<string, Promise<Session>>();
+  private readonly deleting = new Set<string>();
   private readonly index: WebSessionIndex;
   private readonly untitledFirstMessage = new Map<string, string>();
   private unsubscribe: (() => void) | undefined;
@@ -38,8 +39,9 @@ export class SessionManager {
   }
 
   get(key: string): Promise<Session> {
+    if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`没有这个会话：${key}`));
     const existing = this.sessions.get(key);
-    if (existing) return existing;
+    if (existing) return this.availableSession(key, existing);
     let transcriptPath: string;
     try {
       transcriptPath = this.transcriptPath(key);
@@ -49,7 +51,12 @@ export class SessionManager {
     const opening = this.opts.openSession(key, transcriptPath, () => this.windowLabel(key));
     this.sessions.set(key, opening);
     opening.catch(() => this.sessions.delete(key));
-    return opening;
+    return this.availableSession(key, opening);
+  }
+
+  assertAvailable(key: string): void {
+    if (this.deleting.has(key)) throw new UnknownSessionError(`没有这个会话：${key}`);
+    this.transcriptPath(key);
   }
 
   windowLabel(key: string): string {
@@ -76,17 +83,31 @@ export class SessionManager {
   }
 
   async deleteWeb(id: string): Promise<void> {
-    if (!this.index.get(id)) throw new UnknownSessionError(`没有这个网页会话：${id}`);
     const key = webSessionKey(id);
+    if (!this.index.get(id) || this.deleting.has(key)) throw new UnknownSessionError(`没有这个网页会话：${id}`);
     const transcriptPath = this.transcriptPath(key);
+    this.deleting.add(key);
     const loaded = this.sessions.get(key);
     this.sessions.delete(key);
-    const session = await loaded?.catch(() => undefined);
-    await session?.dispose();
-    await rm(transcriptPath, { force: true });
-    await this.index.remove(id);
-    this.untitledFirstMessage.delete(id);
-    this.opts.bus.emit({ type: "sessions_changed" });
+    let restoreLoaded = false;
+    try {
+      const session = await loaded?.catch(() => undefined);
+      if (session) {
+        try {
+          await session.dispose();
+        } catch (err) {
+          restoreLoaded = true;
+          throw err;
+        }
+      }
+      await rm(transcriptPath, { force: true });
+      await this.index.remove(id);
+      this.untitledFirstMessage.delete(id);
+      this.opts.bus.emit({ type: "sessions_changed" });
+    } finally {
+      if (restoreLoaded && loaded && this.index.get(id)) this.sessions.set(key, loaded);
+      this.deleting.delete(key);
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -106,9 +127,17 @@ export class SessionManager {
     throw new UnknownSessionError(`没有这个会话：${key}`);
   }
 
+  private availableSession(key: string, opening: Promise<Session>): Promise<Session> {
+    return opening.then((session) => {
+      this.assertAvailable(key);
+      return session;
+    });
+  }
+
   private onEvent(event: VexEvent): void {
     if (event.type !== "session" || !event.sessionKey.startsWith(WEB_PREFIX)) return;
     const id = event.sessionKey.slice(WEB_PREFIX.length);
+    if (this.deleting.has(event.sessionKey)) return;
     const meta = this.index.get(id);
     if (!meta) return;
     const e = event.event;
@@ -129,6 +158,7 @@ export class SessionManager {
   private async applyTitle(id: string, userText: string, assistantText: string): Promise<void> {
     try {
       const title = await this.opts.generateTitle!(userText, assistantText);
+      if (this.deleting.has(webSessionKey(id))) return;
       const current = this.index.get(id);
       if (!current || current.titled) return;
       await this.index.update(id, { title, titled: true });

@@ -92,25 +92,24 @@ function runCommand(
         // The group already exited.
       }
     };
-    const timer = setTimeout(() => {
-      stopReason = "timeout";
-      killGroup();
-    }, timeoutSec * 1000);
-    const onAbort = () => {
-      stopReason = "aborted";
-      killGroup();
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
+    let settled = false;
     const cleanup = () => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
+      child.stdout.removeListener("data", collect);
+      child.stderr.removeListener("data", collect);
+      child.removeListener("close", onClose);
+      child.removeListener("error", onError);
     };
-
-    child.on("error", (err) => {
+    const onError = (err: Error) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       reject(err);
-    });
-    child.on("close", (code) => {
+    };
+    const onClose = (code: number | null) => {
+      if (settled) return;
+      settled = true;
       cleanup();
       const text = output();
       if (stopReason === "timeout") {
@@ -122,6 +121,22 @@ function runCommand(
       } else {
         resolve({ content: [{ type: "text", text: text || "(无输出)" }], details: { exitCode: 0 } });
       }
-    });
+    };
+    const stop = (reason: "timeout" | "aborted") => {
+      if (settled) return;
+      stopReason = reason;
+      killGroup();
+      // Escaped descendants may still hold these pipes after the group exits.
+      child.stdout.destroy();
+      child.stderr.destroy();
+      if (child.pid === undefined) child.once("error", () => {});
+      onClose(null);
+    };
+    const timer = setTimeout(() => stop("timeout"), timeoutSec * 1000);
+    const onAbort = () => stop("aborted");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.on("error", onError);
+    child.on("close", onClose);
+    if (signal?.aborted) onAbort();
   });
 }

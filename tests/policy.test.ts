@@ -1,6 +1,9 @@
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ToolPolicy } from "../src/policy/policy.js";
 import { summarizeArgs } from "../src/tools/summary.js";
+import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 describe("summarizeArgs", () => {
   it("picks the most telling argument", () => {
@@ -40,6 +43,32 @@ describe("ToolPolicy", () => {
     expect(custom.decide("bash", { command: "rm -rf /" })).toBe("allow");
     expect(custom.decide("write", { path: "a.md" })).toBe("ask");
     expect(custom.decide("grep", {})).toBe("deny");
+  });
+
+  it("asks for existing files and new descendants reached through external symlinks", async () => {
+    const dir = await makeTmpDir();
+    try {
+      const workspace = join(dir, "workspace");
+      const outside = join(dir, "outside");
+      await mkdir(workspace);
+      await mkdir(outside);
+      await writeFile(join(outside, "file"), "outside");
+      await symlink(join(outside, "file"), join(workspace, "linked-file"));
+      await symlink(outside, join(workspace, "linked-dir"));
+      await symlink(join(outside, "missing"), join(workspace, "dangling"));
+      await symlink(workspace, join(dir, "workspace-alias"));
+      const scoped = new ToolPolicy({ workspace, overrides: {} });
+      expect(scoped.decide("edit", { path: "linked-file" })).toBe("ask");
+      expect(scoped.decide("write", { path: "linked-dir/file" })).toBe("ask");
+      expect(scoped.decide("write", { path: "linked-dir/new/deeper/file" })).toBe("ask");
+      expect(scoped.decide("write", { path: "dangling" })).toBe("ask");
+      expect(scoped.decide("write", { path: "new/deeper/file" })).toBe("allow");
+      const aliased = new ToolPolicy({ workspace: join(dir, "workspace-alias"), overrides: {} });
+      expect(aliased.decide("write", { path: "new/file" })).toBe("allow");
+      expect(aliased.decide("edit", { path: "linked-file" })).toBe("ask");
+    } finally {
+      await removeTmpDir(dir);
+    }
   });
 
   it("filters out denied tools", () => {

@@ -13,7 +13,16 @@ const state = {
 };
 
 function send(message) {
-  if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(message));
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    try {
+      state.ws.send(JSON.stringify(message));
+      return true;
+    } catch {
+      // The connection can close between the ready-state check and send.
+    }
+  }
+  setStatus("连接已断开，正在重连…");
+  return false;
 }
 
 function connect() {
@@ -84,7 +93,7 @@ function selectSession(id) {
   state.currentId = id;
   remember(id);
   clearMessages();
-  renderSessions();
+  for (const row of $("session-list").children) row.className = row.dataset.sessionId === id ? "active" : "";
   showChat();
   send({ type: "open", sessionId: id });
 }
@@ -94,6 +103,7 @@ function renderSessions() {
   list.replaceChildren();
   for (const session of state.sessions) {
     const li = document.createElement("li");
+    li.dataset.sessionId = session.id;
     li.className = session.id === state.currentId ? "active" : "";
     const title = document.createElement("span");
     title.className = "title";
@@ -308,7 +318,7 @@ $("composer").addEventListener("submit", (event) => {
   const input = $("input");
   const text = input.value.trim();
   if (!text || !state.currentId) return;
-  send({ type: "send", sessionId: state.currentId, text });
+  if (!send({ type: "send", sessionId: state.currentId, text })) return;
   input.value = "";
   autoGrow();
 });

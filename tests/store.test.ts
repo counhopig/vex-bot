@@ -42,4 +42,21 @@ describe("jsonl", () => {
     await writeFile(file, '{"n":1}\n{"n":2}\n{"n":', "utf8");
     expect(await readJsonl(file)).toEqual([{ n: 1 }, { n: 2 }]);
   });
+
+  it("preserves the first appended record after recovering a torn trailing line", async () => {
+    const file = join(dir, "log.jsonl");
+    await writeFile(file, '{"n":1}\n{"n":', "utf8");
+    expect(await readJsonl(file)).toEqual([{ n: 1 }]);
+    await appendJsonl(file, { n: 2 });
+    await appendJsonl(file, { n: 3 });
+    expect(await readJsonl(file)).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }]);
+  });
+
+  it("preserves a valid trailing record without a newline before appending", async () => {
+    const file = join(dir, "log.jsonl");
+    await writeFile(file, '{"n":1}', "utf8");
+    expect(await readJsonl(file)).toEqual([{ n: 1 }]);
+    await appendJsonl(file, { n: 2 });
+    expect(await readJsonl(file)).toEqual([{ n: 1 }, { n: 2 }]);
+  });
 });

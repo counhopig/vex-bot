@@ -152,6 +152,98 @@ describe("SessionManager", () => {
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);
   });
 
+  it("allows retrying after session disposal fails during deletion", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const key = webSessionKey(meta.id);
+    const session = await manager.get(key);
+    const dispose = vi.spyOn(session, "dispose").mockRejectedValueOnce(new Error("dispose failed"));
+
+    await expect(manager.deleteWeb(meta.id)).rejects.toThrow("dispose failed");
+    expect(await manager.get(key)).toBe(session);
+
+    dispose.mockRestore();
+    await expect(manager.deleteWeb(meta.id)).resolves.toBeUndefined();
+    await expect(manager.get(key)).rejects.toThrow(UnknownSessionError);
+  });
+
+  it("rejects get and send lookups as soon as deletion starts", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const key = webSessionKey(meta.id);
+    const session = await manager.get(key);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const dispose = vi.spyOn(session, "dispose").mockImplementation(async () => gate);
+    const deletion = manager.deleteWeb(meta.id);
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
+    await expect(manager.get(key)).rejects.toThrow(UnknownSessionError);
+    const send = vi.spyOn(session, "send");
+    await expect(manager.get(key).then((s) => s.send("late"))).rejects.toThrow(UnknownSessionError);
+    expect(send).not.toHaveBeenCalled();
+    release();
+    await deletion;
+    await expect(manager.get(key)).rejects.toThrow(UnknownSessionError);
+    expect(manager.listWeb()).toEqual([]);
+    await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
+  });
+
+  it("rejects an in-flight open and disposes it when deletion begins", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const originalOpen = Session.open;
+    let opened: Session | undefined;
+    const spy = vi.spyOn(Session, "open").mockImplementationOnce(async (opts) => {
+      await gate;
+      opened = await originalOpen(opts);
+      vi.spyOn(opened, "dispose");
+      return opened;
+    });
+    try {
+      const pending = manager.get(webSessionKey(meta.id));
+      const rejected = expect(pending).rejects.toThrow(UnknownSessionError);
+      const deletion = manager.deleteWeb(meta.id);
+      await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
+      release();
+      await rejected;
+      await deletion;
+      expect(opened?.dispose).toHaveBeenCalledOnce();
+      expect(spy).toHaveBeenCalledOnce();
+      expect(manager.listWeb()).toEqual([]);
+      await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  });
+
+  it("rejects a send if deletion starts after get resolves but before the caller resumes", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const key = webSessionKey(meta.id);
+    const session = await manager.get(key);
+    const send = vi.spyOn(session, "send");
+    const pending = manager.get(key).then((loaded) => {
+      manager.assertAvailable(key);
+      loaded.send("late");
+    });
+    let deletion!: Promise<void>;
+    queueMicrotask(() => { deletion = manager.deleteWeb(meta.id); });
+    await expect(pending).rejects.toThrow(UnknownSessionError);
+    await deletion;
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("rejects unknown keys", async () => {
     faux = createFaux();
     const manager = makeManager();
