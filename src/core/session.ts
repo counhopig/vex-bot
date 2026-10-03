@@ -36,6 +36,9 @@ export class Session {
   private readonly agent: Agent;
   private current: Promise<void> | undefined;
   private stopRequested = false;
+  private backoff: AbortController | undefined;
+  // Messages sent while a stopped run is still winding down; they start a fresh run afterwards.
+  private afterStop: string[] = [];
 
   static async open(opts: SessionOptions): Promise<Session> {
     const records = await readJsonl<AgentMessage>(opts.transcriptPath);
@@ -72,6 +75,10 @@ export class Session {
   }
 
   send(text: string): void {
+    if (this.current && this.stopRequested) {
+      this.afterStop.push(text);
+      return;
+    }
     const message: UserMessage = { role: "user", content: text, timestamp: Date.now() };
     if (this.current) {
       this.agent.steer(message);
@@ -87,12 +94,15 @@ export class Session {
       .finally(() => {
         this.current = undefined;
         this.opts.emit({ kind: "busy", busy: false });
+        for (const queued of this.afterStop.splice(0)) this.send(queued);
       });
   }
 
   stop(): void {
     if (!this.current) return;
     this.stopRequested = true;
+    this.afterStop = [];
+    this.backoff?.abort();
     this.agent.clearAllQueues();
     this.agent.abort();
   }
@@ -158,7 +168,15 @@ export class Session {
         this.opts.emit({ kind: "error", message: `模型调用失败：${last.errorMessage ?? "未知错误"}` });
         return;
       }
-      await delay(baseDelayMs * 2 ** (attempt - 1));
+      const backoff = new AbortController();
+      this.backoff = backoff;
+      try {
+        await delay(baseDelayMs * 2 ** (attempt - 1), undefined, { signal: backoff.signal });
+      } catch {
+        return;
+      } finally {
+        this.backoff = undefined;
+      }
       if (this.stopRequested) return;
       await this.agent.continue();
     }
