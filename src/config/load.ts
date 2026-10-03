@@ -34,6 +34,12 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     workspace: raw.workspace ? resolve(paths.home, expandHome(raw.workspace)) : paths.defaultWorkspace,
     toolPolicy: raw.tools?.policy ?? {},
     bashEnvPassthrough: raw.bashEnvPassthrough ?? [],
+    compaction: { threshold: raw.compaction?.threshold ?? 0.7 },
+    ...(raw.memory ? { memory: raw.memory } : {}),
+    ...(raw.heartbeat ? { heartbeat: raw.heartbeat } : {}),
+    ...(raw.persona ? { persona: raw.persona } : {}),
+    ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
+    ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,
       ownerId: raw.wechat?.ownerId,

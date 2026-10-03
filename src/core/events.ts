@@ -1,14 +1,15 @@
 export type SessionEvent =
-  | { kind: "user_message"; text: string; timestamp: number }
+  | { kind: "user_message"; text: string; timestamp: number; source?: string }
   | { kind: "text_delta"; delta: string }
-  | { kind: "assistant_message"; text: string; stopReason: string; timestamp: number }
+  | { kind: "assistant_message"; text: string; stopReason: string; timestamp: number; injected?: boolean }
   | { kind: "tool_start"; toolCallId: string; toolName: string; summary: string }
   | { kind: "tool_end"; toolCallId: string; toolName: string; isError: boolean }
-  | { kind: "busy"; busy: boolean }
+  | { kind: "tool_update"; toolCallId: string; toolName: string; text: string }
+  | { kind: "busy"; busy: boolean; discardReply?: boolean }
   | { kind: "error"; message: string };
 
 export type HistoryItem =
-  | { kind: "user"; text: string; timestamp: number }
+  | { kind: "user"; text: string; timestamp: number; source?: string }
   | { kind: "assistant"; text: string; stopReason: string; timestamp: number }
   | { kind: "tool"; toolCallId: string; toolName: string; summary: string; isError?: boolean };
 

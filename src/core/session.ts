@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingSetting } from "../config/schema.js";
+import { ContextCompactor, isCompactionRecord, type CompactionOptions } from "../context/compaction.js";
 import { appendJsonl, readJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
@@ -27,6 +28,11 @@ export interface SessionOptions {
   emit: (event: SessionEvent) => void;
   onError?: (err: unknown) => void;
   retry?: { attempts: number; baseDelayMs: number };
+  compaction?: Omit<CompactionOptions, "model" | "streamFn" | "getApiKey" | "save">;
+  onRunEnd?: () => Promise<void>;
+  onOwnerMessage?: () => void;
+  onOwnerInteraction?: (count: number) => Promise<void>;
+  onDispose?: () => void;
 }
 
 const DEFAULT_RETRY = { attempts: 3, baseDelayMs: 1000 };
@@ -38,18 +44,36 @@ export class Session {
   private stopRequested = false;
   private backoff: AbortController | undefined;
   // Messages sent while a stopped run is still winding down; they start a fresh run afterwards.
-  private afterStop: string[] = [];
+  private afterStop: { text: string; source?: string }[] = [];
+  private readonly transcript: AgentMessage[];
+  private pendingOwner = 0;
+  private writes: Promise<void> = Promise.resolve();
+  private closing = false;
+  private runSource?: string;
+  private runFailed = false;
+  private lastResponse?: AssistantMessage;
+
+  get successfulReply(): string | undefined {
+    return !this.runFailed && !this.stopRequested && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
+  }
 
   static async open(opts: SessionOptions): Promise<Session> {
-    const records = await readJsonl<AgentMessage>(opts.transcriptPath);
-    return new Session(opts, records.filter(isTranscriptMessage));
+    const records = await readJsonl<unknown>(opts.transcriptPath);
+    return new Session(opts, records);
   }
 
   private constructor(
     private readonly opts: SessionOptions,
-    messages: AgentMessage[],
+    records: unknown[],
   ) {
     this.key = opts.key;
+    const messages = records.filter(isTranscriptMessage);
+    this.transcript = [...messages];
+    const restored = records.filter(isCompactionRecord).filter((r) => r.through <= messages.length).at(-1);
+    const compactor = opts.compaction ? new ContextCompactor({
+      ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey,
+      save: (record) => appendJsonl(opts.transcriptPath, record),
+    }, restored) : undefined;
     this.agent = new Agent({
       initialState: {
         systemPrompt: "",
@@ -61,6 +85,7 @@ export class Session {
       streamFn: opts.streamFn,
       getApiKey: opts.getApiKey,
       beforeToolCall: opts.beforeToolCall,
+      transformContext: compactor ? (messages, signal) => compactor.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => ({
         context: { ...context, messages: withSystemPrompt(context.messages, await opts.buildSystemPrompt()) },
@@ -74,27 +99,33 @@ export class Session {
     return this.current !== undefined;
   }
 
-  send(text: string): void {
+  send(text: string, source?: string): void {
     if (this.current && this.stopRequested) {
-      this.afterStop.push(text);
+      this.afterStop.push({ text, source });
       return;
     }
-    const message: UserMessage = { role: "user", content: text, timestamp: Date.now() };
+    if (!source) { this.pendingOwner++; this.opts.onOwnerMessage?.(); }
+    const message: UserMessage & { vexSource?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}) };
     if (this.current) {
       this.agent.steer(message);
       return;
     }
     this.stopRequested = false;
+    this.runSource = source;
+    this.runFailed = false;
+    this.lastResponse = undefined;
     this.opts.emit({ kind: "busy", busy: true });
     this.current = this.run(message)
       .catch((err: unknown) => {
+        this.runFailed = true;
         this.opts.onError?.(err);
-        this.opts.emit({ kind: "error", message: `处理消息时出错：${err instanceof Error ? err.message : String(err)}` });
+        if (this.runSource !== "主动聊天" || this.pendingOwner) this.opts.emit({ kind: "error", message: `处理消息时出错：${err instanceof Error ? err.message : String(err)}` });
       })
       .finally(() => {
         this.current = undefined;
-        this.opts.emit({ kind: "busy", busy: false });
-        for (const queued of this.afterStop.splice(0)) this.send(queued);
+        this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "主动聊天" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
+        this.pendingOwner = 0;
+        for (const queued of this.afterStop.splice(0)) this.send(queued.text, queued.source);
       });
   }
 
@@ -112,16 +143,44 @@ export class Session {
   }
 
   async dispose(): Promise<void> {
+    this.closing = true;
     this.stop();
     await this.whenIdle();
+    await this.writes;
+    this.opts.onDispose?.();
+  }
+
+  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = tools; }
+
+  async injectAssistant(text: string, signal?: AbortSignal): Promise<void> {
+    while (this.busy) {
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => { signal?.removeEventListener("abort", aborted); reject(signal?.reason ?? new Error("已取消")); };
+        signal?.addEventListener("abort", aborted, { once: true });
+        if (signal?.aborted) { aborted(); return; }
+        this.whenIdle().then(() => { signal?.removeEventListener("abort", aborted); resolve(); }, err => { signal?.removeEventListener("abort", aborted); reject(err); });
+      });
+      signal?.throwIfAborted();
+    }
+    signal?.throwIfAborted();
+    if (this.closing) throw new Error("会话正在关闭");
+    const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text }],
+      api: this.opts.model.api, provider: this.opts.model.provider, model: this.opts.model.id,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "stop", timestamp: Date.now() };
+    this.agent.state.messages.push(message);
+    this.transcript.push(message);
+    this.writes = this.writes.then(() => appendJsonl(this.opts.transcriptPath, message));
+    await this.writes;
+    this.opts.emit({ kind: "assistant_message", text, stopReason: "stop", timestamp: message.timestamp, injected: true });
   }
 
   history(): { items: HistoryItem[]; streaming?: string } {
     const items: HistoryItem[] = [];
     const toolItems = new Map<string, Extract<HistoryItem, { kind: "tool" }>>();
-    for (const message of this.agent.state.messages) {
+    for (const message of this.transcript) {
       if (message.role === "user") {
-        items.push({ kind: "user", text: contentText(message.content), timestamp: message.timestamp });
+        items.push({ kind: "user", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource });
       } else if (message.role === "assistant") {
         const text = assistantText(message);
         if (text || message.stopReason === "aborted") {
@@ -148,6 +207,7 @@ export class Session {
   }
 
   private async run(first: UserMessage): Promise<void> {
+    try {
     await this.agent.prompt(first);
     await this.settle();
     // A message steered in just as the loop finished is still queued; run it now.
@@ -155,6 +215,11 @@ export class Session {
       await this.agent.continue();
       await this.settle();
     }
+    await this.writes;
+    if (this.pendingOwner && this.successfulReply) {
+      await this.opts.onOwnerInteraction?.(this.pendingOwner);
+    }
+    } finally { await this.writes; await this.opts.onRunEnd?.(); }
   }
 
   private async settle(): Promise<void> {
@@ -165,7 +230,10 @@ export class Session {
       this.agent.state.messages = this.agent.state.messages.slice(0, -1);
       if (this.stopRequested) return;
       if (attempt > attempts) {
-        this.opts.emit({ kind: "error", message: `模型调用失败：${last.errorMessage ?? "未知错误"}` });
+        this.runFailed = true;
+        const error = new Error(`模型调用失败：${last.errorMessage ?? "未知错误"}`);
+        this.opts.onError?.(error);
+        if (this.runSource !== "主动聊天" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
         return;
       }
       const backoff = new AbortController();
@@ -194,12 +262,15 @@ export class Session {
         // System messages are rebuilt from the current prompt and tools on every start.
         if (message.role === "system") return;
         if (message.role === "assistant" && message.stopReason === "error") return;
-        await appendJsonl(this.opts.transcriptPath, message);
+        this.transcript.push(message);
+        this.writes = this.writes.then(() => appendJsonl(this.opts.transcriptPath, message));
+        await this.writes;
         if (message.role === "user") {
-          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp });
+          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource });
         } else if (message.role === "assistant") {
+          this.lastResponse = message;
           const text = assistantText(message);
-          if (text || message.stopReason === "aborted") {
+          if ((text || message.stopReason === "aborted") && !(this.runSource === "主动聊天" && !this.pendingOwner && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }
         }
@@ -215,6 +286,14 @@ export class Session {
         return;
       case "tool_execution_end":
         this.opts.emit({ kind: "tool_end", toolCallId: event.toolCallId, toolName: event.toolName, isError: event.isError });
+        return;
+      case "tool_execution_update":
+        const details = event.partialResult.details;
+        const progress = details?.type === "tool_execution_start" ? `开始 ${details.toolName}：${summarizeArgs(details.toolName, details.args)}`
+          : details?.type === "tool_execution_end" ? `${details.toolName} ${details.isError ? "失败" : "完成"}`
+          : details?.type === "tool_execution_update" ? `${details.toolName} 执行中` : "";
+        this.opts.emit({ kind: "tool_update", toolCallId: event.toolCallId, toolName: event.toolName,
+          text: progress ? `\n${progress}\n` : event.partialResult.content.flatMap((c: { type: string; text?: string }) => c.type === "text" ? [c.text ?? ""] : []).join("") });
         return;
       default:
         return;

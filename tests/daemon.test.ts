@@ -1,6 +1,7 @@
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
+import { createServer } from "node:net";
+import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { VexConfig } from "../src/config/schema.js";
 import { startDaemon, type Daemon } from "../src/daemon.js";
@@ -110,7 +111,107 @@ describe("startDaemon", () => {
     ]);
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" } }), log: createLogger(), models: models() });
     await chat("hi");
-    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find"]);
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate"]);
+  });
+
+  it("loads persona and dynamic skills in order and settles only successful owner interaction", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(join(workspace, "skills", "custom"), { recursive: true });
+    await writeFile(join(workspace, "skills", "custom", "SKILL.md"), "---\nname: custom\ndescription: Custom test skill\n---\nFull secret body\n");
+    let prompt = "";
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("ok"); }, fauxAssistantMessage("标题")]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    const id = await chat("hi");
+    expect(prompt).toContain("Custom test skill");
+    expect(prompt).not.toContain("Full secret body");
+    expect(prompt.indexOf("## USER.md")).toBeLessThan(prompt.indexOf("## 情绪与作息"));
+    expect(prompt.indexOf("## 情绪与作息")).toBeLessThan(prompt.indexOf("## MEMORY.md"));
+    expect(prompt.indexOf("## MEMORY.md")).toBeLessThan(prompt.indexOf("Custom test skill"));
+    const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
+    expect(mood.social).toBeCloseTo(35, 1);
+    await writeFile(join(workspace, "skills", "custom", "SKILL.md"), "---\nname: custom\ndescription: Changed skill\n---\nBody\n");
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("updated"); }]);
+    client!.send({ type: "send", sessionId: id, text: "again" });
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "updated");
+    expect(prompt).toContain("Changed skill");
+  });
+
+  it("binds schedule to the calling web session and marks delivery without owner settlement", async () => {
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("schedule", { action: "create", name: "test", schedule: { once: new Date(Date.now() + 1700).toISOString() }, prompt: "scheduled hello" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("created"), fauxAssistantMessage("标题"), fauxAssistantMessage("scheduled reply"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    const id = await chat("schedule it");
+    const tasks = JSON.parse(await readFile(join(paths.home, "schedules.json"), "utf8"));
+    expect(tasks[0].target).toBe(id);
+    const notification = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "定时任务");
+    expect(notification).toMatchObject({ sessionId: id, event: { text: "scheduled hello" } });
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "scheduled reply");
+    await daemon.stop(); daemon = undefined;
+    const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
+    expect(mood.social).toBeCloseTo(35, 1);
+  });
+
+  it("runs heartbeat silently in an isolated background transcript and injects its result without another model call", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
+    let calls = 0;
+    faux.setResponses([(ctx) => { calls++; expect(getCurrentSystemPrompt(ctx.messages)).toContain("窗口：心跳"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    await daemon.stop(); daemon = undefined;
+    const history = await readFile(join(paths.sessions, "wechat.jsonl"), "utf8");
+    expect(history).toContain("检查完成，需要注意");
+    expect(history).not.toContain("HEARTBEAT.md");
+    expect(calls).toBe(1);
+    const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
+    expect(mood.social).toBeCloseTo(50, 1);
+  });
+
+  it("wires feel without approval and persists its temporary emotion", async () => {
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("feel", { mood: 10, reason: "开心" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("ok"), fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("记录情绪");
+    const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
+    expect(mood.feelings).toHaveLength(1);
+    expect(mood.feelings[0]).toMatchObject({ mood: 10, reason: "开心" });
+    expect(client!.messages.some(m => m.type === "approvals" && m.pending.length)).toBe(false);
+  });
+
+  it("aborts a slow silent heartbeat on shutdown without delivering a partial message", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
+    faux = createFaux(1);
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    faux.setResponses([() => { started(); return fauxAssistantMessage("a very long heartbeat that should never finish"); }]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
+    await ready;
+    await daemon.stop(); daemon = undefined;
+    await expect(readFile(join(paths.sessions, "wechat.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    const records = await readdir(join(paths.sessions, "runs"));
+    expect(records).toHaveLength(1);
+    expect(await readFile(join(paths.sessions, "runs", records[0]!), "utf8")).toContain('"stopReason":"aborted"');
+  });
+
+  it("releases the listening socket when malformed schedule data prevents startup", async () => {
+    const probe = createServer();
+    await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") throw new Error("port not allocated");
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close(err => err ? reject(err) : resolve()));
+    await writeFile(join(paths.home, "schedules.json"), "not JSON");
+    await expect(startDaemon({ paths, config: config({ web: { host: "127.0.0.1", port } }), log: createLogger(), models: models() })).rejects.toThrow();
+    const rebound = createServer();
+    try { await new Promise<void>((resolve, reject) => { rebound.once("error", reject); rebound.listen(port, "127.0.0.1", resolve); }); }
+    finally { await new Promise<void>(resolve => rebound.close(() => resolve())); }
   });
 
   it("refuses a public address without a token", async () => {

@@ -83,6 +83,26 @@ async function sentTexts(): Promise<string[]> {
 }
 
 describe("WeChatChannel inbound", () => {
+  it("reports successful delivery, failed delivery, and discarded internal output", async () => {
+    await store.saveState({ contextToken: "ctx" });
+    await startChannel();
+    expect(channel!.available).toBe(true);
+    emit({ kind: "busy", busy: true });
+    emit({ kind: "assistant_message", text: "ok", stopReason: "stop", timestamp: Date.now() });
+    emit({ kind: "busy", busy: false });
+    expect(await channel!.replyDelivered()).toBe(true);
+    ilink.on("/ilink/bot/sendmessage", () => ({ errcode: 1, errmsg: "failed" }));
+    emit({ kind: "busy", busy: true });
+    emit({ kind: "assistant_message", text: "failed", stopReason: "stop", timestamp: Date.now() });
+    emit({ kind: "busy", busy: false });
+    expect(await channel!.replyDelivered()).toBe(false);
+    const requests = ilink.requests.length;
+    emit({ kind: "busy", busy: true });
+    emit({ kind: "assistant_message", text: "partial internal", stopReason: "stop", timestamp: Date.now() });
+    emit({ kind: "busy", busy: false, discardReply: true });
+    expect(await channel!.replyDelivered()).toBe(false);
+    expect(ilink.requests.length).toBe(requests);
+  });
   it("passes owner messages to the wechat session and ignores everyone else", async () => {
     ilink.queueUpdates(
       textMessage("owner1", "你好", { message_id: "m1" }),

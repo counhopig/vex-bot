@@ -28,6 +28,7 @@ describe("ToolPolicy", () => {
     expect(policy.decide("find", {})).toBe("allow");
     expect(policy.decide("bash", { command: "ls" })).toBe("ask");
     expect(policy.decide("mystery", {})).toBe("ask");
+    for (const tool of ["web_fetch", "web_search", "memory_search", "feel", "schedule", "delegate"]) expect(policy.decide(tool, {})).toBe("allow");
   });
 
   it("allows writes inside the workspace only", () => {
@@ -74,5 +75,14 @@ describe("ToolPolicy", () => {
   it("filters out denied tools", () => {
     const custom = new ToolPolicy({ workspace: "/ws", overrides: { bash: "deny" } });
     expect(custom.filter([{ name: "read" }, { name: "bash" }]).map((t) => t.name)).toEqual(["read"]);
+  });
+
+  it("applies MCP service policy while exact tool policy takes precedence", () => {
+    const custom = new ToolPolicy({ workspace: "/ws", overrides: { mcp__browser: "deny", mcp__browser__read: "allow", mcp__other: "allow" } });
+    expect(custom.decide("mcp__browser__click", {})).toBe("deny");
+    expect(custom.decide("mcp__browser__read", {})).toBe("allow");
+    expect(custom.decide("mcp__other__read", {})).toBe("allow");
+    expect(custom.decide("mcp__unknown__read", {})).toBe("ask");
+    expect(custom.filter([{ name: "mcp__browser__click" }, { name: "mcp__browser__read" }])).toEqual([{ name: "mcp__browser__read" }]);
   });
 });

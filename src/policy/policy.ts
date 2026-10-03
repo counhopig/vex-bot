@@ -7,6 +7,7 @@ export const DEFAULT_DECISIONS: Record<string, Decision> = {
   read: "allow",
   grep: "allow",
   find: "allow",
+  web_fetch: "allow", web_search: "allow", memory_search: "allow", feel: "allow", schedule: "allow", delegate: "allow",
   bash: "ask",
 };
 
@@ -22,14 +23,18 @@ export class ToolPolicy {
   }
 
   decide(toolName: string, args: unknown): Decision {
-    const override = this.overrides[toolName];
+    const override = this.override(toolName);
     if (override) return override;
     if (PATH_SCOPED_TOOLS.has(toolName)) return this.decideByPath(args);
     return DEFAULT_DECISIONS[toolName] ?? "ask";
   }
 
   filter<T extends { name: string }>(tools: T[]): T[] {
-    return tools.filter((tool) => this.overrides[tool.name] !== "deny");
+    return tools.filter((tool) => this.override(tool.name) !== "deny");
+  }
+
+  private override(toolName: string): Decision | undefined {
+    return this.overrides[toolName] ?? (toolName.startsWith("mcp__") ? this.overrides[toolName.split("__").slice(0, 2).join("__")] : undefined);
   }
 
   private decideByPath(args: unknown): Decision {

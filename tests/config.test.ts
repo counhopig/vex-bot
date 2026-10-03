@@ -17,6 +17,14 @@ afterEach(async () => { await removeTmpDir(dir); });
 const minimal = "model:\n  provider: deepseek\n  id: deepseek-v4-pro\n";
 
 describe("parseConfig", () => {
+  it("validates scheduler, persona, search and MCP configuration", () => {
+    const config = parseConfig(`${minimal}heartbeat: { every: 30m, activeHours: ["08:00", "22:00"] }\npersona: { sleep: ["23:00", "07:00"], outreach: { dailyLimit: 3 } }\nmemory: { consolidateAt: "03:00" }\nwebSearch: { provider: brave }\nmcpServers: { local: { command: node, args: [server.js] }, remote: { url: "https://example.com/mcp" } }\n`, paths);
+    expect(config.persona?.sleep).toEqual(["23:00", "07:00"]);
+    expect(config.mcpServers?.local).toMatchObject({ command: "node" });
+    for (const block of ["heartbeat: { every: 0m }", "persona: { sleep: ['25:00', '07:00'] }", "persona: { outreach: { dailyLimit: -1 } }", "memory: { consolidateAt: '99:00' }", "webSearch: { provider: unknown }", "mcpServers: { broken: {} }"]) {
+      expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(ConfigError);
+    }
+  });
   it("fills defaults for a minimal config", () => {
     const config = parseConfig(minimal, paths);
     expect(config).toEqual({
@@ -27,6 +35,7 @@ describe("parseConfig", () => {
       workspace: join(dir, "workspace"),
       toolPolicy: {},
       bashEnvPassthrough: [],
+      compaction: { threshold: 0.7 },
       wechat: { enabled: true, ownerId: undefined, baseUrl: "https://ilinkai.weixin.qq.com" },
     });
   });
