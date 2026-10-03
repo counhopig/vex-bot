@@ -1,53 +1,59 @@
 # Vex
 
-Vex 是只服务一个主人的个人 AI 助手。守护进程 `vexd` 常驻运行，通过微信 ClawBot 和浏览器 WebChat 对话；两个入口共享工作区、长期记忆、工具审批与情绪状态，各自保留独立的聊天历史。
+Vex is a personal AI assistant for a single owner. Its persistent daemon, `vexd`, connects to WeChat ClawBot and a browser-based WebChat. Both interfaces share a workspace, long-term memory, tool approvals, and mood state while keeping separate conversation histories.
 
-## 功能
+## Features
 
-- WebChat 多会话、流式回复、插话、中断、自动标题与历史恢复。
-- 微信扫码绑定、主人身份校验、长任务提示和工具审批。
-- 文件读写、命令执行、网页抓取、Brave 搜索和 FTS5 记忆检索。
-- 上下文压缩、压缩前记忆抢救、每日笔记与后台记忆整理。
-- 定时投递、心跳检查、情绪作息及主动聊天。
-- MCP 工具接入、隔离的子 Agent、动态 Skills，以及内置天气和图片理解技能。
+- Multiple WebChat conversations with streaming responses, steering, interruption, automatic titles, and history recovery.
+- QR-code WeChat linking, owner filtering, approval commands, and progress notices for long-running turns.
+- File operations, shell commands, web fetching, Brave Search, and SQLite FTS5 memory search.
+- Context compaction, silent memory rescue, daily notes, and scheduled memory consolidation.
+- Scheduled messages, heartbeat checks, mood and sleep patterns, and proactive conversations.
+- MCP integrations, isolated subagents, dynamic Skills, and built-in weather and image-analysis skills.
 
-## 安装与启动
+## Installation
 
-需要 Node.js 24 或更新版本。`better-sqlite3` 如无法使用预编译包，安装时需要本地 C/C++ 编译工具。
+Requires Node.js 24 or later. If a prebuilt `better-sqlite3` binary is unavailable, installation requires native C/C++ build tools.
 
 ```bash
 git clone git@github.com:counhopig/vex-bot.git
 cd vex-bot
 npm ci
 npm run build
-
 node dist/cli/index.js onboard
 node dist/cli/index.js start -d
 ```
 
-配置向导选择模型提供方、模型、API key 和网页端口，也可当场扫码绑定微信。默认 WebChat 地址为 `http://127.0.0.1:7860`。
+The onboarding wizard asks for a provider, model, API key, and web port. It can also link WeChat by QR code. WebChat defaults to `http://127.0.0.1:7860`.
 
-也可运行 `npm link`，随后使用 `vex` 代替 `node dist/cli/index.js`。
+Optionally run `npm link` to use `vex` instead of `node dist/cli/index.js`.
 
-## 命令
+## Commands
 
-| 命令 | 说明 |
+| Command | Description |
 |---|---|
-| `vex onboard [--force]` | 生成配置与工作区；覆盖已有配置需要 `--force` |
-| `vex start` | 前台启动 |
-| `vex start -d` | 后台启动 |
-| `vex stop` | 停止守护进程 |
-| `vex status` | 查看运行状态 |
-| `vex logs [-f]` | 查看日志；`-f` 持续输出 |
-| `vex wechat login` | 扫码绑定微信，重启后生效 |
+| `vex onboard [--force]` | Create configuration and workspace templates; `--force` overwrites existing configuration |
+| `vex start` | Run in the foreground |
+| `vex start -d` | Run in the background |
+| `vex stop` | Stop the daemon |
+| `vex status` | Show running status |
+| `vex logs [-f]` | Show logs; `-f` follows new output |
+| `vex wechat login` | Link WeChat by QR code; restart to apply |
 
-微信指令：`/stop` 中断当前回复；`/y` 允许最早的待审批请求；`/ya` 在当前会话中总是允许该工具；`/n` 拒绝。审批同时推送到微信与在线网页，首个答复生效，10 分钟未答复自动拒绝。
+WeChat commands:
 
-## 配置
+- `/stop`: interrupt the current response.
+- `/y`: allow the oldest pending approval.
+- `/ya`: always allow that tool in the requesting conversation.
+- `/n`: deny the oldest pending approval.
 
-默认配置文件为 `~/.vex/config.yaml`。WebChat 设置页可以编辑配置，修改后重启生效。
+Approvals appear in WeChat and connected WebChat windows. The first answer wins; unanswered requests are denied after ten minutes.
 
-最小配置：
+## Configuration
+
+Configuration lives in `~/.vex/config.yaml`. It can also be edited from WebChat settings. Restart after changes.
+
+Minimal configuration:
 
 ```yaml
 model:
@@ -55,12 +61,12 @@ model:
   id: MiniMax-M2.7
 providers:
   minimax-cn:
-    apiKey: "填写你的 API key"
+    apiKey: "YOUR_API_KEY"
 ```
 
-内置提供方和模型以安装版本的 pi-ai 注册表为准，模型 ID 区分大小写。API key 优先读取 `providers` 配置，其次读取提供方约定的环境变量；程序不会自动加载 `.env`。
+Built-in providers and models depend on the installed pi-ai registry. Model IDs are case-sensitive. API keys are read from `providers` first, then from the provider's supported environment variables. Vex does not automatically load `.env` files.
 
-可选配置示例（与上面的配置合并）：
+Optional settings to combine with the minimal configuration:
 
 ```yaml
 web:
@@ -68,7 +74,7 @@ web:
   port: 7860
 wechat:
   enabled: true
-  # ownerId: "主人微信 ID；默认使用扫码用户"
+  # ownerId defaults to the account that scanned the QR code.
 compaction:
   threshold: 0.7
 memory:
@@ -91,7 +97,7 @@ tools:
 bashEnvPassthrough: []
 webSearch:
   provider: brave
-  apiKey: "填写 Brave Search API key"
+  apiKey: "YOUR_BRAVE_SEARCH_API_KEY"
 mcpServers:
   local:
     command: node
@@ -100,7 +106,9 @@ mcpServers:
     url: "https://example.com/mcp"
 ```
 
-`backgroundModel` 可按 `model` 的格式单独配置，用于标题、压缩摘要、心跳和记忆整理；缺省与主模型相同。自定义提供方示例：
+Configure `backgroundModel` with the same fields as `model` to select a separate model for titles, compaction summaries, heartbeats, and memory consolidation. It defaults to the primary model.
+
+Custom provider configuration:
 
 ```yaml
 model:
@@ -110,20 +118,20 @@ providers:
   custom:
     api: openai-completions
     baseUrl: "https://example.com/v1"
-    apiKey: "填写你的 API key"
+    apiKey: "YOUR_API_KEY"
     models:
       - id: your-model
         contextWindow: 32000
         maxTokens: 4096
 ```
 
-自定义接口支持 `openai-completions` 和 `anthropic-messages`。声明 `models` 时只接受列表中的 ID。
+Custom providers support `openai-completions` and `anthropic-messages`. When `models` is specified, only listed IDs are accepted.
 
-远程访问必须设置 `web.token`。工具策略为 `allow`、`ask` 或 `deny`；默认工作区内写入直接允许，工作区外写入、bash 与 MCP 工具需要审批。bash 只继承环境变量白名单，额外变量须通过 `bashEnvPassthrough` 明确放行。
+Remote access requires `web.token`. Tool policies are `allow`, `ask`, and `deny`. By default, writes inside the workspace are allowed; external writes, shell commands, and MCP tools require approval. Shell commands inherit only an environment allowlist. Add specific variables to `bashEnvPassthrough` when needed.
 
-## 工作区与数据
+## Workspace and Data
 
-默认数据目录为 `~/.vex`，可以通过 `VEX_HOME` 改为独立实例：
+The default data directory is `~/.vex`. Set `VEX_HOME` to run an isolated instance:
 
 ```bash
 export VEX_HOME=/absolute/path/to/vex-data
@@ -131,37 +139,37 @@ node dist/cli/index.js onboard
 node dist/cli/index.js start -d
 ```
 
-该实例的所有后续命令须使用同一 `VEX_HOME`。`workspace` 配置可以单独指定工作区。
+Use the same `VEX_HOME` for all commands addressing that instance. The `workspace` setting can independently select its working directory.
 
 ```text
 ~/.vex/
 ├── config.yaml
 ├── workspace/
-│   ├── SOUL.md              # 人设与行为准则
-│   ├── USER.md              # 关于主人的稳定认知
-│   ├── MEMORY.md            # 长期事实与决定
-│   ├── HEARTBEAT.md         # 心跳检查清单；空文件不调用模型
-│   ├── memory/YYYY-MM-DD.md # 每日笔记
-│   └── skills/              # 自定义技能
-├── sessions/               # 微信、网页及后台运行记录
-├── index.sqlite            # 可重建的检索索引
-├── schedules.json          # 定时任务
-├── state/mood.json         # 情绪与主动聊天状态
-├── wechat/                 # 登录凭证与同步状态
+│   ├── SOUL.md              # Persona and behavior
+│   ├── USER.md              # Stable information about the owner
+│   ├── MEMORY.md            # Long-term facts and decisions
+│   ├── HEARTBEAT.md         # Checklist; empty files skip model calls
+│   ├── memory/YYYY-MM-DD.md # Daily notes
+│   └── skills/              # Custom skills
+├── sessions/               # WeChat, WebChat, and background transcripts
+├── index.sqlite            # Rebuildable search index
+├── schedules.json          # Scheduled tasks
+├── state/mood.json         # Mood and outreach state
+├── wechat/                 # Login credentials and synchronization state
 └── logs/vexd.log
 ```
 
-直接编辑工作区 Markdown 文件即可调整人设、认知与检查清单，下一轮读取最新内容。压缩只改变模型上下文，原始聊天记录仍保留。
+Edit workspace Markdown files to adjust personality, owner information, memory, and heartbeat checks. Changes are read on the next turn. Compaction changes the model context while preserving original conversation records.
 
-## 定时任务与 Skills
+## Scheduling and Skills
 
-通过聊天请求创建、列出或删除定时任务。`schedule` 支持 cron、固定间隔（如 `30m`）和带时区的一次性 ISO 时间点。默认投递到当前会话，网页目标已删除时回退微信；停机期间错过的一次性任务会在启动后补报。
+Ask Vex to create, list, or delete scheduled tasks. The `schedule` tool supports cron expressions, fixed intervals such as `30m`, and one-time ISO timestamps with a time zone. Tasks target the current conversation by default. Deleted WebChat targets fall back to WeChat, and missed one-time tasks are reported after startup.
 
-技能目录包含带 `name`、`description` frontmatter 的 `SKILL.md`，可附带脚本。工作区 `skills/` 的同名技能覆盖内置技能。内置天气技能查询天气，图片技能调用支持图片输入的已配置模型进行分析；脚本执行遵循 bash 审批。
+A Skill is a directory containing `SKILL.md` with `name` and `description` frontmatter, plus optional scripts and resources. Workspace skills override built-in skills with the same name. The weather skill retrieves forecasts; the image skill analyzes images using a configured model that supports image input. Script execution follows shell approval rules.
 
-`web_search` 需要 Brave API key，也可使用 `BRAVE_API_KEY` 环境变量。MCP 支持 stdio 和 Streamable HTTP，工具命名为 `mcp__<服务名>__<工具名>`。`delegate` 使用独立上下文执行任务，继承审批，禁止再次委派。
+`web_search` requires a Brave Search API key, configured directly or through `BRAVE_API_KEY`. MCP supports stdio and Streamable HTTP, exposing tools as `mcp__<server>__<tool>`. The `delegate` tool runs an isolated subagent with inherited approvals and prevents nested delegation.
 
-## 开发与验证
+## Development
 
 ```bash
 npm run dev
@@ -170,4 +178,4 @@ npm test
 npm run build
 ```
 
-测试使用脚本化模型和本地假服务，无需真实模型、微信或 MCP 凭证。设计与分阶段实现计划位于 [docs/superpowers](docs/superpowers)。
+Tests use scripted models and local mock services, so no real model, WeChat, or MCP credentials are required. Design documents and implementation plans are in [docs/superpowers](docs/superpowers).
