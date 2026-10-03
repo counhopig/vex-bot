@@ -50,6 +50,18 @@ describe("splitMessage", () => {
     expect(splitMessage(text, 10)).toEqual(["aaaaaaaa", "bbbbbbbb", "ccc"]);
     expect(splitMessage("x".repeat(25), 10)).toEqual(["x".repeat(10), "x".repeat(10), "x".repeat(5)]);
   });
+
+  it("never splits a surrogate pair when cutting at max", () => {
+    const text = "x".repeat(9) + "😀" + "y";
+    const chunks = splitMessage(text, 10);
+    // Emoji is 2 code units, so without fix would cut at 10 (in middle of emoji)
+    // With fix, should cut at 9, keeping emoji intact
+    expect(chunks.every(chunk => chunk.length <= 10)).toBe(true);
+    expect(chunks.join("")).toBe(text);
+    // Verify no lone surrogates are present
+    const loneSurrogateRegex = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    expect(chunks.every(chunk => !loneSurrogateRegex.test(chunk))).toBe(true);
+  });
 });
 
 describe("formatApprovalPrompt", () => {
@@ -79,5 +91,14 @@ describe("formatApprovalPrompt", () => {
 
   it("formats clock times in 24-hour form", () => {
     expect(formatClock(Date.UTC(2026, 9, 3, 16, 5), "Asia/Shanghai")).toBe("00:05");
+  });
+
+  it("never splits a surrogate pair when truncating detail at 1500", () => {
+    // Create detail where position 1500 is in the middle of an emoji
+    const detail = "a".repeat(1499) + "😀" + "b".repeat(100);
+    const text = formatApprovalPrompt({ ...request, detail }, 1, "Asia/Shanghai");
+    // Regex to detect lone surrogates (high without following low, or low without preceding high)
+    const loneSurrogateRegex = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    expect(loneSurrogateRegex.test(text)).toBe(false);
   });
 });
