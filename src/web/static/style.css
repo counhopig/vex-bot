@@ -60,6 +60,8 @@
 
 * { box-sizing: border-box; }
 
+[hidden] { display: none !important; }
+
 html { -webkit-text-size-adjust: 100%; }
 
 body {
@@ -144,7 +146,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 #chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-#chat[hidden], #settings[hidden] { display: none; }
 #messages {
   flex: 1;
   overflow-y: auto;
@@ -250,7 +251,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #settings-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 #settings-form { display: flex; flex-direction: column; gap: 18px; padding-bottom: 8px; }
 #settings-editor { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-#settings-editor[hidden], #settings-form[hidden] { display: none; }
 #settings-text {
   flex: 1;
   min-height: 260px;
