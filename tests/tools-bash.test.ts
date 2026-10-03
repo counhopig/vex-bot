@@ -34,6 +34,11 @@ describe("truncateMiddle", () => {
 });
 
 describe("bash tool", () => {
+  it("provides the current configuration path without extending secret passthrough", async () => {
+    const configPath = `${ws}/config.yaml`;
+    const tool = createBashTool({ workspace: ws, envPassthrough: [], configPath });
+    expect(textOf(await tool.execute("1", { command: 'printf "%s" "$VEX_CONFIG_PATH"' }))).toBe(configPath);
+  });
   it("runs in the workspace and merges stderr", async () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
     const result = await tool.execute("1", { command: "pwd; echo oops >&2" });

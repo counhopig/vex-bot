@@ -57,6 +57,10 @@ function handle(msg) {
       break;
     case "event":
       if (msg.sessionId === state.currentId) applyEvent(msg.event);
+      else if (msg.event.kind === "user_message" && msg.event.source) {
+        const session = state.sessions.find(s => s.id === msg.sessionId);
+        flash(`${session?.title ?? "网页会话"}：${msg.event.source}`);
+      }
       break;
     case "approvals":
       state.pending = msg.pending;
@@ -137,7 +141,7 @@ function clearMessages() {
 function renderHistory(msg) {
   clearMessages();
   for (const item of msg.items) {
-    if (item.kind === "user") addBubble("user", item.text);
+    if (item.kind === "user") { if (item.source) addNotice(`${item.source}：${item.text}`); else addBubble("user", item.text); }
     else if (item.kind === "assistant") addBubble("assistant", item.text, item.stopReason === "aborted");
     else addTool(item.toolCallId, item.toolName, item.summary, item.isError === undefined ? "running" : item.isError ? "error" : "done");
   }
@@ -148,7 +152,7 @@ function renderHistory(msg) {
 function applyEvent(event) {
   switch (event.kind) {
     case "user_message":
-      addBubble("user", event.text);
+      if (event.source) addNotice(`${event.source}：${event.text}`); else addBubble("user", event.text);
       break;
     case "text_delta":
       if (!state.streamEl) state.streamEl = addBubble("assistant streaming", "");
@@ -168,6 +172,11 @@ function applyEvent(event) {
     case "tool_end":
       updateTool(event.toolCallId, event.isError ? "error" : "done");
       break;
+    case "tool_update": {
+      const el = state.toolEls.get(event.toolCallId);
+      if (el && event.text) el.textContent += event.text;
+      break;
+    }
     case "busy":
       setBusy(event.busy);
       if (!event.busy && state.streamEl) {

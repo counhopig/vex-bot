@@ -51,12 +51,17 @@ export class WeChatChannel {
   private loop: Promise<void> | undefined;
   private unsubscribe: (() => void) | undefined;
   private sessionExpired = false;
+  private lastReply: Promise<boolean> = Promise.resolve(false);
 
   constructor(private readonly opts: WeChatChannelOptions) {}
 
   get expired(): boolean {
     return this.sessionExpired;
   }
+
+  get available(): boolean { return !this.sessionExpired && !this.abort.signal.aborted && !!this.contextToken; }
+
+  replyDelivered(): Promise<boolean> { return this.lastReply; }
 
   async start(): Promise<void> {
     const state = await this.opts.store.loadState();
@@ -190,9 +195,10 @@ export class WeChatChannel {
     switch (event.kind) {
       case "busy":
         if (event.busy) this.beginTurn();
-        else this.endTurn();
+        else this.endTurn(event.discardReply);
         return;
       case "assistant_message":
+        if (event.injected) { if (event.text) this.send(event.text); return; }
         if (!this.turn) {
           if (event.text) this.send(event.text);
           return;
@@ -210,6 +216,7 @@ export class WeChatChannel {
   }
 
   private beginTurn(): void {
+    this.lastReply = Promise.resolve(false);
     if (this.turn) clearTimeout(this.turn.timer);
     const timer = setTimeout(() => {
       if (this.turn?.timer === timer) this.send("处理中…");
@@ -217,33 +224,37 @@ export class WeChatChannel {
     this.turn = { texts: [], aborted: false, timer };
   }
 
-  private endTurn(): void {
+  private endTurn(discard = false): void {
     const turn = this.turn;
     if (!turn) return;
     clearTimeout(turn.timer);
     this.turn = undefined;
+    if (discard) return;
     const reply = turn.texts.join("\n\n");
     if (turn.aborted) this.send(reply ? `${reply}\n（已中断）` : "已中断。");
-    else if (reply) this.send(reply);
+    else if (reply) this.lastReply = this.send(reply);
   }
 
-  private send(text: string): void {
+  private send(text: string): Promise<boolean> {
     const chunks = splitMessage(text);
-    this.outbox = this.outbox.then(async () => {
+    const sending = this.outbox.then(async () => {
       const contextToken = this.contextToken;
       if (!contextToken) {
         this.opts.log.warn("no wechat context token yet; the owner has to message the bot first");
-        return;
+        return false;
       }
       for (const chunk of chunks) {
         try {
           await this.opts.client.sendText(this.opts.ownerId, contextToken, chunk, this.abort.signal);
         } catch (err) {
           this.opts.log.warn({ err }, "failed to send wechat message");
-          return;
+          return false;
         }
       }
+      return true;
     });
+    this.outbox = sending.then(() => {});
+    return sending;
   }
 
   private async sleep(ms: number): Promise<void> {

@@ -34,6 +34,7 @@ const BashParams = Type.Object({
 interface BashOptions {
   workspace: string;
   envPassthrough: string[];
+  configPath?: string;
 }
 
 export function createBashTool(opts: BashOptions): AgentTool<typeof BashParams> {
@@ -59,7 +60,7 @@ function runCommand(
     }
     const child = spawn("bash", ["-c", command], {
       cwd: opts.workspace,
-      env: buildChildEnv(opts.envPassthrough),
+      env: { ...buildChildEnv(opts.envPassthrough), ...(opts.configPath ? { VEX_CONFIG_PATH: opts.configPath } : {}) },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });

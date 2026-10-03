@@ -6,6 +6,7 @@ import { createFindTool, createGrepTool } from "./search.js";
 export interface CoreToolOptions {
   workspace: string;
   bashEnvPassthrough: string[];
+  configPath?: string;
 }
 
 export function createCoreTools(opts: CoreToolOptions): AgentTool<any>[] {
@@ -13,7 +14,7 @@ export function createCoreTools(opts: CoreToolOptions): AgentTool<any>[] {
     createReadTool(opts.workspace),
     createWriteTool(opts.workspace),
     createEditTool(opts.workspace),
-    createBashTool({ workspace: opts.workspace, envPassthrough: opts.bashEnvPassthrough }),
+    createBashTool({ workspace: opts.workspace, envPassthrough: opts.bashEnvPassthrough, configPath: opts.configPath }),
     createGrepTool(opts.workspace),
     createFindTool(opts.workspace),
   ];

@@ -63,6 +63,62 @@ describe("Session", () => {
     expect(saved.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 
+  it("queues injected heartbeat until the active run finishes and restores it as assistant history", async () => {
+    faux = createFaux(100);
+    faux.setResponses([fauxAssistantMessage("owner response ".repeat(5))]);
+    const session = await open();
+    session.send("owner request");
+    const injecting = session.injectAssistant("heartbeat result");
+    await injecting;
+    const saved = await readJsonl<{ role: string; content: unknown }>(join(dir, "t.jsonl"));
+    expect(saved.map(m => m.role)).toEqual(["user", "assistant", "assistant"]);
+    expect(events.at(-1)).toMatchObject({ kind: "assistant_message", text: "heartbeat result", injected: true });
+    expect(events.findIndex(e => e.kind === "busy" && !e.busy)).toBeLessThan(events.length - 1);
+    const restored = await open();
+    expect(restored.history().items.at(-1)).toMatchObject({ kind: "assistant", text: "heartbeat result" });
+  });
+
+  it("silences failed outreach while keeping owner errors visible", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
+    const session = await open({ retry: { attempts: 0, baseDelayMs: 1 } });
+    session.send("internal", "主动聊天");
+    await session.whenIdle();
+    expect(events.some(e => e.kind === "error")).toBe(false);
+    expect(events.at(-1)).toMatchObject({ kind: "busy", busy: false, discardReply: true });
+    expect(session.successfulReply).toBeUndefined();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
+    session.send("owner");
+    await session.whenIdle();
+    expect(events.some(e => e.kind === "error")).toBe(true);
+  });
+
+  it("cancels heartbeat injection immediately while a permanent session is busy", async () => {
+    faux = createFaux(1);
+    faux.setResponses([fauxAssistantMessage("a very slow permanent reply")]);
+    const session = await open();
+    session.send("owner");
+    const abort = new AbortController();
+    const injection = session.injectAssistant("heartbeat", abort.signal);
+    abort.abort();
+    await expect(injection).rejects.toMatchObject({ name: "AbortError" });
+    expect(session.busy).toBe(true);
+    await session.dispose();
+    expect(session.history().items.some(item => item.kind === "assistant" && item.text === "heartbeat")).toBe(false);
+  });
+
+  it("forwards delegated subtool progress through session events", async () => {
+    faux = createFaux();
+    const progressing: AgentTool<typeof EchoParams> = { ...echoTool, execute: async (_id, _args, _signal, onUpdate) => {
+      onUpdate?.({ content: [], details: { type: "tool_execution_start", toolName: "read", args: { path: "MEMORY.md" } } });
+      return { content: [{ type: "text" as const, text: "done" }], details: {} };
+    } };
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("echo", { text: "x" }, { id: "progress" }), { stopReason: "toolUse" }), fauxAssistantMessage("done")]);
+    const session = await open({ tools: [progressing] });
+    session.send("run"); await session.whenIdle();
+    expect(events).toContainEqual({ kind: "tool_update", toolCallId: "progress", toolName: "echo", text: "\n开始 read：MEMORY.md\n" });
+  });
+
   it("restores history from the transcript", async () => {
     faux = createFaux();
     faux.setResponses([

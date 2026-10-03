@@ -1,0 +1,42 @@
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { builtinSkillsDirectory, discoverSkills, skillsSection } from "../src/skills/discovery.js";
+
+describe("skill discovery", () => {
+  const roots: string[] = [];
+  afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
+  async function root() { const directory = await mkdtemp(join(tmpdir(), "vex-skills-")); roots.push(directory); return directory; }
+  async function skill(directory: string, folder: string, text: string) {
+    await mkdir(join(directory, folder), { recursive: true });
+    await writeFile(join(directory, folder, "SKILL.md"), text);
+  }
+  const document = (name: string, description: string, body = "private skill body") => `---\nname: ${name}\ndescription: ${description}\n---\n${body}`;
+
+  it("discovers builtin weather and image scripts", async () => {
+    const skills = await discoverSkills({ workspace: await root() });
+    expect(skills.map((item) => item.name)).toEqual(["image", "weather"]);
+    expect(builtinSkillsDirectory()).toContain("skills");
+  });
+  it("workspace names override builtins and changes appear next round", async () => {
+    const builtinDir = await root();
+    const workspace = await root();
+    await skill(builtinDir, "weather", document("weather", "built in"));
+    await skill(join(workspace, "skills"), "local", document("weather", "user version"));
+    const section = skillsSection(workspace, builtinDir);
+    expect((await discoverSkills({ workspace, builtinDir }))[0]?.description).toBe("user version");
+    expect(await section({ now: new Date(), windowLabel: "web" })).not.toContain("private skill body");
+    await skill(join(workspace, "skills"), "notes", document("notes", "notes skill"));
+    expect(await section({ now: new Date(), windowLabel: "web" })).toContain("notes skill");
+  });
+  it("ignores malformed frontmatter and incomplete directories", async () => {
+    const builtinDir = await root();
+    const workspace = await root();
+    await skill(builtinDir, "bad", "not frontmatter");
+    await skill(builtinDir, "invalid-name", document("BAD NAME", "desc"));
+    await skill(builtinDir, "invalid-yaml", "---\nname: [\n---\n");
+    await skill(builtinDir, "valid", document("valid", "usable"));
+    expect((await discoverSkills({ workspace, builtinDir })).map((item) => item.name)).toEqual(["valid"]);
+  });
+});

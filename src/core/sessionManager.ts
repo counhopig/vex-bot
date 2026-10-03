@@ -118,7 +118,7 @@ export class SessionManager {
     const settled = await Promise.allSettled([...this.sessions.values()]);
     const open = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     for (const session of open) session.stop();
-    await Promise.allSettled(open.map((s) => s.whenIdle()));
+    await Promise.allSettled(open.map((s) => s.dispose()));
   }
 
   private transcriptPath(key: string): string {
@@ -145,7 +145,7 @@ export class SessionManager {
     if (!meta) return;
     const e = event.event;
     if (e.kind === "user_message") {
-      if (!meta.titled && !this.untitledFirstMessage.has(id)) this.untitledFirstMessage.set(id, e.text);
+      if (!e.source && !meta.titled && !this.untitledFirstMessage.has(id)) this.untitledFirstMessage.set(id, e.text);
       this.index
         .update(id, { updatedAt: e.timestamp })
         .then(() => this.opts.bus.emit({ type: "sessions_changed" }))

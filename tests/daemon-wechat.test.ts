@@ -1,4 +1,4 @@
-import { chmod } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +54,25 @@ async function link(userId?: string): Promise<void> {
 }
 
 describe("vexd with WeChat", () => {
+  it("shuts down while heartbeat delivery waits behind a permanent approval-blocked WeChat run", async () => {
+    await link("owner1");
+    const cfg = config();
+    cfg.heartbeat = { every: "1s", activeHours: ["00:00", "00:00"] };
+    await mkdir(cfg.workspace, { recursive: true });
+    await writeFile(join(cfg.workspace, "HEARTBEAT.md"), "Check system");
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("bash", { command: "date" }, { id: "blocked" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("heartbeat result"),
+    ]);
+    ilink.queueUpdates(textMessage("owner1", "run date", { message_id: "m1" }));
+    await start(cfg);
+    await vi.waitFor(() => expect(ilink.sentTexts()[0]).toContain("【需要你批准】"));
+    await vi.waitFor(() => expect(faux.getPendingResponseCount()).toBe(0), { timeout: 3000 });
+    const started = Date.now();
+    await daemon!.stop(); daemon = undefined;
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(ilink.sentTexts()).not.toContain("heartbeat result");
+  });
   it("answers the owner on WeChat", async () => {
     await link("owner1");
     faux.setResponses([fauxAssistantMessage("在的")]);
