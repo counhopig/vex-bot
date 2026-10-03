@@ -10,6 +10,7 @@ export interface VexPaths {
   logFile: string;
   pidFile: string;
   defaultWorkspace: string;
+  wechat: string;
 }
 
 export function resolvePaths(home?: string): VexPaths {
@@ -23,6 +24,7 @@ export function resolvePaths(home?: string): VexPaths {
     logFile: join(root, "logs", "vexd.log"),
     pidFile: join(root, "vexd.pid"),
     defaultWorkspace: join(root, "workspace"),
+    wechat: join(root, "wechat"),
   };
 }
 

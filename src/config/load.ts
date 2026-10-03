@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { writeFileAtomic } from "../store/atomic.js";
-import { ConfigSchema, type VexConfig } from "./schema.js";
+import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VexConfig } from "./schema.js";
 
 export class ConfigError extends Error {}
 
@@ -34,6 +34,11 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     workspace: raw.workspace ? resolve(paths.home, expandHome(raw.workspace)) : paths.defaultWorkspace,
     toolPolicy: raw.tools?.policy ?? {},
     bashEnvPassthrough: raw.bashEnvPassthrough ?? [],
+    wechat: {
+      enabled: raw.wechat?.enabled ?? true,
+      ownerId: raw.wechat?.ownerId,
+      baseUrl: raw.wechat?.baseUrl ?? DEFAULT_WECHAT_BASE_URL,
+    },
   };
 }
 

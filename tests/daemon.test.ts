@@ -39,6 +39,7 @@ function config(overrides: Partial<VexConfig> = {}): VexConfig {
     workspace: join(dir, "workspace"),
     toolPolicy: {},
     bashEnvPassthrough: [],
+    wechat: { enabled: false, baseUrl: "http://127.0.0.1:1" },
     ...overrides,
   };
 }

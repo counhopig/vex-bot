@@ -27,7 +27,13 @@ describe("parseConfig", () => {
       workspace: join(dir, "workspace"),
       toolPolicy: {},
       bashEnvPassthrough: [],
+      wechat: { enabled: true, ownerId: undefined, baseUrl: "https://ilinkai.weixin.qq.com" },
     });
+  });
+
+  it("reads the wechat block", () => {
+    const config = parseConfig(`${minimal}wechat: { enabled: false, ownerId: o9x, baseUrl: "http://127.0.0.1:9000" }\n`, paths);
+    expect(config.wechat).toEqual({ enabled: false, ownerId: "o9x", baseUrl: "http://127.0.0.1:9000" });
   });
 
   it("reads every supported key", () => {
