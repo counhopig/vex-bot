@@ -9,7 +9,13 @@ const state = {
   busy: false,
   pending: [],
   streamEl: null,
+  streamText: "",
+  streamFrame: false,
   toolEls: new Map(),
+  statusInfo: null,
+  settings: null,
+  settingsTab: "model",
+  fileName: "SOUL.md",
 };
 
 function send(message) {
@@ -32,6 +38,7 @@ function connect() {
     state.retryMs = 1000;
     setStatus("");
     if (state.currentId) send({ type: "open", sessionId: state.currentId });
+    send({ type: "get_status" });
   });
   ws.addEventListener("message", (event) => handle(JSON.parse(event.data)));
   ws.addEventListener("close", () => {
@@ -66,23 +73,269 @@ function handle(msg) {
       state.pending = msg.pending;
       renderApprovals();
       break;
+    case "status":
+      state.statusInfo = msg.status;
+      renderStatusLine();
+      updateWechatStatus();
+      break;
+    case "settings":
+      state.settings = makeSettings(msg);
+      if (isFormTab(state.settingsTab)) renderSettingsForm();
+      break;
+    case "settings_saved":
+      if (msg.ok) {
+        showSaved(true, msg.restartRequired ? "已保存，重启 vexd 后生效" : "已保存，立即生效");
+        send({ type: "get_settings" });
+      } else {
+        showSaved(false, "", msg.error);
+      }
+      break;
     case "config":
-      if ($("settings-file").value === "config.yaml") $("settings-text").value = msg.text;
+      if (state.settingsTab === "yaml") $("settings-text").value = msg.text;
       break;
     case "file":
-      if ($("settings-file").value === msg.name) $("settings-text").value = msg.text;
+      if (state.settingsTab === "persona" && state.fileName === msg.name) $("settings-text").value = msg.text;
       break;
     case "config_saved":
       showSaved(msg.ok, "已保存，重启 vexd 后生效", msg.error);
       break;
     case "file_saved":
-      if ($("settings-file").value === msg.name) showSaved(msg.ok, "已保存，下一条消息起生效", msg.error);
+      if (state.fileName === msg.name) showSaved(msg.ok, "已保存，下一条消息起生效", msg.error);
       break;
     case "error":
       flash(msg.message);
       break;
   }
 }
+
+/* ---------- Markdown ---------- */
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})\s*([\w+#.-]*)/;
+const HEADING = /^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$/;
+const RULE = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const LIST_ITEM = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const TABLE_DIVIDER = /^\s*\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+
+function startsBlock(line, next) {
+  return FENCE.test(line) || HEADING.test(line) || RULE.test(line) || /^\s{0,3}>/.test(line) || LIST_ITEM.test(line)
+    || (line.includes("|") && next !== undefined && TABLE_DIVIDER.test(next) && next.includes("-"));
+}
+
+function splitRow(line) {
+  let row = line.trim();
+  if (row.startsWith("|")) row = row.slice(1);
+  if (row.endsWith("|")) row = row.slice(0, -1);
+  return row.split("|").map((cell) => cell.trim());
+}
+
+function parseList(lines, start) {
+  const first = LIST_ITEM.exec(lines[start]);
+  const baseIndent = first[1].length;
+  const ordered = /\d/.test(first[2]);
+  const items = [];
+  let i = start;
+  while (i < lines.length) {
+    const match = LIST_ITEM.exec(lines[i]);
+    if (!match || match[1].length < baseIndent || (match[1].length === baseIndent && /\d/.test(match[2]) !== ordered)) break;
+    if (match[1].length > baseIndent) {
+      const nested = parseList(lines, i);
+      const last = items[items.length - 1];
+      if (last) last.blocks.push(nested.block);
+      i = nested.next;
+      continue;
+    }
+    const item = { inline: parseInline(match[3]), blocks: [] };
+    items.push(item);
+    i++;
+    while (i < lines.length && lines[i].trim() && !LIST_ITEM.test(lines[i]) && /^\s+/.test(lines[i])) {
+      item.inline.push({ t: "br" }, ...parseInline(lines[i].trim()));
+      i++;
+    }
+  }
+  return { block: { type: "list", ordered, items }, next: i };
+}
+
+function parseMarkdown(text) {
+  const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const fence = FENCE.exec(line);
+    if (fence) {
+      const marker = fence[1];
+      const body = [];
+      i++;
+      while (i < lines.length && !(lines[i].trim().startsWith(marker[0].repeat(marker.length)) && lines[i].trim().replace(new RegExp(`^${marker[0]}+`), "") === "")) body.push(lines[i++]);
+      i++;
+      blocks.push({ type: "code", lang: fence[2], text: body.join("\n") });
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const heading = HEADING.exec(line);
+    if (heading) { blocks.push({ type: "heading", level: heading[1].length, inline: parseInline(heading[2]) }); i++; continue; }
+    if (RULE.test(line)) { blocks.push({ type: "rule" }); i++; continue; }
+    if (/^\s{0,3}>/.test(line)) {
+      const quoted = [];
+      while (i < lines.length && /^\s{0,3}>/.test(lines[i])) quoted.push(lines[i++].replace(/^\s{0,3}> ?/, ""));
+      blocks.push({ type: "quote", blocks: parseMarkdown(quoted.join("\n")) });
+      continue;
+    }
+    if (LIST_ITEM.test(line)) {
+      const list = parseList(lines, i);
+      blocks.push(list.block);
+      i = list.next;
+      continue;
+    }
+    if (line.includes("|") && i + 1 < lines.length && TABLE_DIVIDER.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const head = splitRow(line);
+      const rows = [];
+      i += 2;
+      while (i < lines.length && lines[i].trim() && lines[i].includes("|")) rows.push(splitRow(lines[i++]));
+      blocks.push({ type: "table", head: head.map(parseInline), rows: rows.map((row) => row.map(parseInline)) });
+      continue;
+    }
+    const paragraph = [line];
+    i++;
+    while (i < lines.length && lines[i].trim() && !startsBlock(lines[i], lines[i + 1])) paragraph.push(lines[i++]);
+    const inline = [];
+    paragraph.forEach((part, index) => { if (index) inline.push({ t: "br" }); inline.push(...parseInline(part.trim())); });
+    blocks.push({ type: "paragraph", inline });
+  }
+  return blocks;
+}
+
+const INLINE_PATTERNS = [
+  ["code", /`([^`\n]+)`/],
+  ["link", /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/],
+  ["bold", /\*\*(?=\S)([\s\S]*?\S)\*\*/],
+  ["strike", /~~(?=\S)([\s\S]*?\S)~~/],
+  ["italic", /(?<![*\w])\*(?=\S)([^*\n]*?\S)\*(?!\*)/],
+  ["italic", /(?<!\w)_(?=\S)([^_\n]*?\S)_(?!\w)/],
+  ["url", /https?:\/\/[^\s<>()]+[^\s<>().,;:!?，。；：！？）」』]/],
+];
+
+function parseInline(text) {
+  const nodes = [];
+  let rest = text;
+  while (rest) {
+    let best;
+    for (const [kind, pattern] of INLINE_PATTERNS) {
+      const match = pattern.exec(rest);
+      if (match && (!best || match.index < best.match.index)) best = { kind, match };
+    }
+    if (!best) { nodes.push({ t: "text", v: rest }); break; }
+    const { kind, match } = best;
+    if (match.index > 0) nodes.push({ t: "text", v: rest.slice(0, match.index) });
+    if (kind === "code") nodes.push({ t: "code", v: match[1] });
+    else if (kind === "link") nodes.push({ t: "link", href: match[2], c: parseInline(match[1]) });
+    else if (kind === "url") nodes.push({ t: "link", href: match[0], c: [{ t: "text", v: match[0] }] });
+    else nodes.push({ t: kind, c: parseInline(match[1]) });
+    rest = rest.slice(match.index + match[0].length);
+  }
+  return nodes;
+}
+
+function element(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function renderInline(parent, nodes) {
+  for (const node of nodes) {
+    switch (node.t) {
+      case "text": parent.append(document.createTextNode(node.v)); break;
+      case "br": parent.append(document.createElement("br")); break;
+      case "code": parent.append(element("code", "", node.v)); break;
+      case "link": {
+        const a = element("a");
+        a.href = node.href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        renderInline(a, node.c);
+        parent.append(a);
+        break;
+      }
+      default: {
+        const tag = { bold: "strong", italic: "em", strike: "del" }[node.t];
+        const el = element(tag);
+        renderInline(el, node.c);
+        parent.append(el);
+      }
+    }
+  }
+}
+
+function copyText(button, text) {
+  const done = () => {
+    button.textContent = "已复制";
+    setTimeout(() => { button.textContent = "复制"; }, 1500);
+  };
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => {});
+}
+
+function renderBlocks(parent, blocks) {
+  for (const block of blocks) {
+    switch (block.type) {
+      case "paragraph": { const p = element("p"); renderInline(p, block.inline); parent.append(p); break; }
+      case "heading": { const h = element(`h${block.level}`); renderInline(h, block.inline); parent.append(h); break; }
+      case "rule": parent.append(element("hr")); break;
+      case "quote": { const q = element("blockquote"); renderBlocks(q, block.blocks); parent.append(q); break; }
+      case "list": {
+        const list = element(block.ordered ? "ol" : "ul");
+        for (const item of block.items) {
+          const li = element("li");
+          renderInline(li, item.inline);
+          renderBlocks(li, item.blocks);
+          list.append(li);
+        }
+        parent.append(list);
+        break;
+      }
+      case "code": {
+        const wrap = element("div", "code");
+        const head = element("div", "code-head");
+        head.append(element("span", "", block.lang || "代码"));
+        const copy = element("button", "", "复制");
+        copy.type = "button";
+        copy.addEventListener("click", () => copyText(copy, block.text));
+        head.append(copy);
+        const pre = element("pre");
+        pre.append(element("code", "", block.text));
+        wrap.append(head, pre);
+        parent.append(wrap);
+        break;
+      }
+      case "table": {
+        const wrap = element("div", "table-wrap");
+        const table = element("table");
+        const thead = element("thead");
+        const headRow = element("tr");
+        for (const cell of block.head) { const th = element("th"); renderInline(th, cell); headRow.append(th); }
+        thead.append(headRow);
+        const tbody = element("tbody");
+        for (const row of block.rows) {
+          const tr = element("tr");
+          for (const cell of row) { const td = element("td"); renderInline(td, cell); tr.append(td); }
+          tbody.append(tr);
+        }
+        table.append(thead, tbody);
+        wrap.append(table);
+        parent.append(wrap);
+        break;
+      }
+    }
+  }
+}
+
+function renderMarkdown(target, text) {
+  target.replaceChildren();
+  renderBlocks(target, parseMarkdown(text));
+}
+
+/* ---------- Sessions and messages ---------- */
 
 function ensureCurrentSession() {
   if (state.currentId && state.sessions.some((s) => s.id === state.currentId)) return;
@@ -95,6 +348,7 @@ function ensureCurrentSession() {
 function createSession() {
   if (state.creating) return;
   state.creating = true;
+  closeDrawer();
   send({ type: "create_session" });
 }
 
@@ -103,8 +357,15 @@ function selectSession(id) {
   remember(id);
   clearMessages();
   for (const row of $("session-list").children) row.className = row.dataset.sessionId === id ? "active" : "";
+  updateTopbar();
+  closeDrawer();
   showChat();
   send({ type: "open", sessionId: id });
+}
+
+function renameSession(session) {
+  const next = prompt("会话名称", session.title);
+  if (next && next.trim()) send({ type: "rename_session", sessionId: session.id, title: next.trim() });
 }
 
 function renderSessions() {
@@ -119,26 +380,38 @@ function renderSessions() {
     title.textContent = session.title;
     title.title = "双击改名";
     title.addEventListener("click", () => selectSession(session.id));
-    title.addEventListener("dblclick", () => {
-      const next = prompt("会话名称", session.title);
-      if (next && next.trim()) send({ type: "rename_session", sessionId: session.id, title: next.trim() });
-    });
+    title.addEventListener("dblclick", () => renameSession(session));
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.className = "icon";
+    rename.textContent = "✎\uFE0E";
+    rename.title = "改名";
+    rename.setAttribute("aria-label", `重命名「${session.title}」`);
+    rename.addEventListener("click", () => renameSession(session));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "icon";
     remove.textContent = "×";
     remove.title = "删除";
+    remove.setAttribute("aria-label", `删除「${session.title}」`);
     remove.addEventListener("click", () => {
       if (confirm(`删除「${session.title}」？`)) send({ type: "delete_session", sessionId: session.id });
     });
-    li.append(title, remove);
+    li.append(title, rename, remove);
     list.append(li);
   }
+  updateTopbar();
+}
+
+function updateTopbar() {
+  const current = state.sessions.find((s) => s.id === state.currentId);
+  $("topbar-title").textContent = current ? current.title : "Vex";
 }
 
 function clearMessages() {
   $("messages").replaceChildren();
   state.streamEl = null;
+  state.streamText = "";
   state.toolEls.clear();
   setBusy(false);
 }
@@ -150,7 +423,10 @@ function renderHistory(msg) {
     else if (item.kind === "assistant") addBubble("assistant", item.text, item.stopReason === "aborted");
     else addTool(item.toolCallId, item.toolName, item.summary, item.isError === undefined ? "running" : item.isError ? "error" : "done");
   }
-  if (msg.streaming !== undefined) state.streamEl = addBubble("assistant streaming", msg.streaming);
+  if (msg.streaming !== undefined) {
+    state.streamText = msg.streaming;
+    state.streamEl = addBubble("assistant streaming", msg.streaming);
+  }
   setBusy(msg.busy);
 }
 
@@ -160,14 +436,15 @@ function applyEvent(event) {
       if (event.source) addNotice(`${event.source}：${event.text}`); else addBubble("user", event.text);
       break;
     case "text_delta":
-      if (!state.streamEl) state.streamEl = addBubble("assistant streaming", "");
-      state.streamEl.firstChild.textContent += event.delta;
-      scrollToBottom();
+      if (!state.streamEl) { state.streamText = ""; state.streamEl = addBubble("assistant streaming", ""); }
+      state.streamText += event.delta;
+      scheduleStreamRender();
       break;
     case "assistant_message":
       if (state.streamEl) {
         state.streamEl.remove();
         state.streamEl = null;
+        state.streamText = "";
       }
       addBubble("assistant", event.text, event.stopReason === "aborted");
       break;
@@ -180,7 +457,7 @@ function applyEvent(event) {
     case "tool_update": {
       const el = state.toolEls.get(event.toolCallId);
       if (el && event.text) {
-        const progress = el.querySelector(".tool-progress");
+        const progress = el.children[1];
         progress.textContent = (progress.textContent + event.text).slice(-2000);
         scrollToBottom();
       }
@@ -189,7 +466,7 @@ function applyEvent(event) {
     case "busy":
       setBusy(event.busy);
       if (!event.busy && state.streamEl) {
-        state.streamEl.classList.remove("streaming");
+        state.streamEl.className = state.streamEl.className.replace(" streaming", "");
         state.streamEl = null;
       }
       break;
@@ -199,12 +476,26 @@ function applyEvent(event) {
   }
 }
 
+function scheduleStreamRender() {
+  if (state.streamFrame) return;
+  state.streamFrame = true;
+  const render = () => {
+    state.streamFrame = false;
+    if (!state.streamEl) return;
+    renderMarkdown(state.streamEl.firstChild, state.streamText);
+    scrollToBottom();
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(render);
+  else render();
+}
+
 function addBubble(kind, text, aborted = false) {
   const el = document.createElement("div");
   el.className = `bubble ${kind}`;
   const body = document.createElement("div");
-  body.className = "text";
-  body.textContent = text;
+  body.className = kind.startsWith("assistant") ? "text md" : "text";
+  if (kind.startsWith("assistant")) renderMarkdown(body, text);
+  else body.textContent = text;
   el.append(body);
   if (aborted) {
     const tag = document.createElement("div");
@@ -285,37 +576,430 @@ function renderApprovals() {
   }
 }
 
-function showChat() {
-  $("settings").hidden = true;
-  $("chat").hidden = false;
+/* ---------- Status line, drawer and theme ---------- */
+
+const WECHAT_LABELS = { connected: "微信已连接", connecting: "微信连接中", unlinked: "微信未绑定", expired: "微信已过期", disabled: "微信已关闭" };
+
+function renderStatusLine() {
+  const line = $("statusline");
+  line.replaceChildren();
+  const info = state.statusInfo;
+  if (!info) return;
+  line.append(element("span", "", info.model));
+  const wechat = element("span");
+  wechat.append(element("span", `dot ${info.wechat}`), document.createTextNode(WECHAT_LABELS[info.wechat] ?? info.wechat));
+  line.append(wechat);
+  const { energy, mood, social, resting } = info.persona;
+  line.append(element("span", "", `精力 ${energy} · 心情 ${mood} · 社交 ${social}${resting ? " · 休息中" : ""}`));
 }
 
-const SETTINGS_HINTS = {
-  "config.yaml": "编辑配置，保存后重启 vexd 生效。",
+function openDrawer() { $("app").className = "drawer-open"; $("scrim").hidden = false; }
+function closeDrawer() { $("app").className = ""; $("scrim").hidden = true; }
+
+const THEMES = [["", "跟随系统"], ["light", "浅色"], ["dark", "深色"]];
+
+function currentTheme() {
+  try {
+    const stored = localStorage.getItem("vex.theme");
+    return stored === "light" || stored === "dark" ? stored : "";
+  } catch {
+    return "";
+  }
+}
+
+function applyTheme(mode) {
+  if (mode) document.documentElement.dataset.theme = mode;
+  else delete document.documentElement.dataset.theme;
+  $("theme").textContent = THEMES.find(([value]) => value === mode)[1];
+}
+
+function cycleTheme() {
+  const next = THEMES[(THEMES.findIndex(([value]) => value === currentTheme()) + 1) % THEMES.length][0];
+  try {
+    if (next) localStorage.setItem("vex.theme", next);
+    else localStorage.removeItem("vex.theme");
+  } catch {
+    // Storage can be unavailable in private windows.
+  }
+  applyTheme(next);
+}
+
+/* ---------- Settings ---------- */
+
+const MODEL_FIELDS = [
+  { path: "model.provider", label: "提供方", type: "provider", help: "内置提供方可从候选里选；自建的 OpenAI / Anthropic 兼容服务直接填名称。" },
+  { path: "model.id", label: "模型", type: "model", of: "model.provider", help: "区分大小写。" },
+  { path: "model.thinking", label: "思考强度", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], help: "留空使用提供方默认。" },
+  { path: "key:model.provider", label: "API Key", type: "providerKey", of: "model.provider" },
+  { path: "api:model.provider", label: "接口协议", type: "providerApi", of: "model.provider" },
+  { path: "base:model.provider", label: "接口地址", type: "providerBase", of: "model.provider", help: "自建服务的 baseUrl，例如 https://example.com/v1。" },
+];
+
+const BACKGROUND_FIELDS = [
+  { path: "background.same", label: "后台任务使用与主模型相同的模型", type: "bool", help: "后台模型用于会话标题、上下文摘要、心跳、记忆整理和链接摘要。" },
+  { path: "backgroundModel.provider", label: "提供方", type: "provider", when: (draft) => !draft["background.same"] },
+  { path: "backgroundModel.id", label: "模型", type: "model", of: "backgroundModel.provider", when: (draft) => !draft["background.same"] },
+  { path: "backgroundModel.thinking", label: "思考强度", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], when: (draft) => !draft["background.same"] },
+  { path: "key:backgroundModel.provider", label: "API Key", type: "providerKey", of: "backgroundModel.provider", when: (draft) => !draft["background.same"] && draft["backgroundModel.provider"] !== draft["model.provider"] },
+];
+
+const SETTINGS_TABS = [
+  { id: "model", label: "模型", sections: [{ title: "主模型", fields: MODEL_FIELDS }, { title: "后台模型", fields: BACKGROUND_FIELDS }] },
+  { id: "channel", label: "微信", sections: [{ title: "微信", status: true, fields: [
+    { path: "wechat.enabled", label: "启用微信", type: "bool", help: "关闭后不连接微信；修改需要重启。" },
+    { path: "wechat.ownerId", label: "主人的微信号 ID", type: "text", help: "留空则使用扫码绑定的账号。只有主人的消息会得到回复。" },
+  ] }] },
+  { id: "voice", label: "语音与链接", sections: [
+    { title: "语音转文字", fields: [
+      { path: "stt.baseUrl", label: "服务地址", type: "text", placeholder: "https://api.openai.com/v1", help: "任何兼容 OpenAI /audio/transcriptions 的服务。没有字幕的 B站和 YouTube 视频会用它转写。" },
+      { path: "stt.model", label: "模型", type: "text", placeholder: "whisper-1" },
+      { path: "stt.apiKey", label: "API Key", type: "secret" },
+      { path: "stt.language", label: "语言提示", type: "text", placeholder: "zh" },
+      { path: "stt.chunkMinutes", label: "每段时长（分钟）", type: "number", min: 1, max: 30, help: "服务限制上传大小时调小，默认 10。" },
+      { path: "stt.maxMinutes", label: "最长转写（分钟）", type: "number", min: 1, max: 600, help: "更长的视频不转写，默认 90。" },
+    ] },
+    { title: "链接读取", fields: [
+      { path: "links.bilibili.sessdata", label: "B站 SESSDATA", type: "secret", help: "登录 bilibili.com 后，在浏览器开发者工具 → Application → Cookies 里复制 SESSDATA。多数字幕需要登录才能读取；它相当于你的登录凭证，请妥善保管。保存后立即生效。" },
+    ] },
+    { title: "网页搜索", fields: [
+      { path: "webSearch.provider", label: "搜索服务", type: "select", options: ["", "brave"], labels: { "": "关闭", brave: "Brave Search" } },
+      { path: "webSearch.apiKey", label: "API Key", type: "secret", help: "也可以用环境变量 BRAVE_API_KEY。" },
+    ] },
+  ] },
+  { id: "life", label: "作息", sections: [
+    { title: "心跳与整理", fields: [
+      { path: "heartbeat.every", label: "心跳间隔", type: "text", placeholder: "30m", help: "数字加 s、m、h 或 d。HEARTBEAT.md 为空时不会调用模型。" },
+      { path: "heartbeat.activeHours", label: "心跳时段", type: "times" },
+      { path: "memory.consolidateAt", label: "每日记忆整理时间", type: "time" },
+      { path: "compaction.threshold", label: "上下文压缩阈值", type: "number", min: 0.1, max: 1, step: 0.05, help: "历史超过模型上下文窗口的这个比例时压缩，默认 0.7。" },
+    ] },
+    { title: "作息与主动聊天", fields: [
+      { path: "persona.sleep", label: "休息时段", type: "times", help: "休息时段内回复更困倦，也不会主动聊天。" },
+      { path: "persona.outreach.enabled", label: "允许主动聊天", type: "bool" },
+      { path: "persona.outreach.checkEvery", label: "检查间隔", type: "text", placeholder: "30m" },
+      { path: "persona.outreach.dailyLimit", label: "每天最多主动聊几次", type: "number", min: 0 },
+      { path: "persona.outreach.socialThreshold", label: "社交需求阈值（0-100）", type: "number", min: 0, max: 100 },
+      { path: "persona.outreach.quietHours", label: "多久没聊过才主动（小时）", type: "number", min: 0 },
+    ] },
+  ] },
+  { id: "persona", label: "人设与记忆", files: ["SOUL.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"] },
+  { id: "yaml", label: "高级", yaml: true },
+];
+
+const FILE_LABELS = { "SOUL.md": "人设", "USER.md": "关于我", "MEMORY.md": "长期记忆", "HEARTBEAT.md": "心跳清单" };
+const FILE_HINTS = {
   "SOUL.md": "人设、语气和行为准则，保存后下一条消息起生效。",
-  "USER.md": "它对你的了解：称呼、身份、偏好、习惯。",
-  "MEMORY.md": "提炼后的长期事实与决定，保持在 100 行以内。",
-  "HEARTBEAT.md": "定期自查清单，留空则不检查。",
+  "USER.md": "它对你的了解：称呼、身份、偏好、习惯。保存后下一条消息起生效。",
+  "MEMORY.md": "提炼后的长期事实与决定，保持在 100 行以内。保存后下一条消息起生效。",
+  "HEARTBEAT.md": "定期自查清单，留空则不检查。下一次心跳起生效。",
 };
+const YAML_HINT = "完整的 config.yaml。表单没有覆盖的设置（工具审批、MCP 服务、网页令牌等）在这里修改，保存后重启 vexd 生效。";
+
+const isFormTab = (id) => !!SETTINGS_TABS.find((tab) => tab.id === id)?.sections;
+const secretPath = (field, draft) => field.type === "secret" ? field.path : `providers.${draft[field.of]}.apiKey`;
+
+function makeSettings(msg) {
+  const draft = { ...msg.values };
+  draft["background.same"] = !(msg.values["backgroundModel.provider"] && msg.values["backgroundModel.id"]);
+  return { loaded: { ...draft }, draft, secrets: new Set(msg.secrets), catalog: msg.catalog, typed: {}, cleared: new Set() };
+}
+
+function providerNames() {
+  const names = new Set(state.settings.catalog.providers);
+  for (const path of Object.keys(state.settings.draft)) {
+    const match = /^providers\.([^.]+)\./.exec(path);
+    if (match) names.add(match[1]);
+  }
+  return [...names].sort();
+}
+
+function isCustomProvider(name) {
+  return !!name && !state.settings.catalog.providers.includes(name);
+}
+
+function fieldLabel(field, draft) {
+  return field.type === "providerKey" && draft[field.of] ? `API Key（${draft[field.of]}）` : field.label;
+}
+
+function renderField(field, draft) {
+  const wrap = element("div", "field");
+  const id = `f-${field.path.replace(/[^\w]/g, "-")}`;
+  const label = element("label", "", fieldLabel(field, draft));
+  label.htmlFor = id;
+  const track = (input, read) => input.addEventListener("input", () => { draft[field.path] = read(input); });
+  switch (field.type) {
+    case "bool": {
+      const row = element("label", "check");
+      const box = element("input");
+      box.type = "checkbox";
+      box.id = id;
+      box.checked = draft[field.path] === true;
+      box.addEventListener("change", () => { draft[field.path] = box.checked; if (field.path === "background.same") renderSettingsForm(); });
+      row.append(box, document.createTextNode(field.label));
+      wrap.append(row);
+      break;
+    }
+    case "select": {
+      const select = element("select");
+      select.id = id;
+      for (const value of field.options) {
+        const option = element("option", "", field.labels?.[value] ?? (value || "默认"));
+        option.value = value;
+        select.append(option);
+      }
+      select.value = draft[field.path] ?? "";
+      select.addEventListener("change", () => { draft[field.path] = select.value; });
+      wrap.append(label, select);
+      break;
+    }
+    case "provider":
+    case "model": {
+      const input = element("input");
+      input.type = "text";
+      input.id = id;
+      input.value = draft[field.path] ?? "";
+      input.autocomplete = "off";
+      const list = element("datalist");
+      list.id = `${id}-list`;
+      input.setAttribute("list", list.id);
+      const options = field.type === "provider" ? providerNames() : state.settings.catalog.models[draft[field.of]] ?? [];
+      for (const value of options) { const option = element("option"); option.value = value; list.append(option); }
+      input.addEventListener("input", () => { draft[field.path] = input.value.trim(); });
+      if (field.type === "provider") input.addEventListener("change", renderSettingsForm);
+      wrap.append(label, input, list);
+      break;
+    }
+    case "providerApi": {
+      if (!isCustomProvider(draft[field.of])) return undefined;
+      const select = element("select");
+      select.id = id;
+      for (const value of ["", "openai-completions", "anthropic-messages"]) { const option = element("option", "", value || "请选择"); option.value = value; select.append(option); }
+      const key = `providers.${draft[field.of]}.api`;
+      select.value = draft[key] ?? "";
+      select.addEventListener("change", () => { draft[key] = select.value; });
+      wrap.append(label, select);
+      break;
+    }
+    case "providerBase": {
+      if (!isCustomProvider(draft[field.of])) return undefined;
+      const input = element("input");
+      input.type = "text";
+      input.id = id;
+      const key = `providers.${draft[field.of]}.baseUrl`;
+      input.value = draft[key] ?? "";
+      track(input, (el) => { draft[key] = el.value.trim(); return el.value.trim(); });
+      wrap.append(label, input);
+      break;
+    }
+    case "secret":
+    case "providerKey": {
+      if (field.type === "providerKey" && !draft[field.of]) return undefined;
+      const path = secretPath(field, draft);
+      const input = element("input");
+      input.type = "password";
+      input.id = id;
+      input.autocomplete = "new-password";
+      input.value = state.settings.typed[path] ?? "";
+      input.placeholder = state.settings.secrets.has(path) ? "已设置，留空保持不变" : "未设置";
+      input.addEventListener("input", () => { state.settings.typed[path] = input.value; });
+      wrap.append(label, input);
+      if (state.settings.secrets.has(path)) {
+        const clear = element("label", "clear");
+        const box = element("input");
+        box.type = "checkbox";
+        box.checked = state.settings.cleared.has(path);
+        box.addEventListener("change", () => { if (box.checked) state.settings.cleared.add(path); else state.settings.cleared.delete(path); });
+        clear.append(box, document.createTextNode("清除已保存的值"));
+        wrap.append(clear);
+      }
+      break;
+    }
+    case "number": {
+      const input = element("input");
+      input.type = "number";
+      input.id = id;
+      if (field.min !== undefined) input.min = field.min;
+      if (field.max !== undefined) input.max = field.max;
+      if (field.step !== undefined) input.step = field.step;
+      input.value = draft[field.path] ?? "";
+      input.addEventListener("input", () => { draft[field.path] = input.value === "" ? "" : Number(input.value); });
+      wrap.append(label, input);
+      break;
+    }
+    case "time": {
+      const input = element("input");
+      input.type = "time";
+      input.id = id;
+      input.value = draft[field.path] ?? "";
+      input.addEventListener("input", () => { draft[field.path] = input.value; });
+      wrap.append(label, input);
+      break;
+    }
+    case "times": {
+      const pair = element("div", "pair");
+      const current = Array.isArray(draft[field.path]) ? draft[field.path] : ["", ""];
+      const inputs = [0, 1].map((index) => {
+        const input = element("input");
+        input.type = "time";
+        input.value = current[index] ?? "";
+        input.setAttribute("aria-label", index === 0 ? `${field.label}开始` : `${field.label}结束`);
+        input.addEventListener("input", () => { draft[field.path] = [inputs[0].value, inputs[1].value]; });
+        return input;
+      });
+      pair.append(inputs[0], document.createTextNode("至"), inputs[1]);
+      wrap.append(element("span", "label", field.label), pair);
+      break;
+    }
+    default: {
+      const input = element("input");
+      input.type = "text";
+      input.id = id;
+      input.value = draft[field.path] ?? "";
+      if (field.placeholder) input.placeholder = field.placeholder;
+      input.addEventListener("input", () => { draft[field.path] = input.value.trim(); });
+      wrap.append(label, input);
+    }
+  }
+  if (field.help) wrap.append(element("p", "help", field.help));
+  return wrap;
+}
+
+function updateWechatStatus() {
+  const hint = $("wechat-status");
+  if (!hint) return;
+  const info = state.statusInfo;
+  hint.textContent = info ? `当前状态：${WECHAT_LABELS[info.wechat] ?? info.wechat}。未绑定或已过期时，vexd 会在日志里显示二维码，用手机微信扫码即可，无需重启。` : "正在读取状态…";
+}
+
+function renderSettingsForm() {
+  const form = $("settings-form");
+  form.replaceChildren();
+  const tab = SETTINGS_TABS.find((item) => item.id === state.settingsTab);
+  if (!tab?.sections) return;
+  if (!state.settings) { form.append(element("p", "hint", "正在读取…")); return; }
+  for (const group of tab.sections) {
+    const section = element("div", "section");
+    section.append(element("h3", "", group.title));
+    if (group.status) {
+      const hint = element("p", "hint");
+      hint.id = "wechat-status";
+      section.append(hint);
+    }
+    for (const field of group.fields) {
+      if (field.when && !field.when(state.settings.draft)) continue;
+      const node = renderField(field, state.settings.draft);
+      if (node) section.append(node);
+    }
+    form.append(section);
+  }
+  updateWechatStatus();
+}
+
+/** Turns the form's edits into the set and unset lists the server applies to config.yaml. */
+function buildPatch(settings) {
+  const { loaded, draft, secrets, typed, cleared } = settings;
+  const set = {};
+  const unset = [];
+  const blank = (value) => value === undefined || value === "" || (Array.isArray(value) && value.every((item) => !item));
+  const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
+  const paths = new Set([...Object.keys(loaded), ...Object.keys(draft)]);
+  paths.delete("background.same");
+  for (const path of paths) {
+    if (same(loaded[path], draft[path])) continue;
+    if (path.startsWith("backgroundModel.") && draft["background.same"]) continue;
+    if (blank(draft[path])) unset.push(path);
+    else set[path] = Array.isArray(draft[path]) && draft[path].some((item) => !item) ? undefined : draft[path];
+    if (set[path] === undefined) delete set[path];
+  }
+  if (draft["background.same"] && !loaded["background.same"]) {
+    for (const key of ["provider", "id", "thinking"]) if (loaded[`backgroundModel.${key}`] !== undefined) unset.push(`backgroundModel.${key}`);
+  }
+  for (const [path, value] of Object.entries(typed)) if (value) set[path] = value;
+  for (const path of cleared) if (secrets.has(path) && !typed[path]) unset.push(path);
+  return { set, unset: [...new Set(unset)] };
+}
 
 function showSaved(ok, message, error) {
   $("settings-result").textContent = ok ? message : error;
   $("settings-result").className = ok ? "ok" : "bad";
 }
 
-function loadSettings() {
-  const name = $("settings-file").value;
-  $("settings-hint").textContent = SETTINGS_HINTS[name];
+function renderSettingsTabs() {
+  const tabs = $("settings-tabs");
+  tabs.replaceChildren();
+  for (const tab of SETTINGS_TABS) {
+    const button = element("button", tab.id === state.settingsTab ? "active" : "", tab.label);
+    button.type = "button";
+    button.setAttribute("role", "tab");
+    button.addEventListener("click", () => { state.settingsTab = tab.id; openSettingsTab(); });
+    tabs.append(button);
+  }
+}
+
+function renderFileTabs(files) {
+  const tabs = $("file-tabs");
+  tabs.replaceChildren();
+  for (const name of files) {
+    const button = element("button", name === state.fileName ? "active" : "", FILE_LABELS[name]);
+    button.type = "button";
+    button.addEventListener("click", () => { state.fileName = name; openSettingsTab(); });
+    tabs.append(button);
+  }
+}
+
+function openSettingsTab() {
+  const tab = SETTINGS_TABS.find((item) => item.id === state.settingsTab);
+  renderSettingsTabs();
   $("settings-result").textContent = "";
+  $("settings-form").hidden = !tab.sections;
+  $("settings-editor").hidden = !!tab.sections;
+  $("file-tabs").hidden = !tab.files;
+  if (tab.sections) {
+    renderSettingsForm();
+    if (!state.settings) send({ type: "get_settings" });
+    return;
+  }
   $("settings-text").value = "";
-  send(name === "config.yaml" ? { type: "get_config" } : { type: "get_file", name });
+  if (tab.files) {
+    renderFileTabs(tab.files);
+    $("settings-hint").textContent = FILE_HINTS[state.fileName];
+    send({ type: "get_file", name: state.fileName });
+  } else {
+    $("settings-hint").textContent = YAML_HINT;
+    send({ type: "get_config" });
+  }
+}
+
+function saveSettings() {
+  const tab = SETTINGS_TABS.find((item) => item.id === state.settingsTab);
+  $("settings-result").textContent = "保存中…";
+  $("settings-result").className = "";
+  if (tab.sections) {
+    if (!state.settings) return;
+    const patch = buildPatch(state.settings);
+    if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "没有改动"); return; }
+    send({ type: "save_settings", ...patch });
+  } else if (tab.files) {
+    send({ type: "save_file", name: state.fileName, text: $("settings-text").value });
+  } else {
+    send({ type: "save_config", text: $("settings-text").value });
+  }
+}
+
+function showChat() {
+  $("settings").hidden = true;
+  $("chat").hidden = false;
 }
 
 function showSettings() {
+  state.settings = null;
+  closeDrawer();
   $("chat").hidden = true;
   $("settings").hidden = false;
-  loadSettings();
+  openSettingsTab();
 }
+
+/* ---------- Misc ---------- */
 
 function setStatus(text) {
   $("status").textContent = text;
@@ -367,25 +1051,34 @@ $("composer").addEventListener("submit", (event) => {
 });
 
 $("input").addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  if (event.key !== "Enter" || event.isComposing) return;
+  // On touch screens Enter starts a new line and the send button sends.
+  if (event.ctrlKey || event.metaKey || (!event.shiftKey && !isTouchDevice())) {
     event.preventDefault();
     $("composer").requestSubmit();
   }
 });
+
+function isTouchDevice() {
+  return typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+}
+
 $("input").addEventListener("input", autoGrow);
 $("stop").addEventListener("click", () => {
   if (state.currentId) send({ type: "stop", sessionId: state.currentId });
 });
 $("new-session").addEventListener("click", createSession);
+$("topbar-new").addEventListener("click", createSession);
+$("menu").addEventListener("click", openDrawer);
+$("scrim").addEventListener("click", closeDrawer);
+$("theme").addEventListener("click", cycleTheme);
 $("open-settings").addEventListener("click", showSettings);
 $("close-settings").addEventListener("click", showChat);
-$("settings-file").addEventListener("change", loadSettings);
-$("save-settings").addEventListener("click", () => {
-  $("settings-result").textContent = "保存中…";
-  $("settings-result").className = "";
-  const name = $("settings-file").value;
-  const text = $("settings-text").value;
-  send(name === "config.yaml" ? { type: "save_config", text } : { type: "save_file", name, text });
-});
+$("save-settings").addEventListener("click", saveSettings);
+
+applyTheme(currentTheme());
+renderSettingsTabs();
+$("input").placeholder = isTouchDevice() ? "说点什么…" : "说点什么…（Enter 发送，Shift+Enter 换行）";
+setInterval(() => { if (!document.hidden) send({ type: "get_status" }); }, 20000);
 
 connect();

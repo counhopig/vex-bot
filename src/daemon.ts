@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWeChat, type WeChatRuntime } from "./channels/wechat/setup.js";
 import { ConfigError, saveConfigText } from "./config/load.js";
+import { applySettings, readSettings } from "./config/settings.js";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { VexConfig } from "./config/schema.js";
 import {
   baseInstructionsSection,
@@ -50,6 +52,13 @@ export interface Daemon {
   url: string;
   port: number;
   stop(): Promise<void>;
+}
+
+let cachedCatalog: { providers: string[]; models: Record<string, string[]> } | undefined;
+function catalog() {
+  const providers: string[] = getBuiltinProviders();
+  cachedCatalog ??= { providers, models: Object.fromEntries(providers.map((name) => [name, getBuiltinModels(name as never).map((entry) => entry.id)])) };
+  return cachedCatalog;
 }
 
 const DEFAULT_STATIC_DIR = fileURLToPath(new URL("./web/static/", import.meta.url));
@@ -199,6 +208,23 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     approvals,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
+    status: () => {
+      const mood = persona.snapshot();
+      const channel = wechatRuntime?.channel;
+      return {
+        model: `${model.provider}/${model.id}`,
+        wechat: !config.wechat.enabled ? "disabled" : !channel ? "unlinked" : channel.expired ? "expired" : channel.available ? "connected" : "connecting",
+        persona: { energy: Math.round(mood.energy), mood: Math.round(mood.mood), social: Math.round(mood.social), resting: persona.isResting() },
+      };
+    },
+    settings: {
+      read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: catalog() }),
+      save: async (patch) => {
+        const next = applySettings(await readFile(paths.config, "utf8"), patch, paths);
+        await saveConfigText(paths, next.text);
+        return { restartRequired: next.restartRequired };
+      },
+    },
     workspace: { read: (name) => readWorkspaceFile(config.workspace, name), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
