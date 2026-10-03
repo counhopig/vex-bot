@@ -16,6 +16,17 @@ const COMMANDS: Record<string, OwnerCommand> = {
   "/n": { kind: "approve", answer: "deny" },
 };
 
+// Move back if cutting between a high and low surrogate pair.
+function safeCutPoint(text: string, cut: number): number {
+  if (cut > 0) {
+    const codeUnit = text.charCodeAt(cut - 1);
+    if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {
+      return cut - 1;
+    }
+  }
+  return cut;
+}
+
 export function extractText(items: InboundItem[]): string {
   const parts: string[] = [];
   for (const item of items) {
@@ -57,7 +68,8 @@ export function splitMessage(text: string, max = MAX_MESSAGE_CHARS): string[] {
   let rest = text.trim();
   while (rest.length > max) {
     const newline = rest.lastIndexOf("\n", max);
-    const cut = newline > max / 2 ? newline : max;
+    let cut = newline > max / 2 ? newline : max;
+    cut = safeCutPoint(rest, cut);
     chunks.push(rest.slice(0, cut).trimEnd());
     rest = rest.slice(cut).trimStart();
   }
@@ -70,10 +82,11 @@ export function formatClock(ms: number, timeZone?: string): string {
 }
 
 export function formatApprovalPrompt(request: ApprovalRequest, pendingCount: number, timeZone?: string): string {
-  const detail =
-    request.detail.length > MAX_APPROVAL_DETAIL_CHARS
-      ? `${request.detail.slice(0, MAX_APPROVAL_DETAIL_CHARS)}\n…（内容过长，完整内容请在网页查看）`
-      : request.detail;
+  let detail = request.detail;
+  if (detail.length > MAX_APPROVAL_DETAIL_CHARS) {
+    const cut = safeCutPoint(detail, MAX_APPROVAL_DETAIL_CHARS);
+    detail = `${detail.slice(0, cut)}\n…（内容过长，完整内容请在网页查看）`;
+  }
   const lines = [
     `【需要你批准】${request.windowLabel}想执行 ${request.toolName}：`,
     detail,
