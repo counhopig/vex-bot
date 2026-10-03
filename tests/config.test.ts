@@ -95,6 +95,7 @@ describe("parseConfig", () => {
 
   it("restricts MCP server names to letters, digits and hyphens", () => {
     expect(() => parseConfig(`${minimal}mcpServers: { "a__b": { url: "http://x" } }\n`, paths)).toThrow(ConfigError);
+    expect(() => parseConfig(`${minimal}mcpServers: { "${"a".repeat(33)}": { url: "http://x" } }\n`, paths)).toThrow(ConfigError);
     expect(() => parseConfig(`${minimal}mcpServers: { "my-server1": { url: "http://x" } }\n`, paths)).not.toThrow();
   });
 

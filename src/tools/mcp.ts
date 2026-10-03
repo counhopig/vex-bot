@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ToolListChangedNotificationSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import { createHash } from "node:crypto";
 import { Type } from "typebox";
@@ -109,7 +109,16 @@ export class McpBridge {
       connection.connected = false;
       this.reconnect(connection);
     };
-    client.onerror = (error) => this.options.onError?.(connection.name, error);
+    client.onerror = (error) => {
+      this.options.onError?.(connection.name, error);
+      // A restarted HTTP server rejects the old session id and the transport never closes by itself.
+      if (error instanceof StreamableHTTPError && (error.code === 404 || error.code === 400) && connection.client === client) {
+        connection.connected = false;
+        clearTimeout(connection.stable);
+        void client.close().catch(() => {});
+        this.reconnect(connection);
+      }
+    };
     client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
       try {
         await this.refresh(connection, client);
