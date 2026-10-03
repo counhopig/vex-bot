@@ -72,7 +72,7 @@ export class MemoryIndex {
       this.db.transaction(() => {
         if (!append) this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
         if (!isSession) {
-          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text).join(" "), text, source, date, null, "memory");
+          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
         } else {
           for (const line of bytes.subarray(start, offset).toString("utf8").split("\n")) {
             if (!line.trim()) continue;
@@ -86,7 +86,7 @@ export class MemoryIndex {
             if (!text.trim()) continue;
             const timestamp = message.timestamp ?? record.timestamp;
             const parsedDate = timestamp === undefined ? undefined : new Date(timestamp);
-            insert.run(tokenize(text).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions");
+            insert.run(tokenize(text, true).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions");
           }
         }
         this.db.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?)").run(source, info.mtimeMs, bytes.length, offset, digest(bytes.subarray(0, offset)));
