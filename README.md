@@ -30,7 +30,7 @@ Optionally run `npm link` to use `vex` instead of `node dist/cli/index.js`.
 
 ## Docker
 
-Images are published to `ghcr.io/counhopig/vex-bot` for `linux/amd64` and `linux/arm64`: `latest` and `sha-*` tags on every push to `main`, and `X.Y.Z` / `X.Y` tags when a `vX.Y.Z` tag is pushed. A new GHCR package is private until its visibility is changed under the package settings.
+Images are published to `ghcr.io/counhopig/vex-bot` and, when the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token) are set, to `<DOCKERHUB_USERNAME>/vex-bot` on Docker Hub, for `linux/amd64` and `linux/arm64`: `latest` and `sha-*` tags on every push to `main`, and `X.Y.Z` / `X.Y` tags when a `vX.Y.Z` tag is pushed. A new GHCR package is private until its visibility is changed under the package settings.
 
 Deploy with the repository's `compose.yaml`:
 
