@@ -148,7 +148,7 @@ The channel talks to the iLink OC API (`getupdates` long polling with a persiste
 ## Gateway and WebChat
 
 - Listens on `127.0.0.1` by default. A non-loopback host requires `web.token`; login sets an HttpOnly cookie. Host and Origin headers are checked, and failed logins are rate limited.
-- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, config read/save from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, notices and errors from the server.
+- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, config and workspace file (`SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`) read/save from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, notices and errors from the server.
 - The front end is static files served by vexd; there is no front-end build step.
 
 ## Security

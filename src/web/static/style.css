@@ -131,7 +131,16 @@ button.icon { background: none; color: var(--muted); padding: 0 6px; font-size: 
 .settings-head { display: flex; align-items: center; justify-content: space-between; }
 .settings-head h2 { margin: 0; font-size: 18px; }
 .hint { margin: 0; color: var(--muted); font-size: 13px; }
-#config-text {
+#settings-file {
+  align-self: flex-start;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+#settings-text {
   flex: 1;
   font: 13px/1.5 ui-monospace, monospace;
   padding: 10px;
@@ -142,8 +151,8 @@ button.icon { background: none; color: var(--muted); padding: 0 6px; font-size: 
   resize: none;
 }
 .settings-actions { display: flex; gap: 12px; align-items: center; }
-#config-result.ok { color: var(--accent); }
-#config-result.bad { color: var(--danger); white-space: pre-wrap; }
+#settings-result.ok { color: var(--accent); }
+#settings-result.bad { color: var(--danger); white-space: pre-wrap; }
 
 .login-page { display: grid; place-items: center; height: 100vh; }
 #login { display: flex; flex-direction: column; gap: 10px; width: 260px; }

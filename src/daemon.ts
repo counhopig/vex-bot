@@ -26,7 +26,8 @@ import { createToolGate } from "./policy/gate.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
-import { ensureWorkspace } from "./workspace/workspace.js";
+import { writeFileAtomic } from "./store/atomic.js";
+import { ensureWorkspace, readWorkspaceFile } from "./workspace/workspace.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -198,6 +199,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     approvals,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
+    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });

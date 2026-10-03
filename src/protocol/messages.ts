@@ -6,6 +6,14 @@ import type { ApprovalRequest } from "../policy/approvals.js";
 
 const SessionId = Type.String({ minLength: 1, maxLength: 100 });
 
+const WorkspaceFileName = Type.Union([
+  Type.Literal("SOUL.md"),
+  Type.Literal("USER.md"),
+  Type.Literal("MEMORY.md"),
+  Type.Literal("HEARTBEAT.md"),
+]);
+export type WorkspaceFile = Static<typeof WorkspaceFileName>;
+
 export const ClientMessageSchema = Type.Union([
   Type.Object({ type: Type.Literal("open"), sessionId: SessionId }),
   Type.Object({ type: Type.Literal("send"), sessionId: SessionId, text: Type.String({ minLength: 1, maxLength: 100_000 }) }),
@@ -22,6 +30,8 @@ export const ClientMessageSchema = Type.Union([
     id: Type.String({ minLength: 1 }),
     answer: Type.Union([Type.Literal("allow"), Type.Literal("allow_session"), Type.Literal("deny")]),
   }),
+  Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
+  Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }) }),
   Type.Object({ type: Type.Literal("get_config") }),
   Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }) }),
 ]);
@@ -34,6 +44,8 @@ export type ServerMessage =
   | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string }
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
+  | { type: "file"; name: WorkspaceFile; text: string }
+  | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string }
   | { type: "config"; text: string }
   | { type: "config_saved"; ok: boolean; error?: string }
   | { type: "error"; message: string };

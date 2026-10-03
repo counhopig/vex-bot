@@ -1,6 +1,6 @@
 # Configuration
 
-Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or edit it in WebChat settings. Changes take effect after a restart. Invalid files are rejected with the path of the failing key.
+Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or edit it in WebChat settings (choose `config.yaml` in the file selector). Changes take effect after a restart. Invalid files are rejected with the path of the failing key.
 
 Samples (`docs/samples/`):
 
@@ -81,7 +81,7 @@ Vex does not load `.env` files. Inside the shell tool, `VEX_CONFIG_PATH` points 
 
 ## Workspace files
 
-Edit these Markdown files in the workspace to shape Vex; the next message sees the change.
+Edit these Markdown files to shape Vex; the next message sees the change. WebChat settings edits `config.yaml`, `SOUL.md`, `USER.md`, `MEMORY.md` and `HEARTBEAT.md` through a file selector; you can also ask Vex in conversation to change them, or edit them on disk.
 
 | File | Purpose | Loaded |
 |---|---|---|

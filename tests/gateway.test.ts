@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall, type FauxProviderHandle, type FauxResponseStep } from "@earendil-works/pi-ai";
@@ -76,6 +77,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     approvals,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
+    workspace: { read: (name) => readFile(join(paths.home, name), "utf8").catch(() => ""), save: (name, text) => writeFile(join(paths.home, name), text, "utf8") },
     staticDir,
     log: pino({ level: "silent" }),
   });
@@ -240,6 +242,18 @@ describe("Gateway chat", () => {
     await client.waitFor((m) => m.type === "event" && m.event.kind === "tool_end" && !m.event.isError);
     await client.waitFor((m) => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "跑完了");
     expect(client.messages.filter(isType("approvals")).at(-1)?.pending).toEqual([]);
+  });
+
+  it("reads and saves workspace files and rejects other names", async () => {
+    const client = await connect(await start());
+    client.send({ type: "save_file", name: "SOUL.md", text: "你是一只猫" });
+    await client.waitFor((m) => m.type === "file_saved" && m.name === "SOUL.md" && m.ok);
+    client.send({ type: "get_file", name: "SOUL.md" });
+    await client.waitFor((m) => m.type === "file" && m.name === "SOUL.md" && m.text === "你是一只猫");
+    client.send({ type: "get_file", name: "../config.yaml" } as never);
+    client.send({ type: "get_file", name: "MEMORY.md" });
+    await client.waitFor((m) => m.type === "file" && m.name === "MEMORY.md");
+    expect(client.messages.filter((m) => m.type === "file").map((m) => m.name)).toEqual(["SOUL.md", "MEMORY.md"]);
   });
 
   it("reads and validates the config", async () => {
