@@ -1,0 +1,7 @@
+# Smallest working configuration.
+model:
+  provider: minimax-cn
+  id: MiniMax-M2.7
+providers:
+  minimax-cn:
+    apiKey: "YOUR_API_KEY"
