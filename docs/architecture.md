@@ -112,8 +112,8 @@ The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run thro
 |---|---|---|
 | Bilibili | title, author, duration, description, cover (signed `wbi` API; `b23.tv` short links resolved) | Subtitles; AI subtitles usually need `links.bilibili.sessdata` |
 | YouTube | title, author, duration, description (innertube player API) | Captions, preferring the owner's language and manual tracks over automatic ones |
-| Douyin | caption, author, duration, counts (public share page; short links resolved) | None: the caption is the only text |
-| Xiaohongshu | title, author, tags, counts (share page state; short links resolved) | The note body |
+| Douyin | author and caption from the pasted share text (the caption may be cut by Douyin), publish date and likes from the share page; no duration or counts | None |
+| Xiaohongshu | title, author, tags, counts (share page state; `xhslink.com` and `xhslink.cn` short links resolved) | The note body |
 
 Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000. Audio is never transcribed, so a video without subtitles yields metadata only.
 

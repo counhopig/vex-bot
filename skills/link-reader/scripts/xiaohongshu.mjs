@@ -1,6 +1,6 @@
 import { firstUrl, hostMatches, MOBILE_UA, parseJson } from "./shared.mjs";
 
-const HOSTS = ["xiaohongshu.com", "xhslink.com"];
+const HOSTS = ["xiaohongshu.com", "xhslink.com", "xhslink.cn"];
 const NOTE_ID = /\/(?:explore|discovery\/item|note|item)\/([0-9a-f]{24})/;
 
 function findNote(html, id) {
@@ -34,7 +34,7 @@ export const xiaohongshu = {
     return {
       platform: "小红书",
       title: note.title ?? "",
-      author: note.user?.nickname ?? "",
+      author: note.user?.nickName ?? note.user?.nickname ?? "",
       url: id ? `https://www.xiaohongshu.com/explore/${id}` : page.url,
       durationSeconds: note.video?.capa?.duration,
       cover: note.imageList?.[0]?.urlDefault ?? note.imageList?.[0]?.url,
