@@ -78,6 +78,21 @@ describe("Session", () => {
     expect(restored.history().items.at(-1)).toMatchObject({ kind: "assistant", text: "heartbeat result" });
   });
 
+  it("runs a message sent during onRunEnd as its own persisted turn", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("first reply"), (ctx) => fauxAssistantMessage(`re:${lastUserText(ctx)}`)]);
+    let ended = 0;
+    let session!: Session;
+    session = await open({ onRunEnd: async () => { if (++ended === 1) session.send("second"); } });
+    session.send("first");
+    await session.whenIdle();
+    await session.whenIdle();
+    expect(events.filter((e) => e.kind === "user_message").map((e) => (e as { text: string }).text)).toEqual(["first", "second"]);
+    expect(events.filter((e) => e.kind === "assistant_message").map((e) => (e as { text: string }).text)).toEqual(["first reply", "re:second"]);
+    expect((await readJsonl<{ role: string }>(join(dir, "t.jsonl"))).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(ended).toBe(2);
+  });
+
   it("silences failed outreach while keeping owner errors visible", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);

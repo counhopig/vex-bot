@@ -42,8 +42,10 @@ export class Session {
   private readonly agent: Agent;
   private current: Promise<void> | undefined;
   private stopRequested = false;
+  // True once the agent loop has ended and only settlement hooks remain; steering would strand the message.
+  private finishing = false;
   private backoff: AbortController | undefined;
-  // Messages sent while a stopped run is still winding down; they start a fresh run afterwards.
+  // Messages sent while a stopped or finishing run winds down; they start a fresh run afterwards.
   private afterStop: { text: string; source?: string }[] = [];
   private readonly transcript: AgentMessage[];
   private pendingOwner = 0;
@@ -100,7 +102,7 @@ export class Session {
   }
 
   send(text: string, source?: string): void {
-    if (this.current && this.stopRequested) {
+    if (this.current && (this.stopRequested || this.finishing)) {
       this.afterStop.push({ text, source });
       return;
     }
@@ -111,6 +113,7 @@ export class Session {
       return;
     }
     this.stopRequested = false;
+    this.finishing = false;
     this.runSource = source;
     this.runFailed = false;
     this.lastResponse = undefined;
@@ -215,11 +218,12 @@ export class Session {
       await this.agent.continue();
       await this.settle();
     }
+    this.finishing = true;
     await this.writes;
     if (this.pendingOwner && this.successfulReply) {
       await this.opts.onOwnerInteraction?.(this.pendingOwner);
     }
-    } finally { await this.writes; await this.opts.onRunEnd?.(); }
+    } finally { this.finishing = true; await this.writes; await this.opts.onRunEnd?.(); }
   }
 
   private async settle(): Promise<void> {
