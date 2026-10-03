@@ -28,6 +28,27 @@ The onboarding wizard asks for a provider, model, API key, and web port. It can 
 
 Optionally run `npm link` to use `vex` instead of `node dist/cli/index.js`.
 
+## Docker
+
+Images are published to `ghcr.io/counhopig/vex-bot` for `linux/amd64` and `linux/arm64`: `latest` and `sha-*` tags on every push to `main`, and `X.Y.Z` / `X.Y` tags when a `vX.Y.Z` tag is pushed. A new GHCR package is private until its visibility is changed under the package settings.
+
+Deploy with the repository's `compose.yaml`:
+
+```bash
+echo "VEX_WEB_TOKEN=$(openssl rand -hex 24)" > .env
+docker compose run --rm vex onboard
+docker compose up -d
+docker compose logs -f
+```
+
+WebChat listens on `http://127.0.0.1:7860` and asks for the token. To link WeChat, run `docker compose run --rm vex wechat login`, then `docker compose restart`.
+
+- Data lives in the `vex-data` volume, mounted at `/data` (`VEX_HOME`). Back it up with the volume itself.
+- `VEX_WEB_HOST` (set to `0.0.0.0` in the image) and `VEX_WEB_TOKEN` override `web.host` and `web.token` from `config.yaml`. The compose file publishes the port on the loopback interface only; put a TLS reverse proxy in front for remote access.
+- `TZ` in `compose.yaml` sets the time zone used by cron schedules, rest hours, and heartbeat hours.
+- Update with `docker compose pull && docker compose up -d`. Build locally with `docker build -t vex-bot .` and point `image` at that tag.
+- Release: `git tag v3.0.0 && git push origin v3.0.0` runs the tests and publishes the versioned image.
+
 ## Commands
 
 | Command | Description |

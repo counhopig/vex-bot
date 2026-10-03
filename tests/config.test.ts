@@ -1,7 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConfigError, loadConfig, parseConfig, saveConfigText } from "../src/config/load.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -115,6 +115,17 @@ describe("loadConfig / saveConfigText", () => {
     const { config, text } = await loadConfig(paths);
     expect(config.model.id).toBe("deepseek-v4-pro");
     expect(text).toBe(minimal);
+  });
+
+  it("lets VEX_WEB_HOST and VEX_WEB_TOKEN override the web settings", async () => {
+    await writeFile(paths.config, `${minimal}web: { host: 127.0.0.1, port: 7000, token: file-token }\n`, "utf8");
+    vi.stubEnv("VEX_WEB_HOST", "0.0.0.0");
+    vi.stubEnv("VEX_WEB_TOKEN", "env-token");
+    try {
+      const { config } = await loadConfig(paths);
+      expect(config.web).toEqual({ host: "0.0.0.0", port: 7000, token: "env-token" });
+    } finally { vi.unstubAllEnvs(); }
+    expect((await loadConfig(paths)).config.web).toEqual({ host: "127.0.0.1", port: 7000, token: "file-token" });
   });
 
   it("saves valid text and refuses invalid text without touching the file", async () => {

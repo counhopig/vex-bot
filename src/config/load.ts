@@ -58,7 +58,12 @@ export async function loadConfig(paths: VexPaths): Promise<{ config: VexConfig; 
     }
     throw err;
   }
-  return { config: parseConfig(text, paths), text };
+  const config = parseConfig(text, paths);
+  const host = process.env.VEX_WEB_HOST?.trim();
+  const token = process.env.VEX_WEB_TOKEN?.trim();
+  if (host) config.web.host = host;
+  if (token) config.web.token = token;
+  return { config, text };
 }
 
 export async function saveConfigText(paths: VexPaths, text: string): Promise<void> {
