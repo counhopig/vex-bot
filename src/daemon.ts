@@ -100,7 +100,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     log,
   });
   const { port } = await gateway.start();
-  const wechat = await startWeChatChannel({ config, paths, sessions, approvals, bus, log });
+  const wechat = await startWeChatChannel({ config, paths, sessions, approvals, bus, log }).catch((err: unknown) => {
+    log.error({ err }, "wechat failed to start; running without wechat");
+    return undefined;
+  });
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;
   log.info({ url, model: `${model.provider}/${model.id}` }, "vexd started");

@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -90,6 +91,18 @@ describe("vexd with WeChat", () => {
     await daemon!.stop();
     await link(undefined);
     await start(config());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(ilink.requests).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("keeps running when wechat credentials are unreadable", async () => {
+    await link("owner1");
+    const credPath = join(paths.wechat, "credentials.json");
+    await chmod(credPath, 0o000);
+    await start(config());
+    expect(daemon).toBeDefined();
+    expect(daemon!.url).toBeDefined();
+    expect(daemon!.port).toBeGreaterThan(0);
     await new Promise((r) => setTimeout(r, 50));
     expect(ilink.requests).toEqual([]);
   });
