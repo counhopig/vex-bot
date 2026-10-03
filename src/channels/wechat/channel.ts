@@ -85,7 +85,13 @@ export class WeChatChannel {
       try {
         const messages = await this.opts.client.getUpdates(this.abort.signal);
         backoff = initialBackoff;
-        for (const message of messages) await this.handleInbound(message);
+        for (const message of messages) {
+          try {
+            await this.handleInbound(message);
+          } catch (err) {
+            this.opts.log.warn({ err }, "failed to handle wechat message");
+          }
+        }
         if (messages.length === 0) await this.sleep(this.opts.idleDelayMs ?? 1000);
       } catch (err) {
         if (this.abort.signal.aborted) return;
