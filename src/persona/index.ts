@@ -23,11 +23,6 @@ function day(at: number): string {
   const d = new Date(at);
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
-export function isResting(at: number, sleep: readonly [string, string] = ["23:00", "07:00"]): boolean {
-  const [start, end] = sleep.map(clockMinutes) as [number, number];
-  const d = new Date(at), minutes = d.getHours() * 60 + d.getMinutes();
-  return start > end ? minutes >= start || minutes < end : minutes >= start && minutes < end;
-}
 function valid(value: unknown): value is PersonaState {
   if (!value || typeof value !== "object") return false;
   const s = value as PersonaState;

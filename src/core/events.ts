@@ -5,7 +5,7 @@ export type SessionEvent =
   | { kind: "tool_start"; toolCallId: string; toolName: string; summary: string }
   | { kind: "tool_end"; toolCallId: string; toolName: string; isError: boolean }
   | { kind: "tool_update"; toolCallId: string; toolName: string; text: string }
-  | { kind: "busy"; busy: boolean; discardReply?: boolean }
+  | { kind: "busy"; busy: boolean; discardReply?: boolean; source?: string }
   | { kind: "error"; message: string };
 
 export type HistoryItem =

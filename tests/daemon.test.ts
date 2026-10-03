@@ -1,6 +1,5 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createServer } from "node:net";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { VexConfig } from "../src/config/schema.js";
@@ -146,7 +145,7 @@ describe("startDaemon", () => {
     const tasks = JSON.parse(await readFile(join(paths.home, "schedules.json"), "utf8"));
     expect(tasks[0].target).toBe(id);
     const notification = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "定时任务");
-    expect(notification).toMatchObject({ sessionId: id, event: { text: "scheduled hello" } });
+    expect(notification).toMatchObject({ sessionId: id, event: { text: "【定时任务「test」】scheduled hello" } });
     await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "scheduled reply");
     await daemon.stop(); daemon = undefined;
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
@@ -195,23 +194,13 @@ describe("startDaemon", () => {
     await ready;
     await daemon.stop(); daemon = undefined;
     await expect(readFile(join(paths.sessions, "wechat.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    const records = await readdir(join(paths.sessions, "runs"));
-    expect(records).toHaveLength(1);
-    expect(await readFile(join(paths.sessions, "runs", records[0]!), "utf8")).toContain('"stopReason":"aborted"');
+    expect(await readdir(join(paths.sessions, "runs"))).toEqual([]);
   });
 
-  it("releases the listening socket when malformed schedule data prevents startup", async () => {
-    const probe = createServer();
-    await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
-    const address = probe.address();
-    if (!address || typeof address === "string") throw new Error("port not allocated");
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => probe.close(err => err ? reject(err) : resolve()));
+  it("starts with no tasks when the schedule file is corrupt and keeps the bad file", async () => {
     await writeFile(join(paths.home, "schedules.json"), "not JSON");
-    await expect(startDaemon({ paths, config: config({ web: { host: "127.0.0.1", port } }), log: createLogger(), models: models() })).rejects.toThrow();
-    const rebound = createServer();
-    try { await new Promise<void>((resolve, reject) => { rebound.once("error", reject); rebound.listen(port, "127.0.0.1", resolve); }); }
-    finally { await new Promise<void>(resolve => rebound.close(() => resolve())); }
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    expect((await readdir(paths.home)).some(name => name.startsWith("schedules.json.bad-"))).toBe(true);
   });
 
   it("refuses a public address without a token", async () => {

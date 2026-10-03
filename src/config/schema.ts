@@ -50,14 +50,14 @@ export const ConfigSchema = Type.Object({
   compaction: Type.Optional(Type.Object({ threshold: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 1 })) })),
   memory: Type.Optional(Type.Object({ consolidateAt: Type.Optional(Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })) })),
   heartbeat: Type.Optional(Type.Object({
-    every: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(ms|s|m|h|d)$" })),
+    every: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(s|m|h|d)$" })),
     activeHours: Type.Optional(Type.Tuple([Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }), Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })])),
   })),
   persona: Type.Optional(Type.Object({
     sleep: Type.Optional(Type.Tuple([Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }), Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })])),
     outreach: Type.Optional(Type.Object({
       enabled: Type.Optional(Type.Boolean()),
-      checkEvery: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(ms|s|m|h|d)$" })),
+      checkEvery: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(s|m|h|d)$" })),
       socialThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 100 })),
       quietHours: Type.Optional(Type.Number({ minimum: 0 })),
       dailyLimit: Type.Optional(Type.Integer({ minimum: 0 })),

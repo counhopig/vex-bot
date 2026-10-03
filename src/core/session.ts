@@ -117,7 +117,7 @@ export class Session {
     this.runSource = source;
     this.runFailed = false;
     this.lastResponse = undefined;
-    this.opts.emit({ kind: "busy", busy: true });
+    this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}) });
     this.current = this.run(message)
       .catch((err: unknown) => {
         this.runFailed = true;

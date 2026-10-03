@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
@@ -38,6 +38,10 @@ export function activeAt(now: number, hours: [string, string]): boolean {
   const start = minute(hours[0]), end = minute(hours[1]);
   return start === end || (start < end ? current >= start && current < end : current >= start || current < end);
 }
+function stamp(at: number): string {
+  const d = new Date(at), pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 function next(rule: ScheduleRule, now: number): number | null {
   if (!rule || typeof rule !== "object" || Object.keys(rule).length !== 1 || !("every" in rule || "once" in rule || "cron" in rule)) throw new Error("时间规则无效");
   if ("every" in rule) return now + duration(rule.every);
@@ -75,8 +79,9 @@ export class Scheduler {
   async start(): Promise<void> {
     if (this.stopped) throw new Error("调度器已关闭");
     if (this.timer) return;
+    const file = join(this.options.dataDir, "schedules.json");
     try {
-      const parsed: unknown = JSON.parse(await readFile(join(this.options.dataDir, "schedules.json"), "utf8"));
+      const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
       if (!Array.isArray(parsed)) throw new Error("定时任务文件无效");
       const names = new Set<string>();
       for (const item of parsed) {
@@ -85,7 +90,17 @@ export class Scheduler {
         if (item.nextAt !== null && (!Number.isFinite(item.nextAt) || typeof item.nextAt !== "number")) throw new Error("定时任务触发时间无效");
       }
       this.tasks = parsed;
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        const backup = `${file}.bad-${this.now()}`;
+        await rename(file, backup).catch(() => {});
+        this.options.hooks.log(new Error(`定时任务文件无法读取，已移至 ${backup}：${error instanceof Error ? error.message : String(error)}`));
+      }
+    }
+    const now = this.now();
+    for (const task of this.tasks) {
+      if (task.enabled && task.nextAt !== null && task.nextAt <= now && !("once" in task.schedule)) task.nextAt = next(task.schedule, now);
+    }
     await this.tick(true);
     if (this.stopped) return;
     this.timer = setInterval(() => { void this.tick().catch(this.options.hooks.log); }, 1000); this.timer.unref();
@@ -97,6 +112,7 @@ export class Scheduler {
       if (!input.name.trim() || !input.prompt.trim() || !input.target.trim()) throw new Error("名称、消息和目标不能为空");
       if (this.tasks.some(task => task.name === input.name)) throw new Error("定时任务名称已存在");
       if (Object.keys(input.schedule).length !== 1) throw new Error("只能指定一个时间规则");
+      if ("once" in input.schedule && Date.parse(input.schedule.once) <= this.now()) throw new Error("一次性时间已过");
       const task: ScheduledTask = { ...structuredClone(input), id: randomUUID(), enabled: input.enabled ?? true, nextAt: next(input.schedule, this.now()) };
       this.tasks.push(task); try { await this.save(); } catch (error) { this.tasks.pop(); throw error; } return structuredClone(task);
     });
@@ -119,6 +135,7 @@ export class Scheduler {
           if (!task.enabled || task.nextAt === null || task.nextAt > now) continue;
           const busy = this.running.has(task.id);
           const once = "once" in task.schedule;
+          const dueAt = task.nextAt;
           const previous = { enabled: task.enabled, nextAt: task.nextAt };
           if (once) task.enabled = false;
           else task.nextAt = next(task.schedule, now);
@@ -126,7 +143,9 @@ export class Scheduler {
           if (busy) continue;
           this.launch(task.id, async () => {
             const target = task.target === "wechat" || await this.options.hooks.targetExists(task.target) ? task.target : "wechat";
-            if (!this.stopped) await this.options.hooks.deliver(target, task.prompt, startup && once ? "missed" : "scheduled", this.abort.signal);
+            const missed = startup && once;
+            const label = missed ? `【错过的定时任务「${task.name}」，原定 ${stamp(dueAt)}】` : `【定时任务「${task.name}」】`;
+            if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);
           });
         }
       });

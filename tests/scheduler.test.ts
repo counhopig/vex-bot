@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,7 +23,7 @@ describe("scheduler", () => {
     await f.scheduler.create({ name: "停用", prompt: "不发送", target: "wechat", schedule: { every: "1s" }, enabled: false });
     f.advance(59_000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).not.toHaveBeenCalled();
     f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
-    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "整点", "scheduled", expect.any(AbortSignal));
+    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "【定时任务「cron」】整点", "scheduled", expect.any(AbortSignal));
   });
   it("persists unique names and defaults tool targets to the source", async () => {
     const f = await fixture(); await f.scheduler.start();
@@ -37,12 +37,35 @@ describe("scheduler", () => {
   });
   it("delivers missed once tasks exactly once and falls back to WeChat", async () => {
     const f = await fixture();
-    await f.scheduler.create({ name: "一次", prompt: "提醒", target: "deleted", schedule: { once: new Date(f.time() - 1000).toISOString() } });
+    const dueAt = f.time() - 1000;
+    await writeFile(join(f.dataDir, "schedules.json"), JSON.stringify([{ id: "1", name: "一次", prompt: "提醒", target: "deleted", enabled: true, schedule: { once: new Date(dueAt).toISOString() }, nextAt: dueAt }]));
     vi.mocked(f.hooks.targetExists).mockReturnValue(false);
     await f.scheduler.start(); await f.flush();
-    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "提醒", "missed", expect.any(AbortSignal));
+    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "【错过的定时任务「一次」，原定 2026-10-03 11:59】提醒", "missed", expect.any(AbortSignal));
     expect(f.scheduler.list()[0]?.enabled).toBe(false);
     await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
+  });
+  it("moves missed recurring tasks to their next time without delivering", async () => {
+    const f = await fixture();
+    const dueAt = f.time() - 3_600_000;
+    await writeFile(join(f.dataDir, "schedules.json"), JSON.stringify([{ id: "1", name: "每日", prompt: "早安", target: "wechat", enabled: true, schedule: { cron: "0 8 * * *" }, nextAt: dueAt }]));
+    await f.scheduler.start(); await f.flush();
+    expect(f.hooks.deliver).not.toHaveBeenCalled();
+    expect(f.scheduler.list()[0]?.nextAt).toBe(new Date(2026, 9, 4, 8).getTime());
+  });
+  it("rejects one-shot times in the past", async () => {
+    const f = await fixture(); await f.scheduler.start();
+    await expect(f.scheduler.create({ name: "过期", prompt: "x", target: "wechat", schedule: { once: new Date(f.time() - 1000).toISOString() } })).rejects.toThrow("已过");
+  });
+  it("sets a corrupt schedule file aside and starts with no tasks", async () => {
+    const f = await fixture();
+    await writeFile(join(f.dataDir, "schedules.json"), "not JSON");
+    await f.scheduler.start();
+    expect(f.scheduler.list()).toEqual([]);
+    expect(f.hooks.log).toHaveBeenCalled();
+    const kept = (await readdir(f.dataDir)).filter(name => name.startsWith("schedules.json.bad-"));
+    expect(kept).toHaveLength(1);
+    expect(await readFile(join(f.dataDir, kept[0]!), "utf8")).toBe("not JSON");
   });
   it("skips overlap while a turn is running, then permits the next trigger", async () => {
     const f = await fixture(); let finish!: () => void;
