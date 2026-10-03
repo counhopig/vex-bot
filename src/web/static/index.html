@@ -32,11 +32,18 @@
           <h2>设置</h2>
           <button id="close-settings" type="button" class="link">返回</button>
         </div>
-        <p class="hint">编辑 config.yaml，保存后重启 vexd 生效。</p>
-        <textarea id="config-text" spellcheck="false"></textarea>
+        <select id="settings-file">
+          <option value="config.yaml">config.yaml · 配置</option>
+          <option value="SOUL.md">SOUL.md · 人设</option>
+          <option value="USER.md">USER.md · 关于我</option>
+          <option value="MEMORY.md">MEMORY.md · 长期记忆</option>
+          <option value="HEARTBEAT.md">HEARTBEAT.md · 心跳清单</option>
+        </select>
+        <p id="settings-hint" class="hint"></p>
+        <textarea id="settings-text" spellcheck="false"></textarea>
         <div class="settings-actions">
-          <button id="save-config" type="button">保存</button>
-          <span id="config-result"></span>
+          <button id="save-settings" type="button">保存</button>
+          <span id="settings-result"></span>
         </div>
       </section>
     </main>

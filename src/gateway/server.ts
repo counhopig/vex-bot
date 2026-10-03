@@ -7,7 +7,7 @@ import { ConfigError } from "../config/load.js";
 import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
-import { parseClientMessage, type ClientMessage, type ServerMessage } from "../protocol/messages.js";
+import { parseClientMessage, type ClientMessage, type ServerMessage, type WorkspaceFile } from "../protocol/messages.js";
 import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
@@ -18,6 +18,7 @@ export interface GatewayOptions {
   approvals: ApprovalManager;
   bus: EventBus;
   config: { read: () => Promise<string>; save: (text: string) => Promise<void> };
+  workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<void> };
   staticDir: string;
   log: Logger;
 }
@@ -228,6 +229,18 @@ export class Gateway {
         return;
       case "approve":
         this.opts.approvals.answer(message.id, message.answer);
+        return;
+      case "get_file":
+        send(ws, { type: "file", name: message.name, text: await this.opts.workspace.read(message.name) });
+        return;
+      case "save_file":
+        try {
+          await this.opts.workspace.save(message.name, message.text);
+          send(ws, { type: "file_saved", name: message.name, ok: true });
+        } catch (err) {
+          this.opts.log.warn({ err, file: message.name }, "saving workspace file failed");
+          send(ws, { type: "file_saved", name: message.name, ok: false, error: "保存失败，详见 vexd 日志" });
+        }
         return;
       case "get_config":
         send(ws, { type: "config", text: await this.opts.config.read() });

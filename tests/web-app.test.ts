@@ -75,6 +75,25 @@ describe("web app", () => {
     expect(get("status").hidden).toBe(false);
   });
 
+  it("loads and saves the selected settings file", async () => {
+    const { get, socket, context } = await loadApp();
+    get("settings-file").value = "config.yaml";
+    get("open-settings").dispatch("click");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_config" }));
+    get("settings-file").value = "SOUL.md";
+    get("settings-file").dispatch("change");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "SOUL.md" }));
+    runInContext('handle({ type: "file", name: "USER.md", text: "过期的回复" })', context);
+    expect(get("settings-text").value).toBe("");
+    runInContext('handle({ type: "file", name: "SOUL.md", text: "你是一只猫" })', context);
+    expect(get("settings-text").value).toBe("你是一只猫");
+    get("settings-text").value = "你是一只狗";
+    get("save-settings").dispatch("click");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "SOUL.md", text: "你是一只狗" }));
+    runInContext('handle({ type: "file_saved", name: "SOUL.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("已保存，下一条消息起生效");
+  });
+
   it("clears input after a successful send", async () => {
     const { get, socket, context } = await loadApp();
     get("input").value = "  已发送  ";

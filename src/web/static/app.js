@@ -67,11 +67,16 @@ function handle(msg) {
       renderApprovals();
       break;
     case "config":
-      $("config-text").value = msg.text;
+      if ($("settings-file").value === "config.yaml") $("settings-text").value = msg.text;
+      break;
+    case "file":
+      if ($("settings-file").value === msg.name) $("settings-text").value = msg.text;
       break;
     case "config_saved":
-      $("config-result").textContent = msg.ok ? "已保存，重启 vexd 后生效" : msg.error;
-      $("config-result").className = msg.ok ? "ok" : "bad";
+      showSaved(msg.ok, "已保存，重启 vexd 后生效", msg.error);
+      break;
+    case "file_saved":
+      if ($("settings-file").value === msg.name) showSaved(msg.ok, "已保存，下一条消息起生效", msg.error);
       break;
     case "error":
       flash(msg.message);
@@ -285,11 +290,31 @@ function showChat() {
   $("chat").hidden = false;
 }
 
+const SETTINGS_HINTS = {
+  "config.yaml": "编辑配置，保存后重启 vexd 生效。",
+  "SOUL.md": "人设、语气和行为准则，保存后下一条消息起生效。",
+  "USER.md": "它对你的了解：称呼、身份、偏好、习惯。",
+  "MEMORY.md": "提炼后的长期事实与决定，保持在 100 行以内。",
+  "HEARTBEAT.md": "定期自查清单，留空则不检查。",
+};
+
+function showSaved(ok, message, error) {
+  $("settings-result").textContent = ok ? message : error;
+  $("settings-result").className = ok ? "ok" : "bad";
+}
+
+function loadSettings() {
+  const name = $("settings-file").value;
+  $("settings-hint").textContent = SETTINGS_HINTS[name];
+  $("settings-result").textContent = "";
+  $("settings-text").value = "";
+  send(name === "config.yaml" ? { type: "get_config" } : { type: "get_file", name });
+}
+
 function showSettings() {
   $("chat").hidden = true;
   $("settings").hidden = false;
-  $("config-result").textContent = "";
-  send({ type: "get_config" });
+  loadSettings();
 }
 
 function setStatus(text) {
@@ -354,10 +379,13 @@ $("stop").addEventListener("click", () => {
 $("new-session").addEventListener("click", createSession);
 $("open-settings").addEventListener("click", showSettings);
 $("close-settings").addEventListener("click", showChat);
-$("save-config").addEventListener("click", () => {
-  $("config-result").textContent = "保存中…";
-  $("config-result").className = "";
-  send({ type: "save_config", text: $("config-text").value });
+$("settings-file").addEventListener("change", loadSettings);
+$("save-settings").addEventListener("click", () => {
+  $("settings-result").textContent = "保存中…";
+  $("settings-result").className = "";
+  const name = $("settings-file").value;
+  const text = $("settings-text").value;
+  send(name === "config.yaml" ? { type: "save_config", text } : { type: "save_file", name, text });
 });
 
 connect();

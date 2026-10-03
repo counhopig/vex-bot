@@ -11,6 +11,8 @@ describe("parseClientMessage", () => {
       { type: "rename_session", sessionId: "s", title: "t" },
       { type: "delete_session", sessionId: "s" },
       { type: "approve", id: "a", answer: "allow_session" },
+      { type: "get_file", name: "SOUL.md" },
+      { type: "save_file", name: "USER.md", text: "x" },
       { type: "get_config" },
       { type: "save_config", text: "model: {}" },
     ];
@@ -22,5 +24,7 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage(JSON.stringify({ type: "send", sessionId: "s", text: "" }))).toBeUndefined();
     expect(parseClientMessage(JSON.stringify({ type: "approve", id: "a", answer: "maybe" }))).toBeUndefined();
     expect(parseClientMessage(JSON.stringify({ type: "unknown" }))).toBeUndefined();
+    expect(parseClientMessage(JSON.stringify({ type: "get_file", name: "../config.yaml" }))).toBeUndefined();
+    expect(parseClientMessage(JSON.stringify({ type: "save_file", name: "NOTES.md", text: "x" }))).toBeUndefined();
   });
 });
