@@ -106,6 +106,25 @@ describe("WeChatChannel inbound", () => {
     expect(session.stops).toBe(1);
     expect(session.sent).toEqual([]);
   });
+
+  it("continues handling the batch when sessions.get() fails for one message", async () => {
+    let getCallCount = 0;
+    await startChannel({
+      sessions: {
+        get: async (key) => {
+          getCallCount++;
+          if (getCallCount === 1) throw new Error("session failed");
+          keys.push(key);
+          return session;
+        },
+      },
+    });
+    ilink.queueUpdates(
+      textMessage("owner1", "第一句", { message_id: "f1" }),
+      textMessage("owner1", "第二句", { message_id: "f2" }),
+    );
+    await vi.waitFor(() => expect(session.sent).toEqual(["第二句"]));
+  });
 });
 
 describe("WeChatChannel outbound", () => {
