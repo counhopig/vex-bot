@@ -92,7 +92,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     residentFileSection({ workspace: config.workspace, file: "USER.md", maxLines: 200 }),
     () => `## 情绪与作息\n${persona.describe()}`,
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: 100 }),
-    skillsSection(config.workspace),
+    skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     timeSection(),
   ]);
 

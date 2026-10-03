@@ -30,6 +30,16 @@ describe("skill discovery", () => {
     await skill(join(workspace, "skills"), "notes", document("notes", "notes skill"));
     expect(await section({ now: new Date(), windowLabel: "web" })).toContain("notes skill");
   });
+  it("skips an unreadable skill with a warning and keeps the rest", async () => {
+    const workspace = await root();
+    await skill(join(workspace, "skills"), "good", document("good", "works"));
+    await mkdir(join(workspace, "skills", "broken", "SKILL.md"), { recursive: true });
+    const warnings: string[] = [];
+    const skills = await discoverSkills({ workspace, builtinDir: await root(), warn: (message) => warnings.push(message) });
+    expect(skills.map((item) => item.name)).toEqual(["good"]);
+    expect(warnings).toHaveLength(1);
+    expect(await skillsSection(workspace, await root())({ now: new Date(), windowLabel: "web" })).toContain("good");
+  });
   it("ignores malformed frontmatter and incomplete directories", async () => {
     const builtinDir = await root();
     const workspace = await root();

@@ -93,7 +93,7 @@ persona:
 tools:
   policy:
     bash: ask
-    mcp__browser: ask
+    mcp__remote: ask
 bashEnvPassthrough: []
 webSearch:
   provider: brave
@@ -165,7 +165,7 @@ Edit workspace Markdown files to adjust personality, owner information, memory, 
 
 Ask Vex to create, list, or delete scheduled tasks. The `schedule` tool supports cron expressions, fixed intervals such as `30m`, and one-time ISO timestamps with a time zone. Tasks target the current conversation by default. Deleted WebChat targets fall back to WeChat, and missed one-time tasks are reported after startup.
 
-A Skill is a directory containing `SKILL.md` with `name` and `description` frontmatter, plus optional scripts and resources. Workspace skills override built-in skills with the same name. The weather skill retrieves forecasts; the image skill analyzes images using a configured model that supports image input. Script execution follows shell approval rules.
+A Skill is a directory containing `SKILL.md` with `name` and `description` frontmatter, plus optional scripts and resources. Workspace skills override built-in skills with the same name. The weather skill retrieves forecasts; the image skill analyzes images with the primary model unless `--provider` and `--model` are passed to its script, and that model must accept image input. The minimal `minimax-cn/MiniMax-M2.7` example is text-only; custom provider models declare image support with `input: [text, image]`. Script execution follows shell approval rules.
 
 `web_search` requires a Brave Search API key, configured directly or through `BRAVE_API_KEY`. MCP supports stdio and Streamable HTTP, exposing tools as `mcp__<server>__<tool>`. The `delegate` tool runs an isolated subagent with inherited approvals and prevents nested delegation.
 
@@ -177,5 +177,7 @@ npm run lint
 npm test
 npm run build
 ```
+
+The image skill loads the compiled model registry, so run `npm run build` once before using it from a source checkout.
 
 Tests use scripted models and local mock services, so no real model, WeChat, or MCP credentials are required. Design documents and implementation plans are in [docs/superpowers](docs/superpowers).

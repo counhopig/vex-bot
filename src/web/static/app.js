@@ -174,7 +174,11 @@ function applyEvent(event) {
       break;
     case "tool_update": {
       const el = state.toolEls.get(event.toolCallId);
-      if (el && event.text) el.textContent += event.text;
+      if (el && event.text) {
+        const progress = el.querySelector(".tool-progress");
+        progress.textContent = (progress.textContent + event.text).slice(-2000);
+        scrollToBottom();
+      }
       break;
     }
     case "busy":
@@ -214,7 +218,12 @@ function addTool(id, name, summary, status) {
   const el = document.createElement("div");
   el.className = `tool ${status}`;
   el.dataset.label = `${name}：${summary}`;
-  el.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
+  const head = document.createElement("div");
+  head.className = "tool-head";
+  head.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
+  const progress = document.createElement("div");
+  progress.className = "tool-progress";
+  el.append(head, progress);
   $("messages").append(el);
   state.toolEls.set(id, el);
   scrollToBottom();
@@ -224,7 +233,7 @@ function updateTool(id, status) {
   const el = state.toolEls.get(id);
   if (!el) return;
   el.className = `tool ${status}`;
-  el.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
+  el.firstChild.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
 }
 
 function addNotice(text) {

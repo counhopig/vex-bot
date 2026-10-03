@@ -10,6 +10,14 @@ const MAX_BYTES = 2_000_000;
 const MAX_REDIRECTS = 5;
 const BLOCKED_HOSTS = new Set(["localhost", "metadata.google.internal", "metadata.goog"]);
 
+export function decodeBody(bytes: Buffer, contentType = ""): string {
+  const label = /charset\s*=\s*"?([^\s;"]+)/i.exec(contentType)?.[1];
+  if (label) {
+    try { return new TextDecoder(label).decode(bytes); } catch { /* unsupported label falls back to UTF-8 */ }
+  }
+  return bytes.toString("utf8");
+}
+
 export function isBlockedAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) {
@@ -17,7 +25,7 @@ export function isBlockedAddress(address: string): boolean {
     return a === 0 || a === 10 || a === 127 || a >= 224 ||
       (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
       (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
-      (a === 192 && b === 0) || (a === 192 && b === 88 && c === 99) ||
+      (a === 192 && b === 0 && (c === 0 || c === 2)) || (a === 192 && b === 88 && c === 99) ||
       (a === 198 && (b === 18 || b === 19 || b === 51 && c === 100)) ||
       (a === 203 && b === 0 && c === 113);
   }
@@ -96,7 +104,7 @@ export function createPublicPageRequest(resolver?: ResolveAddresses): PageReques
         else chunks.push(chunk);
       });
       response.on("error", reject);
-      response.on("end", () => resolve({ status, headers, body: Buffer.concat(chunks).toString("utf8") }));
+      response.on("end", () => resolve({ status, headers, body: decodeBody(Buffer.concat(chunks), headers["content-type"]) }));
     });
     request.on("error", reject);
     request.end();
