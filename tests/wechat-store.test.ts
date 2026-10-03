@@ -38,4 +38,12 @@ describe("WeChatStore", () => {
     await store.saveState({ contextToken: "ctx-9" });
     expect(await store.loadState()).toEqual({ contextToken: "ctx-9" });
   });
+
+  it("round-trips the sync cursor alongside the context token", async () => {
+    const store = new WeChatStore(join(dir, "wechat"));
+    await store.saveState({ contextToken: "ctx-9", syncBuf: "buf-3" });
+    expect(await store.loadState()).toEqual({ contextToken: "ctx-9", syncBuf: "buf-3" });
+    await store.saveState({ syncBuf: "buf-4" });
+    expect(await store.loadState()).toEqual({ syncBuf: "buf-4" });
+  });
 });

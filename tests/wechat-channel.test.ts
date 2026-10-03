@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -174,6 +175,20 @@ describe("WeChatChannel outbound", () => {
     expect((await sentTexts()).map((t) => t.length)).toEqual([2000, 2000, 500]);
   });
 
+  it("stops promptly while a send is hanging", async () => {
+    await store.saveState({ contextToken: "ctx" });
+    ilink.on("/ilink/bot/sendmessage", () => new Promise(() => {}));
+    await startChannel({ processingNoticeMs: 60_000 });
+    emit({ kind: "busy", busy: true });
+    emit({ kind: "assistant_message", text: "卡住", stopReason: "stop", timestamp: 1 });
+    emit({ kind: "busy", busy: false });
+    await vi.waitFor(() => expect(ilink.requests.some((r) => r.path === "/ilink/bot/sendmessage")).toBe(true));
+    const started = Date.now();
+    await channel?.stop();
+    channel = undefined;
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
   it("drops outgoing messages until the owner has written once", async () => {
     await startChannel({ processingNoticeMs: 60_000 });
     emit({ kind: "busy", busy: true });
@@ -215,6 +230,68 @@ describe("WeChatChannel approvals", () => {
 });
 
 describe("WeChatChannel polling", () => {
+  it("sends the cursor from the previous poll and resumes from it after a restart", async () => {
+    ilink.queueBatch("cur-1", textMessage("owner1", "一", { message_id: "c1" }));
+    ilink.queueBatch("cur-2", textMessage("owner1", "二", { message_id: "c2" }));
+    await startChannel();
+    await vi.waitFor(() => expect(session.sent).toEqual(["一", "二"]));
+    await vi.waitFor(async () => expect((await store.loadState()).syncBuf).toBe("cur-2"));
+    expect(ilink.updateBodies().slice(0, 3).map((b) => b.get_updates_buf)).toEqual(["", "cur-1", "cur-2"]);
+    await channel?.stop();
+    channel = undefined;
+    const before = ilink.updateBodies().length;
+    await startChannel();
+    await vi.waitFor(() => expect(ilink.updateBodies().length).toBeGreaterThan(before));
+    expect(ilink.updateBodies()[before]?.get_updates_buf).toBe("cur-2");
+    expect((await store.loadState()).contextToken).toBe("ctx-owner1");
+  });
+
+  it("clears the persisted cursor but keeps the context token when the login has expired", async () => {
+    await store.saveState({ contextToken: "ctx-keep", syncBuf: "cur-old" });
+    ilink.on("/ilink/bot/getupdates", () => ({ ret: 0, errcode: -14, errmsg: "session timeout" }));
+    await startChannel();
+    await vi.waitFor(() => expect(channel?.expired).toBe(true));
+    expect(JSON.parse(await readFile(store.stateFile, "utf8"))).toEqual({ contextToken: "ctx-keep" });
+  });
+
+  it("treats a client-side long-poll timeout as an empty poll", async () => {
+    const lines: string[] = [];
+    const log = pino({ level: "warn" }, { write: (line: string) => void lines.push(line) });
+    const responses: unknown[] = [new Promise(() => {}), { ret: 0, msgs: [textMessage("owner1", "来了", { message_id: "t1" })] }];
+    ilink.on("/ilink/bot/getupdates", () => responses.shift() ?? { ret: 0, msgs: [] });
+    await startChannel({
+      client: new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok", updatesTimeoutMs: 30 }),
+      log,
+      initialBackoffMs: 60_000,
+    });
+    await vi.waitFor(() => expect(session.sent).toEqual(["来了"]), { timeout: 2000 });
+    expect(lines).toEqual([]);
+  });
+
+  it("stops handling the batch once the channel is stopping", async () => {
+    const handled: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    ilink.queueUpdates(
+      textMessage("owner1", "第一句", { message_id: "g1" }),
+      textMessage("owner1", "第二句", { message_id: "g2" }),
+    );
+    await startChannel({
+      sessions: {
+        get: async () => {
+          await gate;
+          return { send: (text) => void handled.push(text), stop: () => {}, busy: false };
+        },
+      },
+    });
+    await vi.waitFor(() => expect(ilink.requests.length).toBeGreaterThan(0));
+    const stopping = channel?.stop();
+    release();
+    await stopping;
+    channel = undefined;
+    expect(handled).toEqual(["第一句"]);
+  });
+
   it("recovers from a transient failure", async () => {
     const responses: unknown[] = [502, { ret: 0, msgs: [textMessage("owner1", "恢复了", { message_id: "r1" })] }];
     ilink.on("/ilink/bot/getupdates", () => responses.shift() ?? { ret: 0, msgs: [] });

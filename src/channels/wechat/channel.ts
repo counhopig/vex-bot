@@ -45,6 +45,7 @@ export class WeChatChannel {
   private readonly seen = new Set<string>();
   private readonly announced = new Set<string>();
   private contextToken: string | undefined;
+  private syncBuf: string | undefined;
   private turn: Turn | undefined;
   private outbox: Promise<void> = Promise.resolve();
   private loop: Promise<void> | undefined;
@@ -58,7 +59,9 @@ export class WeChatChannel {
   }
 
   async start(): Promise<void> {
-    this.contextToken = (await this.opts.store.loadState()).contextToken;
+    const state = await this.opts.store.loadState();
+    this.contextToken = state.contextToken;
+    this.syncBuf = state.syncBuf;
     this.unsubscribe = this.opts.bus.on((event) => this.onBusEvent(event));
     this.loop = this.pollLoop();
   }
@@ -83,20 +86,29 @@ export class WeChatChannel {
     let backoff = initialBackoff;
     while (!this.abort.signal.aborted) {
       try {
-        const messages = await this.opts.client.getUpdates(this.abort.signal);
+        const { messages, syncBuf } = await this.opts.client.getUpdates(this.syncBuf ?? "", this.abort.signal);
         backoff = initialBackoff;
         for (const message of messages) {
+          if (this.abort.signal.aborted) return;
           try {
             await this.handleInbound(message);
           } catch (err) {
             this.opts.log.warn({ err }, "failed to handle wechat message");
           }
         }
+        if (syncBuf && syncBuf !== this.syncBuf) {
+          this.syncBuf = syncBuf;
+          await this.saveState();
+        }
         if (messages.length === 0) await this.sleep(this.opts.idleDelayMs ?? 1000);
       } catch (err) {
         if (this.abort.signal.aborted) return;
+        // A long poll that times out client-side simply had no messages.
+        if (err instanceof Error && err.name === "TimeoutError") continue;
         if (err instanceof WeChatApiError && err.errcode === SESSION_EXPIRED_ERRCODE) {
           this.sessionExpired = true;
+          this.syncBuf = undefined;
+          await this.saveState();
           this.opts.log.error("微信登录已失效，运行 vex wechat login 重新登录后重启 vexd");
           return;
         }
@@ -118,9 +130,7 @@ export class WeChatChannel {
 
     if (message.contextToken && message.contextToken !== this.contextToken) {
       this.contextToken = message.contextToken;
-      await this.opts.store
-        .saveState({ contextToken: message.contextToken })
-        .catch((err: unknown) => this.opts.log.warn({ err }, "failed to save wechat state"));
+      await this.saveState();
     }
 
     const text = extractText(message.items);
@@ -137,6 +147,14 @@ export class WeChatChannel {
       return;
     }
     session.send(command.text);
+  }
+
+  private async saveState(): Promise<void> {
+    const state = {
+      ...(this.contextToken ? { contextToken: this.contextToken } : {}),
+      ...(this.syncBuf ? { syncBuf: this.syncBuf } : {}),
+    };
+    await this.opts.store.saveState(state).catch((err: unknown) => this.opts.log.warn({ err }, "failed to save wechat state"));
   }
 
   private answerOldest(answer: ApprovalAnswer): void {
@@ -219,7 +237,7 @@ export class WeChatChannel {
       }
       for (const chunk of chunks) {
         try {
-          await this.opts.client.sendText(this.opts.ownerId, contextToken, chunk);
+          await this.opts.client.sendText(this.opts.ownerId, contextToken, chunk, this.abort.signal);
         } catch (err) {
           this.opts.log.warn({ err }, "failed to send wechat message");
           return;

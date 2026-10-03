@@ -11,6 +11,7 @@ export interface WeChatCredentials {
 
 export interface WeChatState {
   contextToken?: string;
+  syncBuf?: string;
 }
 
 export class WeChatStore {
@@ -42,8 +43,11 @@ export class WeChatStore {
   async loadState(): Promise<WeChatState> {
     const value = await readJson(this.stateFile);
     if (!value || typeof value !== "object") return {};
-    const contextToken = (value as Record<string, unknown>).contextToken;
-    return typeof contextToken === "string" && contextToken ? { contextToken } : {};
+    const { contextToken, syncBuf } = value as Record<string, unknown>;
+    return {
+      ...(typeof contextToken === "string" && contextToken ? { contextToken } : {}),
+      ...(typeof syncBuf === "string" && syncBuf ? { syncBuf } : {}),
+    };
   }
 
   async saveState(state: WeChatState): Promise<void> {

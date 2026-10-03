@@ -57,7 +57,8 @@ describe("WeChatClient messaging", () => {
       "garbage",
     );
     const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok" });
-    const messages = await client.getUpdates();
+    const { messages, syncBuf } = await client.getUpdates("");
+    expect(syncBuf).toBeUndefined();
     expect(messages.map((m) => m.messageId.slice(0, 3))).toEqual(["m1", "42", "wx_"]);
     expect(messages[0]).toEqual({
       messageId: "m1",
@@ -70,7 +71,7 @@ describe("WeChatClient messaging", () => {
     expect(request.headers.authorization).toBe("Bearer tok");
     expect(request.headers.authorizationtype).toBe("ilink_bot_token");
     expect(Buffer.from(String(request.headers["x-wechat-uin"]), "base64").toString("utf8")).toMatch(/^\d+$/);
-    expect(request.body).toEqual({ base_info: { channel_version: "vex" } });
+    expect(request.body).toEqual({ base_info: { channel_version: "vex" }, get_updates_buf: "" });
   });
 
   it("gives a redelivered id-less message the same id", async () => {
@@ -78,9 +79,25 @@ describe("WeChatClient messaging", () => {
     ilink.queueUpdates(msg);
     ilink.queueUpdates(msg);
     const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok" });
-    const [a] = await client.getUpdates();
-    const [b] = await client.getUpdates();
+    const a = (await client.getUpdates("")).messages[0];
+    const b = (await client.getUpdates("")).messages[0];
     expect(a?.messageId).toBe(b?.messageId);
+  });
+
+  it("sends the sync cursor and returns the next one", async () => {
+    ilink.queueBatch("cursor-2", textMessage("owner1", "你好", { message_id: "m1" }));
+    ilink.queueUpdates();
+    const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok" });
+    expect((await client.getUpdates("cursor-1")).syncBuf).toBe("cursor-2");
+    expect((await client.getUpdates("cursor-2")).syncBuf).toBeUndefined();
+    expect(ilink.updateBodies().map((b) => b.get_updates_buf)).toEqual(["cursor-1", "cursor-2"]);
+  });
+
+  it("times out a long poll with the configured limit", async () => {
+    ilink.on("/ilink/bot/getupdates", () => new Promise(() => {}));
+    const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok", updatesTimeoutMs: 30 });
+    const err = await client.getUpdates("").catch((e: unknown) => e);
+    expect((err as Error).name).toBe("TimeoutError");
   });
 
   it("sends a text message", async () => {
@@ -100,20 +117,20 @@ describe("WeChatClient messaging", () => {
   it("surfaces body-level errors and HTTP failures", async () => {
     ilink.on("/ilink/bot/getupdates", () => ({ ret: 0, errcode: SESSION_EXPIRED_ERRCODE, errmsg: "session timeout" }));
     const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok" });
-    const err = await client.getUpdates().catch((e: unknown) => e);
+    const err = await client.getUpdates("").catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WeChatApiError);
     expect((err as WeChatApiError).errcode).toBe(SESSION_EXPIRED_ERRCODE);
     ilink.on("/ilink/bot/sendmessage", () => ({ ret: 1, errmsg: "bad context" }));
     await expect(client.sendText("owner1", "ctx", "x")).rejects.toThrow(/ret=1/);
     ilink.on("/ilink/bot/getupdates", () => 502);
-    await expect(client.getUpdates()).rejects.toThrow(/HTTP 502/);
+    await expect(client.getUpdates("")).rejects.toThrow(/HTTP 502/);
   });
 
   it("stops polling when aborted", async () => {
     ilink.on("/ilink/bot/getupdates", () => new Promise(() => {}));
     const client = new WeChatClient({ baseUrl: ilink.baseUrl, token: "tok" });
     const controller = new AbortController();
-    const pending = client.getUpdates(controller.signal);
+    const pending = client.getUpdates("", controller.signal);
     setTimeout(() => controller.abort(), 50);
     await expect(pending).rejects.toThrow();
   });
