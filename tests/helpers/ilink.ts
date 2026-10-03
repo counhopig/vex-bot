@@ -14,11 +14,14 @@ export class FakeIlink {
   readonly requests: IlinkRequest[] = [];
   baseUrl = "";
   private readonly routes = new Map<string, IlinkResponder>();
-  private readonly batches: unknown[][] = [];
+  private readonly batches: { msgs: unknown[]; syncBuf?: string }[] = [];
   private server: Server | undefined;
 
   constructor() {
-    this.routes.set("/ilink/bot/getupdates", () => ({ ret: 0, msgs: this.batches.shift() ?? [] }));
+    this.routes.set("/ilink/bot/getupdates", () => {
+      const batch = this.batches.shift();
+      return { ret: 0, msgs: batch?.msgs ?? [], ...(batch?.syncBuf ? { get_updates_buf: batch.syncBuf } : {}) };
+    });
     this.routes.set("/ilink/bot/sendmessage", () => ({ ret: 0 }));
   }
 
@@ -27,7 +30,15 @@ export class FakeIlink {
   }
 
   queueUpdates(...msgs: unknown[]): void {
-    this.batches.push(msgs);
+    this.batches.push({ msgs });
+  }
+
+  queueBatch(syncBuf: string, ...msgs: unknown[]): void {
+    this.batches.push({ msgs, syncBuf });
+  }
+
+  updateBodies(): { get_updates_buf?: string }[] {
+    return this.requests.filter((r) => r.path === "/ilink/bot/getupdates").map((r) => r.body as { get_updates_buf?: string });
   }
 
   sentTexts(): string[] {

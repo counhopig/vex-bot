@@ -48,13 +48,13 @@ interface RequestOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
-const UPDATES_TIMEOUT_MS = 45_000;
+const DEFAULT_UPDATES_TIMEOUT_MS = 45_000;
 const QR_STATUS_TIMEOUT_MS = 40_000;
 
 export class WeChatClient {
   private readonly baseUrl: string;
 
-  constructor(private readonly opts: { baseUrl: string; token?: string }) {
+  constructor(private readonly opts: { baseUrl: string; token?: string; updatesTimeoutMs?: number }) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
   }
 
@@ -94,21 +94,23 @@ export class WeChatClient {
     return { status: "wait" };
   }
 
-  async getUpdates(signal?: AbortSignal): Promise<InboundMessage[]> {
+  async getUpdates(syncBuf: string, signal?: AbortSignal): Promise<{ messages: InboundMessage[]; syncBuf?: string }> {
     const data = await this.request("POST", "ilink/bot/getupdates", {
-      body: { base_info: { channel_version: "vex" } },
+      body: { base_info: { channel_version: "vex" }, get_updates_buf: syncBuf },
       auth: true,
-      timeoutMs: UPDATES_TIMEOUT_MS,
+      timeoutMs: this.opts.updatesTimeoutMs ?? DEFAULT_UPDATES_TIMEOUT_MS,
       signal,
     });
     const msgs = Array.isArray(data.msgs) ? data.msgs : [];
-    return msgs.flatMap((raw) => {
+    const messages = msgs.flatMap((raw) => {
       const message = normalizeMessage(raw);
       return message ? [message] : [];
     });
+    const next = typeof data.get_updates_buf === "string" ? data.get_updates_buf : "";
+    return next ? { messages, syncBuf: next } : { messages };
   }
 
-  async sendText(toUserId: string, contextToken: string, text: string): Promise<void> {
+  async sendText(toUserId: string, contextToken: string, text: string, signal?: AbortSignal): Promise<void> {
     await this.request("POST", "ilink/bot/sendmessage", {
       body: {
         base_info: { channel_version: "vex" },
@@ -124,6 +126,7 @@ export class WeChatClient {
       },
       auth: true,
       timeoutMs: DEFAULT_TIMEOUT_MS,
+      signal,
     });
   }
 
