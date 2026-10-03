@@ -14,9 +14,9 @@ describe("skill discovery", () => {
   }
   const document = (name: string, description: string, body = "private skill body") => `---\nname: ${name}\ndescription: ${description}\n---\n${body}`;
 
-  it("discovers builtin weather and image scripts", async () => {
+  it("discovers the bundled skills", async () => {
     const skills = await discoverSkills({ workspace: await root() });
-    expect(skills.map((item) => item.name)).toEqual(["image", "weather"]);
+    expect(skills.map((item) => item.name)).toEqual(["image", "link-reader", "weather"]);
     expect(builtinSkillsDirectory()).toContain("skills");
   });
   it("workspace names override builtins and changes appear next round", async () => {

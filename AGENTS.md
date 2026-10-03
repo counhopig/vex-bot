@@ -11,7 +11,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner and MCP SDK; Node.js ≥24.
 ./
 ├── src/                 # Daemon, CLI, channels and static WebChat
 ├── tests/               # Module tests and local-service integration tests
-├── skills/              # Bundled weather and image skills
+├── skills/              # Bundled weather, image and link-reader skills
 ├── scripts/copy-static.mjs
 ├── docs/                # Architecture, configuration, operations and samples
 ├── .github/workflows/docker.yml
@@ -30,7 +30,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner and MCP SDK; Node.js ≥24.
 | Tools and permissions | `src/tools/`, `src/policy/` | Tool factories and approvals |
 | Memory and background work | `src/index/`, `src/scheduler/`, `src/persona/` | FTS5, schedules and mood |
 | Configuration and workspace | `src/config/`, `src/paths.ts`, `src/workspace/` | Schemas, paths and templates |
-| Bundled skills | `skills/`, `src/skills/` | Scripts and SKILL.md discovery |
+| Bundled skills | `skills/`, `src/skills/` | Scripts and SKILL.md discovery; `skills/link-reader/` holds one module per platform |
 | Deployment and samples | `docs/operations.md`, `docs/configuration.md`, `docs/samples/` | Cross-check against runtime code |
 
 ## CODE MAP

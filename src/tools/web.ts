@@ -67,16 +67,18 @@ export interface PageResponse {
   body: string;
 }
 
-export type PageRequest = (url: URL, signal: AbortSignal) => Promise<PageResponse>;
+export interface PageInit { method?: "GET" | "POST"; headers?: Record<string, string>; body?: string }
+
+export type PageRequest = (url: URL, signal: AbortSignal, init?: PageInit) => Promise<PageResponse>;
 
 export function createPublicPageRequest(resolver?: ResolveAddresses): PageRequest {
-  return (url, signal) => new Promise((resolve, reject) => {
+  return (url, signal, init) => new Promise((resolve, reject) => {
     assertPublicUrl(url);
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
-      method: "GET",
+      method: init?.method ?? "GET",
       agent: false,
       signal,
-      headers: { Accept: "text/html,text/plain,application/json", "User-Agent": "Vex/3.0" },
+      headers: { Accept: "text/html,text/plain,application/json", "User-Agent": "Vex/3.0", ...init?.headers },
       // DNS is validated at the connection itself, preventing a second lookup/rebinding gap.
       lookup(hostname, options, callback) {
         void resolvePublicAddresses(hostname, resolver).then((addresses) => {
@@ -107,13 +109,13 @@ export function createPublicPageRequest(resolver?: ResolveAddresses): PageReques
       response.on("end", () => resolve({ status, headers, body: decodeBody(Buffer.concat(chunks), headers["content-type"]) }));
     });
     request.on("error", reject);
-    request.end();
+    request.end(init?.body);
   });
 }
 
 export async function fetchPublicPage(
   rawUrl: string,
-  options: { signal?: AbortSignal; timeoutMs?: number; request?: PageRequest } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; request?: PageRequest; init?: PageInit; hosts?: (hostname: string) => boolean } = {},
 ): Promise<PageResponse & { url: string }> {
   const signal = AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 30_000), ...(options.signal ? [options.signal] : [])]);
   const request = options.request ?? createPublicPageRequest();
@@ -121,7 +123,8 @@ export async function fetchPublicPage(
   for (let redirects = 0; ; redirects++) {
     signal.throwIfAborted();
     assertPublicUrl(url);
-    const response = await request(url, signal);
+    if (options.hosts && !options.hosts(url.hostname)) throw new Error(`不支持访问 ${url.hostname}`);
+    const response = await request(url, signal, options.init);
     if (response.status >= 300 && response.status < 400 && response.headers.location) {
       if (redirects >= MAX_REDIRECTS) throw new Error("网页重定向超过 5 次");
       url = new URL(response.headers.location, url);
