@@ -145,6 +145,28 @@ describe("web app", () => {
     expect(call("buildPatch(state.settings)")).toEqual({ set: { "stt.apiKey": "new-key" }, unset: [] });
   });
 
+  it("shows only the fields of the chosen web search service", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "x" })})`, context);
+    get("settings-tabs").children[2]!.dispatch("click");
+    const form = get("settings-form");
+    expect(find(form, (el) => el.id === "f-webSearch-apiKey")).toBeUndefined();
+    expect(find(form, (el) => el.id === "f-webSearch-baseUrl")).toBeUndefined();
+    const provider = find(form, (el) => el.id === "f-webSearch-provider")!;
+    provider.value = "searxng";
+    provider.dispatch("change");
+    expect(find(get("settings-form"), (el) => el.id === "f-webSearch-apiKey")).toBeUndefined();
+    const base = find(get("settings-form"), (el) => el.id === "f-webSearch-baseUrl")!;
+    base.value = "http://searxng:8080";
+    base.dispatch("input");
+    get("save-settings").dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "save_settings", set: { "webSearch.provider": "searxng", "webSearch.baseUrl": "http://searxng:8080" }, unset: [] });
+    find(get("settings-form"), (el) => el.id === "f-webSearch-provider")!.value = "tavily";
+    find(get("settings-form"), (el) => el.id === "f-webSearch-provider")!.dispatch("change");
+    expect(find(get("settings-form"), (el) => el.id === "f-webSearch-apiKey")).toBeDefined();
+  });
+
   it("builds patches for cleared values, paired times and the shared background model", async () => {
     const { context, call } = await loadApp();
     runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "a", "backgroundModel.provider": "deepseek", "backgroundModel.id": "b", "heartbeat.every": "30m", "persona.sleep": ["23:00", "07:00"] }, ["links.bilibili.sessdata"])})`, context);

@@ -662,8 +662,9 @@ const SETTINGS_TABS = [
       { path: "links.bilibili.sessdata", label: "B站 SESSDATA", type: "secret", help: "登录 bilibili.com 后，在浏览器开发者工具 → Application → Cookies 里复制 SESSDATA。多数字幕需要登录才能读取；它相当于你的登录凭证，请妥善保管。保存后立即生效。" },
     ] },
     { title: "网页搜索", fields: [
-      { path: "webSearch.provider", label: "搜索服务", type: "select", options: ["", "brave"], labels: { "": "关闭", brave: "Brave Search" } },
-      { path: "webSearch.apiKey", label: "API Key", type: "secret", help: "也可以用环境变量 BRAVE_API_KEY。" },
+      { path: "webSearch.provider", label: "搜索服务", type: "select", options: ["", "tavily", "searxng", "brave"], rerender: true, labels: { "": "关闭", tavily: "Tavily（每月 1000 次免费）", searxng: "SearXNG（自己部署，免费）", brave: "Brave Search（收费）" } },
+      { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave"].includes(draft["webSearch.provider"]), help: "对应所选服务的 key；也可以用环境变量 TAVILY_API_KEY 或 BRAVE_API_KEY。" },
+      { path: "webSearch.baseUrl", label: "SearXNG 地址", type: "text", placeholder: "http://searxng:8080", when: (draft) => draft["webSearch.provider"] === "searxng", help: "SearXNG 需要在 settings.yml 里开启 json 格式，部署方法见文档。" },
     ] },
   ] },
   { id: "life", label: "作息", sections: [
@@ -748,7 +749,7 @@ function renderField(field, draft) {
         select.append(option);
       }
       select.value = draft[field.path] ?? "";
-      select.addEventListener("change", () => { draft[field.path] = select.value; });
+      select.addEventListener("change", () => { draft[field.path] = select.value; if (field.rerender) renderSettingsForm(); });
       wrap.append(label, select);
       break;
     }

@@ -83,7 +83,7 @@ Messages are rendered to plain text for estimation and summarisation (tool resul
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
 | `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
 | `web_fetch` | Public pages only (see Security); output is Markdown |
-| `web_search` | Brave Search |
+| `web_search` | Tavily, SearXNG or Brave Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |

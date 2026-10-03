@@ -56,7 +56,9 @@ The forms change only the fields you touch and keep the rest of the file, commen
 | `persona.outreach.socialThreshold` | `70` | 0–100 |
 | `persona.outreach.quietHours` | `3` | Hours without an owner message |
 | `persona.outreach.dailyLimit` | `3` | Proactive conversations per day |
-| `webSearch.provider`, `webSearch.apiKey` | none | `brave`; the key may come from `BRAVE_API_KEY` |
+| `webSearch.provider` | none | `tavily`, `searxng` or `brave`; without it `web_search` reports that no service is configured |
+| `webSearch.apiKey` | none | Key for `tavily` or `brave`; may come from `TAVILY_API_KEY` / `BRAVE_API_KEY` |
+| `webSearch.baseUrl` | none | Address of your SearXNG, required for `searxng` |
 | `stt.baseUrl`, `stt.model` | none | Speech-to-text service: an OpenAI-compatible API root (for example `https://api.openai.com/v1`) and a model name. Both are required to enable it |
 | `stt.apiKey` | none | Bearer token for the service; omit for a local service |
 | `stt.language` | auto | Language hint such as `zh` |
@@ -95,7 +97,7 @@ Tools appear as `mcp__<server>__<tool>`, sanitised to `[A-Za-z0-9_-]` and at mos
 | `VEX_WEB_HOST` | Overrides `web.host`; when it is not a loopback address, `vex onboard` skips the port question and generates an access token |
 | `VEX_WEB_TOKEN` | Overrides `web.token` |
 | `VEX_LOG_STDOUT` | `1` also writes logs to standard output (set in the Docker image) |
-| `BRAVE_API_KEY` | Brave Search key when `webSearch.apiKey` is absent |
+| `TAVILY_API_KEY`, `BRAVE_API_KEY` | Search key when `webSearch.apiKey` is absent |
 | Provider variables such as `DEEPSEEK_API_KEY` | API key when `providers.<name>.apiKey` is absent |
 
 Vex does not load `.env` files. Inside the shell tool, `VEX_CONFIG_PATH` points to the active configuration for skill scripts.
@@ -120,6 +122,30 @@ Templates for the first four are created on first start.
 A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads the body with `read` and runs scripts with `bash`, which follows the approval policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
+
+## Web search
+
+`web_search` supports three services; pick one with `webSearch.provider` (or in the settings page, 语音与链接 tab):
+
+| Service | Cost | Needs |
+|---|---|---|
+| `tavily` | 1000 searches a month free, no card | An account key from tavily.com |
+| `searxng` | Free, no limit | A SearXNG you run yourself |
+| `brave` | Paid since February 2026 ($5 of credit a month, card required) | An API key |
+
+```yaml
+webSearch:
+  provider: tavily
+  apiKey: "tvly-..."
+```
+
+For SearXNG, the repository ships `compose.searxng.yaml`, which adds a ready-to-use container whose settings enable the JSON format Vex needs:
+
+```bash
+docker compose -f compose.yaml -f compose.searxng.yaml up -d
+```
+
+Then set `webSearch: { provider: searxng, baseUrl: "http://searxng:8080" }`; the name resolves because both containers share the Compose network. The container is not published on any port. Set `SEARXNG_SECRET` in `.env` to use your own secret key. A SearXNG you already run works too, as long as `json` is listed under `search.formats` in its `settings.yml`; otherwise it answers 403 and Vex says so. Results depend on the engines behind SearXNG and can be thinner when an engine rate-limits it.
 
 ## Speech to text
 

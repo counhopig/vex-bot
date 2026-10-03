@@ -43,6 +43,12 @@ describe("settings", () => {
     expect(applySettings(base, { unset: ["providers.deepseek.apiKey"] }, paths).text).not.toContain("providers");
   });
 
+  it("manages the web search provider, key and SearXNG address", () => {
+    const next = applySettings(base, { set: { "webSearch.provider": "searxng", "webSearch.baseUrl": "http://searxng:8080" } }, paths);
+    expect(readSettings(next.text).values).toMatchObject({ "webSearch.provider": "searxng", "webSearch.baseUrl": "http://searxng:8080" });
+    expect(() => applySettings(base, { set: { "webSearch.provider": "bing" } }, paths)).toThrow(/webSearch/);
+  });
+
   it("applies live settings without asking for a restart", () => {
     expect(applySettings(base, { set: { "stt.baseUrl": "https://s/v1", "stt.model": "m", "links.bilibili.sessdata": "x" } }, paths).restartRequired).toBe(false);
   });
