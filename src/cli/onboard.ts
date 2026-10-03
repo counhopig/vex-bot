@@ -1,7 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { access } from "node:fs/promises";
 import { getBuiltinModels, getBuiltinProviders, type BuiltinProvider } from "@earendil-works/pi-ai/providers/all";
 import { stringify } from "yaml";
 import { loadConfig, saveConfigText } from "../config/load.js";
+import { isLoopback } from "../gateway/auth.js";
 import type { VexPaths } from "../paths.js";
 import type { LoginOptions } from "../channels/wechat/login.js";
 import { ensureWorkspace } from "../workspace/workspace.js";
@@ -62,8 +64,11 @@ export async function runOnboard(
     doc.providers = { [name]: { api, baseUrl, ...(apiKey ? { apiKey } : {}), models: [{ id }] } };
   }
 
-  const port = await askNumber(io, "WebChat 端口（默认 7860）：", 1, 65535, "端口", 7860);
-  doc.web = { host: "127.0.0.1", port };
+  const host = process.env.VEX_WEB_HOST?.trim();
+  const exposed = !!host && !isLoopback(host);
+  const generatedToken = exposed && !process.env.VEX_WEB_TOKEN?.trim() ? randomBytes(24).toString("hex") : undefined;
+  if (exposed) doc.web = { host, port: 7860, ...(generatedToken ? { token: generatedToken } : {}) };
+  else doc.web = { host: "127.0.0.1", port: await askNumber(io, "WebChat 端口（默认 7860）：", 1, 65535, "端口", 7860) };
 
   await saveConfigText(paths, stringify(doc));
   const { config } = await loadConfig(paths);
@@ -80,6 +85,7 @@ export async function runOnboard(
   } else {
     io.print("之后可以运行 vex wechat login 扫码绑定微信");
   }
+  if (generatedToken) io.print(`WebChat 访问令牌（请记下，登录时使用，也保存在 ${paths.config}）：${generatedToken}`);
   io.print("运行 vex start 启动");
   return true;
 }

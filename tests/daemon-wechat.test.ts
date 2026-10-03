@@ -73,6 +73,41 @@ describe("vexd with WeChat", () => {
     expect(Date.now() - started).toBeLessThan(1000);
     expect(ilink.sentTexts()).not.toContain("heartbeat result");
   });
+  it("connects WeChat without a restart when it is linked while vexd runs", async () => {
+    faux.setResponses([fauxAssistantMessage("联上了")]);
+    ilink.queueUpdates(textMessage("owner1", "在吗", { message_id: "m1" }));
+    await start(config());
+    expect(ilink.sentTexts()).toEqual([]);
+    await link("owner1");
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(["联上了"]), { timeout: 8000 });
+  });
+
+  it("shows a QR code itself when unlinked and answers after the scan", async () => {
+    const shown = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      ilink.on("/ilink/bot/get_bot_qrcode", () => ({ qrcode: "q1", qrcode_img_content: "https://login.example/q1" }));
+      ilink.on("/ilink/bot/get_qrcode_status", () => ({ status: "confirmed", bot_token: "tok", ilink_bot_id: "bot1", ilink_user_id: "owner1" }));
+      faux.setResponses([fauxAssistantMessage("扫码成功")]);
+      ilink.queueUpdates(textMessage("owner1", "在吗", { message_id: "m1" }));
+      await start(config());
+      await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(["扫码成功"]), { timeout: 10000 });
+      expect(shown).toHaveBeenCalledWith(expect.stringContaining("扫描"));
+    } finally { shown.mockRestore(); }
+  });
+
+  it("stops promptly while still waiting for a scan", async () => {
+    const shown = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      ilink.on("/ilink/bot/get_bot_qrcode", () => ({ qrcode: "q1", qrcode_img_content: "https://login.example/q1" }));
+      ilink.on("/ilink/bot/get_qrcode_status", () => ({ status: "wait" }));
+      await start(config());
+      await vi.waitFor(() => expect(shown).toHaveBeenCalled(), { timeout: 5000 });
+      const started = Date.now();
+      await daemon!.stop(); daemon = undefined;
+      expect(Date.now() - started).toBeLessThan(2000);
+    } finally { shown.mockRestore(); }
+  });
+
   it("answers the owner on WeChat", async () => {
     await link("owner1");
     faux.setResponses([fauxAssistantMessage("在的")]);
@@ -103,10 +138,8 @@ describe("vexd with WeChat", () => {
     await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(["主人好"]), { timeout: 5000 });
   });
 
-  it("stays off when disabled, unlinked, or without an owner", async () => {
+  it("stays off when disabled or without an owner", async () => {
     await start(config({ enabled: false }));
-    await daemon!.stop();
-    await start(config());
     await daemon!.stop();
     await link(undefined);
     await start(config());

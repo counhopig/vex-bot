@@ -1,7 +1,7 @@
 import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WeChatStore } from "../src/channels/wechat/store.js";
 import { runOnboard, type OnboardIO } from "../src/cli/onboard.js";
 import { loadConfig } from "../src/config/load.js";
@@ -42,6 +42,18 @@ describe("runOnboard", () => {
     expect((await stat(join(dir, "workspace", "SOUL.md"))).isFile()).toBe(true);
     expect(io.output).toContain("请输入 1 到 8 之间的编号");
     expect(io.output).toContain("API key 不能为空");
+  });
+
+  it("skips the port question and generates an access token when exposed beyond loopback", async () => {
+    vi.stubEnv("VEX_WEB_HOST", "0.0.0.0");
+    try {
+      const io = scripted(["1", "1", "sk-test", ""]);
+      expect(await runOnboard(io, paths, { force: false })).toBe(true);
+      const token = (await loadConfig(paths)).config.web.token!;
+      expect(token).toMatch(/^[0-9a-f]{48}$/);
+      expect(io.output.some((line) => line.includes(token))).toBe(true);
+      expect(io.output.some((line) => line.includes("端口"))).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("links WeChat right away when asked", async () => {

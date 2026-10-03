@@ -61,7 +61,14 @@ async function runningPid(paths: VexPaths): Promise<number | undefined> {
   return pid !== undefined && isAlive(pid) ? pid : undefined;
 }
 
+async function ensureConfig(paths: VexPaths): Promise<void> {
+  if (!process.stdin.isTTY || (await stat(paths.config).then(() => true, () => false))) return;
+  console.log("尚未配置，开始初始化。");
+  if (await onboard(paths, false) !== 0) throw new Error("初始化未完成");
+}
+
 async function startForeground(paths: VexPaths): Promise<number> {
+  await ensureConfig(paths);
   const { config } = await loadConfig(paths);
   const existing = await runningPid(paths);
   if (existing) {
@@ -92,6 +99,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
 }
 
 async function startBackground(paths: VexPaths): Promise<number> {
+  await ensureConfig(paths);
   const { config } = await loadConfig(paths);
   const existing = await runningPid(paths);
   if (existing) {

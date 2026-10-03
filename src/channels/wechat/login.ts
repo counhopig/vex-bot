@@ -14,6 +14,7 @@ export interface LoginOptions {
   maxQrRefreshes?: number;
   maxConsecutiveErrors?: number;
   botType?: string;
+  signal?: AbortSignal;
 }
 
 export class WeChatLoginError extends Error {}
@@ -28,12 +29,14 @@ export async function loginWithQr(
   const maxConsecutiveErrors = opts.maxConsecutiveErrors ?? 5;
 
   for (let attempt = 1; attempt <= maxQrRefreshes; attempt++) {
+    opts.signal?.throwIfAborted();
     const qr = await client.getQrCode(opts.botType);
     print("用手机微信扫描下面的二维码登录：");
     print(await renderQr(qr.url, { type: "terminal", small: true }));
 
     let errors = 0;
     for (;;) {
+      opts.signal?.throwIfAborted();
       let status;
       try {
         status = await client.getQrStatus(qr.qrcode);
@@ -41,7 +44,7 @@ export async function loginWithQr(
       } catch (err) {
         errors++;
         if (errors >= maxConsecutiveErrors) throw err;
-        await delay(pollIntervalMs);
+        await delay(pollIntervalMs, undefined, { signal: opts.signal });
         continue;
       }
       if (status.status === "confirmed") {
@@ -52,7 +55,7 @@ export async function loginWithQr(
         if (attempt < maxQrRefreshes) print("二维码已过期，正在刷新…");
         break;
       }
-      await delay(pollIntervalMs);
+      await delay(pollIntervalMs, undefined, { signal: opts.signal });
     }
   }
   throw new WeChatLoginError(`二维码连续 ${maxQrRefreshes} 次过期，登录失败`);
