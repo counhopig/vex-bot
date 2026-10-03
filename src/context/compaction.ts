@@ -44,14 +44,15 @@ function partsText(content: unknown): string {
   return content.map((c: { type?: string; text?: string }) => c.type === "text" ? c.text ?? "" : c.type === "image" ? "[图片]" : "").join("");
 }
 
-function clip(text: string, limit: number): string {
+function clip(text: string | undefined, limit: number): string {
+  if (!text) return "";
   return text.length > limit ? `${text.slice(0, limit)}…（已截断）` : text;
 }
 
 // Plain-text rendering keeps usage metadata and image bytes out of token estimates and summarizer input.
 export function renderMessages(messages: AgentMessage[], limit = Infinity): string {
   return messages.map((m) => {
-    if (m.role === "user") return `主人：${partsText(m.content)}`;
+    if (m.role === "user") return `${(m as { vexSource?: string }).vexSource ?? "主人"}：${partsText(m.content)}`;
     if (m.role === "system") return partsText(m.content);
     if (m.role === "assistant") {
       const parts = m.content.flatMap((c) => c.type === "text" ? [c.text] : c.type === "toolCall" ? [`${c.name}(${clip(JSON.stringify(c.arguments), limit)})`] : []);
@@ -93,7 +94,7 @@ export class ContextCompactor {
     const { contextWindow, maxTokens } = this.opts.model;
     const hardBudget = Math.floor(Math.min(contextWindow * 0.85, Math.max(contextWindow * 0.5, contextWindow - maxTokens)));
     if (through <= previous && estimateTokens(projected) <= hardBudget) return projected;
-    if (this.failure && this.failure.signal === signal) return this.fit(projected, hardBudget);
+    if (this.failure && this.failure.signal === signal) return this.fit(projected, hardBudget, history.length);
     const older = history.slice(previous, through);
     try {
       const fresh = history.slice(Math.max(this.rescued, previous), through);
@@ -124,16 +125,16 @@ export class ContextCompactor {
       if (signal?.aborted) return projected;
       this.opts.onError?.(err);
       this.failure = { signal };
-      return this.fit(projected, hardBudget);
+      return this.fit(projected, hardBudget, history.length);
     }
   }
 
   // Drops the oldest retained messages, always cutting at a user turn so tool call/result pairs stay intact.
-  private fit(projected: AgentMessage[], budget: number): AgentMessage[] {
+  private fit(projected: AgentMessage[], budget: number, historyLength: number): AgentMessage[] {
     if (estimateTokens(projected) <= budget) return projected;
     const system = projected.filter((m) => m.role === "system");
     const rest = projected.filter((m) => m.role !== "system");
-    const summary = this.record?.through ? rest.slice(0, 1) : [];
+    const summary = this.record?.through && this.record.through <= historyLength ? rest.slice(0, 1) : [];
     const retained = rest.slice(summary.length);
     let start = 0;
     while (start < retained.length - 1 && estimateTokens([...system, ...summary, ...retained.slice(start)]) > budget) start++;

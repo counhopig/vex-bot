@@ -21,6 +21,7 @@ async function files(root: string, recursive = false): Promise<string[]> {
   } catch (err) { if ((err as NodeJS.ErrnoException).code === "ENOENT") return []; throw err; }
 }
 const WINDOW = 4096;
+const INDEX_VERSION = 1;
 function digest(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 // Reads the bytes in [start, size) of a file.
 async function readRange(source: string, start: number, end = Infinity): Promise<Buffer> {
@@ -57,6 +58,11 @@ export class MemoryIndex {
     if (check !== "ok") throw Object.assign(new Error(String(check)), { code: "SQLITE_CORRUPT" });
     this.db.exec(`CREATE TABLE IF NOT EXISTS files(source TEXT PRIMARY KEY, mtime REAL, size INTEGER, offset INTEGER, hash TEXT);
       CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(tokens, text UNINDEXED, source UNINDEXED, date UNINDEXED, session UNINDEXED, scope UNINDEXED, tokenize='unicode61');`);
+    // Rows written under another tokenization or hash scheme are dropped so every file re-indexes.
+    if (this.db.pragma("user_version", { simple: true }) !== INDEX_VERSION) {
+      this.db.exec("DELETE FROM chunks; DELETE FROM files;");
+      this.db.pragma(`user_version = ${INDEX_VERSION}`);
+    }
   }
   sync(): Promise<void> {
     const run = this.queue.then(() => this.syncFiles());
