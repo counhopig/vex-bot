@@ -167,7 +167,7 @@ Ask Vex to create, list, or delete scheduled tasks. The `schedule` tool supports
 
 A Skill is a directory containing `SKILL.md` with `name` and `description` frontmatter, plus optional scripts and resources. Workspace skills override built-in skills with the same name. The weather skill retrieves forecasts; the image skill analyzes images with the primary model unless `--provider` and `--model` are passed to its script, and that model must accept image input. The minimal `minimax-cn/MiniMax-M2.7` example is text-only; custom provider models declare image support with `input: [text, image]`. Script execution follows shell approval rules.
 
-`web_search` requires a Brave Search API key, configured directly or through `BRAVE_API_KEY`. MCP supports stdio and Streamable HTTP, exposing tools as `mcp__<server>__<tool>`. The `delegate` tool runs an isolated subagent with inherited approvals and prevents nested delegation.
+`web_search` requires a Brave Search API key, configured directly or through `BRAVE_API_KEY`. MCP supports stdio and Streamable HTTP, exposing tools as `mcp__<server>__<tool>`. Server names use up to 32 letters, digits, and hyphens; tool names are sanitized to letters, digits, `_`, and `-` and truncated to 64 characters. The `delegate` tool runs an isolated subagent with inherited approvals and prevents nested delegation.
 
 ## Development
 

@@ -93,8 +93,8 @@ export class Scheduler {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const backup = `${file}.bad-${this.now()}`;
-        await rename(file, backup).catch(() => {});
-        this.options.hooks.log(new Error(`定时任务文件无法读取，已移至 ${backup}：${error instanceof Error ? error.message : String(error)}`));
+        const moved = await rename(file, backup).then(() => true, () => false);
+        this.options.hooks.log(new Error(`定时任务文件无法读取${moved ? `，已移至 ${backup}` : ""}：${error instanceof Error ? error.message : String(error)}`));
       }
     }
     const now = this.now();

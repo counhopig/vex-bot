@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { McpBridge } from "../src/tools/mcp.js";
 
 const server = `
@@ -83,7 +84,7 @@ describe("MCP bridge", () => {
     expect(names.filter((name) => name.startsWith("mcp__local__a_b"))).toHaveLength(2);
     const dotted = bridge.getTools().find((tool) => tool.description.startsWith("Dotted"))!;
     expect(dotted.description).toContain("不可信");
-    expect(await bridge.getTools().find((tool) => tool.name.startsWith("mcp__local__echo"))!.execute("1", { text: "hi" })).toMatchObject({ details: {} });
+    expect(await bridge.getTools().find((tool) => tool.name.startsWith("mcp__local__echo"))!.execute("1", { text: "hi" })).toEqual(expect.objectContaining({ details: {}, isError: false }));
   });
 
   it("keeps the connection when the client reports a non-fatal error", async () => {
@@ -96,6 +97,17 @@ describe("MCP bridge", () => {
     expect(connection.connected).toBe(true);
     const echo = bridge.getTools().find((tool) => tool.name.endsWith("__echo"))!;
     expect(await echo.execute("1", { text: "still" })).toMatchObject({ content: [{ type: "text", text: "still" }] });
+  });
+
+  it("reconnects when an HTTP server rejects the session", async () => {
+    const bridge = create({ reconnectDelayMs: 100 });
+    await bridge.start();
+    const connection = (bridge as any).connections[0];
+    const first = connection.client;
+    first.onerror(new StreamableHTTPError(404, "session not found"));
+    expect(connection.connected).toBe(false);
+    await expect.poll(() => connection.connected).toBe(true);
+    expect(connection.client).not.toBe(first);
   });
 
   it("keeps growing the reconnect delay until a connection has stayed up", async () => {
