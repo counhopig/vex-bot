@@ -78,7 +78,7 @@ export function formatNow(now: Date, timeZone: string): string {
     timeZoneName: "longOffset",
   });
   for (const part of formatter.formatToParts(now)) parts[part.type] = part.value;
-  const offset = (parts.timeZoneName ?? "GMT").replace("GMT", "UTC");
+  const offset = (parts.timeZoneName ?? "GMT").replace("GMT", "UTC").replace("UTC+00:00", "UTC");
   const hour = Number(parts.hour);
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${parts.weekday}（${timeZone}，${offset}，${describeTimeOfDay(hour)}）`;
 }
