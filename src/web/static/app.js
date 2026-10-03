@@ -241,8 +241,8 @@ function renderApprovals() {
     head.className = "approval-head";
     const deadline = new Date(request.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     head.textContent = `${request.windowLabel} 请求执行 ${request.toolName}（${deadline} 前未答复将自动拒绝）`;
-    const summary = document.createElement("pre");
-    summary.textContent = request.summary;
+    const detail = document.createElement("pre");
+    detail.textContent = request.detail;
     const actions = document.createElement("div");
     actions.className = "approval-actions";
     for (const [answer, label, cls] of [
@@ -257,7 +257,7 @@ function renderApprovals() {
       button.addEventListener("click", () => send({ type: "approve", id: request.id, answer }));
       actions.append(button);
     }
-    card.append(head, summary, actions);
+    card.append(head, detail, actions);
     box.append(card);
   }
 }

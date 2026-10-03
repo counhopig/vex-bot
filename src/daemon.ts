@@ -52,7 +52,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const getApiKey = (provider: string) => models.getApiKey(provider);
 
   const bus = new EventBus((err) => log.error({ err }, "event listener failed"));
-  const approvals = new ApprovalManager({ onChange: () => bus.emit({ type: "approvals_changed" }) });
+  const approvals = new ApprovalManager({ onChange: () => bus.emit({ type: "approvals_changed" }), workspace: config.workspace });
   const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy });
   const tools = policy.filter(
     createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough }),

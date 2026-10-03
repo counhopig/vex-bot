@@ -234,7 +234,7 @@ describe("Gateway chat", () => {
 
     const asked = await client.waitFor((m) => m.type === "approvals" && m.pending.length === 1);
     if (asked.type !== "approvals") throw new Error("unreachable");
-    expect(asked.pending[0]).toMatchObject({ toolName: "bash", summary: "echo hi", windowLabel: "网页会话「新对话」" });
+    expect(asked.pending[0]).toMatchObject({ toolName: "bash", summary: "echo hi", detail: "echo hi", windowLabel: "网页会话「新对话」" });
 
     client.send({ type: "approve", id: asked.pending[0]!.id, answer: "allow" });
     await client.waitFor((m) => m.type === "event" && m.event.kind === "tool_end" && !m.event.isError);
