@@ -28,6 +28,9 @@ server.setRequestHandler(CallToolRequestSchema, async ({ params }, extra) => {
 await server.connect(new StdioServerTransport());
 `;
 
+const oddNames = server
+  .replace("{ name: 'echo',", "{ name: 'a.b', description: 'Dotted', inputSchema: { type: 'object', properties: {} } },\n { name: 'a_b', inputSchema: { type: 'object', properties: {} } },\n { name: 'x'.repeat(100), inputSchema: { type: 'object', properties: {} } },\n { name: 'echo',");
+
 describe("MCP bridge", () => {
   const bridges: McpBridge[] = [];
   afterEach(async () => { await Promise.all(bridges.splice(0).map((bridge) => bridge.close())); });
@@ -67,6 +70,41 @@ describe("MCP bridge", () => {
     await expect(pending).rejects.toThrow();
     await bridge.close();
     await expect(tool.execute("2", {})).rejects.toThrow("disconnected");
+  });
+
+  it("exposes tool names that satisfy provider limits, with originals kept for calls", async () => {
+    const bridge = new McpBridge({ local: { command: process.execPath, args: ["--input-type=module", "-e", oddNames] } });
+    bridges.push(bridge);
+    await bridge.start();
+    const names = bridge.getTools().map((tool) => tool.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const name of names) expect(name).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(names).toContain("mcp__local__a_b");
+    expect(names.filter((name) => name.startsWith("mcp__local__a_b"))).toHaveLength(2);
+    const dotted = bridge.getTools().find((tool) => tool.description.startsWith("Dotted"))!;
+    expect(dotted.description).toContain("不可信");
+    expect(await bridge.getTools().find((tool) => tool.name.startsWith("mcp__local__echo"))!.execute("1", { text: "hi" })).toMatchObject({ details: {} });
+  });
+
+  it("keeps the connection when the client reports a non-fatal error", async () => {
+    const errors: unknown[] = [];
+    const bridge = create({ onError: (_server, error) => errors.push(error) });
+    await bridge.start();
+    const connection = (bridge as any).connections[0];
+    connection.client.onerror(new Error("stream hiccup"));
+    expect(errors).toHaveLength(1);
+    expect(connection.connected).toBe(true);
+    const echo = bridge.getTools().find((tool) => tool.name.endsWith("__echo"))!;
+    expect(await echo.execute("1", { text: "still" })).toMatchObject({ content: [{ type: "text", text: "still" }] });
+  });
+
+  it("keeps growing the reconnect delay until a connection has stayed up", async () => {
+    const bridge = create({ reconnectDelayMs: 100 });
+    await bridge.start();
+    await bridge.getTools().find((tool) => tool.name.endsWith("__exit"))!.execute("1", {});
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await expect.poll(() => (bridge as any).connections[0].connected).toBe(true);
+    expect((bridge as any).connections[0].attempts).toBe(1);
   });
 
   it("retains known tools while disconnected and reconnects", async () => {

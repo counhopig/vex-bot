@@ -14,12 +14,14 @@ export function builtinSkillsDirectory(): string {
   return existsSync(bundled) ? bundled : fileURLToPath(new URL("../../skills/", import.meta.url));
 }
 
-async function readSkills(directory: string): Promise<SkillInfo[]> {
+type Warn = (message: string) => void;
+
+async function readSkills(directory: string, warn?: Warn): Promise<SkillInfo[]> {
   let entries;
   try { entries = await readdir(directory, { withFileTypes: true }); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`无法读取技能目录 ${directory}：${(error as Error).message}`);
+    return [];
   }
   const skills: SkillInfo[] = [];
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
@@ -28,8 +30,8 @@ async function readSkills(directory: string): Promise<SkillInfo[]> {
     let text: string;
     try { text = await readFile(path, "utf8"); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-      throw error;
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`无法读取技能 ${path}：${(error as Error).message}`);
+      continue;
     }
     const match = text.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
     if (!match?.[1]) continue;
@@ -44,17 +46,19 @@ async function readSkills(directory: string): Promise<SkillInfo[]> {
   return skills;
 }
 
-export async function discoverSkills(options: { workspace: string; builtinDir?: string }): Promise<SkillInfo[]> {
+export async function discoverSkills(options: { workspace: string; builtinDir?: string; warn?: Warn }): Promise<SkillInfo[]> {
   const byName = new Map<string, SkillInfo>();
   for (const directory of [options.builtinDir ?? builtinSkillsDirectory(), join(options.workspace, "skills")]) {
-    for (const skill of await readSkills(directory)) byName.set(skill.name, skill);
+    for (const skill of await readSkills(directory, options.warn)) byName.set(skill.name, skill);
   }
   return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function skillsSection(workspace: string, builtinDir?: string): PromptSection {
+export function skillsSection(workspace: string, builtinDir?: string, warn?: Warn): PromptSection {
   return async () => {
-    const skills = await discoverSkills({ workspace, builtinDir });
+    let skills: SkillInfo[];
+    try { skills = await discoverSkills({ workspace, builtinDir, warn }); }
+    catch (error) { warn?.(`技能发现失败：${(error as Error).message}`); return undefined; }
     if (!skills.length) return undefined;
     return [
       "## Skills",

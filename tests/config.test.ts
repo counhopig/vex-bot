@@ -93,6 +93,11 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${minimal}heartbeat: { every: 30m }\n`, paths)).not.toThrow();
   });
 
+  it("restricts MCP server names to letters, digits and hyphens", () => {
+    expect(() => parseConfig(`${minimal}mcpServers: { "a__b": { url: "http://x" } }\n`, paths)).toThrow(ConfigError);
+    expect(() => parseConfig(`${minimal}mcpServers: { "my-server1": { url: "http://x" } }\n`, paths)).not.toThrow();
+  });
+
   it("reports the failing path for schema errors", () => {
     expect(() => parseConfig("model: { provider: deepseek }\n", paths)).toThrow(/\/model/);
     expect(() => parseConfig(`${minimal}tools: { policy: { bash: maybe } }\n`, paths)).toThrow(/\/tools\/policy\/bash/);

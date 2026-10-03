@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertPublicUrl, createPublicPageRequest, createWebFetchTool, createWebSearchTool, fetchPublicPage, isBlockedAddress, resolvePublicAddresses } from "../src/tools/web.js";
+import { assertPublicUrl, createPublicPageRequest, decodeBody, createWebFetchTool, createWebSearchTool, fetchPublicPage, isBlockedAddress, resolvePublicAddresses } from "../src/tools/web.js";
 
 describe("public webpage access", () => {
-  it.each(["127.0.0.1", "10.0.0.1", "172.20.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "224.0.0.1", "0.0.0.0", "198.18.0.1", "::1", "::", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "2002:7f00:1::", "2001:db8::1"])("blocks %s", (ip) => {
+  it("allows public addresses inside 192.0.0.0/16", () => {
+    expect(isBlockedAddress("192.0.78.9")).toBe(false);
+  });
+  it("decodes bodies with the declared charset and falls back to UTF-8", () => {
+    const gbk = Buffer.from([0xc4, 0xe3, 0xba, 0xc3]);
+    expect(decodeBody(gbk, "text/html; charset=GBK")).toBe("你好");
+    expect(decodeBody(Buffer.from("你好"), "text/html; charset=utf-8")).toBe("你好");
+    expect(decodeBody(Buffer.from("你好"), "text/html; charset=nonsense")).toBe("你好");
+    expect(decodeBody(Buffer.from("你好"))).toBe("你好");
+  });
+  it.each(["127.0.0.1", "10.0.0.1", "172.20.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "224.0.0.1", "0.0.0.0", "198.18.0.1", "192.0.0.1", "192.0.2.1", "::1", "::", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1", "2002:7f00:1::", "2001:db8::1"])("blocks %s", (ip) => {
     expect(isBlockedAddress(ip)).toBe(true);
   });
   it.each(["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111"])("allows %s", (ip) => {

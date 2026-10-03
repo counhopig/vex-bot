@@ -64,10 +64,10 @@ export const ConfigSchema = Type.Object({
     })),
   })),
   webSearch: Type.Optional(Type.Object({ provider: Type.Literal("brave"), apiKey: Type.Optional(Type.String()) })),
-  mcpServers: Type.Optional(Type.Record(Type.String(), Type.Union([
+  mcpServers: Type.Optional(Type.Record(Type.String({ pattern: "^[A-Za-z0-9-]+$" }), Type.Union([
     Type.Object({ command: Type.String({ minLength: 1 }), args: Type.Optional(Type.Array(Type.String())), env: Type.Optional(Type.Record(Type.String(), Type.String())), cwd: Type.Optional(Type.String()) }),
     Type.Object({ url: Type.String({ minLength: 1 }), headers: Type.Optional(Type.Record(Type.String(), Type.String())) }),
-  ]))),
+  ]), { additionalProperties: false })),
   wechat: Type.Optional(
     Type.Object({
       enabled: Type.Optional(Type.Boolean()),
