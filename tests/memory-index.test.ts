@@ -61,6 +61,47 @@ describe("memory retrieval index", () => {
     await writeFile(file, JSON.stringify({ role: "user", content: "第三条记忆" }) + "\n"); await db.sync();
     expect(db.search("第一")).toHaveLength(0); expect(db.search("第三")).toHaveLength(1);
   });
+  it("reads only appended bytes and re-indexes a rewritten file", async () => {
+    const file = join(root, "sessions/wechat.jsonl");
+    const first = JSON.stringify({ role: "user", content: `第一条记忆${"填".repeat(6000)}` }) + "\n";
+    await writeFile(file, first);
+    const db = await open();
+    await writeFile(file, first.replace("第一条记忆", "另一条记忆"));
+    await appendFile(file, JSON.stringify({ role: "user", content: "第二条记忆" }) + "\n");
+    await db.sync();
+    expect(db.search("第一")).toHaveLength(1);
+    expect(db.search("第二")).toHaveLength(1);
+    await writeFile(file, JSON.stringify({ role: "user", content: `全新内容${"换".repeat(9000)}` }) + "\n"); await db.sync();
+    expect(db.search("第一")).toHaveLength(0);
+    expect(db.search("全新")).toHaveLength(1);
+  });
+  it("excludes temporary run sessions and marked synthetic messages", async () => {
+    await mkdir(join(root, "sessions/runs"), { recursive: true });
+    await writeFile(join(root, "sessions/runs/job.jsonl"), JSON.stringify({ role: "user", content: "临时会话内容" }) + "\n");
+    await writeFile(join(root, "sessions/wechat.jsonl"), [{ role: "user", content: "心跳触发内容", vexSource: "心跳" }, { role: "user", content: "正常对话内容" }].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const db = await open();
+    expect(db.search("临时会话")).toHaveLength(0);
+    expect(db.search("心跳触发")).toHaveLength(0);
+    expect(db.search("正常对话")).toHaveLength(1);
+  });
+  it("waits for an in-flight sync before closing", async () => {
+    await writeFile(join(root, "workspace/MEMORY.md"), "喜欢茶叶");
+    const db = await open();
+    await writeFile(join(root, "workspace/MEMORY.md"), "喜欢咖啡");
+    const pending = db.sync();
+    await db.close();
+    await expect(pending).resolves.toBeUndefined();
+    index = undefined;
+  });
+  it("returns snippets of about 300 characters around the match", async () => {
+    await writeFile(join(root, "workspace/MEMORY.md"), `${"前文".repeat(400)}关键线索${"后文".repeat(400)}`);
+    const db = await open();
+    const result = await createMemorySearchTool(db).execute("call", { query: "关键线索", scope: "memory" });
+    const [hit] = result.details.results;
+    expect(hit!.text).toContain("关键线索");
+    expect(hit!.text.length).toBeLessThanOrEqual(310);
+    expect(JSON.stringify(result.content)).not.toContain("前文".repeat(150));
+  });
   it("rebuilds a corrupt database from source files", async () => {
     await writeFile(join(root, "index.sqlite"), "not a database");
     await writeFile(join(root, "workspace/USER.md"), "主人喜欢音乐");
