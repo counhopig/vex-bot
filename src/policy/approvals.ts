@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { summarizeArgs } from "../tools/summary.js";
+import { approvalDetail, summarizeArgs } from "../tools/summary.js";
 
 export type ApprovalAnswer = "allow" | "allow_session" | "deny";
 
@@ -9,6 +9,7 @@ export interface ApprovalRequest {
   windowLabel: string;
   toolName: string;
   summary: string;
+  detail: string;
   createdAt: number;
   expiresAt: number;
 }
@@ -31,11 +32,13 @@ export class ApprovalManager {
   private readonly timeoutMs: number;
   private readonly now: () => number;
   private readonly onChange: () => void;
+  private readonly workspace: string | undefined;
 
-  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void } = {}) {
+  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string } = {}) {
     this.timeoutMs = opts.timeoutMs ?? 10 * 60_000;
     this.now = opts.now ?? Date.now;
     this.onChange = opts.onChange ?? (() => {});
+    this.workspace = opts.workspace;
   }
 
   request(input: {
@@ -53,6 +56,7 @@ export class ApprovalManager {
       windowLabel: input.windowLabel,
       toolName: input.toolName,
       summary: summarizeArgs(input.toolName, input.args),
+      detail: approvalDetail(input.toolName, input.args, this.workspace),
       createdAt,
       expiresAt: createdAt + this.timeoutMs,
     };
