@@ -44,6 +44,8 @@ docker compose up -d
 docker compose logs -f
 ```
 
+The commands use the Compose plugin (`docker compose`). With the standalone binary, use `docker-compose` instead.
+
 Without compose:
 
 ```bash
