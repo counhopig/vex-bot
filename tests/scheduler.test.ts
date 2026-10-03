@@ -77,10 +77,14 @@ describe("scheduler", () => {
   });
   it("skips blank heartbeats, silences OK and delivers useful results", async () => {
     const f = await fixture(); await f.scheduler.start();
-    await writeFile(join(f.workspace, "HEARTBEAT.md"), " \n"); f.advance(30 * 60_000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.runTemporary).not.toHaveBeenCalled();
-    await writeFile(join(f.workspace, "HEARTBEAT.md"), "检查今天日程"); f.advance(30 * 60_000); await f.scheduler.tick(); await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledTimes(1)); await f.flush(); expect(f.hooks.deliverHeartbeat).not.toHaveBeenCalled();
-    vi.mocked(f.hooks.runTemporary).mockResolvedValue("今天有预约"); f.advance(30 * 60_000); await f.scheduler.tick(); await vi.waitFor(() => expect(f.hooks.deliverHeartbeat).toHaveBeenCalledWith("今天有预约", expect.any(AbortSignal)));
-    f.advance(10 * 3_600_000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.runTemporary).toHaveBeenCalledTimes(2);
+    const settle = () => Promise.allSettled([...(f.scheduler as any).running.values()]);
+    const beat = async () => { f.advance(30 * 60_000); await f.scheduler.tick(); await settle(); };
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), " \n"); await beat(); expect(f.hooks.runTemporary).not.toHaveBeenCalled();
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), "检查今天日程"); await beat();
+    expect(f.hooks.runTemporary).toHaveBeenCalledTimes(1); expect(f.hooks.deliverHeartbeat).not.toHaveBeenCalled();
+    vi.mocked(f.hooks.runTemporary).mockResolvedValue("今天有预约"); await beat();
+    expect(f.hooks.deliverHeartbeat).toHaveBeenCalledWith("今天有预约", expect.any(AbortSignal));
+    f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runTemporary).toHaveBeenCalledTimes(2);
   });
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {
     const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick(); await f.flush();
