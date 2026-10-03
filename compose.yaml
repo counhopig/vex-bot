@@ -6,7 +6,6 @@ services:
       - "127.0.0.1:7860:7860"
     environment:
       TZ: Asia/Shanghai
-      VEX_WEB_TOKEN: ${VEX_WEB_TOKEN:?请在 .env 中设置 VEX_WEB_TOKEN}
     volumes:
       - vex-data:/data
 

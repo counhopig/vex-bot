@@ -80,7 +80,7 @@ describe("runWeChatLogin", () => {
     expect(await store.loadCredentials()).toEqual({ token: "tok", accountId: "bot1", baseUrl: "https://api2.example", userId: "owner1" });
     expect((await stat(store.credentialsFile)).mode & 0o777).toBe(0o600);
     expect(output).toContain("已绑定微信，主人是扫码的这个微信号（owner1）。");
-    expect(output.at(-1)).toBe("重启 vexd 后生效：vex stop && vex start -d");
+    expect(output.at(-1)).toBe("vexd 运行中会在几秒内自动接入。");
   });
 
   it("stores a login base URL only when it is https", async () => {

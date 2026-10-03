@@ -35,16 +35,15 @@ Images are published to `ghcr.io/counhopig/vex-bot` for `linux/amd64` and `linux
 Deploy with the repository's `compose.yaml`:
 
 ```bash
-echo "VEX_WEB_TOKEN=$(openssl rand -hex 24)" > .env
 docker compose run --rm vex onboard
 docker compose up -d
 docker compose logs -f
 ```
 
-WebChat listens on `http://127.0.0.1:7860` and asks for the token. To link WeChat, run `docker compose run --rm vex wechat login`, then `docker compose restart`.
+`onboard` asks for the model and API key and prints the WebChat access token. WebChat listens on `http://127.0.0.1:7860`. While WeChat is unlinked or its session has expired, `vexd` prints a QR code to its output: scan it from `docker compose logs -f`, and it connects without a restart. `docker compose run --rm vex wechat login` links from another terminal and is picked up the same way. Set `wechat.enabled: false` to turn WeChat off.
 
 - Data lives in the `vex-data` volume, mounted at `/data` (`VEX_HOME`). Back it up with the volume itself.
-- `VEX_WEB_HOST` (set to `0.0.0.0` in the image) and `VEX_WEB_TOKEN` override `web.host` and `web.token` from `config.yaml`. The compose file publishes the port on the loopback interface only; put a TLS reverse proxy in front for remote access.
+- `VEX_WEB_HOST` (set to `0.0.0.0` in the image) and `VEX_WEB_TOKEN` (optional) override `web.host` and `web.token` from `config.yaml`. The compose file publishes the port on the loopback interface only; put a TLS reverse proxy in front for remote access.
 - `TZ` in `compose.yaml` sets the time zone used by cron schedules, rest hours, and heartbeat hours.
 - Update with `docker compose pull && docker compose up -d`. Build locally with `docker build -t vex-bot .` and point `image` at that tag.
 - Release: `git tag v3.0.0 && git push origin v3.0.0` runs the tests and publishes the versioned image.
@@ -59,7 +58,7 @@ WebChat listens on `http://127.0.0.1:7860` and asks for the token. To link WeCha
 | `vex stop` | Stop the daemon |
 | `vex status` | Show running status |
 | `vex logs [-f]` | Show logs; `-f` follows new output |
-| `vex wechat login` | Link WeChat by QR code; restart to apply |
+| `vex wechat login` | Link WeChat by QR code; a running daemon connects automatically (it also shows a QR code itself while WeChat is unlinked or expired) |
 
 WeChat commands:
 

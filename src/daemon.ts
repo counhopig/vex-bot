@@ -2,7 +2,7 @@ import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { startWeChatChannel } from "./channels/wechat/setup.js";
+import { runWeChat, type WeChatRuntime } from "./channels/wechat/setup.js";
 import { ConfigError, saveConfigText } from "./config/load.js";
 import type { VexConfig } from "./config/schema.js";
 import {
@@ -36,7 +36,6 @@ import { McpBridge } from "./tools/mcp.js";
 import { createDelegateTool } from "./tools/delegate.js";
 import { skillsSection } from "./skills/index.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { WeChatChannel } from "./channels/wechat/channel.js";
 
 export interface DaemonOptions {
   paths: VexPaths;
@@ -75,7 +74,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const persona = await Persona.open({ path: join(paths.home, "state", "mood.json"), sleep: config.persona?.sleep,
     outreach: config.persona?.outreach, warn: (message) => log.warn(message) });
   let scheduler: Scheduler;
-  let wechat: WeChatChannel | undefined;
+  let wechatRuntime: WeChatRuntime | undefined;
   let wechatInbound = 0;
   const live = new Map<Session, () => AgentTool<any>[]>();
   const mcp = new McpBridge(config.mcpServers ?? {}, {
@@ -176,9 +175,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       },
       deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); await (await sessions.get("wechat")).injectAssistant(text, signal); },
       checkOutreach: async (signal) => {
+        const wechat = wechatRuntime?.channel;
         if (!wechat?.available) return;
         const session = await sessions.get("wechat");
-        if (!wechat?.available || !persona.shouldOutreach(!session.busy)) { await persona.save(); return; }
+        if (!wechat.available || !persona.shouldOutreach(!session.busy)) { await persona.save(); return; }
         const inboundBefore = wechatInbound;
         signal.throwIfAborted();
         const abort = () => session.stop();
@@ -203,11 +203,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
   startupCleanup.push(() => gateway.stop());
   const { port } = await gateway.start();
-  wechat = await startWeChatChannel({ config, paths, sessions, approvals, bus, log }).catch((err: unknown) => {
-    log.error({ err }, "wechat failed to start; running without wechat");
-    return undefined;
-  });
-  startupCleanup.push(() => wechat?.stop());
+  wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log });
+  startupCleanup.push(() => wechatRuntime?.stop());
   startupCleanup.push(() => scheduler.close());
   await scheduler.start();
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
@@ -227,7 +224,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     port,
     async stop() {
       await step("scheduler", () => scheduler.close());
-      await step("wechat", () => wechat?.stop());
+      await step("wechat", () => wechatRuntime?.stop());
       await step("sessions", () => sessions.shutdown());
       await step("approvals", () => approvals.dispose());
       await step("MCP", () => mcp.close());
