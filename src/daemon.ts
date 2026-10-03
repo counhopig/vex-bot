@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { startWeChatChannel } from "./channels/wechat/setup.js";
 import { ConfigError, saveConfigText } from "./config/load.js";
 import type { VexConfig } from "./config/schema.js";
 import {
@@ -99,6 +100,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     log,
   });
   const { port } = await gateway.start();
+  const wechat = await startWeChatChannel({ config, paths, sessions, approvals, bus, log });
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;
   log.info({ url, model: `${model.provider}/${model.id}` }, "vexd started");
@@ -115,6 +117,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     url,
     port,
     async stop() {
+      await step("wechat", () => wechat?.stop());
       await step("sessions", () => sessions.shutdown());
       await step("approvals", () => approvals.dispose());
       await step("gateway", () => gateway.stop());
