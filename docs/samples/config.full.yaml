@@ -1,0 +1,88 @@
+# Every setting with its default or an example value. Delete what you do not need.
+
+# Primary conversation model. thinking: off | minimal | low | medium | high | xhigh | max
+model:
+  provider: deepseek
+  id: deepseek-v4-pro
+  thinking: off
+
+# Titles, compaction summaries, heartbeats and memory consolidation. Defaults to `model`.
+backgroundModel:
+  provider: deepseek
+  id: deepseek-v4-flash
+
+providers:
+  # Built-in provider: only the key is needed (or the provider's environment variable).
+  deepseek:
+    apiKey: "YOUR_DEEPSEEK_API_KEY"
+  # Custom OpenAI- or Anthropic-compatible endpoint.
+  custom:
+    api: openai-completions        # openai-completions | anthropic-messages
+    baseUrl: "https://example.com/v1"
+    apiKey: "YOUR_API_KEY"
+    models:                        # when listed, only these ids are accepted
+      - id: your-model
+        contextWindow: 32000
+        maxTokens: 4096
+        reasoning: false
+        input: [text, image]
+
+# WebChat. A non-loopback host requires a token.
+web:
+  host: 127.0.0.1
+  port: 7860
+  token: ""
+
+# Working directory of the agent; holds SOUL.md, USER.md, MEMORY.md, HEARTBEAT.md, memory/ and skills/.
+workspace: ~/.vex/workspace
+
+wechat:
+  enabled: true
+  # ownerId: "xxx@im.wechat"       # defaults to the account that scanned the QR code
+  baseUrl: https://ilinkai.weixin.qq.com
+
+# allow | ask | deny, by tool name. An MCP server name (mcp__<server>) covers all of its tools.
+tools:
+  policy:
+    bash: ask
+    mcp__remote: ask
+
+# Environment variables that shell commands may inherit, in addition to the built-in allowlist.
+bashEnvPassthrough: []
+
+# Context compaction starts when history exceeds this share of the model's context window.
+compaction:
+  threshold: 0.7
+
+memory:
+  consolidateAt: "03:00"
+
+# Runs HEARTBEAT.md inside activeHours. An empty HEARTBEAT.md skips the model call.
+heartbeat:
+  every: 30m                       # s | m | h | d
+  activeHours: ["08:00", "22:00"]
+
+persona:
+  sleep: ["23:00", "07:00"]        # rest hours; may cross midnight
+  outreach:
+    enabled: true
+    checkEvery: 30m
+    socialThreshold: 70            # 0-100
+    quietHours: 3                  # hours since the owner's last WeChat message
+    dailyLimit: 3
+
+webSearch:
+  provider: brave
+  apiKey: "YOUR_BRAVE_SEARCH_API_KEY"   # or set BRAVE_API_KEY
+
+# Server names: letters, digits and hyphens, up to 32 characters.
+mcpServers:
+  local:
+    command: node
+    args: ["/absolute/path/to/mcp-server.js"]
+    env: {}
+    cwd: /absolute/path
+  remote:
+    url: "https://example.com/mcp"
+    headers:
+      Authorization: "Bearer YOUR_TOKEN"

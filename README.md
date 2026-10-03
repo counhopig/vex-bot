@@ -28,6 +28,13 @@ The onboarding wizard asks for a provider, model, API key, and web port. It can 
 
 Optionally run `npm link` to use `vex` instead of `node dist/cli/index.js`.
 
+## Documentation
+
+- [Architecture](docs/architecture.md): components, sessions, memory, mood, scheduler, security.
+- [Configuration](docs/configuration.md): every setting, environment variables, workspace files, skills.
+- [Deployment and operations](docs/operations.md): source and Docker deployment, WeChat linking, data directory, troubleshooting.
+- [Samples](docs/samples/): minimal and full `config.yaml`, a heartbeat checklist and a skill.
+
 ## Docker
 
 Images are published to `ghcr.io/counhopig/vex-bot` and, when the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token) are set, to `<DOCKERHUB_USERNAME>/vex-bot` on Docker Hub, for `linux/amd64` and `linux/arm64`: `latest` and `sha-*` tags on every push to `main`, and `X.Y.Z` / `X.Y` tags when a `vX.Y.Z` tag is pushed. A new GHCR package is private until its visibility is changed under the package settings.
