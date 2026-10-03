@@ -61,6 +61,22 @@ describe("runOnboard", () => {
     }
   });
 
+  it("finishes onboarding when the WeChat login fails", async () => {
+    const ilink = new FakeIlink();
+    await ilink.start();
+    try {
+      ilink.on("/ilink/bot/get_bot_qrcode", () => ({ qrcode: "q1", qrcode_img_content: "https://login.example/q1" }));
+      ilink.on("/ilink/bot/get_qrcode_status", () => ({ status: "cancel" }));
+      const io = scripted(["1", "1", "sk-test", "", "y"]);
+      expect(await runOnboard(io, paths, { force: false, login: { baseUrl: ilink.baseUrl, pollIntervalMs: 1 } })).toBe(true);
+      expect(await new WeChatStore(paths.wechat).loadCredentials()).toBeUndefined();
+      expect(io.output).toContain("微信绑定没有完成：已在手机上取消登录。之后可以运行 vex wechat login 重试");
+      expect(io.output.at(-1)).toBe("运行 vex start 启动");
+    } finally {
+      await ilink.stop();
+    }
+  });
+
   it("configures a custom provider", async () => {
     const io = scripted(["8", "stepfun", "1", "https://api.stepfun.com/v1", "step-2-16k", "", "abc", "8000", "n"]);
     expect(await runOnboard(io, paths, { force: false })).toBe(true);
