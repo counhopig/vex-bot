@@ -104,6 +104,19 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 `ask` publishes a request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y` (allow), `/ya` (always allow for that tool in the session), `/n` (deny) on WeChat, which answer the oldest pending request. Requests unanswered after ten minutes are denied. Scheduled turns, heartbeat, consolidation and sub-agents use the same flow; consolidation may only touch workspace files.
 
+### Link reading
+
+The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run through `bash`) picks a platform from a link, or from a whole pasted share text, and reads it through that platform's public endpoints. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch` (the script reuses `fetchPublicPage`).
+
+| Platform | Metadata | Text |
+|---|---|---|
+| Bilibili | title, author, duration, description, cover (signed `wbi` API; `b23.tv` short links resolved) | Subtitles; AI subtitles usually need `links.bilibili.sessdata` |
+| YouTube | title, author, duration, description (innertube player API) | Captions, preferring the owner's language and manual tracks over automatic ones |
+| Douyin | caption, author, duration, counts (public share page; short links resolved) | None: the caption is the only text |
+| Xiaohongshu | title, author, tags, counts (share page state; short links resolved) | The note body |
+
+Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000. Audio is never transcribed, so a video without subtitles yields metadata only.
+
 ## Memory
 
 - Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`.

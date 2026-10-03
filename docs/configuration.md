@@ -42,6 +42,7 @@ Samples (`docs/samples/`):
 | `persona.outreach.quietHours` | `3` | Hours without an owner message |
 | `persona.outreach.dailyLimit` | `3` | Proactive conversations per day |
 | `webSearch.provider`, `webSearch.apiKey` | none | `brave`; the key may come from `BRAVE_API_KEY` |
+| `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
 Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
@@ -96,9 +97,18 @@ Templates for the first four are created on first start.
 
 ## Skills
 
-A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`); a workspace skill with the same name overrides a built-in one. Vex reads the body with `read` and runs scripts with `bash`, which follows the approval policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
+A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads the body with `read` and runs scripts with `bash`, which follows the approval policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
+
+## Reading share links
+
+Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin or Xiaohongshu, and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
+
+- Videos are not transcribed. Without subtitles you get title, author, duration and description only; Douyin videos never have text beyond their caption.
+- Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
+- Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
+- Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.
 
 ## Scheduled messages
 
