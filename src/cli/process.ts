@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
 import { readFile, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { writeFileAtomic } from "../store/atomic.js";
@@ -14,14 +13,13 @@ interface ProcessIdentity {
 
 interface PidRecord {
   pid: number;
-  cliPath: string;
   identity: ProcessIdentity;
 }
 
-export async function readPid(file: string, cliPath?: string): Promise<number | undefined> {
+export async function readPid(file: string): Promise<number | undefined> {
   try {
     const record: unknown = JSON.parse(await readFile(file, "utf8"));
-    if (!isPidRecord(record) || (cliPath !== undefined && record.cliPath !== resolve(cliPath))) return undefined;
+    if (!isPidRecord(record)) return undefined;
     const current = await processIdentity(record.pid);
     return current?.startTime === record.identity.startTime && current.command === record.identity.command
       ? record.pid
@@ -31,10 +29,10 @@ export async function readPid(file: string, cliPath?: string): Promise<number | 
   }
 }
 
-export async function writePid(file: string, pid: number, cliPath = process.argv[1] ?? process.execPath): Promise<void> {
+export async function writePid(file: string, pid: number): Promise<void> {
   const identity = await processIdentity(pid);
   if (!identity) throw new Error(`无法验证进程身份（pid ${pid}）`);
-  await writeFileAtomic(file, `${JSON.stringify({ pid, cliPath: resolve(cliPath), identity })}\n`);
+  await writeFileAtomic(file, `${JSON.stringify({ pid, identity })}\n`);
 }
 
 async function processIdentity(pid: number): Promise<ProcessIdentity | undefined> {
@@ -60,7 +58,7 @@ async function processIdentity(pid: number): Promise<ProcessIdentity | undefined
 function isPidRecord(value: unknown): value is PidRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<PidRecord>;
-  return Number.isInteger(record.pid) && (record.pid ?? 0) > 0 && typeof record.cliPath === "string" &&
+  return Number.isInteger(record.pid) && (record.pid ?? 0) > 0 &&
     typeof record.identity?.startTime === "string" && typeof record.identity.command === "string";
 }
 

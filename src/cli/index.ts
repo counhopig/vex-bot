@@ -20,7 +20,6 @@ const USAGE = [
   "  logs [-f]           查看日志（-f 持续输出）",
   "  onboard [--force]   生成初始配置",
 ].join("\n");
-const CLI_PATH = fileURLToPath(import.meta.url);
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -49,7 +48,7 @@ async function main(argv: string[]): Promise<number> {
 }
 
 async function runningPid(paths: VexPaths): Promise<number | undefined> {
-  const pid = await readPid(paths.pidFile, CLI_PATH);
+  const pid = await readPid(paths.pidFile);
   return pid !== undefined && isAlive(pid) ? pid : undefined;
 }
 
@@ -62,13 +61,17 @@ async function startForeground(paths: VexPaths): Promise<number> {
   }
   const log = createLogger({ file: paths.logFile });
   const daemon = await startDaemon({ paths, config, log });
-  await writePid(paths.pidFile, process.pid, CLI_PATH);
+  await writePid(paths.pidFile, process.pid);
   console.log(`vexd 已启动：${daemon.url}`);
   return new Promise((resolve) => {
+    let stopping = false;
     const shutdown = () => {
+      if (stopping) return;
+      stopping = true;
       void daemon
         .stop()
         .then(() => removePid(paths.pidFile))
+        .catch((err: unknown) => log.error({ err }, "shutdown failed"))
         .finally(() => {
           log.flush();
           resolve(0);
