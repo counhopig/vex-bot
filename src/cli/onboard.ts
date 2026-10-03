@@ -3,7 +3,9 @@ import { getBuiltinModels, getBuiltinProviders, type BuiltinProvider } from "@ea
 import { stringify } from "yaml";
 import { loadConfig, saveConfigText } from "../config/load.js";
 import type { VexPaths } from "../paths.js";
+import type { LoginOptions } from "../channels/wechat/login.js";
 import { ensureWorkspace } from "../workspace/workspace.js";
+import { runWeChatLogin } from "./wechat.js";
 
 export interface OnboardIO {
   ask(question: string): Promise<string>;
@@ -20,7 +22,11 @@ const FEATURED_PROVIDERS = [
   "openrouter",
 ];
 
-export async function runOnboard(io: OnboardIO, paths: VexPaths, opts: { force: boolean }): Promise<boolean> {
+export async function runOnboard(
+  io: OnboardIO,
+  paths: VexPaths,
+  opts: { force: boolean; login?: LoginOptions & { baseUrl?: string } },
+): Promise<boolean> {
   if (!opts.force && (await exists(paths.config))) {
     io.print(`配置文件已存在：${paths.config}（使用 --force 覆盖）`);
     return false;
@@ -64,6 +70,12 @@ export async function runOnboard(io: OnboardIO, paths: VexPaths, opts: { force: 
   await ensureWorkspace(config.workspace);
   io.print(`已写入 ${paths.config}`);
   io.print(`工作区：${config.workspace}`);
+  const linkNow = (await io.ask("现在扫码绑定微信吗？（y/N）：")).trim().toLowerCase();
+  if (linkNow === "y" || linkNow === "yes") {
+    await runWeChatLogin((text) => io.print(text), paths, { ...opts.login, restartHint: false });
+  } else {
+    io.print("之后可以运行 vex wechat login 扫码绑定微信");
+  }
   io.print("运行 vex start 启动");
   return true;
 }

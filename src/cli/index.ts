@@ -11,6 +11,7 @@ import { createLogger } from "../logger.js";
 import { resolvePaths, type VexPaths } from "../paths.js";
 import { runOnboard } from "./onboard.js";
 import { isAlive, readPid, removePid, tailLines, waitUntil, writePid } from "./process.js";
+import { runWeChatLogin } from "./wechat.js";
 
 const USAGE = [
   "用法：vex <命令>",
@@ -19,6 +20,7 @@ const USAGE = [
   "  status              查看运行状态",
   "  logs [-f]           查看日志（-f 持续输出）",
   "  onboard [--force]   生成初始配置",
+  "  wechat login        扫码绑定微信",
 ].join("\n");
 
 async function main(argv: string[]): Promise<number> {
@@ -41,6 +43,13 @@ async function main(argv: string[]): Promise<number> {
       const { values } = parseArgs({ args: rest, options: { force: { type: "boolean" } } });
       return onboard(paths, values.force ?? false);
     }
+    case "wechat":
+      if (rest[0] === "login") {
+        await runWeChatLogin((text) => console.log(text), paths);
+        return 0;
+      }
+      console.log(USAGE);
+      return 1;
     default:
       console.log(USAGE);
       return command ? 1 : 0;

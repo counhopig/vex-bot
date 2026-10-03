@@ -2,9 +2,11 @@ import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { WeChatStore } from "../src/channels/wechat/store.js";
 import { runOnboard, type OnboardIO } from "../src/cli/onboard.js";
 import { loadConfig } from "../src/config/load.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
+import { FakeIlink } from "./helpers/ilink.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -31,7 +33,7 @@ function scripted(answers: string[]): OnboardIO & { output: string[] } {
 
 describe("runOnboard", () => {
   it("configures a built-in provider", async () => {
-    const io = scripted(["9", "1", "1", "", "sk-test", ""]);
+    const io = scripted(["9", "1", "1", "", "sk-test", "", ""]);
     expect(await runOnboard(io, paths, { force: false })).toBe(true);
     const { config } = await loadConfig(paths);
     expect(config.model).toEqual({ provider: "deepseek", id: getBuiltinModels("deepseek")[0]!.id });
@@ -42,8 +44,25 @@ describe("runOnboard", () => {
     expect(io.output).toContain("API key 不能为空");
   });
 
+  it("links WeChat right away when asked", async () => {
+    const ilink = new FakeIlink();
+    await ilink.start();
+    try {
+      ilink.on("/ilink/bot/get_bot_qrcode", () => ({ qrcode: "q1", qrcode_img_content: "https://login.example/q1" }));
+      ilink.on("/ilink/bot/get_qrcode_status", () => ({ status: "confirmed", bot_token: "tok", ilink_bot_id: "bot1", ilink_user_id: "owner1" }));
+      const io = scripted(["1", "1", "sk-test", "", "y"]);
+      expect(await runOnboard(io, paths, { force: false, login: { baseUrl: ilink.baseUrl, pollIntervalMs: 1 } })).toBe(true);
+      expect((await new WeChatStore(paths.wechat).loadCredentials())?.userId).toBe("owner1");
+      expect(io.output).toContain("已绑定微信，主人是扫码的这个微信号（owner1）。");
+      expect(io.output.at(-1)).toBe("运行 vex start 启动");
+      expect(io.output.some((line) => line.includes("重启 vexd"))).toBe(false);
+    } finally {
+      await ilink.stop();
+    }
+  });
+
   it("configures a custom provider", async () => {
-    const io = scripted(["8", "stepfun", "1", "https://api.stepfun.com/v1", "step-2-16k", "", "abc", "8000"]);
+    const io = scripted(["8", "stepfun", "1", "https://api.stepfun.com/v1", "step-2-16k", "", "abc", "8000", "n"]);
     expect(await runOnboard(io, paths, { force: false })).toBe(true);
     const { config } = await loadConfig(paths);
     expect(config.model).toEqual({ provider: "stepfun", id: "step-2-16k" });
