@@ -72,7 +72,11 @@ export async function runOnboard(
   io.print(`工作区：${config.workspace}`);
   const linkNow = (await io.ask("现在扫码绑定微信吗？（y/N）：")).trim().toLowerCase();
   if (linkNow === "y" || linkNow === "yes") {
-    await runWeChatLogin((text) => io.print(text), paths, { ...opts.login, restartHint: false });
+    try {
+      await runWeChatLogin((text) => io.print(text), paths, { ...opts.login, restartHint: false });
+    } catch (err) {
+      io.print(`微信绑定没有完成：${err instanceof Error ? err.message : String(err)}。之后可以运行 vex wechat login 重试`);
+    }
   } else {
     io.print("之后可以运行 vex wechat login 扫码绑定微信");
   }
