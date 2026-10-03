@@ -175,4 +175,30 @@ describe("Session", () => {
     expect(faux.getPendingResponseCount()).toBe(0);
     expect(session.history().items.map((i) => i.kind)).toEqual(["user"]);
   });
+
+  it("runs a message sent after stop as its own turn", async () => {
+    faux = createFaux(20);
+    faux.setResponses([fauxAssistantMessage("long ".repeat(80)), (ctx) => fauxAssistantMessage(`回应：${lastUserText(ctx)}`)]);
+    const session = await open();
+    session.send("go");
+    await new Promise((r) => setTimeout(r, 200));
+    session.stop();
+    session.send("after");
+    while (session.busy) await session.whenIdle();
+    expect(events.filter((e) => e.kind === "assistant_message").at(-1)).toMatchObject({ text: "回应：after", stopReason: "stop" });
+    expect(events.filter((e) => e.kind === "user_message").map((e) => (e as { text: string }).text)).toEqual(["go", "after"]);
+  });
+
+  it("does not wait out the retry backoff after stop", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom" }), fauxAssistantMessage("never")]);
+    const session = await open({ retry: { attempts: 3, baseDelayMs: 5000 } });
+    session.send("go");
+    await new Promise((r) => setTimeout(r, 100));
+    const started = Date.now();
+    session.stop();
+    await session.whenIdle();
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(faux.getPendingResponseCount()).toBe(1);
+  });
 });
