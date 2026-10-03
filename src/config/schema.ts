@@ -47,6 +47,13 @@ export const ConfigSchema = Type.Object({
   workspace: Type.Optional(Type.String({ minLength: 1 })),
   tools: Type.Optional(Type.Object({ policy: Type.Optional(Type.Record(Type.String(), DecisionSchema)) })),
   bashEnvPassthrough: Type.Optional(Type.Array(Type.String())),
+  wechat: Type.Optional(
+    Type.Object({
+      enabled: Type.Optional(Type.Boolean()),
+      ownerId: Type.Optional(Type.String({ minLength: 1 })),
+      baseUrl: Type.Optional(Type.String({ minLength: 1 })),
+    }),
+  ),
 });
 
 export type Decision = Static<typeof DecisionSchema>;
@@ -63,4 +70,7 @@ export interface VexConfig {
   workspace: string;
   toolPolicy: Record<string, Decision>;
   bashEnvPassthrough: string[];
+  wechat: { enabled: boolean; ownerId?: string; baseUrl: string };
 }
+
+export const DEFAULT_WECHAT_BASE_URL = "https://ilinkai.weixin.qq.com";
