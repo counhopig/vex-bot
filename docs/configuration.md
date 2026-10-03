@@ -42,6 +42,11 @@ Samples (`docs/samples/`):
 | `persona.outreach.quietHours` | `3` | Hours without an owner message |
 | `persona.outreach.dailyLimit` | `3` | Proactive conversations per day |
 | `webSearch.provider`, `webSearch.apiKey` | none | `brave`; the key may come from `BRAVE_API_KEY` |
+| `stt.baseUrl`, `stt.model` | none | Speech-to-text service: an OpenAI-compatible API root (for example `https://api.openai.com/v1`) and a model name. Both are required to enable it |
+| `stt.apiKey` | none | Bearer token for the service; omit for a local service |
+| `stt.language` | auto | Language hint such as `zh` |
+| `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30); lower it for services with small upload limits |
+| `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
@@ -101,11 +106,25 @@ A skill is a directory with `SKILL.md` and optional scripts. Frontmatter require
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
 
+## Speech to text
+
+`stt` points Vex at any service that implements the OpenAI transcription API (`POST <baseUrl>/audio/transcriptions` with `file` and `model`), such as OpenAI Whisper, Groq, SiliconFlow's SenseVoice, or a self-hosted faster-whisper server:
+
+```yaml
+stt:
+  baseUrl: "https://api.openai.com/v1"
+  model: whisper-1
+  apiKey: "YOUR_API_KEY"
+  language: zh
+```
+
+The `link-reader` skill uses it for Bilibili and YouTube videos that have no subtitles. Transcribing needs `ffmpeg` on the `PATH`, and for YouTube also `yt-dlp` plus Node.js (the Docker image has all three; for a source install add `ffmpeg` and `yt-dlp`, and update `yt-dlp` when YouTube changes). A long video takes minutes (download, re-encoding, service time), so the agent runs the skill with the shell tool's longest timeout. Audio is sent to the configured service; choose one you trust with the content.
+
 ## Reading share links
 
 Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin or Xiaohongshu, and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
 
-- Videos are not transcribed. Without subtitles you get title, author, duration and description only; Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
+- A Bilibili or YouTube video without subtitles is transcribed only when `stt` is set (see below); otherwise you get title, author, duration and description only. Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
 - Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
 - Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.

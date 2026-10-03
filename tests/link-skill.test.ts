@@ -216,3 +216,96 @@ describe("summaries", () => {
     expect(raw).toContain("已截断，共 35000 字");
   });
 });
+
+const { transcribeFile, transcribeVideo } = await skill("stt.mjs");
+const stt = { baseUrl: "https://stt.example/v1/", model: "whisper-1", apiKey: "KEY", language: "zh" };
+
+const noSubtitles: Route = (url, init) => url.pathname === "/x/player/wbi/v2" ? json({ code: 0, data: { subtitle: { subtitles: [] } } }) : bilibiliRoute(url, init);
+const playurl: Route = (url, init) => url.pathname === "/x/player/wbi/playurl"
+  ? json({ code: 0, data: { dash: { audio: [{ bandwidth: 134695, baseUrl: "https://upos-hz-mirrorakam.akamaized.net/high.m4a" }, { bandwidth: 68646, baseUrl: "https://upos-sz-mirrorcosov.bilivideo.com/low.m4a" }] } } })
+  : noSubtitles(url, init);
+
+describe("speech to text", () => {
+  function runner(parts: number) {
+    const calls: { command: string; args: string[] }[] = [];
+    const runCommand = vi.fn(async (command: string, args: string[]) => {
+      calls.push({ command, args });
+      const { writeFile } = await import("node:fs/promises");
+      if (command === "yt-dlp") {
+        const template = args[args.indexOf("-o") + 1]!;
+        await writeFile(template.replace("%(ext)s", "webm"), "audio");
+      } else {
+        const pattern = args.at(-1)!;
+        for (let i = 0; i < parts; i++) await writeFile(pattern.replace("%03d", String(i).padStart(3, "0")), `p${i}`);
+      }
+    });
+    return { runCommand, calls };
+  }
+  const requests: string[] = [];
+  const router = vi.fn(async (url: string, init: RequestInit) => {
+    requests.push(url);
+    if (url.includes("/audio/transcriptions")) return new Response(JSON.stringify({ text: `文字-${((init.body as FormData).get("file") as File).name}` }));
+    return new Response(Buffer.from("m4a-bytes"), { headers: { "content-length": "9" } });
+  });
+
+  it("posts the audio to an OpenAI compatible endpoint", async () => {
+    const { writeFile, mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "stt-test-"));
+    await writeFile(join(dir, "part000.mp3"), "bytes");
+    const fetchFn = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ text: " 你好 " })));
+    expect(await transcribeFile(join(dir, "part000.mp3"), stt, { fetchFn })).toBe("你好");
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://stt.example/v1/audio/transcriptions");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer KEY");
+    const form = init.body as FormData;
+    expect(form.get("model")).toBe("whisper-1");
+    expect(form.get("language")).toBe("zh");
+    expect((form.get("file") as File).name).toBe("part000.mp3");
+    await expect(transcribeFile(join(dir, "part000.mp3"), stt, { fetchFn: async () => new Response("quota", { status: 429 }) })).rejects.toThrow("HTTP 429：quota");
+  });
+
+  it("downloads through yt-dlp, cuts and transcribes the parts in order, then removes the temporary files", async () => {
+    const { runCommand, calls } = runner(3);
+    const text = await transcribeVideo({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", durationSeconds: 1500 }, { ...stt, chunkMinutes: 5 }, { runCommand, fetchFn: router });
+    expect(text).toBe("文字-part000.mp3\n文字-part001.mp3\n文字-part002.mp3");
+    expect(calls[0]!.command).toBe("yt-dlp");
+    expect(calls[0]!.args.slice(-1)).toEqual(["https://www.youtube.com/watch?v=dQw4w9WgXcQ"]);
+    expect(calls[0]!.args).toEqual(expect.arrayContaining(["--js-runtimes", "node"]));
+    expect(calls[1]!.command).toBe("ffmpeg");
+    expect(calls[1]!.args).toEqual(expect.arrayContaining(["-segment_time", "300", "-ac", "1", "48k"]));
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(calls[1]!.args[calls[1]!.args.indexOf("-i") + 1]!.replace(/\/source\..*$/, ""))).toBe(false);
+  });
+
+  it("uses a platform audio address instead of yt-dlp and refuses other hosts", async () => {
+    const { runCommand, calls } = runner(1);
+    const text = await transcribeVideo({ url: "https://x", audioSource: async () => ({ url: "https://upos-sz.bilivideo.com/a.m4a", headers: { Referer: "r" } }) }, stt, { runCommand, fetchFn: router });
+    expect(text).toBe("文字-part000.mp3");
+    expect(calls.map((call) => call.command)).toEqual(["ffmpeg"]);
+    expect(requests).toContain("https://upos-sz.bilivideo.com/a.m4a");
+    await expect(transcribeVideo({ url: "https://x", audioSource: async () => ({ url: "https://evil.example/a.m4a", headers: {} }) }, stt, { runCommand, fetchFn: router })).rejects.toThrow("不在允许的域名内");
+  });
+
+  it("refuses videos over the length limit and reports a missing program", async () => {
+    await expect(transcribeVideo({ url: "https://x", durationSeconds: 100 * 60 }, stt, { runCommand: runner(1).runCommand, fetchFn: router })).rejects.toThrow("超过 90 分钟");
+    await expect(transcribeVideo({ url: "https://x", durationSeconds: 60 }, stt, { runCommand: async () => { throw new Error("没有找到 yt-dlp，转写音频需要先安装它"); }, fetchFn: router })).rejects.toThrow("没有找到 yt-dlp");
+  });
+
+  it("transcribes a Bilibili video without subtitles from its own audio stream and summarises the transcript", async () => {
+    const { runCommand, calls } = runner(2);
+    const ask = answer();
+    const output = await readLink("https://www.bilibili.com/video/BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask, stt, runCommand, sttFetch: router });
+    expect(output).toContain("语音转写摘要：\n摘要内容");
+    expect(ask.mock.calls[0]![0]).toContain("文字-part000.mp3\n文字-part001.mp3");
+    expect(calls.map((call) => call.command)).toEqual(["ffmpeg"]);
+    expect(requests).toContain("https://upos-sz-mirrorcosov.bilivideo.com/low.m4a");
+  });
+
+  it("explains why a subtitle-less video has no text", async () => {
+    const unset = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(noSubtitles).request, ask: answer() });
+    expect(unset).toContain("未配置语音转文字");
+    const failing = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask: answer(), stt, runCommand: async () => { throw new Error("ffmpeg 运行失败：bad"); }, sttFetch: router });
+    expect(failing).toContain("语音转写失败：ffmpeg 运行失败：bad");
+  });
+});

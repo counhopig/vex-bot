@@ -7,10 +7,12 @@ import { bilibili } from "./bilibili.mjs";
 import { douyin } from "./douyin.mjs";
 import { hostMatches } from "./shared.mjs";
 import { summarizeText } from "./summarize.mjs";
+import { transcribeVideo } from "./stt.mjs";
 import { xiaohongshu } from "./xiaohongshu.mjs";
 import { youtube } from "./youtube.mjs";
 
 const PLATFORMS = [bilibili, youtube, douyin, xiaohongshu];
+const TRANSCRIBABLE = new Set(["B站", "YouTube"]);
 const MAX_TRANSCRIPT = 500_000;
 const RAW_LIMIT = 30_000;
 const FALLBACK_LIMIT = 20_000;
@@ -46,15 +48,30 @@ function header(content) {
   ];
 }
 
-export async function readLink(text, { fetchPublicPage, request, ask, sessdata, raw = false, signal } = {}) {
+export async function readLink(text, { fetchPublicPage, request, ask, sessdata, raw = false, signal, stt, runCommand, sttFetch } = {}) {
   const platform = findPlatform(text);
   if (!platform) throw new Error(`暂不支持这个链接，目前支持：${PLATFORMS.map((item) => item.name).join("、")}`);
   const content = await platform.read(text, createHttp(platform, { fetchPublicPage, request, signal }), { sessdata });
+  let note;
+  if (!content.text && TRANSCRIBABLE.has(content.platform)) {
+    if (!stt) {
+      note = "（未配置语音转文字；在配置的 stt 中填写服务后，没有字幕的视频会转写音频）";
+    } else {
+      try {
+        const spoken = await transcribeVideo(content, stt, { runCommand, fetchFn: sttFetch, signal });
+        if (spoken) { content.text = spoken; content.textKind = "语音转写"; }
+        else note = "（语音转写没有识别出内容）";
+      } catch (error) {
+        signal?.throwIfAborted();
+        note = `（语音转写失败：${error.message}）`;
+      }
+    }
+  }
   const lines = header(content);
   const body = content.text?.slice(0, MAX_TRANSCRIPT);
   const kind = content.textKind ?? "正文";
   if (!body) {
-    lines.push("", "该链接没有可读取的字幕或正文，只能提供上面的基本信息。");
+    lines.push("", "该链接没有可读取的字幕或正文，只能提供上面的基本信息。", ...(note ? [note] : []));
   } else if (raw || !ask) {
     lines.push("", `${kind}原文：`, body.length > RAW_LIMIT ? `${body.slice(0, RAW_LIMIT)}\n…（已截断，共 ${body.length} 字）` : body);
   } else {
@@ -105,7 +122,7 @@ async function main(args) {
     return result.content.filter((part) => part.type === "text").map((part) => part.text).join("").trim();
   };
   const sessdata = config.links?.bilibili?.sessdata || process.env.BILIBILI_SESSDATA;
-  console.log(await readLink(target, { fetchPublicPage, ask: raw ? undefined : ask, sessdata, raw, signal: AbortSignal.timeout(300_000) }));
+  console.log(await readLink(target, { fetchPublicPage, ask: raw ? undefined : ask, sessdata, raw, stt: config.stt?.baseUrl && config.stt?.model ? config.stt : undefined, signal: AbortSignal.timeout(570_000) }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

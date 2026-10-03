@@ -15,9 +15,19 @@ COPY src ./src
 COPY skills ./skills
 RUN npm run build
 
+FROM node:24-bookworm-slim AS tools
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/* \
+ && asset=$([ "$TARGETARCH" = "arm64" ] && echo yt-dlp_linux_aarch64 || echo yt-dlp_linux) \
+ && curl -fsSL -o /yt-dlp "https://github.com/yt-dlp/yt-dlp/releases/latest/download/$asset" \
+ && chmod 755 /yt-dlp
+
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production VEX_HOME=/data VEX_LOG_STDOUT=1 VEX_WEB_HOST=0.0.0.0
 WORKDIR /app
+# ffmpeg and yt-dlp let the link-reader skill transcribe videos that have no subtitles.
+COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=tools /yt-dlp /usr/local/bin/yt-dlp
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

@@ -5,7 +5,7 @@ Vex is a personal AI assistant for one owner. A single daemon, `vexd`, answers o
 ## Features
 
 - **Two windows.** WeChat is one permanent conversation. WebChat has many, with streaming replies, interruption, automatic titles and history recovery.
-- **Agent tools.** Files, shell, web fetch, Brave Search, memory search, isolated sub-agents, MCP servers (stdio and Streamable HTTP) and Skills, including bundled weather, image and share-link skills (Bilibili, YouTube, Douyin and Xiaohongshu links are read and summarised).
+- **Agent tools.** Files, shell, web fetch, Brave Search, memory search, isolated sub-agents, MCP servers (stdio and Streamable HTTP) and Skills, including bundled weather, image and share-link skills (Bilibili, YouTube, Douyin and Xiaohongshu links are read and summarised; videos without subtitles can be transcribed through any OpenAI-compatible speech-to-text service).
 - **Approvals.** Shell commands, MCP tools and writes outside the workspace ask first, on WeChat or in WebChat, whichever answers first.
 - **Memory.** Plain Markdown in the workspace, a full-text search index, context compaction with silent memory rescue, and a nightly consolidation pass.
 - **Presence.** Scheduled messages, heartbeat checks, a mood and rest-hours model, and proactive conversations on WeChat.

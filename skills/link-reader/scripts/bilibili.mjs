@@ -58,6 +58,14 @@ export const bilibili = {
     const cid = info.pages?.[0]?.cid;
     if (!cid) return content;
 
+    content.audioSource = async () => {
+      const playurl = parseJson((await http.get(`https://api.bilibili.com/x/player/wbi/playurl?${signWbi({ bvid, cid, fnval: 16, fnver: 0, fourk: 1 }, mixin)}`, authed)).body, "B 站");
+      const tracks = playurl.data?.dash?.audio ?? [];
+      const best = tracks.reduce((chosen, track) => (!chosen || track.bandwidth < chosen.bandwidth ? track : chosen), undefined);
+      if (!best?.baseUrl) throw new Error(`B 站没有返回音频地址：${playurl.message ?? playurl.code}`);
+      return { url: best.baseUrl, headers: { "User-Agent": BROWSER_UA, Referer: "https://www.bilibili.com/" } };
+    };
+
     const player = parseJson((await http.get(`https://api.bilibili.com/x/player/wbi/v2?${signWbi({ bvid, cid }, mixin)}`, authed)).body, "B 站");
     const subtitleUrl = pickSubtitle(player.data?.subtitle?.subtitles ?? []);
     if (!subtitleUrl || !subtitleUrl.startsWith("https:") || !hostMatches(subtitleUrl, ["hdslb.com", "bilibili.com"])) return content;

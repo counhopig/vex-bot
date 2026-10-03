@@ -21,3 +21,15 @@ export function parseJson(body, what) {
     throw new Error(`${what}返回的内容无法解析`);
   }
 }
+
+export async function mapLimited(items, limit, task) {
+  const results = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await task(items[index], index);
+    }
+  }));
+  return results;
+}
