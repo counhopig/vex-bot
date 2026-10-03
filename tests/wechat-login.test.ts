@@ -83,6 +83,19 @@ describe("runWeChatLogin", () => {
     expect(output.at(-1)).toBe("重启 vexd 后生效：vex stop && vex start -d");
   });
 
+  it("stores a login base URL only when it is https", async () => {
+    await writeFile(paths.config, `model: { provider: deepseek, id: deepseek-v4-pro }\nwechat: { baseUrl: "${ilink.baseUrl}" }\n`, "utf8");
+    const store = new WeChatStore(paths.wechat);
+    for (const baseurl of ["http://evil.example", "not a url", "ftp://x.example"]) {
+      statuses({ ...confirmed, baseurl });
+      await runWeChatLogin(() => {}, paths, { pollIntervalMs: 1 });
+      expect((await store.loadCredentials())?.baseUrl).toBe(ilink.baseUrl);
+    }
+    statuses(confirmed);
+    await runWeChatLogin(() => {}, paths, { pollIntervalMs: 1 });
+    expect((await store.loadCredentials())?.baseUrl).toBe("https://api2.example");
+  });
+
   it("warns when the scanner id is missing and no owner is configured", async () => {
     await writeFile(paths.config, `model: { provider: deepseek, id: deepseek-v4-pro }\nwechat: { baseUrl: "${ilink.baseUrl}" }\n`, "utf8");
     statuses({ status: "confirmed", bot_token: "tok" });
