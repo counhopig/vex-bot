@@ -69,7 +69,8 @@ export function splitMessage(text: string, max = MAX_MESSAGE_CHARS): string[] {
   while (rest.length > max) {
     const newline = rest.lastIndexOf("\n", max);
     let cut = newline > max / 2 ? newline : max;
-    cut = safeCutPoint(rest, cut);
+    // Fall back to one whole code point so every pass consumes input.
+    cut = safeCutPoint(rest, cut) || safeCutPoint(rest, 1) || 2;
     chunks.push(rest.slice(0, cut).trimEnd());
     rest = rest.slice(cut).trimStart();
   }
