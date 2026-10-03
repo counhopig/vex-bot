@@ -26,6 +26,12 @@ describe("memory retrieval index", () => {
     expect(db.search('" OR *')).toEqual([]);
     expect(() => db.search("a", 0)).toThrow();
   });
+  it("matches single-character and two-character CJK queries", async () => {
+    await writeFile(join(root, "workspace/MEMORY.md"), "主人养了一只小猫咪");
+    const db = await open();
+    expect(db.search("猫", 5, "memory")).toHaveLength(1);
+    expect(db.search("小猫", 5, "memory")).toHaveLength(1);
+  });
   it("retrieves Latin and CJK terms adjacent without spaces in either direction", async () => {
     expect(tokenize("使用TypeScript编程")).toEqual(["使用", "typescript", "编程"]);
     expect(tokenize("TypeScript编程TypeScript")).toEqual(["typescript", "编程", "typescript"]);
