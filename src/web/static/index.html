@@ -2,27 +2,45 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Vex</title>
   <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const mode = localStorage.getItem("vex.theme");
+      if (mode === "light" || mode === "dark") document.documentElement.dataset.theme = mode;
+    } catch {
+      // Storage can be unavailable in private windows.
+    }
+  </script>
 </head>
 <body>
   <div id="app">
+    <header id="topbar">
+      <button id="menu" type="button" class="icon" aria-label="会话列表">☰</button>
+      <span id="topbar-title">Vex</span>
+      <button id="topbar-new" type="button" class="icon" aria-label="新对话">＋</button>
+    </header>
+    <div id="scrim" hidden></div>
     <aside id="sidebar">
       <div class="sidebar-head">
         <span class="brand">Vex</span>
         <button id="new-session" type="button">新对话</button>
       </div>
       <ul id="session-list"></ul>
-      <button id="open-settings" type="button" class="link">设置</button>
+      <div class="sidebar-foot">
+        <button id="open-settings" type="button" class="link">设置</button>
+        <button id="theme" type="button" class="link" aria-label="切换主题">跟随系统</button>
+      </div>
     </aside>
     <main id="main">
-      <div id="status" hidden></div>
+      <div id="status" role="status" hidden></div>
       <section id="approvals"></section>
       <section id="chat">
         <div id="messages"></div>
+        <div id="statusline"></div>
         <form id="composer">
-          <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+          <textarea id="input" rows="1" placeholder="说点什么…" enterkeyhint="send"></textarea>
           <button id="stop" type="button" class="secondary" hidden>停止</button>
           <button id="send" type="submit">发送</button>
         </form>
@@ -32,18 +50,18 @@
           <h2>设置</h2>
           <button id="close-settings" type="button" class="link">返回</button>
         </div>
-        <select id="settings-file">
-          <option value="config.yaml">config.yaml · 配置</option>
-          <option value="SOUL.md">SOUL.md · 人设</option>
-          <option value="USER.md">USER.md · 关于我</option>
-          <option value="MEMORY.md">MEMORY.md · 长期记忆</option>
-          <option value="HEARTBEAT.md">HEARTBEAT.md · 心跳清单</option>
-        </select>
-        <p id="settings-hint" class="hint"></p>
-        <textarea id="settings-text" spellcheck="false"></textarea>
+        <nav id="settings-tabs" role="tablist"></nav>
+        <div id="settings-body">
+          <div id="settings-form"></div>
+          <div id="settings-editor" hidden>
+            <div id="file-tabs" role="tablist"></div>
+            <p id="settings-hint" class="hint"></p>
+            <textarea id="settings-text" spellcheck="false"></textarea>
+          </div>
+        </div>
         <div class="settings-actions">
           <button id="save-settings" type="button">保存</button>
-          <span id="settings-result"></span>
+          <span id="settings-result" role="status"></span>
         </div>
       </section>
     </main>

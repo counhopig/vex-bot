@@ -7,6 +7,7 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { saveConfigText } from "../src/config/load.js";
+import { applySettings, readSettings } from "../src/config/settings.js";
 import { EventBus } from "../src/core/events.js";
 import { Session } from "../src/core/session.js";
 import { SessionManager } from "../src/core/sessionManager.js";
@@ -77,6 +78,11 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     approvals,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
+    status: () => ({ model: "faux/model", wechat: "unlinked", persona: { energy: 80, mood: 70, social: 50, resting: false } }),
+    settings: {
+      read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: { providers: ["faux"], models: { faux: ["model"] } } }),
+      save: async (patch) => { const next = applySettings(await readFile(paths.config, "utf8"), patch, paths); await saveConfigText(paths, next.text); return { restartRequired: next.restartRequired }; },
+    },
     workspace: { read: (name) => readFile(join(paths.home, name), "utf8").catch(() => ""), save: (name, text) => writeFile(join(paths.home, name), text, "utf8") },
     staticDir,
     log: pino({ level: "silent" }),
@@ -254,6 +260,30 @@ describe("Gateway chat", () => {
     client.send({ type: "get_file", name: "MEMORY.md" });
     await client.waitFor((m) => m.type === "file" && m.name === "MEMORY.md");
     expect(client.messages.filter((m) => m.type === "file").map((m) => m.name)).toEqual(["SOUL.md", "MEMORY.md"]);
+  });
+
+  it("reports status and edits settings without losing other keys or exposing secrets", async () => {
+    const host = await start();
+    await writeFile(paths.config, "# my notes\nmodel: { provider: deepseek, id: deepseek-v4-pro }\nproviders:\n  deepseek: { apiKey: sk-secret }\ntools:\n  policy: { bash: ask }\n", "utf8");
+    const client = await connect(host);
+    client.send({ type: "get_status" });
+    expect(await client.waitFor((m) => m.type === "status")).toMatchObject({ status: { model: "faux/model", wechat: "unlinked" } });
+    client.send({ type: "get_settings" });
+    const view = await client.waitFor((m) => m.type === "settings") as Extract<ServerMessage, { type: "settings" }>;
+    expect(view.values["model.provider"]).toBe("deepseek");
+    expect(view.secrets).toEqual(["providers.deepseek.apiKey"]);
+    expect(JSON.stringify(view)).not.toContain("sk-secret");
+    client.send({ type: "save_settings", set: { "model.id": "deepseek-flash", "stt.baseUrl": "https://stt.example/v1", "stt.model": "whisper-1" } });
+    expect(await client.waitFor((m) => m.type === "settings_saved")).toMatchObject({ ok: true, restartRequired: true });
+    const saved = await readFile(paths.config, "utf8");
+    expect(saved).toContain("# my notes");
+    expect(saved).toContain("deepseek-flash");
+    expect(saved).toContain("sk-secret");
+    expect(saved).toContain("policy: { bash: ask }");
+    client.send({ type: "save_settings", set: { "stt.language": "zh" } });
+    expect(await client.waitFor((m) => m.type === "settings_saved" && m.ok && m.restartRequired === false)).toBeTruthy();
+    client.send({ type: "save_settings", set: { "web.token": "x" } });
+    expect(await client.waitFor((m) => m.type === "settings_saved" && !m.ok)).toMatchObject({ error: expect.stringContaining("web.token") });
   });
 
   it("reads and validates the config", async () => {

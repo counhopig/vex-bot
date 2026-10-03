@@ -39,7 +39,8 @@
 - Tool factories accept workspace and injected dependencies; daemon assembles session-specific tools.
 - Web session metadata writes are serialized and use atomic replacement from `store/atomic.ts`.
 - Browser protocol handling is handwritten; check both history replay and live events when changing message shapes.
-- Dynamic browser content uses `textContent`; DOM IDs and state classes match the HTML and CSS.
+- Dynamic browser content uses `textContent` or DOM nodes built by `renderMarkdown`; never `innerHTML`. DOM IDs and state classes match the HTML and CSS.
+- Settings edits are limited to the keys in `config/settings.ts`; the form definition in `web/static/app.js` must stay in step with it.
 
 ## ANTI-PATTERNS
 

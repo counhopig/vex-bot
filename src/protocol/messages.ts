@@ -32,11 +32,24 @@ export const ClientMessageSchema = Type.Union([
   }),
   Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
   Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }) }),
+  Type.Object({ type: Type.Literal("get_status") }),
+  Type.Object({ type: Type.Literal("get_settings") }),
+  Type.Object({
+    type: Type.Literal("save_settings"),
+    set: Type.Optional(Type.Record(Type.String({ maxLength: 100 }), Type.Union([Type.String({ maxLength: 2000 }), Type.Number(), Type.Boolean(), Type.Array(Type.String({ maxLength: 100 }), { maxItems: 10 })]), { maxProperties: 60 })),
+    unset: Type.Optional(Type.Array(Type.String({ maxLength: 100 }), { maxItems: 60 })),
+  }),
   Type.Object({ type: Type.Literal("get_config") }),
   Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }) }),
 ]);
 
 export type ClientMessage = Static<typeof ClientMessageSchema>;
+
+export interface StatusInfo {
+  model: string;
+  wechat: "connected" | "connecting" | "unlinked" | "expired" | "disabled";
+  persona: { energy: number; mood: number; social: number; resting: boolean };
+}
 
 export type ServerMessage =
   | { type: "sessions"; sessions: WebSessionMeta[] }
@@ -46,6 +59,9 @@ export type ServerMessage =
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "file"; name: WorkspaceFile; text: string }
   | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string }
+  | { type: "status"; status: StatusInfo }
+  | { type: "settings"; values: Record<string, string | number | boolean | string[]>; secrets: string[]; catalog: { providers: string[]; models: Record<string, string[]> } }
+  | { type: "settings_saved"; ok: boolean; error?: string; restartRequired?: boolean }
   | { type: "config"; text: string }
   | { type: "config_saved"; ok: boolean; error?: string }
   | { type: "error"; message: string };

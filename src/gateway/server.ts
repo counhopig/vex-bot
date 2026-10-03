@@ -4,10 +4,11 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 import { WebSocket, WebSocketServer } from "ws";
 import { ConfigError } from "../config/load.js";
+import type { SettingsPatch, SettingsView } from "../config/settings.js";
 import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
-import { parseClientMessage, type ClientMessage, type ServerMessage, type WorkspaceFile } from "../protocol/messages.js";
+import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
@@ -18,6 +19,8 @@ export interface GatewayOptions {
   approvals: ApprovalManager;
   bus: EventBus;
   config: { read: () => Promise<string>; save: (text: string) => Promise<void> };
+  status: () => StatusInfo;
+  settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean }> };
   workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<void> };
   staticDir: string;
   log: Logger;
@@ -229,6 +232,21 @@ export class Gateway {
         return;
       case "approve":
         this.opts.approvals.answer(message.id, message.answer);
+        return;
+      case "get_status":
+        send(ws, { type: "status", status: this.opts.status() });
+        return;
+      case "get_settings":
+        send(ws, { type: "settings", ...(await this.opts.settings.read()) });
+        return;
+      case "save_settings":
+        try {
+          const { restartRequired } = await this.opts.settings.save({ set: message.set, unset: message.unset });
+          send(ws, { type: "settings_saved", ok: true, restartRequired });
+        } catch (err) {
+          if (!(err instanceof ConfigError)) throw err;
+          send(ws, { type: "settings_saved", ok: false, error: err.message });
+        }
         return;
       case "get_file":
         send(ws, { type: "file", name: message.name, text: await this.opts.workspace.read(message.name) });

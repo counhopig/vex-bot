@@ -1,6 +1,6 @@
 # Configuration
 
-Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or edit it in WebChat settings (choose `config.yaml` in the file selector). Changes take effect after a restart. Invalid files are rejected with the path of the failing key.
+Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or use WebChat settings (below). Changes take effect after a restart, except the `stt` and `links` settings, which the skills read on every run. Invalid files are rejected with the path of the failing key.
 
 Samples (`docs/samples/`):
 
@@ -10,6 +10,21 @@ Samples (`docs/samples/`):
 | `config.full.yaml` | Every setting with defaults and examples |
 | `HEARTBEAT.md` | A heartbeat checklist |
 | `skills/daily-brief/SKILL.md` | A workspace skill |
+
+## WebChat settings
+
+The settings page has six tabs:
+
+| Tab | What it edits |
+|---|---|
+| 模型 | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
+| 微信 | Whether WeChat is on, the owner account, and the live connection state |
+| 语音与链接 | Speech to text, the Bilibili `SESSDATA`, web search |
+| 作息 | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
+| 人设与记忆 | `SOUL.md`, `USER.md`, `MEMORY.md` and `HEARTBEAT.md` |
+| 高级 | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
+
+The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "已设置，留空保持不变", typing replaces it, and "清除已保存的值" removes it. After saving, the page says whether a restart is needed. Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
 
 ## Settings
 
@@ -87,7 +102,7 @@ Vex does not load `.env` files. Inside the shell tool, `VEX_CONFIG_PATH` points 
 
 ## Workspace files
 
-Edit these Markdown files to shape Vex; the next message sees the change. WebChat settings edits `config.yaml`, `SOUL.md`, `USER.md`, `MEMORY.md` and `HEARTBEAT.md` through a file selector; you can also ask Vex in conversation to change them, or edit them on disk.
+Edit these Markdown files to shape Vex; the next message sees the change. WebChat settings edits `config.yaml` (as forms or as text) and these four files; you can also ask Vex in conversation to change them, or edit them on disk.
 
 | File | Purpose | Loaded |
 |---|---|---|
