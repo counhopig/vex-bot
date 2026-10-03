@@ -1,19 +1,33 @@
 # Vex
 
-Vex is a personal AI assistant for a single owner. Its persistent daemon, `vexd`, connects to WeChat ClawBot and a browser-based WebChat. Both interfaces share a workspace, long-term memory, tool approvals, and mood state while keeping separate conversation histories.
+Vex is a personal AI assistant for one owner. A single daemon, `vexd`, answers on personal WeChat and in a browser-based WebChat. Both windows share one workspace, long-term memory, tool set and approval queue; each keeps its own conversation history.
 
 ## Features
 
-- Multiple WebChat conversations with streaming responses, steering, interruption, automatic titles, and history recovery.
-- QR-code WeChat linking, owner filtering, approval commands, and progress notices for long-running turns.
-- File operations, shell commands, web fetching, Brave Search, and SQLite FTS5 memory search.
-- Context compaction, silent memory rescue, daily notes, and scheduled memory consolidation.
-- Scheduled messages, heartbeat checks, mood and sleep patterns, and proactive conversations.
-- MCP integrations, isolated subagents, dynamic Skills, and built-in weather and image-analysis skills.
+- **Two windows.** WeChat is one permanent conversation. WebChat has many, with streaming replies, interruption, automatic titles and history recovery.
+- **Agent tools.** Files, shell, web fetch, Brave Search, memory search, isolated sub-agents, MCP servers (stdio and Streamable HTTP) and Skills, including bundled weather and image skills.
+- **Approvals.** Shell commands, MCP tools and writes outside the workspace ask first, on WeChat or in WebChat, whichever answers first.
+- **Memory.** Plain Markdown in the workspace, a full-text search index, context compaction with silent memory rescue, and a nightly consolidation pass.
+- **Presence.** Scheduled messages, heartbeat checks, a mood and rest-hours model, and proactive conversations on WeChat.
+- **Self-hosted.** One Node.js process or one container; all data stays in one directory.
 
-## Installation
+## Quick start
 
-Requires Node.js 24 or later. If a prebuilt `better-sqlite3` binary is unavailable, installation requires native C/C++ build tools.
+### Docker
+
+```bash
+curl -O https://raw.githubusercontent.com/counhopig/vex-bot/main/compose.yaml
+docker compose run --rm vex onboard    # model, API key, optional WeChat QR; prints the WebChat token
+docker compose up -d
+```
+
+Open <http://127.0.0.1:7860> and sign in with the printed token. While WeChat is unlinked, `docker compose logs -f` shows a QR code to scan.
+
+Images for `linux/amd64` and `linux/arm64`: `ghcr.io/counhopig/vex-bot`, and `<DOCKERHUB_USERNAME>/vex-bot` on Docker Hub when the repository secrets are set.
+
+### From source
+
+Requires Node.js 24 or later. Installation compiles `better-sqlite3` when no prebuilt binary exists, which needs C/C++ build tools.
 
 ```bash
 git clone git@github.com:counhopig/vex-bot.git
@@ -24,63 +38,23 @@ node dist/cli/index.js onboard
 node dist/cli/index.js start -d
 ```
 
-The onboarding wizard asks for a provider, model, API key, and web port. It can also link WeChat by QR code. WebChat defaults to `http://127.0.0.1:7860`.
+`npm link` provides the `vex` command used below.
 
-Optionally run `npm link` to use `vex` instead of `node dist/cli/index.js`.
-
-## Documentation
-
-- [Architecture](docs/architecture.md): components, sessions, memory, mood, scheduler, security.
-- [Configuration](docs/configuration.md): every setting, environment variables, workspace files, skills.
-- [Deployment and operations](docs/operations.md): source and Docker deployment, WeChat linking, data directory, troubleshooting.
-- [Samples](docs/samples/): minimal and full `config.yaml`, a heartbeat checklist and a skill.
-
-## Docker
-
-Images are published to `ghcr.io/counhopig/vex-bot` and, when the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token) are set, to `<DOCKERHUB_USERNAME>/vex-bot` on Docker Hub, for `linux/amd64` and `linux/arm64`: `latest` and `sha-*` tags on every push to `main`, and `X.Y.Z` / `X.Y` tags when a `vX.Y.Z` tag is pushed. A new GHCR package is private until its visibility is changed under the package settings.
-
-Deploy with the repository's `compose.yaml`:
-
-```bash
-docker compose run --rm vex onboard
-docker compose up -d
-docker compose logs -f
-```
-
-`onboard` asks for the model and API key and prints the WebChat access token. WebChat listens on `http://127.0.0.1:7860`. While WeChat is unlinked or its session has expired, `vexd` prints a QR code to its output: scan it from `docker compose logs -f`, and it connects without a restart. `docker compose run --rm vex wechat login` links from another terminal and is picked up the same way. Set `wechat.enabled: false` to turn WeChat off.
-
-- Data lives in the `vex-data` volume, mounted at `/data` (`VEX_HOME`). Back it up with the volume itself.
-- `VEX_WEB_HOST` (set to `0.0.0.0` in the image) and `VEX_WEB_TOKEN` (optional) override `web.host` and `web.token` from `config.yaml`. The compose file publishes the port on the loopback interface only; put a TLS reverse proxy in front for remote access.
-- `TZ` in `compose.yaml` sets the time zone used by cron schedules, rest hours, and heartbeat hours.
-- Update with `docker compose pull && docker compose up -d`. Build locally with `docker build -t vex-bot .` and point `image` at that tag.
-- Release: `git tag v3.0.0 && git push origin v3.0.0` runs the tests and publishes the versioned image.
-
-## Commands
+## Using Vex
 
 | Command | Description |
 |---|---|
-| `vex onboard [--force]` | Create configuration and workspace templates; `--force` overwrites existing configuration |
-| `vex start` | Run in the foreground |
-| `vex start -d` | Run in the background |
-| `vex stop` | Stop the daemon |
-| `vex status` | Show running status |
-| `vex logs [-f]` | Show logs; `-f` follows new output |
-| `vex wechat login` | Link WeChat by QR code; a running daemon connects automatically (it also shows a QR code itself while WeChat is unlinked or expired) |
+| `vex onboard [--force]` | Guided setup: provider, model, API key, port, optional WeChat link |
+| `vex start [-d]` | Run in the foreground or the background |
+| `vex stop` / `vex status` | Stop the daemon / show its state |
+| `vex logs [-f]` | Show or follow the log |
+| `vex wechat login` | Link WeChat by QR code; a running daemon connects automatically |
 
-WeChat commands:
+WebChat is at <http://127.0.0.1:7860> by default. On WeChat only the owner's messages are answered; `/stop` interrupts a reply, and `/y`, `/ya` and `/n` answer the oldest pending approval.
 
-- `/stop`: interrupt the current response.
-- `/y`: allow the oldest pending approval.
-- `/ya`: always allow that tool in the requesting conversation.
-- `/n`: deny the oldest pending approval.
+Shape Vex by editing Markdown files in the workspace: `SOUL.md` (persona), `USER.md` (what it knows about you), `MEMORY.md` (long-term facts), `HEARTBEAT.md` (periodic checks). Ask it in conversation to schedule messages or write new Skills.
 
-Approvals appear in WeChat and connected WebChat windows. The first answer wins; unanswered requests are denied after ten minutes.
-
-## Configuration
-
-Configuration lives in `~/.vex/config.yaml`. It can also be edited from WebChat settings. Restart after changes.
-
-Minimal configuration:
+A minimal `~/.vex/config.yaml`:
 
 ```yaml
 model:
@@ -91,120 +65,20 @@ providers:
     apiKey: "YOUR_API_KEY"
 ```
 
-Built-in providers and models depend on the installed pi-ai registry. Model IDs are case-sensitive. API keys are read from `providers` first, then from the provider's supported environment variables. Vex does not automatically load `.env` files.
+## Documentation
 
-Optional settings to combine with the minimal configuration:
-
-```yaml
-web:
-  host: 127.0.0.1
-  port: 7860
-wechat:
-  enabled: true
-  # ownerId defaults to the account that scanned the QR code.
-compaction:
-  threshold: 0.7
-memory:
-  consolidateAt: "03:00"
-heartbeat:
-  every: 30m
-  activeHours: ["08:00", "22:00"]
-persona:
-  sleep: ["23:00", "07:00"]
-  outreach:
-    enabled: true
-    checkEvery: 30m
-    socialThreshold: 70
-    quietHours: 3
-    dailyLimit: 3
-tools:
-  policy:
-    bash: ask
-    mcp__remote: ask
-bashEnvPassthrough: []
-webSearch:
-  provider: brave
-  apiKey: "YOUR_BRAVE_SEARCH_API_KEY"
-mcpServers:
-  local:
-    command: node
-    args: ["/absolute/path/to/mcp-server.js"]
-  remote:
-    url: "https://example.com/mcp"
-```
-
-Configure `backgroundModel` with the same fields as `model` to select a separate model for titles, compaction summaries, heartbeats, and memory consolidation. It defaults to the primary model.
-
-Custom provider configuration:
-
-```yaml
-model:
-  provider: custom
-  id: your-model
-providers:
-  custom:
-    api: openai-completions
-    baseUrl: "https://example.com/v1"
-    apiKey: "YOUR_API_KEY"
-    models:
-      - id: your-model
-        contextWindow: 32000
-        maxTokens: 4096
-```
-
-Custom providers support `openai-completions` and `anthropic-messages`. When `models` is specified, only listed IDs are accepted.
-
-Remote access requires `web.token`. Tool policies are `allow`, `ask`, and `deny`. By default, writes inside the workspace are allowed; external writes, shell commands, and MCP tools require approval. Shell commands inherit only an environment allowlist. Add specific variables to `bashEnvPassthrough` when needed.
-
-## Workspace and Data
-
-The default data directory is `~/.vex`. Set `VEX_HOME` to run an isolated instance:
-
-```bash
-export VEX_HOME=/absolute/path/to/vex-data
-node dist/cli/index.js onboard
-node dist/cli/index.js start -d
-```
-
-Use the same `VEX_HOME` for all commands addressing that instance. The `workspace` setting can independently select its working directory.
-
-```text
-~/.vex/
-├── config.yaml
-├── workspace/
-│   ├── SOUL.md              # Persona and behavior
-│   ├── USER.md              # Stable information about the owner
-│   ├── MEMORY.md            # Long-term facts and decisions
-│   ├── HEARTBEAT.md         # Checklist; empty files skip model calls
-│   ├── memory/YYYY-MM-DD.md # Daily notes
-│   └── skills/              # Custom skills
-├── sessions/               # WeChat, WebChat, and background transcripts
-├── index.sqlite            # Rebuildable search index
-├── schedules.json          # Scheduled tasks
-├── state/mood.json         # Mood and outreach state
-├── wechat/                 # Login credentials and synchronization state
-└── logs/vexd.log
-```
-
-Edit workspace Markdown files to adjust personality, owner information, memory, and heartbeat checks. Changes are read on the next turn. Compaction changes the model context while preserving original conversation records.
-
-## Scheduling and Skills
-
-Ask Vex to create, list, or delete scheduled tasks. The `schedule` tool supports cron expressions, fixed intervals such as `30m`, and one-time ISO timestamps with a time zone. Tasks target the current conversation by default. Deleted WebChat targets fall back to WeChat, and missed one-time tasks are reported after startup.
-
-A Skill is a directory containing `SKILL.md` with `name` and `description` frontmatter, plus optional scripts and resources. Workspace skills override built-in skills with the same name. The weather skill retrieves forecasts; the image skill analyzes images with the primary model unless `--provider` and `--model` are passed to its script, and that model must accept image input. The minimal `minimax-cn/MiniMax-M2.7` example is text-only; custom provider models declare image support with `input: [text, image]`. Script execution follows shell approval rules.
-
-`web_search` requires a Brave Search API key, configured directly or through `BRAVE_API_KEY`. MCP supports stdio and Streamable HTTP, exposing tools as `mcp__<server>__<tool>`. Server names use up to 32 letters, digits, and hyphens; tool names are sanitized to letters, digits, `_`, and `-` and truncated to 64 characters. The `delegate` tool runs an isolated subagent with inherited approvals and prevents nested delegation.
+- [Architecture](docs/architecture.md): components, sessions, memory, mood, scheduler, security.
+- [Configuration](docs/configuration.md): every setting, environment variables, workspace files, skills.
+- [Deployment and operations](docs/operations.md): source and Docker deployment, WeChat linking, data directory, troubleshooting.
+- [Samples](docs/samples/): minimal and full `config.yaml`, a heartbeat checklist, a skill.
 
 ## Development
 
 ```bash
-npm run dev
-npm run lint
-npm test
+npm run dev      # run from source
+npm run lint     # type check
+npm test         # Vitest; scripted models and local mock services, no credentials needed
 npm run build
 ```
 
-The image skill loads the compiled model registry, so run `npm run build` once before using it from a source checkout.
-
-Tests use scripted models and local mock services, so no real model, WeChat, or MCP credentials are required. Design documents and implementation plans are in [docs/superpowers](docs/superpowers).
+Pushing to `main` runs lint and tests and publishes the image; pushing a `v*` tag publishes versioned image tags.
