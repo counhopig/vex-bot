@@ -156,4 +156,94 @@ describe("context compaction", () => {
     expect(calls).toBe(2);
     expect(save).not.toHaveBeenCalled();
   });
+
+  const rescueSetup = () => {
+    const faux = createFaux();
+    faux.setResponses(Array.from({ length: 30 }, () => fauxAssistantMessage("无需记忆")));
+    const prompts: string[] = [];
+    const streamFn: import("@earendil-works/pi-agent-core").StreamFn = (m, ctx, options) => {
+      prompts.push(JSON.stringify(ctx.messages));
+      return fauxStreamFn(faux)(m, ctx, options);
+    };
+    return { faux, prompts, streamFn };
+  };
+
+  it("rescues only the messages newly replaced by a compaction", async () => {
+    const { faux, prompts, streamFn } = rescueSetup();
+    const record: CompactionRecord = { kind: "compaction", through: 2, summary: "既有摘要内容", timestamp: 1 };
+    const messages = [user("已处理的旧事实"), fauxAssistantMessage("旧回复"), user("新替换的事实".repeat(100)), fauxAssistantMessage("中间回复"), user("保留的最近原文")];
+    const complete = vi.fn(async () => fauxAssistantMessage("新摘要"));
+    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 1000 }, backgroundModel: faux.getModel(), workspace: dir, streamFn, getApiKey: () => undefined, complete, save: vi.fn(), keepTurns: 1, threshold: 0.1 }, record);
+    await compactor.transform(messages);
+    const sent = prompts.join("");
+    expect(sent).toContain("新替换的事实");
+    expect(sent).not.toContain("已处理的旧事实");
+    expect(sent).not.toContain("既有摘要内容");
+    expect(sent).not.toContain("保留的最近原文");
+    prompts.length = 0;
+    await compactor.transform(messages);
+    expect(prompts).toEqual([]);
+  });
+
+  it("does not re-run rescue or summary after a failure within the same run", async () => {
+    const { faux, prompts, streamFn } = rescueSetup();
+    const onError = vi.fn();
+    const complete = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "failed" }));
+    const messages = [user("x".repeat(1000)), fauxAssistantMessage("a"), user("new")];
+    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 2000 }, threshold: 0.1, backgroundModel: faux.getModel(), workspace: dir, streamFn, getApiKey: () => undefined, complete, save: vi.fn(), keepTurns: 1, onError });
+    const signal = new AbortController().signal;
+    await compactor.transform(messages, signal);
+    const rescues = prompts.length;
+    expect(rescues).toBeGreaterThan(0);
+    await compactor.transform([...messages, fauxAssistantMessage("b")], signal);
+    expect(prompts).toHaveLength(rescues);
+    expect(complete).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledOnce();
+    await compactor.transform(messages, new AbortController().signal);
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(prompts).toHaveLength(rescues);
+  });
+
+  it("returns a trimmed projection instead of throwing when over budget after a failure", async () => {
+    const faux = createFaux();
+    faux.setResponses(Array.from({ length: 30 }, () => fauxAssistantMessage("无需记忆")));
+    const onError = vi.fn();
+    const call = fauxAssistantMessage(fauxToolCall("read", { path: "a" }, { id: "c" }), { stopReason: "toolUse" });
+    const result = { role: "toolResult" as const, toolCallId: "c", toolName: "read", content: [{ type: "text" as const, text: "结果" }], isError: false, timestamp: 2 };
+    const messages = [user("旧".repeat(900)), fauxAssistantMessage("旧回复".repeat(100)), user("最新"), call, result];
+    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 1000 }, backgroundModel: faux.getModel(), workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete: async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "failed" }), save: vi.fn(), keepTurns: 1, onError });
+    const projected = await compactor.transform(messages);
+    expect(projected).toEqual(messages.slice(2));
+    expect(estimateTokens(projected)).toBeLessThanOrEqual(850);
+    expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("estimates and summarizes plain text without metadata or image bytes", async () => {
+    const faux = createFaux();
+    const image = { type: "image" as const, data: "QUJD".repeat(50000), mimeType: "image/png" };
+    const toolResult = { role: "toolResult" as const, toolCallId: "c", toolName: "shot", content: [{ type: "text" as const, text: "截图" }, image], isError: false, timestamp: 2 };
+    const messages = [user("看图"), fauxAssistantMessage(fauxToolCall("shot", {}, { id: "c" }), { stopReason: "toolUse" }), toolResult];
+    expect(estimateTokens(messages)).toBeLessThan(100);
+    const complete = vi.fn(async () => fauxAssistantMessage("摘要"));
+    const model = { ...faux.getModel(), contextWindow: 2000 };
+    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: vi.fn() });
+    expect(await compactor.transform(messages)).toEqual(messages);
+    expect(complete).not.toHaveBeenCalled();
+    faux.setResponses(Array.from({ length: 30 }, () => fauxAssistantMessage("无需记忆")));
+    const inputs: string[] = [];
+    const summarizing = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, keepTurns: 1, threshold: 0.01, save: vi.fn(),
+      complete: async (_m, ctx) => { inputs.push(JSON.stringify(ctx.messages)); return fauxAssistantMessage("摘要"); } });
+    await summarizing.transform([...messages, user("再看"), fauxAssistantMessage("好")]);
+    expect(inputs.join("")).toContain("[图片]");
+    expect(inputs.join("")).not.toContain("QUJD");
+  });
+
+  it("budgets the hard limit from the model output reservation", async () => {
+    const faux = createFaux();
+    const onError = vi.fn();
+    const model = { ...faux.getModel(), contextWindow: 10000, maxTokens: 4000 };
+    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete: vi.fn(), save: vi.fn(), threshold: 0.3, onError });
+    await compactor.transform([user("字".repeat(6500))]);
+    expect(onError).toHaveBeenCalledOnce();
+  });
 });
