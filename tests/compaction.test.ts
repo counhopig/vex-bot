@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextCompactor, estimateTokens, type CompactionRecord } from "../src/context/compaction.js";
+import { ContextCompactor, estimateTokens, renderMessages, type CompactionRecord } from "../src/context/compaction.js";
 import { Session } from "../src/core/session.js";
 import { appendJsonl, readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
@@ -245,5 +245,23 @@ describe("context compaction", () => {
     const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete: vi.fn(), save: vi.fn(), threshold: 0.3, onError });
     await compactor.transform([user("字".repeat(6500))]);
     expect(onError).toHaveBeenCalledOnce();
+  });
+
+  it("labels marked user messages by source and tolerates tool calls without arguments", () => {
+    const marked = { ...user("请聊点什么"), vexSource: "主动聊天" };
+    const call = fauxAssistantMessage(fauxToolCall("read", {}, { id: "c" }), { stopReason: "toolUse" });
+    (call.content[0] as { arguments?: unknown }).arguments = undefined;
+    const text = renderMessages([marked, call, user("你好")]);
+    expect(text).toContain("主动聊天：请聊点什么");
+    expect(text).toContain("主人：你好");
+    expect(() => estimateTokens([call])).not.toThrow();
+  });
+
+  it("ignores a stale record beyond the history when trimming", async () => {
+    const faux = createFaux();
+    const record: CompactionRecord = { kind: "compaction", through: 99, summary: "旧摘要", timestamp: 1 };
+    const messages = [user("旧".repeat(900)), fauxAssistantMessage("回复"), user("最新")];
+    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 1000 }, backgroundModel: faux.getModel(), workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete: async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "failed" }), save: vi.fn(), keepTurns: 1, threshold: 0.1 }, record);
+    expect(await compactor.transform(messages)).toEqual(messages.slice(2));
   });
 });

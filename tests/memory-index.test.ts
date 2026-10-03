@@ -1,5 +1,6 @@
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { appendFile, mkdir, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MemoryIndex } from "../src/index/memory.js";
 import { markdownChunks, tokenize } from "../src/index/tokenize.js";
@@ -100,7 +101,23 @@ describe("memory retrieval index", () => {
     const [hit] = result.details.results;
     expect(hit!.text).toContain("关键线索");
     expect(hit!.text.length).toBeLessThanOrEqual(310);
+    await writeFile(join(root, "workspace/USER.md"), `${"😀".repeat(200)}a表情线索${"😀".repeat(200)}`);
+    const emoji = await createMemorySearchTool(db).execute("call", { query: "表情线索", scope: "memory" });
+    expect(emoji.details.results[0]!.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
     expect(JSON.stringify(result.content)).not.toContain("前文".repeat(150));
+  });
+  it("re-indexes a database created by an older index version", async () => {
+    const file = join(root, "workspace/MEMORY.md");
+    await writeFile(file, "主人养了一只小猫咪");
+    const info = await stat(file);
+    const old = new Database(join(root, "index.sqlite"));
+    old.exec(`CREATE TABLE files(source TEXT PRIMARY KEY, mtime REAL, size INTEGER, offset INTEGER, hash TEXT);
+      CREATE VIRTUAL TABLE chunks USING fts5(tokens, text UNINDEXED, source UNINDEXED, date UNINDEXED, session UNINDEXED, scope UNINDEXED, tokenize='unicode61');`);
+    old.prepare("INSERT INTO chunks VALUES(?,?,?,?,?,?)").run("主人 人养 养了 了一 一只 只小 小猫 猫咪", "主人养了一只小猫咪", file, "2026-10-03", null, "memory");
+    old.prepare("INSERT INTO files VALUES(?,?,?,?,?)").run(file, info.mtimeMs, info.size, info.size, "");
+    old.close();
+    const db = await open();
+    expect(db.search("猫", 5, "memory")).toHaveLength(1);
   });
   it("rebuilds a corrupt database from source files", async () => {
     await writeFile(join(root, "index.sqlite"), "not a database");
