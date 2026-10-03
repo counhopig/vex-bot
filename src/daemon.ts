@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -164,14 +164,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       runTemporary: async (text, kind, signal) => {
         signal.throwIfAborted();
         const id = randomUUID();
-        const session = await openSession(`run:${id}`, join(paths.sessions, "runs", `${id}.jsonl`), () => kind === "heartbeat" ? "心跳" : "记忆整理", kind);
+        const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
+        const session = await openSession(`run:${id}`, transcript, () => kind === "heartbeat" ? "心跳" : "记忆整理", kind);
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
         try {
           signal.throwIfAborted(); session.send(text, kind); await session.whenIdle(); signal.throwIfAborted();
           if (!session.successfulReply) throw new Error("后台任务未完成");
           return session.successfulReply;
-        } finally { signal.removeEventListener("abort", abort); await session.dispose(); live.delete(session); }
+        } finally { signal.removeEventListener("abort", abort); await session.dispose(); live.delete(session); await rm(transcript, { force: true }); }
       },
       deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); await (await sessions.get("wechat")).injectAssistant(text, signal); },
       checkOutreach: async (signal) => {
@@ -188,7 +189,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       },
     },
   });
-  startupCleanup.push(() => gateway.stop());
 
   const gateway = new Gateway({
     host: config.web.host,
@@ -201,6 +201,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });
+  startupCleanup.push(() => gateway.stop());
   const { port } = await gateway.start();
   wechat = await startWeChatChannel({ config, paths, sessions, approvals, bus, log }).catch((err: unknown) => {
     log.error({ err }, "wechat failed to start; running without wechat");

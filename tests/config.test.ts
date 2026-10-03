@@ -87,6 +87,12 @@ describe("parseConfig", () => {
     expect(() => parseConfig("model: [", paths)).toThrow(ConfigError);
   });
 
+  it("rejects millisecond intervals for heartbeat and outreach", () => {
+    expect(() => parseConfig(`${minimal}heartbeat: { every: 500ms }\n`, paths)).toThrow(/\/heartbeat\/every/);
+    expect(() => parseConfig(`${minimal}persona: { outreach: { checkEvery: 500ms } }\n`, paths)).toThrow(/\/persona\/outreach\/checkEvery/);
+    expect(() => parseConfig(`${minimal}heartbeat: { every: 30m }\n`, paths)).not.toThrow();
+  });
+
   it("reports the failing path for schema errors", () => {
     expect(() => parseConfig("model: { provider: deepseek }\n", paths)).toThrow(/\/model/);
     expect(() => parseConfig(`${minimal}tools: { policy: { bash: maybe } }\n`, paths)).toThrow(/\/tools\/policy\/bash/);

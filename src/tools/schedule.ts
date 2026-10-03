@@ -5,7 +5,7 @@ import type { Scheduler } from "../scheduler/index.js";
 const Params = Type.Object({
   action: Type.Union([Type.Literal("create"), Type.Literal("list"), Type.Literal("delete")]),
   name: Type.Optional(Type.String()), id: Type.Optional(Type.String()),
-  prompt: Type.Optional(Type.String()), target: Type.Optional(Type.String()), enabled: Type.Optional(Type.Boolean()),
+  prompt: Type.Optional(Type.String()), target: Type.Optional(Type.String()),
   schedule: Type.Optional(Type.Union([Type.Object({ cron: Type.String() }), Type.Object({ every: Type.String() }), Type.Object({ once: Type.String() })])),
 });
 export function createScheduleTool(scheduler: Scheduler, source: string): AgentTool<typeof Params> {
@@ -14,7 +14,7 @@ export function createScheduleTool(scheduler: Scheduler, source: string): AgentT
       let result: unknown;
       if (params.action === "list") result = scheduler.list();
       else if (params.action === "delete") { if (!params.id && !params.name) throw new Error("删除任务需要 id 或 name"); result = { deleted: await scheduler.delete(params.id ?? params.name!) }; }
-      else { if (!params.name || !params.prompt || !params.schedule) throw new Error("创建任务需要 name、prompt 和 schedule"); result = await scheduler.create({ name: params.name, prompt: params.prompt, schedule: params.schedule, target: params.target ?? source, enabled: params.enabled }); }
+      else { if (!params.name || !params.prompt || !params.schedule) throw new Error("创建任务需要 name、prompt 和 schedule"); result = await scheduler.create({ name: params.name, prompt: params.prompt, schedule: params.schedule, target: params.target ?? source }); }
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: {} };
     },
   };

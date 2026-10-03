@@ -194,7 +194,7 @@ export class WeChatChannel {
   private onSessionEvent(event: SessionEvent): void {
     switch (event.kind) {
       case "busy":
-        if (event.busy) this.beginTurn();
+        if (event.busy) this.beginTurn(event.source === "主动聊天");
         else this.endTurn(event.discardReply);
         return;
       case "assistant_message":
@@ -215,11 +215,11 @@ export class WeChatChannel {
     }
   }
 
-  private beginTurn(): void {
+  private beginTurn(silent = false): void {
     this.lastReply = Promise.resolve(false);
     if (this.turn) clearTimeout(this.turn.timer);
     const timer = setTimeout(() => {
-      if (this.turn?.timer === timer) this.send("处理中…");
+      if (!silent && this.turn?.timer === timer) this.send("处理中…");
     }, this.opts.processingNoticeMs ?? 15_000);
     this.turn = { texts: [], aborted: false, timer };
   }

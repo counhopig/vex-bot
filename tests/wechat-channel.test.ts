@@ -171,6 +171,16 @@ describe("WeChatChannel outbound", () => {
     expect(await sentTexts()).toEqual(["处理中…", "好了"]);
   });
 
+  it("does not announce processing during a proactive turn", async () => {
+    await store.saveState({ contextToken: "ctx" });
+    await startChannel({ processingNoticeMs: 30 });
+    emit({ kind: "busy", busy: true, source: "主动聊天" });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    emit({ kind: "assistant_message", text: "在吗", stopReason: "stop", timestamp: 1 });
+    emit({ kind: "busy", busy: false });
+    expect(await sentTexts()).toEqual(["在吗"]);
+  });
+
   it("marks interrupted turns and reports errors", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 60_000 });
