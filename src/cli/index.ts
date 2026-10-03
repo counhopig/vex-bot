@@ -68,7 +68,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
     console.error(`vexd 已在运行（pid ${existing}）`);
     return 1;
   }
-  const log = createLogger({ file: paths.logFile });
+  const log = createLogger({ file: paths.logFile, stdout: process.env.VEX_LOG_STDOUT === "1" });
   const daemon = await startDaemon({ paths, config, log });
   await writePid(paths.pidFile, process.pid);
   console.log(`vexd 已启动：${daemon.url}`);
