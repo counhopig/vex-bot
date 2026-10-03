@@ -93,6 +93,13 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${minimal}heartbeat: { every: 30m }\n`, paths)).not.toThrow();
   });
 
+  it("accepts the three web search providers and rejects others", () => {
+    for (const body of ['{ provider: tavily, apiKey: k }', '{ provider: searxng, baseUrl: "http://searxng:8080" }', '{ provider: brave }']) {
+      expect(() => parseConfig(`${minimal}webSearch: ${body}\n`, paths)).not.toThrow();
+    }
+    expect(() => parseConfig(`${minimal}webSearch: { provider: bing }\n`, paths)).toThrow(/webSearch/);
+  });
+
   it("validates the speech-to-text settings", () => {
     const config = parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1", model: whisper-1, language: zh, chunkMinutes: 5 }\n`, paths);
     expect(config.stt).toEqual({ baseUrl: "https://stt.example/v1", model: "whisper-1", language: "zh", chunkMinutes: 5 });

@@ -60,6 +60,7 @@ Container details:
 - The image sets `VEX_WEB_HOST=0.0.0.0` and `VEX_LOG_STDOUT=1`. `compose.yaml` publishes the port on the loopback interface only; put a TLS reverse proxy in front for remote access.
 - Set `TZ` (the compose file uses `Asia/Shanghai`): cron schedules, rest hours and heartbeat hours follow it.
 - The image includes `ffmpeg` and `yt-dlp` (for the `link-reader` skill's speech to text); a new image carries the current `yt-dlp`, which YouTube support needs to stay up to date with.
+- `compose.searxng.yaml` adds an optional SearXNG search container; see Web search in the configuration guide.
 - A health check requests the WebChat port every 30 seconds.
 - Update: `docker compose pull && docker compose up -d`. Build locally: `docker build -t vex-bot .` and point `image` at it.
 - Back up the volume, for example `docker run --rm -v vex-data:/data -v "$PWD":/backup busybox tar czf /backup/vex-data.tgz -C /data .`

@@ -61,6 +61,36 @@ describe("public webpage access", () => {
   });
 });
 
+describe("configured Tavily and SearXNG search", () => {
+  it("posts the query to Tavily with a bearer key and normalizes the results", async () => {
+    const fetchFn = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ results: [{ title: "T", url: "https://t.example", content: "内容摘要", published_date: "2026-10-01" }] })));
+    const result = await createWebSearchTool({ provider: "tavily", apiKey: "tvly-test" }, { fetch: fetchFn as never }).execute("1", { query: "测试", count: 4 });
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(String(url)).toBe("https://api.tavily.com/search");
+    expect(init!.method).toBe("POST");
+    expect(init!.headers).toMatchObject({ Authorization: "Bearer tvly-test" });
+    expect(JSON.parse(init!.body as string)).toMatchObject({ query: "测试", max_results: 4 });
+    expect(JSON.parse((result.content[0] as { text: string }).text).results).toEqual([{ title: "T", url: "https://t.example", description: "内容摘要", published: "2026-10-01" }]);
+    await expect(createWebSearchTool({ provider: "tavily" }, { fetch: fetchFn as never }).execute("1", { query: "q" })).rejects.toThrow("TAVILY_API_KEY");
+    await expect(createWebSearchTool({ provider: "tavily", apiKey: "k" }, { fetch: async () => new Response("", { status: 401 }) }).execute("1", { query: "q" })).rejects.toThrow("HTTP 401");
+  });
+
+  it("queries SearXNG for JSON and explains the common setup problems", async () => {
+    const fetchFn = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ results: [{ title: "A", url: "https://a.example", content: "摘要", publishedDate: null }, { title: "B", url: "https://b.example", content: "二" }] })));
+    const result = await createWebSearchTool({ provider: "searxng", baseUrl: "http://searxng:8080/" }, { fetch: fetchFn as never }).execute("1", { query: "咖啡", count: 1, country: "CN" });
+    const url = fetchFn.mock.calls[0]![0] as URL;
+    expect(url.origin + url.pathname).toBe("http://searxng:8080/search");
+    expect(url.searchParams.get("q")).toBe("咖啡");
+    expect(url.searchParams.get("format")).toBe("json");
+    expect(url.searchParams.get("language")).toBe("cn");
+    expect(JSON.parse((result.content[0] as { text: string }).text).results).toHaveLength(1);
+    await expect(createWebSearchTool({ provider: "searxng" }).execute("1", { query: "q" })).rejects.toThrow("baseUrl");
+    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "not a url" }).execute("1", { query: "q" })).rejects.toThrow("有效的地址");
+    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "http://s" }, { fetch: async () => new Response("", { status: 403 }) }).execute("1", { query: "q" })).rejects.toThrow("search.formats");
+    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "http://127.0.0.1:1" }).execute("1", { query: "q" })).rejects.toThrow("无法连接搜索服务（searxng）");
+  });
+});
+
 describe("configured Brave search", () => {
   it("uses configured API credentials and normalizes search results", async () => {
     const fetchFn = vi.fn(async () => new Response(JSON.stringify({ web: { results: [{ title: "Title", url: "https://example.com", description: "Snippet", age: "today" }] } }), { status: 200 }));
@@ -73,7 +103,7 @@ describe("configured Brave search", () => {
   });
   it("reports missing config, unsupported providers and HTTP failure", async () => {
     await expect(createWebSearchTool().execute("1", { query: "q" })).rejects.toThrow("配置");
-    await expect(createWebSearchTool({ provider: "unsupported" as "brave" }).execute("1", { query: "q" })).rejects.toThrow("不支持");
+    await expect(createWebSearchTool({ provider: "unsupported" as "brave" }).execute("1", { query: "q" })).rejects.toThrow("brave、tavily、searxng");
     const tool = createWebSearchTool({ provider: "brave", apiKey: "test" }, { fetch: async () => new Response("secret", { status: 403 }) });
     await expect(tool.execute("1", { query: "q" })).rejects.toThrow("HTTP 403");
   });

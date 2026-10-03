@@ -163,7 +163,7 @@ export function createWebFetchTool(options: { request?: PageRequest; timeoutMs?:
   };
 }
 
-export interface WebSearchConfig { provider: "brave"; apiKey?: string }
+export interface WebSearchConfig { provider: "brave" | "tavily" | "searxng"; apiKey?: string; baseUrl?: string }
 
 const SearchParams = Type.Object({
   query: Type.String({ minLength: 1 }),
@@ -171,35 +171,81 @@ const SearchParams = Type.Object({
   country: Type.Optional(Type.String({ pattern: "^[A-Za-z]{2}$" })),
 });
 
+interface SearchResult { title: string; url: string; description: string; published?: string }
+interface SearchRequest { query: string; count: number; country?: string; signal: AbortSignal; fetch: typeof fetch }
+
+const text = (value: unknown): string => (typeof value === "string" ? value : "");
+
+async function searchBrave(config: WebSearchConfig, { query, count, country, signal, fetch: fetchFn }: SearchRequest): Promise<SearchResult[]> {
+  const apiKey = config.apiKey?.trim() || process.env.BRAVE_API_KEY?.trim();
+  if (!apiKey) throw new Error("Brave Search 需要 webSearch.apiKey 或 BRAVE_API_KEY");
+  const url = new URL("https://api.search.brave.com/res/v1/web/search");
+  url.searchParams.set("q", query);
+  url.searchParams.set("count", String(count));
+  if (country) url.searchParams.set("country", country);
+  const response = await fetchFn(url, { headers: { Accept: "application/json", "X-Subscription-Token": apiKey }, redirect: "error", signal });
+  if (!response.ok) throw new Error(`Brave Search 返回 HTTP ${response.status}`);
+  const data = await response.json() as { web?: { results?: { title?: string; url?: string; description?: string; age?: string }[] } };
+  return (Array.isArray(data.web?.results) ? data.web.results : []).slice(0, count)
+    .map((entry) => ({ title: text(entry.title), url: text(entry.url), description: text(entry.description), published: entry.age }));
+}
+
+async function searchTavily(config: WebSearchConfig, { query, count, signal, fetch: fetchFn }: SearchRequest): Promise<SearchResult[]> {
+  const apiKey = config.apiKey?.trim() || process.env.TAVILY_API_KEY?.trim();
+  if (!apiKey) throw new Error("Tavily 需要 webSearch.apiKey 或 TAVILY_API_KEY");
+  const response = await fetchFn("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ query, max_results: count, search_depth: "basic", include_answer: false }),
+    redirect: "error",
+    signal,
+  });
+  if (!response.ok) throw new Error(`Tavily 返回 HTTP ${response.status}`);
+  const data = await response.json() as { results?: { title?: string; url?: string; content?: string; published_date?: string }[] };
+  return (Array.isArray(data.results) ? data.results : []).slice(0, count)
+    .map((entry) => ({ title: text(entry.title), url: text(entry.url), description: text(entry.content), published: entry.published_date }));
+}
+
+async function searchSearxng(config: WebSearchConfig, { query, count, country, signal, fetch: fetchFn }: SearchRequest): Promise<SearchResult[]> {
+  const base = config.baseUrl?.trim();
+  if (!base) throw new Error("SearXNG 需要 webSearch.baseUrl，例如 http://searxng:8080");
+  let url: URL;
+  try { url = new URL("search", base.endsWith("/") ? base : `${base}/`); } catch { throw new Error("webSearch.baseUrl 不是有效的地址"); }
+  url.searchParams.set("q", query);
+  url.searchParams.set("format", "json");
+  url.searchParams.set("categories", "general");
+  if (country) url.searchParams.set("language", country.toLowerCase());
+  const response = await fetchFn(url, { headers: { Accept: "application/json" }, redirect: "error", signal });
+  if (response.status === 403) throw new Error("SearXNG 拒绝了 JSON 请求：请在它的 settings.yml 里把 json 加入 search.formats");
+  if (!response.ok) throw new Error(`SearXNG 返回 HTTP ${response.status}`);
+  const data = await response.json() as { results?: { title?: string; url?: string; content?: string; publishedDate?: string }[] };
+  return (Array.isArray(data.results) ? data.results : []).slice(0, count)
+    .map((entry) => ({ title: text(entry.title), url: text(entry.url), description: text(entry.content), published: entry.publishedDate ?? undefined }));
+}
+
+const SEARCH_PROVIDERS = { brave: searchBrave, tavily: searchTavily, searxng: searchSearxng };
+
 export function createWebSearchTool(
   config?: WebSearchConfig,
   options: { fetch?: typeof fetch; timeoutMs?: number } = {},
 ): AgentTool<typeof SearchParams> {
   return {
-    name: "web_search", label: "网页搜索", description: "通过配置的 Brave Search 搜索公开网页，返回标题、链接和摘要。",
+    name: "web_search", label: "网页搜索", description: "通过配置的搜索服务（Brave Search、Tavily 或 SearXNG）搜索公开网页，返回标题、链接和摘要。",
     parameters: SearchParams,
     async execute(_id, { query, count = 5, country }, signal) {
       if (!config) throw new Error("请在 webSearch 配置搜索服务");
-      if (config.provider !== "brave") throw new Error("不支持的搜索提供方；当前支持 brave");
-      const apiKey = config.apiKey?.trim() || process.env.BRAVE_API_KEY?.trim();
-      if (!apiKey) throw new Error("Brave Search 需要 webSearch.apiKey 或 BRAVE_API_KEY");
-      const url = new URL("https://api.search.brave.com/res/v1/web/search");
-      url.searchParams.set("q", query);
-      url.searchParams.set("count", String(Math.max(1, Math.min(10, count))));
-      if (country) url.searchParams.set("country", country);
-      const response = await (options.fetch ?? fetch)(url, {
-        headers: { Accept: "application/json", "X-Subscription-Token": apiKey },
-        redirect: "error",
+      const search = SEARCH_PROVIDERS[config.provider];
+      if (!search) throw new Error("不支持的搜索提供方；当前支持 brave、tavily、searxng");
+      const results = await search(config, {
+        query,
+        count: Math.max(1, Math.min(10, count)),
+        country,
+        fetch: options.fetch ?? fetch,
         signal: AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 30_000), ...(signal ? [signal] : [])]),
+      }).catch((error: unknown) => {
+        if (error instanceof TypeError) throw new Error(`无法连接搜索服务（${config.provider}）：${(error.cause as Error | undefined)?.message ?? error.message}`);
+        throw error;
       });
-      if (!response.ok) throw new Error(`Brave Search 返回 HTTP ${response.status}`);
-      const data = await response.json() as { web?: { results?: { title?: string; url?: string; description?: string; age?: string }[] } };
-      const results = (Array.isArray(data.web?.results) ? data.web.results : []).slice(0, count).map((entry) => ({
-        title: typeof entry.title === "string" ? entry.title : "",
-        url: typeof entry.url === "string" ? entry.url : "",
-        description: typeof entry.description === "string" ? entry.description : "",
-        published: entry.age,
-      }));
       return { content: [{ type: "text", text: JSON.stringify({ query, results }) }], details: { count: results.length } };
     },
   };

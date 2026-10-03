@@ -71,9 +71,11 @@ persona:
     quietHours: 3                  # hours since the owner's last WeChat message
     dailyLimit: 3
 
+# tavily (1000 free searches a month), searxng (self-hosted, free) or brave (paid).
 webSearch:
-  provider: brave
-  apiKey: "YOUR_BRAVE_SEARCH_API_KEY"   # or set BRAVE_API_KEY
+  provider: tavily
+  apiKey: "YOUR_TAVILY_API_KEY"   # or set TAVILY_API_KEY; brave uses BRAVE_API_KEY
+  # baseUrl: "http://searxng:8080"   # for provider: searxng
 
 # Speech to text for videos without subtitles: any OpenAI-compatible transcription API.
 stt:

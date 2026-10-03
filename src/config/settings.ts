@@ -14,7 +14,7 @@ const ALLOWED = [
   /^wechat\.(enabled|ownerId)$/,
   /^stt\.(baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
-  /^webSearch\.(provider|apiKey)$/,
+  /^webSearch\.(provider|apiKey|baseUrl)$/,
   /^heartbeat\.(every|activeHours)$/,
   /^memory\.consolidateAt$/,
   /^compaction\.threshold$/,
