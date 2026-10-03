@@ -52,5 +52,5 @@ export async function loadConfig(paths: VexPaths): Promise<{ config: VexConfig; 
 
 export async function saveConfigText(paths: VexPaths, text: string): Promise<void> {
   parseConfig(text, paths);
-  await writeFileAtomic(paths.config, text);
+  await writeFileAtomic(paths.config, text, 0o600, 0o700);
 }

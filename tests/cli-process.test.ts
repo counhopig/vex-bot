@@ -32,16 +32,21 @@ describe("pid file", () => {
     expect(isAlive(process.pid)).toBe(true);
   });
 
-  it("rejects reused PIDs and records for another CLI", async () => {
+  it("recognizes a record written by another CLI path", async () => {
     const file = join(dir, "vexd.pid");
-    const cliPath = join(dir, "vex.js");
-    await writePid(file, process.pid, cliPath);
-    expect(await readPid(file, cliPath)).toBe(process.pid);
-    expect(await readPid(file, join(dir, "other.js"))).toBeUndefined();
+    await writePid(file, process.pid);
+    const record = JSON.parse(await readFile(file, "utf8"));
+    await writeFile(file, JSON.stringify({ ...record, cliPath: join(dir, "other.js") }));
+    expect(await readPid(file)).toBe(process.pid);
+  });
+
+  it("rejects reused PIDs", async () => {
+    const file = join(dir, "vexd.pid");
+    await writePid(file, process.pid);
     const record = JSON.parse(await readFile(file, "utf8"));
     record.identity.startTime += "0";
     await writeFile(file, JSON.stringify(record));
-    expect(await readPid(file, cliPath)).toBeUndefined();
+    expect(await readPid(file)).toBeUndefined();
     expect(isAlive(process.pid)).toBe(true);
   });
 

@@ -52,7 +52,13 @@ export function createGrepTool(workspace: string): AgentTool<typeof GrepParams> 
       let truncated = false;
       outer: for await (const file of isFile ? single(base) : walkFiles(base)) {
         if (glob && !matchesGlob(relative(root, file), glob)) continue;
-        const buf = await readFile(file);
+        let buf: Buffer;
+        try {
+          if ((await stat(file)).size > MAX_FILE_BYTES) continue;
+          buf = await readFile(file);
+        } catch {
+          continue;
+        }
         if (buf.length > MAX_FILE_BYTES || buf.subarray(0, 8000).includes(0)) continue;
         const lines = buf.toString("utf8").split("\n");
         for (let i = 0; i < lines.length; i++) {

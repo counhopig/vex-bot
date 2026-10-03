@@ -275,4 +275,14 @@ describe("SessionManager", () => {
     expect(session.busy).toBe(false);
     expect(session.history().items.at(-1)).toMatchObject({ kind: "assistant", stopReason: "aborted" });
   });
+
+  it("refuses to open sessions once shutdown has begun", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const opened = manager.shutdown();
+    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd 正在关闭");
+    await opened;
+    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd 正在关闭");
+  });
 });

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -95,5 +95,16 @@ describe("loadConfig / saveConfigText", () => {
     expect(await readFile(paths.config, "utf8")).toBe(minimal);
     await expect(saveConfigText(paths, "model: 1\n")).rejects.toThrow(ConfigError);
     expect(await readFile(paths.config, "utf8")).toBe(minimal);
+  });
+
+  it("keeps the config file private to the owner", async () => {
+    await saveConfigText(paths, minimal);
+    expect((await stat(paths.config)).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates a missing data directory as owner-only", async () => {
+    const home = join(dir, "fresh");
+    await saveConfigText(resolvePaths(home), minimal);
+    expect((await stat(home)).mode & 0o777).toBe(0o700);
   });
 });

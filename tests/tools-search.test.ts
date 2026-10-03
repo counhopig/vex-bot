@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCoreTools } from "../src/tools/registry.js";
@@ -49,6 +49,23 @@ describe("grep", () => {
     const out = textOf(await createGrepTool(ws).execute("1", { pattern: "hit", path: "many.txt" }));
     expect(out.split("\n")).toHaveLength(201);
     expect(out.endsWith("…（结果超过 200 条，已截断）")).toBe(true);
+  });
+});
+
+describe("grep file limits", () => {
+  it("skips files over 1 MB", async () => {
+    await writeFile(join(ws, "huge.txt"), `coffee\n${"x".repeat(1_100_000)}`, "utf8");
+    const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
+    expect(out).not.toContain("huge.txt");
+    expect(out).toContain("notes.txt");
+  });
+
+  it("skips unreadable files instead of aborting", async () => {
+    await writeFile(join(ws, "locked.txt"), "coffee\n", "utf8");
+    await chmod(join(ws, "locked.txt"), 0o000);
+    const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
+    expect(out).not.toContain("locked.txt");
+    expect(out).toContain("notes.txt");
   });
 });
 

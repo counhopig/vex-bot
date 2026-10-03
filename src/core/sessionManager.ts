@@ -27,6 +27,7 @@ export class SessionManager {
   private readonly deleting = new Set<string>();
   private readonly index: WebSessionIndex;
   private readonly untitledFirstMessage = new Map<string, string>();
+  private closing = false;
   private unsubscribe: (() => void) | undefined;
 
   constructor(private readonly opts: SessionManagerOptions) {
@@ -39,6 +40,7 @@ export class SessionManager {
   }
 
   get(key: string): Promise<Session> {
+    if (this.closing) return Promise.reject(new Error("vexd 正在关闭，无法打开会话。"));
     if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`没有这个会话：${key}`));
     const existing = this.sessions.get(key);
     if (existing) return this.availableSession(key, existing);
@@ -111,6 +113,7 @@ export class SessionManager {
   }
 
   async shutdown(): Promise<void> {
+    this.closing = true;
     this.unsubscribe?.();
     const settled = await Promise.allSettled([...this.sessions.values()]);
     const open = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
