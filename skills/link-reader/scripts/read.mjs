@@ -75,8 +75,13 @@ async function importCompiled(path) {
 }
 
 async function main(args) {
-  const [target, ...flags] = args;
-  if (!target) throw new Error("用法：read.mjs 链接 [--raw] [--config 路径]");
+  const [argument, ...flags] = args;
+  if (!argument) throw new Error("用法：read.mjs 链接（或 - 从标准输入读取整段分享文字） [--raw] [--config 路径]");
+  let target = argument;
+  if (argument === "-") {
+    target = "";
+    for await (const chunk of process.stdin) target += chunk;
+  }
   let raw = false, configFlag;
   for (let i = 0; i < flags.length; i++) {
     if (flags[i] === "--raw") raw = true;

@@ -133,16 +133,25 @@ describe("Douyin", () => {
     expect(output).toContain("没有可读取的字幕或正文");
   });
 
-  it("falls back to the note page and reports a missing work", async () => {
-    const note: Route = (url) => url.pathname.startsWith("/share/note/") ? page({ loaderData: { x: { videoInfoRes: { item_list: [item] } } } }, "window._ROUTER_DATA ") : ok("<html></html>");
-    expect(await run(fake(note).request, `https://www.douyin.com/note/${id}`)).toContain("猫主人");
+  it("reads the share page directly for a work address", async () => {
+    const { request, calls } = fake(route);
+    expect(await run(request, `https://www.douyin.com/video/${id}`)).toContain("猫主人");
+    expect(calls[0]!.url).toBe(`https://www.iesdouyin.com/share/video/${id}/`);
+  });
+
+  it("falls back to the share text and page summary, and reports a missing work", async () => {
+    const bare = fake((url) => url.hostname === "v.douyin.com" ? redirect(`https://www.iesdouyin.com/share/video/${id}/?x=1`) : ok('<meta name="description" content="于20261003发布在抖音，已经收获了7个喜欢，来抖音，记录美好生活！"/>'));
+    const output = await run(bare.request, "5.38 复制打开抖音，看看【yy.的作品】感谢大哥领航😭 甩丢我三次都被我追上了# 京港澳高... https://v.douyin.com/IMJC/ Kws:/ 01/04");
+    expect(output).toContain("作者：yy.");
+    expect(output).toContain("简介：感谢大哥领航😭 甩丢我三次都被我追上了# 京港澳高...");
+    expect(output).toContain("其他：发布于 2026-10-03；喜欢 7；说明：抖音的作品详情需要登录态");
     await expect(run(fake(() => ok("<html></html>")).request, `https://www.douyin.com/video/${id}`)).rejects.toThrow("没有返回作品内容");
   });
 });
 
 describe("Xiaohongshu", () => {
   const id = "64a1b2c3d4e5f60718293a4b";
-  const state = { note: { noteDetailMap: { [id]: { note: { title: "探店", desc: "今天去了一家咖啡店\n拿铁很好喝", type: "normal", user: { nickname: "小红" }, tagList: [{ name: "咖啡" }], imageList: [{ urlDefault: "https://sns-img.xhscdn.com/1.jpg" }], interactInfo: { likedCount: "12", collectedCount: "3", commentCount: "1" } } } } }, other: undefined };
+  const state = { note: { noteDetailMap: { [id]: { note: { title: "探店", desc: "今天去了一家咖啡店\n拿铁很好喝", type: "normal", user: { nickName: "小红" }, tagList: [{ name: "咖啡" }], imageList: [{ urlDefault: "https://sns-img.xhscdn.com/1.jpg" }], interactInfo: { likedCount: "12", collectedCount: "3", commentCount: "1" } } } } }, other: undefined };
   const route: Route = (url) => {
     if (url.hostname === "xhslink.com") return redirect(`https://www.xiaohongshu.com/discovery/item/${id}?xsec_token=T`);
     if (url.pathname === `/discovery/item/${id}`) return ok(`<script>window.__INITIAL_STATE__=${JSON.stringify(state).replace("null", "undefined")}</script>`);
@@ -174,6 +183,7 @@ describe("matching", () => {
     ["https://youtu.be/dQw4w9WgXcQ", "YouTube"],
     ["看 https://v.douyin.com/abc/ 这个", "抖音"],
     ["http://xhslink.com/a/abc", "小红书"],
+    ["http://xhslink.cn/o/9H3n6pbqt30", "小红书"],
   ])("%s is %s", (input, name) => expect(findPlatform(input)?.name).toBe(name));
 
   it("ignores other links", async () => {
