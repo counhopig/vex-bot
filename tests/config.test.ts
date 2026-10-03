@@ -93,6 +93,13 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${minimal}heartbeat: { every: 30m }\n`, paths)).not.toThrow();
   });
 
+  it("validates the speech-to-text settings", () => {
+    const config = parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1", model: whisper-1, language: zh, chunkMinutes: 5 }\n`, paths);
+    expect(config.stt).toEqual({ baseUrl: "https://stt.example/v1", model: "whisper-1", language: "zh", chunkMinutes: 5 });
+    expect(() => parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1" }\n`, paths)).toThrow(/\/stt/);
+    expect(() => parseConfig(`${minimal}stt: { baseUrl: "https://x", model: m, chunkMinutes: 0 }\n`, paths)).toThrow(/chunkMinutes/);
+  });
+
   it("restricts MCP server names to letters, digits and hyphens", () => {
     expect(() => parseConfig(`${minimal}mcpServers: { "a__b": { url: "http://x" } }\n`, paths)).toThrow(ConfigError);
     expect(() => parseConfig(`${minimal}mcpServers: { "${"a".repeat(33)}": { url: "http://x" } }\n`, paths)).toThrow(ConfigError);

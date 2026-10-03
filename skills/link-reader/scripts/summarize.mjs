@@ -1,18 +1,8 @@
+import { mapLimited } from "./shared.mjs";
+
 const SINGLE_LIMIT = 12_000;
 const CHUNK_SIZE = 8_000;
 const CONCURRENCY = 4;
-
-async function mapLimited(items, limit, task) {
-  const results = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const index = next++;
-      results[index] = await task(items[index], index);
-    }
-  }));
-  return results;
-}
 
 export async function summarizeText(text, kind, ask) {
   const requirements = "要求：\n1. 先用 2-3 句话给出整体概要\n2. 再列出 3-5 个关键要点\n3. 保持客观中立，不添加个人评价\n4. 使用中文输出";

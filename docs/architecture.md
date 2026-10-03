@@ -115,7 +115,9 @@ The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run thro
 | Douyin | author and caption from the pasted share text (the caption may be cut by Douyin), publish date and likes from the share page; no duration or counts | None |
 | Xiaohongshu | title, author, tags, counts (share page state; `xhslink.com` and `xhslink.cn` short links resolved) | The note body |
 
-Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000. Audio is never transcribed, so a video without subtitles yields metadata only.
+Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000.
+
+A Bilibili or YouTube video without subtitles is transcribed when `stt` is configured: the audio is fetched (Bilibili's own audio stream, or YouTube through `yt-dlp`), re-encoded by `ffmpeg` into mono MP3 parts of `stt.chunkMinutes` (10) minutes, and each part is sent to an OpenAI-compatible `/audio/transcriptions` endpoint, three at a time; the joined text then goes through the same summary. Videos longer than `stt.maxMinutes` (90) are not transcribed. Douyin and Xiaohongshu are never transcribed.
 
 ## Memory
 

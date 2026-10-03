@@ -39,6 +39,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.heartbeat ? { heartbeat: raw.heartbeat } : {}),
     ...(raw.persona ? { persona: raw.persona } : {}),
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
+    ...(raw.stt ? { stt: raw.stt } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,

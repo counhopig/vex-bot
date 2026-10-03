@@ -75,6 +75,15 @@ webSearch:
   provider: brave
   apiKey: "YOUR_BRAVE_SEARCH_API_KEY"   # or set BRAVE_API_KEY
 
+# Speech to text for videos without subtitles: any OpenAI-compatible transcription API.
+stt:
+  baseUrl: "https://api.openai.com/v1"
+  model: whisper-1
+  apiKey: "YOUR_API_KEY"
+  language: zh
+  chunkMinutes: 10
+  maxMinutes: 90
+
 # Bilibili SESSDATA cookie, for subtitles that need a login.
 links:
   bilibili:
