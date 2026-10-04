@@ -25,3 +25,14 @@ export async function readWorkspaceFile(dir: string, name: string): Promise<stri
     throw err;
   }
 }
+
+/** Lines of each always-loaded file that reach the model; the rest is cut off. */
+export const RESIDENT_LINE_LIMITS: Record<string, number> = { "SOUL.md": 200, "USER.md": 200, "MEMORY.md": 100 };
+
+export function residentLimitWarning(name: string, text: string): string | undefined {
+  const limit = RESIDENT_LINE_LIMITS[name];
+  const content = text.trim();
+  if (!limit || !content) return undefined;
+  const lines = content.split("\n").length;
+  return lines > limit ? `${name} has ${lines} lines; only the first ${limit} reach the model. Shorten it to keep everything.` : undefined;
+}

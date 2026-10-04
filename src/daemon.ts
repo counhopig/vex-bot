@@ -32,7 +32,7 @@ import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
 import { DEFAULT_PROMPTS, isPromptFile, loadPrompt } from "./workspace/prompts.js";
-import { ensureWorkspace, readWorkspaceFile } from "./workspace/workspace.js";
+import { ensureWorkspace, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -108,10 +108,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool(), createWebSearchTool(config.webSearch)];
   const prompt = new SystemPromptBuilder([
     baseInstructionsSection(config.workspace),
-    residentFileSection({ workspace: config.workspace, file: "SOUL.md", maxLines: 200 }),
-    residentFileSection({ workspace: config.workspace, file: "USER.md", maxLines: 200 }),
+    residentFileSection({ workspace: config.workspace, file: "SOUL.md", maxLines: RESIDENT_LINE_LIMITS["SOUL.md"]! }),
+    residentFileSection({ workspace: config.workspace, file: "USER.md", maxLines: RESIDENT_LINE_LIMITS["USER.md"]! }),
     () => `## Mood and rest hours\n${persona.describe()}`,
-    residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: 100 }),
+    residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     timeSection(),
   ]);
@@ -308,7 +308,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return { restartRequired: next.restartRequired, restarting };
       },
     },
-    workspace: { read: async (name) => (await readWorkspaceFile(config.workspace, name)).trim() || (isPromptFile(name) ? DEFAULT_PROMPTS[name] : ""), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
+    workspace: { read: async (name) => (await readWorkspaceFile(config.workspace, name)).trim() || (isPromptFile(name) ? DEFAULT_PROMPTS[name] : ""), save: async (name, text) => { await writeFileAtomic(join(config.workspace, name), text, 0o644); return { warning: residentLimitWarning(name, text) }; } },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });
