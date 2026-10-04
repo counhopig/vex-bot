@@ -204,16 +204,13 @@ describe("web app", () => {
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
   });
 
-  it("groups the persona and instruction files into five pages, with the background tasks together", async () => {
+  it("groups the persona files into four pages, with the background tasks together", async () => {
     const { get, socket, context } = await loadApp();
     const area = (name: string) => runInContext(`state.fileAreas.get(${JSON.stringify(name)})`, context) as Element;
     get("open-settings").dispatch("click");
     get("settings-tabs").children[4]!.dispatch("click");
-    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Instructions", "Background tasks"]);
+    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Background tasks"]);
     get("file-tabs").children[3]!.dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "INSTRUCTIONS.md" }));
-    expect(textOf(get("file-editors"))).toContain("{{workspace}}");
-    get("file-tabs").children[4]!.dispatch("click");
     const requested = socket.send.mock.calls.slice(-3).map((call) => JSON.parse(call[0]).name);
     expect(requested).toEqual(["HEARTBEAT.md", "prompts/consolidation.md", "prompts/outreach.md"]);
     expect(get("file-editors").className).toBe("multi");

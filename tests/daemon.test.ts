@@ -277,18 +277,6 @@ describe("startDaemon", () => {
     });
   });
 
-  it("builds the system prompt from the owner's INSTRUCTIONS.md", async () => {
-    let systemPrompt = "";
-    faux.setResponses([(ctx) => { systemPrompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("ok"); }, fauxAssistantMessage("title")]);
-    const workspace = join(dir, "workspace");
-    await mkdir(workspace, { recursive: true });
-    await writeFile(join(workspace, "INSTRUCTIONS.md"), "House rules for {{workspace}}.");
-    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
-    await chat("hi");
-    expect(systemPrompt).toContain(`House rules for ${workspace}.`);
-    expect(systemPrompt).not.toContain("Memory conventions");
-  });
-
   it("opens prompt files with their default text and restores it when the text is cleared", async () => {
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
     client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
