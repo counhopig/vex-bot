@@ -9,12 +9,12 @@ const Params = Type.Object({
   schedule: Type.Optional(Type.Union([Type.Object({ cron: Type.String() }), Type.Object({ every: Type.String() }), Type.Object({ once: Type.String() })])),
 });
 export function createScheduleTool(scheduler: Scheduler, source: string): AgentTool<typeof Params> {
-  return { name: "schedule", label: "定时任务", description: "创建、列出或删除定时投递。名称唯一；规则为 cron、every（如30m）、once（带时区的ISO时间）。默认投递到当前会话。", parameters: Params,
+  return { name: "schedule", label: "Scheduled tasks", description: "Creates, lists or deletes scheduled messages. Names are unique; the rule is cron, every (such as 30m) or once (an ISO time with a time zone). Delivered to the current conversation by default.", parameters: Params,
     async execute(_id, params) {
       let result: unknown;
       if (params.action === "list") result = scheduler.list();
-      else if (params.action === "delete") { if (!params.id && !params.name) throw new Error("删除任务需要 id 或 name"); result = { deleted: await scheduler.delete(params.id ?? params.name!) }; }
-      else { if (!params.name || !params.prompt || !params.schedule) throw new Error("创建任务需要 name、prompt 和 schedule"); result = await scheduler.create({ name: params.name, prompt: params.prompt, schedule: params.schedule, target: params.target ?? source }); }
+      else if (params.action === "delete") { if (!params.id && !params.name) throw new Error("Deleting a task needs an id or a name"); result = { deleted: await scheduler.delete(params.id ?? params.name!) }; }
+      else { if (!params.name || !params.prompt || !params.schedule) throw new Error("Creating a task needs name, prompt and schedule"); result = await scheduler.create({ name: params.name, prompt: params.prompt, schedule: params.schedule, target: params.target ?? source }); }
       return { content: [{ type: "text", text: JSON.stringify(result) }], details: {} };
     },
   };

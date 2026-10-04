@@ -31,7 +31,7 @@ export async function readPid(file: string): Promise<number | undefined> {
 
 export async function writePid(file: string, pid: number): Promise<void> {
   const identity = await processIdentity(pid);
-  if (!identity) throw new Error(`无法验证进程身份（pid ${pid}）`);
+  if (!identity) throw new Error(`Cannot verify the process identity (pid ${pid})`);
   await writeFileAtomic(file, `${JSON.stringify({ pid, identity })}\n`);
 }
 

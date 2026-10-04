@@ -40,8 +40,8 @@ describe("runOnboard", () => {
     expect(config.providers.deepseek?.apiKey).toBe("sk-test");
     expect(config.web.port).toBe(7860);
     expect((await stat(join(dir, "workspace", "SOUL.md"))).isFile()).toBe(true);
-    expect(io.output).toContain("请输入 1 到 8 之间的编号");
-    expect(io.output).toContain("API key 不能为空");
+    expect(io.output).toContain("Enter a number between 1 and 8");
+    expect(io.output).toContain("API key must not be empty");
   });
 
   it("skips the port question and generates an access token when exposed beyond loopback", async () => {
@@ -52,7 +52,7 @@ describe("runOnboard", () => {
       const token = (await loadConfig(paths)).config.web.token!;
       expect(token).toMatch(/^[0-9a-f]{48}$/);
       expect(io.output.some((line) => line.includes(token))).toBe(true);
-      expect(io.output.some((line) => line.includes("端口"))).toBe(false);
+      expect(io.output.some((line) => line.includes("port"))).toBe(false);
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -65,9 +65,9 @@ describe("runOnboard", () => {
       const io = scripted(["1", "1", "sk-test", "", "y"]);
       expect(await runOnboard(io, paths, { force: false, login: { baseUrl: ilink.baseUrl, pollIntervalMs: 1 } })).toBe(true);
       expect((await new WeChatStore(paths.wechat).loadCredentials())?.userId).toBe("owner1");
-      expect(io.output).toContain("已绑定微信，主人是扫码的这个微信号（owner1）。");
-      expect(io.output.at(-1)).toBe("运行 vex start 启动");
-      expect(io.output.some((line) => line.includes("重启 vexd"))).toBe(false);
+      expect(io.output).toContain("WeChat linked; the owner is the account that scanned the code (owner1).");
+      expect(io.output.at(-1)).toBe("Run vex start to launch");
+      expect(io.output.some((line) => line.includes("restart vexd"))).toBe(false);
     } finally {
       await ilink.stop();
     }
@@ -82,8 +82,8 @@ describe("runOnboard", () => {
       const io = scripted(["1", "1", "sk-test", "", "y"]);
       expect(await runOnboard(io, paths, { force: false, login: { baseUrl: ilink.baseUrl, pollIntervalMs: 1 } })).toBe(true);
       expect(await new WeChatStore(paths.wechat).loadCredentials()).toBeUndefined();
-      expect(io.output).toContain("微信绑定没有完成：已在手机上取消登录。之后可以运行 vex wechat login 重试");
-      expect(io.output.at(-1)).toBe("运行 vex start 启动");
+      expect(io.output).toContain("WeChat linking did not finish: Login was cancelled on the phone. Run vex wechat login later to try again");
+      expect(io.output.at(-1)).toBe("Run vex start to launch");
     } finally {
       await ilink.stop();
     }
@@ -100,7 +100,7 @@ describe("runOnboard", () => {
       models: [{ id: "step-2-16k" }],
     });
     expect(config.web.port).toBe(8000);
-    expect(io.output).toContain("请输入 1 到 65535 之间的端口");
+    expect(io.output).toContain("Enter a port between 1 and 65535");
   });
 
   it("refuses to overwrite an existing config without --force", async () => {

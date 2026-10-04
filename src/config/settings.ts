@@ -65,11 +65,11 @@ function pruneEmptyMaps(doc: Document): void {
 /** Applies a patch to the YAML text, keeping comments and keys the form does not know about. */
 export function applySettings(text: string, patch: SettingsPatch, paths: VexPaths): { text: string; restartRequired: boolean } {
   const doc = parseDocument(text);
-  if (doc.errors.length) throw new ConfigError("config.yaml 不是合法的 YAML，请先在“高级”里修正");
+  if (doc.errors.length) throw new ConfigError("config.yaml is not valid YAML; fix it in Advanced first");
   const touched = [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])];
-  for (const path of touched) if (!isEditable(path)) throw new ConfigError(`不能通过表单修改 ${path}`);
+  for (const path of touched) if (!isEditable(path)) throw new ConfigError(`${path} cannot be changed through the forms`);
   for (const [path, value] of Object.entries(patch.set ?? {})) {
-    if (!validValue(value)) throw new ConfigError(`${path} 的值无效`);
+    if (!validValue(value)) throw new ConfigError(`Invalid value for ${path}`);
     doc.setIn(path.split("."), value);
   }
   for (const path of patch.unset ?? []) doc.deleteIn(path.split("."));

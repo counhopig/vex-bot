@@ -26,7 +26,7 @@ interface Pending {
 
 export interface ApprovalEvent { type: "requested" | "allowed" | "denied"; toolName: string; windowLabel: string; reason?: string }
 
-const ABORTED: ApprovalOutcome = { allowed: false, reason: "本轮已被中断。" };
+const ABORTED: ApprovalOutcome = { allowed: false, reason: "This turn was interrupted." };
 
 export class ApprovalManager {
   private readonly pendingById = new Map<string, Pending>();
@@ -67,7 +67,7 @@ export class ApprovalManager {
     return new Promise((resolve) => {
       const minutes = Math.round(this.timeoutMs / 60_000);
       const timer = setTimeout(
-        () => finish({ allowed: false, reason: `主人 ${minutes} 分钟内没有答复，这次 ${input.toolName} 调用已取消。` }),
+        () => finish({ allowed: false, reason: `The owner did not answer within ${minutes} minutes; this ${input.toolName} call was cancelled.` }),
         this.timeoutMs,
       );
       const onAbort = () => finish(ABORTED);
@@ -96,7 +96,7 @@ export class ApprovalManager {
       this.sessionAllowed.set(request.sessionKey, tools);
     }
     pending.settle(
-      answer === "deny" ? { allowed: false, reason: `主人拒绝了这次 ${request.toolName} 调用。` } : { allowed: true },
+      answer === "deny" ? { allowed: false, reason: `The owner denied this ${request.toolName} call.` } : { allowed: true },
     );
     return true;
   }
@@ -111,7 +111,7 @@ export class ApprovalManager {
 
   dispose(): void {
     for (const pending of [...this.pendingById.values()]) {
-      pending.settle({ allowed: false, reason: "vexd 正在关闭。" });
+      pending.settle({ allowed: false, reason: "vexd is shutting down." });
     }
   }
 }

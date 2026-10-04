@@ -30,36 +30,36 @@ export async function runOnboard(
   opts: { force: boolean; login?: LoginOptions & { baseUrl?: string } },
 ): Promise<boolean> {
   if (!opts.force && (await exists(paths.config))) {
-    io.print(`配置文件已存在：${paths.config}（使用 --force 覆盖）`);
+    io.print(`Config file already exists: ${paths.config} (use --force to overwrite)`);
     return false;
   }
 
   const known: string[] = getBuiltinProviders();
   const providers = FEATURED_PROVIDERS.filter((p) => known.includes(p));
-  io.print("选择模型提供方：");
+  io.print("Choose a model provider:");
   providers.forEach((p, i) => io.print(`  ${i + 1}. ${p}`));
-  io.print(`  ${providers.length + 1}. 自定义（OpenAI / Anthropic 兼容端点）`);
-  const choice = await askNumber(io, "编号：", 1, providers.length + 1, "编号");
+  io.print(`  ${providers.length + 1}. Custom (OpenAI- or Anthropic-compatible endpoint)`);
+  const choice = await askNumber(io, "Number: ", 1, providers.length + 1, "number");
 
   const doc: Record<string, unknown> = {};
   const provider = providers[choice - 1];
   if (provider) {
     const ids = getBuiltinModels(provider as BuiltinProvider).map((m) => m.id);
-    io.print("选择模型：");
+    io.print("Choose a model:");
     ids.forEach((id, i) => io.print(`  ${i + 1}. ${id}`));
-    const id = ids[(await askNumber(io, "编号：", 1, ids.length, "编号")) - 1]!;
+    const id = ids[(await askNumber(io, "Number: ", 1, ids.length, "number")) - 1]!;
     const apiKey = await askRequired(io, "API key：", "API key");
     doc.model = { provider, id };
     doc.providers = { [provider]: { apiKey } };
   } else {
-    const name = await askRequired(io, "提供方名称（如 stepfun）：", "提供方名称");
-    io.print("接口类型：");
+    const name = await askRequired(io, "Provider name (for example stepfun): ", "The provider name");
+    io.print("API type:");
     io.print("  1. openai-completions");
     io.print("  2. anthropic-messages");
-    const api = (await askNumber(io, "编号：", 1, 2, "编号")) === 1 ? "openai-completions" : "anthropic-messages";
+    const api = (await askNumber(io, "Number: ", 1, 2, "number")) === 1 ? "openai-completions" : "anthropic-messages";
     const baseUrl = await askRequired(io, "baseUrl：", "baseUrl");
-    const id = await askRequired(io, "模型 id：", "模型 id");
-    const apiKey = (await io.ask("API key（没有可留空）：")).trim();
+    const id = await askRequired(io, "Model id: ", "The model id");
+    const apiKey = (await io.ask("API key (leave empty if none): ")).trim();
     doc.model = { provider: name, id };
     doc.providers = { [name]: { api, baseUrl, ...(apiKey ? { apiKey } : {}), models: [{ id }] } };
   }
@@ -68,25 +68,25 @@ export async function runOnboard(
   const exposed = !!host && !isLoopback(host);
   const generatedToken = exposed && !process.env.VEX_WEB_TOKEN?.trim() ? randomBytes(24).toString("hex") : undefined;
   if (exposed) doc.web = { host, port: 7860, ...(generatedToken ? { token: generatedToken } : {}) };
-  else doc.web = { host: "127.0.0.1", port: await askNumber(io, "WebChat 端口（默认 7860）：", 1, 65535, "端口", 7860) };
+  else doc.web = { host: "127.0.0.1", port: await askNumber(io, "WebChat port (default 7860): ", 1, 65535, "port", 7860) };
 
   await saveConfigText(paths, stringify(doc));
   const { config } = await loadConfig(paths);
   await ensureWorkspace(config.workspace);
-  io.print(`已写入 ${paths.config}`);
-  io.print(`工作区：${config.workspace}`);
-  const linkNow = (await io.ask("现在扫码绑定微信吗？（y/N）：")).trim().toLowerCase();
+  io.print(`Wrote ${paths.config}`);
+  io.print(`Workspace: ${config.workspace}`);
+  const linkNow = (await io.ask("Link WeChat by QR code now? (y/N): ")).trim().toLowerCase();
   if (linkNow === "y" || linkNow === "yes") {
     try {
       await runWeChatLogin((text) => io.print(text), paths, { ...opts.login, restartHint: false });
     } catch (err) {
-      io.print(`微信绑定没有完成：${err instanceof Error ? err.message : String(err)}。之后可以运行 vex wechat login 重试`);
+      io.print(`WeChat linking did not finish: ${err instanceof Error ? err.message : String(err)}. Run vex wechat login later to try again`);
     }
   } else {
-    io.print("之后可以运行 vex wechat login 扫码绑定微信");
+    io.print("Run vex wechat login later to link WeChat by QR code");
   }
-  if (generatedToken) io.print(`WebChat 访问令牌（请记下，登录时使用，也保存在 ${paths.config}）：${generatedToken}`);
-  io.print("运行 vex start 启动");
+  if (generatedToken) io.print(`WebChat access token (note it down for signing in; it is also stored in ${paths.config}): ${generatedToken}`);
+  io.print("Run vex start to launch");
   return true;
 }
 
@@ -94,7 +94,7 @@ async function askRequired(io: OnboardIO, question: string, label: string): Prom
   for (;;) {
     const answer = (await io.ask(question)).trim();
     if (answer) return answer;
-    io.print(`${label} 不能为空`);
+    io.print(`${label} must not be empty`);
   }
 }
 
@@ -111,7 +111,7 @@ async function askNumber(
     if (!answer && fallback !== undefined) return fallback;
     const value = Number(answer);
     if (Number.isInteger(value) && value >= min && value <= max) return value;
-    io.print(`请输入 ${min} 到 ${max} 之间的${label}`);
+    io.print(`Enter a ${label} between ${min} and ${max}`);
   }
 }
 

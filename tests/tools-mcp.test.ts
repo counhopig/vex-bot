@@ -83,7 +83,7 @@ describe("MCP bridge", () => {
     expect(names).toContain("mcp__local__a_b");
     expect(names.filter((name) => name.startsWith("mcp__local__a_b"))).toHaveLength(2);
     const dotted = bridge.getTools().find((tool) => tool.description.startsWith("Dotted"))!;
-    expect(dotted.description).toContain("不可信");
+    expect(dotted.description).toContain("untrusted");
     expect(await bridge.getTools().find((tool) => tool.name.startsWith("mcp__local__echo"))!.execute("1", { text: "hi" })).toEqual(expect.objectContaining({ details: {}, isError: false }));
   });
 

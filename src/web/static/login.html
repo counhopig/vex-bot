@@ -1,17 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Vex · 登录</title>
+  <title>Vex · Sign in</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="login-page">
   <form id="login">
     <h1>Vex</h1>
-    <input id="token" type="password" autocomplete="current-password" placeholder="访问口令" required>
-    <button type="submit">进入</button>
-    <p id="login-error" hidden>口令不正确</p>
+    <input id="token" type="password" autocomplete="current-password" placeholder="Access token" required>
+    <button type="submit">Enter</button>
+    <p id="login-error" hidden>Incorrect token</p>
   </form>
   <script>
     document.getElementById("login").addEventListener("submit", async (event) => {

@@ -40,6 +40,7 @@
 - Web session metadata writes are serialized and use atomic replacement from `store/atomic.ts`.
 - Browser protocol handling is handwritten; check both history replay and live events when changing message shapes.
 - Dynamic browser content uses `textContent` or DOM nodes built by `renderMarkdown`; never `innerHTML`. DOM IDs and state classes match the HTML and CSS.
+- System-prompt text lives in the workspace files listed in `workspace/prompts.ts` (read fresh on every use, built-in default when missing); add a file there, to the protocol's file list and to `FILE_LABELS` in `web/static/app.js` together.
 - Settings edits are limited to the keys in `config/settings.ts`; the form definition in `web/static/app.js` must stay in step with it.
 - A saved change that needs a restart is applied by `process.execve` from `cli/index.ts` after `commitConfig` in `daemon.ts`; `config/reload.ts` keeps the rollback marker. Never log message text or secrets.
 

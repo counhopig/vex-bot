@@ -4,7 +4,7 @@ import type { CompleteFn } from "../providers/models.js";
 export function cleanTitle(raw: string): string {
   const firstLine = raw.trim().split("\n")[0] ?? "";
   return firstLine
-    .replace(/^标题[:：]\s*/, "")
+    .replace(/^(?:标题|title)[:：]\s*/i, "")
     .replace(/["'“”‘’「」《》]/g, "")
     .trim()
     .slice(0, 20);
@@ -19,11 +19,11 @@ export function createTitleGenerator(opts: {
     const result = await opts.complete(
       opts.model,
       {
-        systemPrompt: "你为一段对话起标题。只输出标题本身，不超过 12 个字，不加引号和句末标点。",
+        systemPrompt: "You title a conversation. Output only the title, in the language the conversation uses, at most 6 words (or 12 Chinese characters), without quotation marks or ending punctuation.",
         messages: [
           {
             role: "user",
-            content: `主人：${userText.slice(0, 500)}\n助手：${assistantText.slice(0, 500)}`,
+            content: `Owner: ${userText.slice(0, 500)}\nAssistant: ${assistantText.slice(0, 500)}`,
             timestamp: Date.now(),
           },
         ],
@@ -31,10 +31,10 @@ export function createTitleGenerator(opts: {
       { apiKey: opts.getApiKey(opts.model.provider), maxTokens: 256 },
     );
     if (result.stopReason === "error" || result.stopReason === "aborted") {
-      throw new Error(`生成标题失败：${result.errorMessage ?? result.stopReason}`);
+      throw new Error(`Title generation failed: ${result.errorMessage ?? result.stopReason}`);
     }
     const title = cleanTitle(result.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join(""));
-    if (!title) throw new Error("生成标题失败：模型返回为空");
+    if (!title) throw new Error("Title generation failed: the model returned nothing");
     return title;
   };
 }

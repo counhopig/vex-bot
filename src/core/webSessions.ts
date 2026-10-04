@@ -11,8 +11,8 @@ export interface WebSessionMeta {
   updatedAt: number;
 }
 
-export const DEFAULT_TITLE = "新对话";
-const RECOVERED_TITLE = "未命名对话";
+export const DEFAULT_TITLE = "New chat";
+const RECOVERED_TITLE = "Untitled chat";
 
 export class WebSessionIndex {
   private metas = new Map<string, WebSessionMeta>();

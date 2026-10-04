@@ -25,7 +25,7 @@ describe("createTitleGenerator", () => {
       getApiKey: () => "k",
     });
     await expect(generate("推荐咖啡", "试试耶加雪菲")).resolves.toBe("咖啡推荐");
-    expect(seen).toBe("主人：推荐咖啡\n助手：试试耶加雪菲");
+    expect(seen).toBe("Owner: 推荐咖啡\nAssistant: 试试耶加雪菲");
   });
 
   it("fails on a model error or an empty title", async () => {
@@ -38,6 +38,6 @@ describe("createTitleGenerator", () => {
       getApiKey: () => "k",
     });
     await expect(generate("a", "b")).rejects.toThrow(/boom/);
-    await expect(generate("a", "b")).rejects.toThrow(/为空/);
+    await expect(generate("a", "b")).rejects.toThrow(/returned nothing/);
   });
 });

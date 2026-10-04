@@ -35,13 +35,13 @@ export const youtube = {
   match: (text) => hostMatches(firstUrl(text) ?? "", HOSTS) && VIDEO_ID.test(firstUrl(text) ?? ""),
   async read(text, http) {
     const id = VIDEO_ID.exec(firstUrl(text) ?? text)?.[1];
-    if (!id) throw new Error("没有识别出 YouTube 视频号");
+    if (!id) throw new Error("Could not recognise a YouTube video id");
     const reply = parseJson((await http.post(
       "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
       { context: { client: ANDROID }, videoId: id },
       { "User-Agent": ANDROID_UA },
     )).body, "YouTube");
-    if (reply.playabilityStatus?.status !== "OK") throw new Error(`YouTube 返回：${reply.playabilityStatus?.reason ?? reply.playabilityStatus?.status ?? "无法播放"}`);
+    if (reply.playabilityStatus?.status !== "OK") throw new Error(`YouTube replied: ${reply.playabilityStatus?.reason ?? reply.playabilityStatus?.status ?? "cannot be played"}`);
     const details = reply.videoDetails ?? {};
     const content = {
       platform: "YouTube",
@@ -55,7 +55,7 @@ export const youtube = {
     const track = pickTrack(reply.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? []);
     if (!track?.baseUrl || !hostMatches(track.baseUrl, ["youtube.com"])) return content;
     const transcript = parseTimedText((await http.get(track.baseUrl, { "User-Agent": ANDROID_UA })).body);
-    if (transcript) { content.text = transcript; content.textKind = "字幕"; }
+    if (transcript) { content.text = transcript; content.textKind = "subtitles"; }
     return content;
   },
 };

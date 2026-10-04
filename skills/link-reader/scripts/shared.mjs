@@ -18,7 +18,7 @@ export function parseJson(body, what) {
   try {
     return JSON.parse(body);
   } catch {
-    throw new Error(`${what}返回的内容无法解析`);
+    throw new Error(`${what} returned content that could not be parsed`);
   }
 }
 

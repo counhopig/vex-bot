@@ -27,11 +27,11 @@ describe("builtin skill scripts", () => {
     const url = fetchFn.mock.calls[0]?.[0] as unknown as URL;
     expect(decodeURIComponent(url.pathname)).toBe("/香港");
     expect(url.searchParams.get("format")).toBe("j1");
-    await expect(weather.queryWeather("", fetchFn)).rejects.toThrow("城市");
+    await expect(weather.queryWeather("", fetchFn)).rejects.toThrow("city name");
   });
   it("reports weather service failures without inventing a result", async () => {
     await expect(weather.queryWeather("Hong Kong", async () => new Response("error", { status: 503 }))).rejects.toThrow("503");
-    await expect(weather.queryWeather("Hong Kong", async () => new Response("{}"))).rejects.toThrow("无效");
+    await expect(weather.queryWeather("Hong Kong", async () => new Response("{}"))).rejects.toThrow("invalid");
   });
   it("uses the resolved image model and sends local image bytes", async () => {
     const completeSimple = vi.fn(async (_model: unknown, _context: unknown, _options?: unknown) => ({ stopReason: "stop", content: [{ type: "text", text: "一只猫" }] }));
@@ -44,7 +44,7 @@ describe("builtin skill scripts", () => {
   it("rejects text-only models before invoking them", async () => {
     const completeSimple = vi.fn();
     const registry = { resolve: () => ({ input: ["text"] }), completeSimple };
-    await expect(image.analyzeImage({ image: await picture() }, registry, { provider: "faux", id: "text" })).rejects.toThrow("不支持图片");
+    await expect(image.analyzeImage({ image: await picture() }, registry, { provider: "faux", id: "text" })).rejects.toThrow("does not accept image");
     expect(completeSimple).not.toHaveBeenCalled();
   });
 });

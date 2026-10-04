@@ -123,7 +123,7 @@ describe("WeChatChannel inbound", () => {
     await vi.waitFor(() => expect(session.stops).toBe(1));
     session.busy = false;
     ilink.queueUpdates(textMessage("owner1", "／stop", { message_id: "s2" }));
-    await vi.waitFor(async () => expect(await sentTexts()).toEqual(["现在没有在运行的任务。"]));
+    await vi.waitFor(async () => expect(await sentTexts()).toEqual(["Nothing is running right now."]));
     expect(session.stops).toBe(1);
     expect(session.sent).toEqual([]);
   });
@@ -165,16 +165,16 @@ describe("WeChatChannel outbound", () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 30 });
     emit({ kind: "busy", busy: true });
-    await vi.waitFor(async () => expect(await sentTexts()).toEqual(["处理中…"]));
+    await vi.waitFor(async () => expect(await sentTexts()).toEqual(["Working on it…"]));
     emit({ kind: "assistant_message", text: "好了", stopReason: "stop", timestamp: 1 });
     emit({ kind: "busy", busy: false });
-    expect(await sentTexts()).toEqual(["处理中…", "好了"]);
+    expect(await sentTexts()).toEqual(["Working on it…", "好了"]);
   });
 
   it("does not announce processing during a proactive turn", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 30 });
-    emit({ kind: "busy", busy: true, source: "主动聊天" });
+    emit({ kind: "busy", busy: true, source: "proactive chat" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     emit({ kind: "assistant_message", text: "在吗", stopReason: "stop", timestamp: 1 });
     emit({ kind: "busy", busy: false });
@@ -193,7 +193,7 @@ describe("WeChatChannel outbound", () => {
     emit({ kind: "busy", busy: true });
     emit({ kind: "error", message: "模型调用失败：boom" });
     emit({ kind: "busy", busy: false });
-    expect(await sentTexts()).toEqual(["写到一半\n（已中断）", "已中断。", "模型调用失败：boom"]);
+    expect(await sentTexts()).toEqual(["写到一半\n(interrupted)", "Interrupted.", "模型调用失败：boom"]);
   });
 
   it("splits long replies", async () => {
@@ -232,30 +232,30 @@ describe("WeChatChannel approvals", () => {
   it("announces pending approvals and answers the oldest one", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel();
-    const first = approvals.request({ sessionKey: "web:1", windowLabel: "网页会话「A」", toolName: "bash", args: { command: "ls" } });
-    const second = approvals.request({ sessionKey: "wechat", windowLabel: "微信", toolName: "write", args: { path: "/etc/x" } });
+    const first = approvals.request({ sessionKey: "web:1", windowLabel: "WebChat conversation 'A'", toolName: "bash", args: { command: "ls" } });
+    const second = approvals.request({ sessionKey: "wechat", windowLabel: "WeChat", toolName: "write", args: { path: "/etc/x" } });
     await vi.waitFor(async () => expect(await sentTexts()).toHaveLength(2));
     const [promptA, promptB] = await sentTexts();
-    expect(promptA).toContain("【需要你批准】网页会话「A」想执行 bash：\nls");
-    expect(promptB).toContain("（共有 2 条待批准，按先后顺序处理）");
+    expect(promptA).toContain("[Approval needed] WebChat conversation 'A' wants to run bash:\nls");
+    expect(promptB).toContain("(2 approvals are pending; they are handled in order)");
 
     ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "a1" }));
     await expect(first).resolves.toEqual({ allowed: true });
     ilink.queueUpdates(textMessage("owner1", "/n", { message_id: "a2" }));
     await expect(second).resolves.toMatchObject({ allowed: false });
     ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "a3" }));
-    await vi.waitFor(async () => expect((await sentTexts()).slice(2)).toEqual(["已允许：bash", "已拒绝：write", "没有待批准的请求。"]));
+    await vi.waitFor(async () => expect((await sentTexts()).slice(2)).toEqual(["Allowed: bash", "Denied: write", "There are no pending requests."]));
     expect(session.sent).toEqual([]);
   });
 
   it("remembers allow_session from /ya", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel();
-    const pending = approvals.request({ sessionKey: "wechat", windowLabel: "微信", toolName: "bash", args: { command: "pwd" } });
+    const pending = approvals.request({ sessionKey: "wechat", windowLabel: "WeChat", toolName: "bash", args: { command: "pwd" } });
     ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "b1" }));
     await expect(pending).resolves.toEqual({ allowed: true });
     expect(approvals.isSessionAllowed("wechat", "bash")).toBe(true);
-    await vi.waitFor(async () => expect(await sentTexts()).toContain("已允许，本会话之后不再询问 bash"));
+    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash will not be asked about again in this conversation"));
   });
 });
 

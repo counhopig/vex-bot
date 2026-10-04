@@ -93,7 +93,7 @@ describe("persona", () => {
     expect(() => persona.feel({ mood: 1, reason: "x", hours: 25 })).toThrow();
     now += 30 * 24 * 3_600_000;
     expect(persona.snapshot()).toMatchObject({ energy: 0, mood: 0, social: 100 });
-    expect(persona.describe()).toContain("累到不想动；心情低落；很想找人说话");
+    expect(persona.describe()).toContain("You feel exhausted. You are feeling down. You really want someone to talk to");
   });
   it("persists feelings recorded through the tool", async () => {
     const { persona, path } = await setup();

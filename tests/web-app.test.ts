@@ -84,7 +84,7 @@ describe("web app", () => {
     expect(row.className).toBe("active");
     title.dispatch("click");
     title.dispatch("dblclick");
-    expect(prompt).toHaveBeenCalledWith("会话名称", "二");
+    expect(prompt).toHaveBeenCalledWith("Conversation name", "二");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "rename_session", sessionId: "two", title: "新标题" }));
   });
 
@@ -95,7 +95,7 @@ describe("web app", () => {
     get("input").value = "  未发送的文本  ";
     get("composer").dispatch("submit");
     expect(get("input").value).toBe("  未发送的文本  ");
-    expect(get("status").textContent).toBe("连接已断开，正在重连…");
+    expect(get("status").textContent).toBe("Connection lost; reconnecting…");
     expect(get("status").hidden).toBe(false);
   });
 
@@ -117,9 +117,9 @@ describe("web app", () => {
     get("save-settings").dispatch("click");
     expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "save_settings", set: { "model.id": "deepseek-flash" }, unset: [] });
     runInContext('handle({ type: "settings_saved", ok: true, restartRequired: true })', context);
-    expect(get("settings-result").textContent).toBe("已保存，重启 vexd 后生效");
+    expect(get("settings-result").textContent).toBe("Saved; takes effect after vexd restarts");
     runInContext('handle({ type: "settings_saved", ok: true, restartRequired: false })', context);
-    expect(get("settings-result").textContent).toBe("已保存，立即生效");
+    expect(get("settings-result").textContent).toBe("Saved; takes effect immediately");
     runInContext('handle({ type: "settings_saved", ok: false, error: "model 无效" })', context);
     expect(get("settings-result").textContent).toBe("model 无效");
     expect(get("settings-result").className).toBe("bad");
@@ -132,7 +132,7 @@ describe("web app", () => {
     const sends = socket.send.mock.calls.length;
     get("save-settings").dispatch("click");
     expect(socket.send.mock.calls.length).toBe(sends);
-    expect(get("settings-result").textContent).toBe("没有改动");
+    expect(get("settings-result").textContent).toBe("No changes");
     get("settings-tabs").children[2]!.dispatch("click");
     const form = get("settings-form");
     const key = find(form, (el) => el.id === "f-stt-apiKey")!;
@@ -191,13 +191,23 @@ describe("web app", () => {
     get("save-settings").dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡" }));
     runInContext('handle({ type: "file_saved", name: "USER.md", ok: true })', context);
-    expect(get("settings-result").textContent).toBe("已保存，下一条消息起生效");
+    expect(get("settings-result").textContent).toBe("Saved; takes effect from the next message");
     get("settings-tabs").children[5]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_config" }));
     runInContext('handle({ type: "config", text: "model: {}" })', context);
     expect(get("settings-text").value).toBe("model: {}");
     get("save-settings").dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
+  });
+
+  it("lists the instruction files next to the persona files", async () => {
+    const { get, socket } = await loadApp();
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[4]!.dispatch("click");
+    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Heartbeat", "Instructions", "Heartbeat task", "Consolidation task", "Proactive chat"]);
+    get("file-tabs").children[4]!.dispatch("click");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "INSTRUCTIONS.md" }));
+    expect(get("settings-hint").textContent).toContain("{{workspace}}");
   });
 
   it("parses Markdown blocks and inline spans", async () => {
@@ -245,14 +255,14 @@ describe("web app", () => {
     runInContext('handle({ type: "status", status: { model: "deepseek/v4", wechat: "connected", persona: { energy: 80, mood: 70, social: 50, resting: true } } })', context);
     const line = textOf(get("statusline"));
     expect(line).toContain("deepseek/v4");
-    expect(line).toContain("微信已连接");
-    expect(line).toContain("精力 80 · 心情 70 · 社交 50 · 休息中");
+    expect(line).toContain("WeChat connected");
+    expect(line).toContain("Energy 80 · Mood 70 · Social 50 · Resting");
     expect(find(get("statusline"), (el) => el.className === "dot connected")).toBeDefined();
   });
 
   it("cycles the theme and remembers it", async () => {
     const { get, documentElement, stored } = await loadApp();
-    expect(get("theme").textContent).toBe("跟随系统");
+    expect(get("theme").textContent).toBe("System");
     get("theme").dispatch("click");
     expect(documentElement.dataset.theme).toBe("light");
     expect(stored.get("vex.theme")).toBe("light");
@@ -261,7 +271,7 @@ describe("web app", () => {
     get("theme").dispatch("click");
     expect(documentElement.dataset.theme).toBeUndefined();
     expect(stored.has("vex.theme")).toBe(false);
-    expect(get("theme").textContent).toBe("跟随系统");
+    expect(get("theme").textContent).toBe("System");
   });
 
   it("opens the session drawer on phones and closes it when a session is picked", async () => {

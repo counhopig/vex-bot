@@ -9,31 +9,31 @@ const MIME = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
 export async function analyzeImage(options, registry, modelRef) {
   const path = resolve(options.image);
   const mimeType = MIME[extname(path).toLowerCase()];
-  if (!mimeType) throw new Error("仅支持 PNG、JPEG、GIF、WebP");
-  if ((await stat(path)).size > 10_000_000) throw new Error("图片超过 10 MB");
+  if (!mimeType) throw new Error("Only PNG, JPEG, GIF and WebP are supported");
+  if ((await stat(path)).size > 10_000_000) throw new Error("The image exceeds 10 MB");
   const image = await readFile(path);
-  if (image.length > 10_000_000) throw new Error("图片超过 10 MB");
+  if (image.length > 10_000_000) throw new Error("The image exceeds 10 MB");
   const model = registry.resolve(modelRef);
-  if (!model.input.includes("image")) throw new Error(`模型 ${modelRef.provider}/${modelRef.id} 不支持图片输入`);
+  if (!model.input.includes("image")) throw new Error(`The model ${modelRef.provider}/${modelRef.id} does not accept image input`);
   const result = await registry.completeSimple(model, {
     messages: [{ role: "user", timestamp: Date.now(), content: [
-      { type: "text", text: options.prompt ?? "请描述这张图片。" },
+      { type: "text", text: options.prompt ?? "Describe this image." },
       { type: "image", data: image.toString("base64"), mimeType },
     ] }],
   }, { apiKey: registry.getApiKey(model.provider), signal: AbortSignal.timeout(60_000), maxTokens: 2048 });
-  if (result.stopReason === "error" || result.stopReason === "aborted") throw new Error(result.errorMessage ?? "图片分析失败");
+  if (result.stopReason === "error" || result.stopReason === "aborted") throw new Error(result.errorMessage ?? "Image analysis failed");
   return result.content.filter((part) => part.type === "text").map((part) => part.text).join("");
 }
 
 async function main(args) {
   const [image, prompt, ...flags] = args;
-  if (!image) throw new Error("用法：analyze.mjs 图片路径 问题 [--config 路径] [--provider 名称 --model id]");
+  if (!image) throw new Error("Usage: analyze.mjs IMAGE_PATH QUESTION [--config PATH] [--provider NAME --model ID]");
   const values = {};
   for (let i = 0; i < flags.length; i += 2) {
-    if (!["--config", "--provider", "--model"].includes(flags[i]) || !flags[i + 1]) throw new Error("无效脚本参数");
+    if (!["--config", "--provider", "--model"].includes(flags[i]) || !flags[i + 1]) throw new Error("Invalid script argument");
     values[flags[i].slice(2)] = flags[i + 1];
   }
-  if (Boolean(values.provider) !== Boolean(values.model)) throw new Error("--provider 与 --model 必须同时指定");
+  if (Boolean(values.provider) !== Boolean(values.model)) throw new Error("--provider and --model must be given together");
   const built = new URL("../../../providers/models.js", import.meta.url);
   const source = new URL("../../../dist/providers/models.js", import.meta.url);
   const modelsUrl = existsSync(built) ? built : source;
@@ -42,7 +42,7 @@ async function main(args) {
   const configPath = values.config ?? process.env.VEX_CONFIG_PATH ?? join(process.env.VEX_HOME ?? join(homedir(), ".vex"), "config.yaml");
   const config = parse(await readFile(configPath, "utf8"));
   const modelRef = values.provider ? { provider: values.provider, id: values.model } : config.model;
-  if (!modelRef?.provider || !modelRef?.id) throw new Error("未配置图片分析模型");
+  if (!modelRef?.provider || !modelRef?.id) throw new Error("No model is configured for image analysis");
   const registry = createModelRegistry(config.providers ?? {});
   console.log(await analyzeImage({ image, prompt }, registry, modelRef));
 }

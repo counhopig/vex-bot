@@ -77,7 +77,7 @@ describe("startDaemon", () => {
     expect((await stat(join(dir, "workspace", "SOUL.md"))).isFile()).toBe(true);
     expect(systemPrompt).toContain(join(dir, "workspace"));
     expect(systemPrompt).toContain("## SOUL.md");
-    expect(systemPrompt).toContain("窗口：网页会话「新对话」");
+    expect(systemPrompt).toContain('Window: WebChat conversation "New chat"');
     expect(client!.messages.some((m) => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "在的")).toBe(true);
   });
 
@@ -123,8 +123,8 @@ describe("startDaemon", () => {
     const id = await chat("hi");
     expect(prompt).toContain("Custom test skill");
     expect(prompt).not.toContain("Full secret body");
-    expect(prompt.indexOf("## USER.md")).toBeLessThan(prompt.indexOf("## 情绪与作息"));
-    expect(prompt.indexOf("## 情绪与作息")).toBeLessThan(prompt.indexOf("## MEMORY.md"));
+    expect(prompt.indexOf("## USER.md")).toBeLessThan(prompt.indexOf("## Mood and rest hours"));
+    expect(prompt.indexOf("## Mood and rest hours")).toBeLessThan(prompt.indexOf("## MEMORY.md"));
     expect(prompt.indexOf("## MEMORY.md")).toBeLessThan(prompt.indexOf("Custom test skill"));
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(35, 1);
@@ -144,8 +144,8 @@ describe("startDaemon", () => {
     const id = await chat("schedule it");
     const tasks = JSON.parse(await readFile(join(paths.home, "schedules.json"), "utf8"));
     expect(tasks[0].target).toBe(id);
-    const notification = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "定时任务");
-    expect(notification).toMatchObject({ sessionId: id, event: { text: "【定时任务「test」】scheduled hello" } });
+    const notification = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "scheduled task");
+    expect(notification).toMatchObject({ sessionId: id, event: { text: "[Scheduled task \"test\"] scheduled hello" } });
     await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "scheduled reply");
     await daemon.stop(); daemon = undefined;
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
@@ -157,7 +157,7 @@ describe("startDaemon", () => {
     await mkdir(workspace, { recursive: true });
     await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
     let calls = 0;
-    faux.setResponses([(ctx) => { calls++; expect(getCurrentSystemPrompt(ctx.messages)).toContain("窗口：心跳"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    faux.setResponses([(ctx) => { calls++; expect(getCurrentSystemPrompt(ctx.messages)).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
     await new Promise(resolve => setTimeout(resolve, 1400));
     await daemon.stop(); daemon = undefined;
@@ -237,7 +237,7 @@ describe("startDaemon", () => {
       await startWithRestart(restart);
       const before = await readFile(paths.config, "utf8");
       client!.send({ type: "save_settings", set: { "model.provider": "nonexistent", "model.id": "x" } });
-      expect(await saved()).toMatchObject({ ok: false, error: expect.stringContaining("模型无法使用") });
+      expect(await saved()).toMatchObject({ ok: false, error: expect.stringContaining("The model cannot be used") });
       expect(await readFile(paths.config, "utf8")).toBe(before);
       await new Promise((resolve) => setTimeout(resolve, 600));
       expect(restart).not.toHaveBeenCalled();
@@ -275,6 +275,32 @@ describe("startDaemon", () => {
       client.send({ type: "get_status" });
       expect(await client.waitFor((m) => m.type === "status" && m.status.reloadError === undefined)).toBeTruthy();
     });
+  });
+
+  it("builds the system prompt from the owner's INSTRUCTIONS.md", async () => {
+    let systemPrompt = "";
+    faux.setResponses([(ctx) => { systemPrompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("ok"); }, fauxAssistantMessage("title")]);
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "INSTRUCTIONS.md"), "House rules for {{workspace}}.");
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("hi");
+    expect(systemPrompt).toContain(`House rules for ${workspace}.`);
+    expect(systemPrompt).not.toContain("Memory conventions");
+  });
+
+  it("opens prompt files with their default text and restores it when the text is cleared", async () => {
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    client.send({ type: "get_file", name: "prompts/outreach.md" });
+    expect(await client.waitFor((m) => m.type === "file" && m.name === "prompts/outreach.md")).toMatchObject({ text: expect.stringContaining("Proactive chat") });
+    client.send({ type: "save_file", name: "prompts/outreach.md", text: "Say hello warmly." });
+    await client.waitFor((m) => m.type === "file_saved" && m.ok);
+    expect(await readFile(join(dir, "workspace", "prompts", "outreach.md"), "utf8")).toBe("Say hello warmly.");
+    client.send({ type: "save_file", name: "prompts/outreach.md", text: "" });
+    await client.waitFor((m) => m.type === "file_saved" && m.ok);
+    client.send({ type: "get_file", name: "prompts/outreach.md" });
+    expect(await client.waitFor((m) => m.type === "file" && m.text.includes("Proactive chat") && m.text !== "Say hello warmly.")).toBeTruthy();
   });
 
   it("refuses a public address without a token", async () => {

@@ -23,12 +23,12 @@ export function buildChildEnv(passthrough: string[], source: NodeJS.ProcessEnv =
 export function truncateMiddle(text: string, max: number): string {
   if (text.length <= max) return text;
   const half = Math.floor(max / 2);
-  return `${text.slice(0, half)}\n…（省略 ${text.length - half * 2} 个字符）…\n${text.slice(text.length - half)}`;
+  return `${text.slice(0, half)}\n… (${text.length - half * 2} characters omitted) …\n${text.slice(text.length - half)}`;
 }
 
 const BashParams = Type.Object({
-  command: Type.String({ description: "要执行的 shell 命令" }),
-  timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 600, description: "超时秒数，默认 120，最长 600" })),
+  command: Type.String({ description: "The shell command to run" }),
+  timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: 600, description: "Timeout in seconds; default 120, maximum 600" })),
 });
 
 interface BashOptions {
@@ -40,8 +40,8 @@ interface BashOptions {
 export function createBashTool(opts: BashOptions): AgentTool<typeof BashParams> {
   return {
     name: "bash",
-    label: "执行命令",
-    description: "在 bash 中执行命令，返回合并后的标准输出与标准错误。默认工作目录是工作区。",
+    label: "Run command",
+    description: "Runs a command in bash and returns the combined standard output and standard error. The default working directory is the workspace.",
     parameters: BashParams,
     execute: (_id, { command, timeout = 120 }, signal) => runCommand(command, opts, timeout, signal),
   };
@@ -55,7 +55,7 @@ function runCommand(
 ): Promise<AgentToolResult<{ exitCode: number }>> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(new Error("命令已中断"));
+      reject(new Error("Command interrupted"));
       return;
     }
     const child = spawn("bash", ["-c", command], {
@@ -82,7 +82,7 @@ function runCommand(
     child.stdout.setEncoding("utf8").on("data", collect);
     child.stderr.setEncoding("utf8").on("data", collect);
     const output = () =>
-      total <= MAX_RESULT_CHARS ? head + tail : `${head}\n…（省略 ${total - head.length - tail.length} 个字符）…\n${tail}`;
+      total <= MAX_RESULT_CHARS ? head + tail : `${head}\n… (${total - head.length - tail.length} characters omitted) …\n${tail}`;
 
     let stopReason: "timeout" | "aborted" | undefined;
     const killGroup = () => {
@@ -114,13 +114,13 @@ function runCommand(
       cleanup();
       const text = output();
       if (stopReason === "timeout") {
-        reject(new Error(`命令超时（${timeoutSec} 秒）已终止\n${text}`));
+        reject(new Error(`Command timed out after ${timeoutSec} seconds and was terminated\n${text}`));
       } else if (stopReason === "aborted") {
-        reject(new Error("命令已中断"));
+        reject(new Error("Command interrupted"));
       } else if (code !== 0) {
-        reject(new Error(`${text}\n[退出码 ${code ?? "未知"}]`));
+        reject(new Error(`${text}\n[exit code ${code ?? "unknown"}]`));
       } else {
-        resolve({ content: [{ type: "text", text: text || "(无输出)" }], details: { exitCode: 0 } });
+        resolve({ content: [{ type: "text", text: text || "(no output)" }], details: { exitCode: 0 } });
       }
     };
     const stop = (reason: "timeout" | "aborted") => {

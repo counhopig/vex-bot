@@ -31,6 +31,7 @@ import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
+import { DEFAULT_PROMPTS, isPromptFile, loadPrompt } from "./workspace/prompts.js";
 import { ensureWorkspace, readWorkspaceFile } from "./workspace/workspace.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
@@ -71,7 +72,7 @@ const DEFAULT_STATIC_DIR = fileURLToPath(new URL("./web/static/", import.meta.ur
 export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const { paths, config, log } = opts;
   if (!isLoopback(config.web.host) && !config.web.token) {
-    throw new ConfigError("web.host 不是本机地址时必须设置 web.token");
+    throw new ConfigError("web.token is required when web.host is not a loopback address");
   }
   await ensureWorkspace(config.workspace);
 
@@ -109,7 +110,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     baseInstructionsSection(config.workspace),
     residentFileSection({ workspace: config.workspace, file: "SOUL.md", maxLines: 200 }),
     residentFileSection({ workspace: config.workspace, file: "USER.md", maxLines: 200 }),
-    () => `## 情绪与作息\n${persona.describe()}`,
+    () => `## Mood and rest hours\n${persona.describe()}`,
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: 100 }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     timeSection(),
@@ -152,7 +153,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         if (temporary === "consolidation") {
           if (ctx.toolCall.name === "memory_search") return;
           const args = ctx.args as { path?: string };
-          if (workspacePolicy.decide("write", { path: args.path ?? "." }) !== "allow") return { block: true, reason: "记忆整理只能访问工作区文件。" };
+          if (workspacePolicy.decide("write", { path: args.path ?? "." }) !== "allow") return { block: true, reason: "Memory consolidation may only touch workspace files." };
           return;
         }
         return gate(ctx, signal);
@@ -209,19 +210,19 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     hooks: {
       log: (err) => log.warn({ err }, "scheduled task failed"),
       targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
-      deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "错过的定时任务" : "定时任务", signal); },
+      deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "missed scheduled task" : "scheduled task", signal); },
       runTemporary: async (text, kind, signal) => {
         signal.throwIfAborted();
         const id = randomUUID();
         const startedAt = Date.now();
         log.info({ kind }, "background run started");
         const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
-        const session = await openSession(`run:${id}`, transcript, () => kind === "heartbeat" ? "心跳" : "记忆整理", kind);
+        const session = await openSession(`run:${id}`, transcript, () => kind === "heartbeat" ? "heartbeat" : "memory consolidation", kind);
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
         try {
           signal.throwIfAborted(); session.send(text, kind); await session.whenIdle(); signal.throwIfAborted();
-          if (!session.successfulReply) throw new Error("后台任务未完成");
+          if (!session.successfulReply) throw new Error("The background task did not finish");
           log.info({ kind, ms: Date.now() - startedAt, chars: session.successfulReply.length }, "background run finished");
           return session.successfulReply;
         } finally { signal.removeEventListener("abort", abort); await session.dispose(); live.delete(session); await rm(transcript, { force: true }); }
@@ -237,7 +238,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
         log.info("proactive chat started");
-        try { session.send("主动聊天：结合当前情绪、时段与记忆，自然地开启一个话题。", "主动聊天"); await session.whenIdle(); }
+        try { session.send(await loadPrompt(config.workspace, "prompts/outreach.md"), "proactive chat"); await session.whenIdle(); }
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },
@@ -262,7 +263,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const next = parseConfig(text, paths);
     const registry = opts.models ?? createModelRegistry(next.providers);
     try { registry.resolve(next.model); registry.resolve(next.backgroundModel); }
-    catch (err) { throw new ConfigError(`模型无法使用：${err instanceof Error ? err.message : String(err)}`); }
+    catch (err) { throw new ConfigError(`The model cannot be used: ${err instanceof Error ? err.message : String(err)}`); }
   };
   const commitConfig = async (before: string, text: string, restartRequired: boolean, keys?: string[]): Promise<boolean> => {
     ensureStartable(text);
@@ -307,7 +308,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return { restartRequired: next.restartRequired, restarting };
       },
     },
-    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
+    workspace: { read: async (name) => (await readWorkspaceFile(config.workspace, name)).trim() || (isPromptFile(name) ? DEFAULT_PROMPTS[name] : ""), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });

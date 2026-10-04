@@ -13,14 +13,14 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
   try {
     raw = parse(text);
   } catch (err) {
-    throw new ConfigError(`config.yaml 不是合法的 YAML：${(err as Error).message}`);
+    throw new ConfigError(`config.yaml is not valid YAML: ${(err as Error).message}`);
   }
   if (!Value.Check(ConfigSchema, raw)) {
     const details = [...Value.Errors(ConfigSchema, raw)]
       .slice(0, 5)
       .map((e) => `${e.instancePath || "/"} ${e.message}`)
       .join("；");
-    throw new ConfigError(`config.yaml 校验失败：${details}`);
+    throw new ConfigError(`config.yaml failed validation: ${details}`);
   }
   return {
     model: raw.model,
@@ -55,7 +55,7 @@ export async function loadConfig(paths: VexPaths): Promise<{ config: VexConfig; 
     text = await readFile(paths.config, "utf8");
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new ConfigError(`找不到配置文件 ${paths.config}，请先运行 vex onboard`);
+      throw new ConfigError(`Config file not found: ${paths.config}. Run vex onboard first`);
     }
     throw err;
   }

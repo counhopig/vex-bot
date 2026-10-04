@@ -45,7 +45,7 @@ export class MemoryIndex {
     catch (err) {
       index.db?.close();
       if (!/SQLITE_(CORRUPT|NOTADB)/.test(String((err as { code?: string }).code))) throw err;
-      opts.onWarning?.("检索索引损坏，正在重建");
+      opts.onWarning?.("The search index is corrupt; rebuilding it");
       for (const suffix of ["", "-wal", "-shm"]) await unlink(opts.databasePath + suffix).catch((e: NodeJS.ErrnoException) => { if (e.code !== "ENOENT") throw e; });
       index.connect();
     }
@@ -122,8 +122,8 @@ export class MemoryIndex {
     })();
   }
   search(query: string, limit = 5, scope: MemoryScope = "all"): MemoryResult[] {
-    if (!["memory", "sessions", "all"].includes(scope)) throw new Error("无效的检索范围");
-    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("limit 必须为 1–50 的整数");
+    if (!["memory", "sessions", "all"].includes(scope)) throw new Error("Invalid search scope");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("limit must be an integer from 1 to 50");
     const terms = [...new Set(tokenize(query))];
     if (!terms.length) return [];
     const match = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(" OR ");

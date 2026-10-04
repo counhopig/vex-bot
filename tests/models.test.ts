@@ -22,7 +22,7 @@ describe("createModelRegistry", () => {
   });
 
   it("rejects an unknown provider", () => {
-    expect(() => createModelRegistry({}).resolve({ provider: "nope", id: "x" })).toThrow(/未知的模型提供方 "nope"/);
+    expect(() => createModelRegistry({}).resolve({ provider: "nope", id: "x" })).toThrow(/Unknown model provider "nope"/);
   });
 
   it("builds a declared custom model", () => {
@@ -45,7 +45,7 @@ describe("createModelRegistry", () => {
       contextWindow: 16000,
       maxTokens: 8192,
     });
-    expect(() => registry.resolve({ provider: "stepfun", id: "other" })).toThrow(/未声明模型 "other"/);
+    expect(() => registry.resolve({ provider: "stepfun", id: "other" })).toThrow(/does not declare model "other"/);
   });
 
   it("accepts any id for a custom provider without a model list", () => {

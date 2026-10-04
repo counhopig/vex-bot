@@ -52,11 +52,11 @@ describe("Bilibili", () => {
   it("reads metadata and the Chinese subtitle, sending the cookie only to the API", async () => {
     const { request, calls } = fake(bilibiliRoute);
     const output = await run(request, "看这个 https://www.bilibili.com/video/BV1xx411c7mD/ 不错", { raw: true, sessdata: "SESS" });
-    expect(output).toContain("平台：B站");
-    expect(output).toContain("标题：测试视频");
-    expect(output).toContain("作者：UP主");
-    expect(output).toContain("时长：1小时2分5秒");
-    expect(output).toContain("字幕原文：\n第一句\n第二句");
+    expect(output).toContain("Platform: Bilibili");
+    expect(output).toContain("Title: 测试视频");
+    expect(output).toContain("Author: UP主");
+    expect(output).toContain("Duration: 1h 2m 5s");
+    expect(output).toContain("Original subtitles:\n第一句\n第二句");
     const api = calls.filter((call) => call.url.includes("api.bilibili.com"));
     expect(api.length).toBe(3);
     expect(api.filter((call) => call.init?.headers?.Cookie === "SESSDATA=SESS").length).toBe(2);
@@ -66,9 +66,9 @@ describe("Bilibili", () => {
 
   it("resolves b23.tv short links and refuses redirects elsewhere", async () => {
     const { request } = fake(bilibiliRoute);
-    expect(await run(request, "https://b23.tv/abc", { raw: true })).toContain("链接：https://www.bilibili.com/video/BV1xx411c7mD");
+    expect(await run(request, "https://b23.tv/abc", { raw: true })).toContain("Link: https://www.bilibili.com/video/BV1xx411c7mD");
     const hostile = fake((url) => url.hostname === "b23.tv" ? redirect("https://example.com/") : undefined);
-    await expect(run(hostile.request, "https://b23.tv/abc")).rejects.toThrow("不支持访问 example.com");
+    await expect(run(hostile.request, "https://b23.tv/abc")).rejects.toThrow("Access to example.com is not supported");
   });
 
   it("reports an API error", async () => {
@@ -97,9 +97,9 @@ describe("YouTube", () => {
     const tracks = [{ baseUrl: "https://www.youtube.com/api/timedtext?lang=en&kind=asr", languageCode: "en", kind: "asr" }, { baseUrl: "https://www.youtube.com/api/timedtext?lang=en", languageCode: "en" }];
     const { request, calls } = fake(youtubeRoute(tracks));
     const output = await run(request, "https://youtu.be/dQw4w9WgXcQ?t=5", { raw: true });
-    expect(output).toContain("标题：T");
-    expect(output).toContain("时长：3分33秒");
-    expect(output).toContain("字幕原文：\nWe're & no strangers\nsecond\nline");
+    expect(output).toContain("Title: T");
+    expect(output).toContain("Duration: 3m 33s");
+    expect(output).toContain("Original subtitles:\nWe're & no strangers\nsecond\nline");
     expect(JSON.parse(calls[0]!.init!.body!)).toMatchObject({ videoId: "dQw4w9WgXcQ", context: { client: { clientName: "ANDROID" } } });
     expect(calls[1]!.url).toContain("lang=en");
     expect(calls[1]!.url).not.toContain("kind=asr");
@@ -108,7 +108,7 @@ describe("YouTube", () => {
   it("surfaces an unplayable video and tolerates missing captions", async () => {
     await expect(run(fake(youtubeRoute([], "ERROR")).request, "https://www.youtube.com/watch?v=dQw4w9WgXcQ")).rejects.toThrow("Video unavailable");
     const output = await run(fake(youtubeRoute([])).request, "https://www.youtube.com/shorts/dQw4w9WgXcQ");
-    expect(output).toContain("没有可读取的字幕或正文");
+    expect(output).toContain("no readable subtitles or text");
   });
 });
 
@@ -125,12 +125,12 @@ describe("Douyin", () => {
 
   it("reads a share text with a short link", async () => {
     const output = await run(fake(route).request, "7.43 复制打开抖音 https://v.douyin.com/AbCd/ 看看猫");
-    expect(output).toContain("平台：抖音");
-    expect(output).toContain("作者：猫主人");
-    expect(output).toContain("时长：0分15秒");
-    expect(output).toContain("简介：今天的猫 #猫");
-    expect(output).toContain("其他：点赞 10；评论 2；收藏 3；分享 1");
-    expect(output).toContain("没有可读取的字幕或正文");
+    expect(output).toContain("Platform: Douyin");
+    expect(output).toContain("Author: 猫主人");
+    expect(output).toContain("Duration: 0m 15s");
+    expect(output).toContain("Description: 今天的猫 #猫");
+    expect(output).toContain("More: Likes 10; Comments 2; Saves 3; Shares 1");
+    expect(output).toContain("no readable subtitles or text");
   });
 
   it("reads the share page directly for a work address", async () => {
@@ -142,10 +142,10 @@ describe("Douyin", () => {
   it("falls back to the share text and page summary, and reports a missing work", async () => {
     const bare = fake((url) => url.hostname === "v.douyin.com" ? redirect(`https://www.iesdouyin.com/share/video/${id}/?x=1`) : ok('<meta name="description" content="于20261003发布在抖音，已经收获了7个喜欢，来抖音，记录美好生活！"/>'));
     const output = await run(bare.request, "5.38 复制打开抖音，看看【yy.的作品】感谢大哥领航😭 甩丢我三次都被我追上了# 京港澳高... https://v.douyin.com/IMJC/ Kws:/ 01/04");
-    expect(output).toContain("作者：yy.");
-    expect(output).toContain("简介：感谢大哥领航😭 甩丢我三次都被我追上了# 京港澳高...");
-    expect(output).toContain("其他：发布于 2026-10-03；喜欢 7；说明：抖音的作品详情需要登录态");
-    await expect(run(fake(() => ok("<html></html>")).request, `https://www.douyin.com/video/${id}`)).rejects.toThrow("没有返回作品内容");
+    expect(output).toContain("Author: yy.");
+    expect(output).toContain("Description: 感谢大哥领航😭 甩丢我三次都被我追上了# 京港澳高...");
+    expect(output).toContain("More: Published 2026-10-03; Likes 7; Note: Douyin's work details need a login");
+    await expect(run(fake(() => ok("<html></html>")).request, `https://www.douyin.com/video/${id}`)).rejects.toThrow("returned no content for this work");
   });
 });
 
@@ -161,59 +161,59 @@ describe("Xiaohongshu", () => {
   it("reads the note body and summarises it", async () => {
     const ask = answer();
     const output = await run(fake(route).request, "58 小红 发布了笔记 http://xhslink.com/a/AbCd 复制本条信息", { ask });
-    expect(output).toContain("标题：探店");
-    expect(output).toContain("作者：小红");
-    expect(output).toContain("其他：话题 咖啡；点赞 12；收藏 3；评论 1");
-    expect(output).toContain("正文摘要：\n摘要内容");
-    expect(output).toContain(`链接：https://www.xiaohongshu.com/explore/${id}`);
+    expect(output).toContain("Title: 探店");
+    expect(output).toContain("Author: 小红");
+    expect(output).toContain("More: Topics 咖啡; Likes 12; Saves 3; Comments 1");
+    expect(output).toContain("Summary of the text:\n摘要内容");
+    expect(output).toContain(`Link: https://www.xiaohongshu.com/explore/${id}`);
     expect(ask).toHaveBeenCalledTimes(1);
   });
 
   it("explains a page without note data", async () => {
-    await expect(run(fake(() => ok("<html>请登录</html>")).request, `https://www.xiaohongshu.com/explore/${id}`)).rejects.toThrow("没有返回笔记内容");
+    await expect(run(fake(() => ok("<html>请登录</html>")).request, `https://www.xiaohongshu.com/explore/${id}`)).rejects.toThrow("returned no note content");
   });
 });
 
 describe("matching", () => {
   it.each([
-    ["https://www.bilibili.com/video/BV1xx411c7mD", "B站"],
-    ["BV1xx411c7mD", "B站"],
-    ["https://b23.tv/abc", "B站"],
+    ["https://www.bilibili.com/video/BV1xx411c7mD", "Bilibili"],
+    ["BV1xx411c7mD", "Bilibili"],
+    ["https://b23.tv/abc", "Bilibili"],
     ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "YouTube"],
     ["https://youtu.be/dQw4w9WgXcQ", "YouTube"],
-    ["看 https://v.douyin.com/abc/ 这个", "抖音"],
-    ["http://xhslink.com/a/abc", "小红书"],
-    ["http://xhslink.cn/o/9H3n6pbqt30", "小红书"],
+    ["看 https://v.douyin.com/abc/ 这个", "Douyin"],
+    ["http://xhslink.com/a/abc", "Xiaohongshu"],
+    ["http://xhslink.cn/o/9H3n6pbqt30", "Xiaohongshu"],
   ])("%s is %s", (input, name) => expect(findPlatform(input)?.name).toBe(name));
 
   it("ignores other links", async () => {
     expect(findPlatform("https://example.com/video/BV")).toBeUndefined();
     expect(findPlatform("https://www.youtube.com/feed")).toBeUndefined();
-    await expect(run(fake(() => undefined).request, "https://example.com")).rejects.toThrow("目前支持：B站、YouTube、抖音、小红书");
+    await expect(run(fake(() => undefined).request, "https://example.com")).rejects.toThrow("supported: Bilibili, YouTube, Douyin, Xiaohongshu");
   });
 });
 
 describe("summaries", () => {
   it("summarises short text in one call and long text in map and reduce steps", async () => {
     const short = vi.fn(async () => "概要");
-    expect(await summarizeText("短字幕", "字幕", short)).toBe("概要");
+    expect(await summarizeText("短字幕", "subtitles", short)).toBe("概要");
     expect(short).toHaveBeenCalledTimes(1);
     const prompts: string[] = [];
     const long = async (prompt: string) => { prompts.push(prompt); return `要点${prompts.length}`; };
-    await summarizeText("字".repeat(30_000), "字幕", long);
+    await summarizeText("字".repeat(30_000), "subtitles", long);
     expect(prompts).toHaveLength(5);
-    expect(prompts[4]).toContain("【第 4 部分要点】");
+    expect(prompts[4]).toContain("[Points from part 4]");
   });
 
   it("falls back to truncated text when the model fails, and respects summarize=false", async () => {
     const route: Route = (url) => url.hostname === "xhslink.com" ? redirect("https://www.xiaohongshu.com/explore/64a1b2c3d4e5f60718293a4b") : ok(`<script>window.__INITIAL_STATE__={"noteData":{"data":{"noteData":{"title":"T","desc":"${"文".repeat(35_000)}"}}}}</script>`);
     const failing = async () => { throw new Error("模型不可用"); };
     const output = await run(fake(route).request, "http://xhslink.com/a/x", { ask: failing });
-    expect(output).toContain("摘要失败：模型不可用");
+    expect(output).toContain("Summary failed: 模型不可用");
     expect(output.match(/文{100,}/)?.[0].length).toBe(20_000);
     const raw = await run(fake(route).request, "http://xhslink.com/a/x", { raw: true });
-    expect(raw).toContain("正文原文：");
-    expect(raw).toContain("已截断，共 35000 字");
+    expect(raw).toContain("Original text:");
+    expect(raw).toContain("truncated; 35000 characters in total");
   });
 });
 
@@ -262,7 +262,7 @@ describe("speech to text", () => {
     expect(form.get("model")).toBe("whisper-1");
     expect(form.get("language")).toBe("zh");
     expect((form.get("file") as File).name).toBe("part000.mp3");
-    await expect(transcribeFile(join(dir, "part000.mp3"), stt, { fetchFn: async () => new Response("quota", { status: 429 }) })).rejects.toThrow("HTTP 429：quota");
+    await expect(transcribeFile(join(dir, "part000.mp3"), stt, { fetchFn: async () => new Response("quota", { status: 429 }) })).rejects.toThrow("HTTP 429: quota");
   });
 
   it("downloads through yt-dlp, cuts and transcribes the parts in order, then removes the temporary files", async () => {
@@ -284,19 +284,19 @@ describe("speech to text", () => {
     expect(text).toBe("文字-part000.mp3");
     expect(calls.map((call) => call.command)).toEqual(["ffmpeg"]);
     expect(requests).toContain("https://upos-sz.bilivideo.com/a.m4a");
-    await expect(transcribeVideo({ url: "https://x", audioSource: async () => ({ url: "https://evil.example/a.m4a", headers: {} }) }, stt, { runCommand, fetchFn: router })).rejects.toThrow("不在允许的域名内");
+    await expect(transcribeVideo({ url: "https://x", audioSource: async () => ({ url: "https://evil.example/a.m4a", headers: {} }) }, stt, { runCommand, fetchFn: router })).rejects.toThrow("not on an allowed domain");
   });
 
   it("refuses videos over the length limit and reports a missing program", async () => {
-    await expect(transcribeVideo({ url: "https://x", durationSeconds: 100 * 60 }, stt, { runCommand: runner(1).runCommand, fetchFn: router })).rejects.toThrow("超过 90 分钟");
-    await expect(transcribeVideo({ url: "https://x", durationSeconds: 60 }, stt, { runCommand: async () => { throw new Error("没有找到 yt-dlp，转写音频需要先安装它"); }, fetchFn: router })).rejects.toThrow("没有找到 yt-dlp");
+    await expect(transcribeVideo({ url: "https://x", durationSeconds: 100 * 60 }, stt, { runCommand: runner(1).runCommand, fetchFn: router })).rejects.toThrow("90-minute limit");
+    await expect(transcribeVideo({ url: "https://x", durationSeconds: 60 }, stt, { runCommand: async () => { throw new Error("yt-dlp was not found; install it to transcribe audio"); }, fetchFn: router })).rejects.toThrow("yt-dlp was not found");
   });
 
   it("transcribes a Bilibili video without subtitles from its own audio stream and summarises the transcript", async () => {
     const { runCommand, calls } = runner(2);
     const ask = answer();
     const output = await readLink("https://www.bilibili.com/video/BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask, stt, runCommand, sttFetch: router });
-    expect(output).toContain("语音转写摘要：\n摘要内容");
+    expect(output).toContain("Summary of the transcript:\n摘要内容");
     expect(ask.mock.calls[0]![0]).toContain("文字-part000.mp3\n文字-part001.mp3");
     expect(calls.map((call) => call.command)).toEqual(["ffmpeg"]);
     expect(requests).toContain("https://upos-sz-mirrorcosov.bilivideo.com/low.m4a");
@@ -304,8 +304,8 @@ describe("speech to text", () => {
 
   it("explains why a subtitle-less video has no text", async () => {
     const unset = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(noSubtitles).request, ask: answer() });
-    expect(unset).toContain("未配置语音转文字");
-    const failing = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask: answer(), stt, runCommand: async () => { throw new Error("ffmpeg 运行失败：bad"); }, sttFetch: router });
-    expect(failing).toContain("语音转写失败：ffmpeg 运行失败：bad");
+    expect(unset).toContain("Speech to text is not configured");
+    const failing = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask: answer(), stt, runCommand: async () => { throw new Error("ffmpeg failed: bad"); }, sttFetch: router });
+    expect(failing).toContain("Speech to text failed: ffmpeg failed: bad");
   });
 });

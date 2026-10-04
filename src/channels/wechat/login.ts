@@ -31,7 +31,7 @@ export async function loginWithQr(
   for (let attempt = 1; attempt <= maxQrRefreshes; attempt++) {
     opts.signal?.throwIfAborted();
     const qr = await client.getQrCode(opts.botType);
-    print("用手机微信扫描下面的二维码登录：");
+    print("Scan the QR code below with WeChat on your phone to sign in:");
     print(await renderQr(qr.url, { type: "terminal", small: true }));
 
     let errors = 0;
@@ -50,13 +50,13 @@ export async function loginWithQr(
       if (status.status === "confirmed") {
         return { token: status.token, accountId: status.accountId, baseUrl: status.baseUrl, userId: status.userId };
       }
-      if (status.status === "cancelled") throw new WeChatLoginError("已在手机上取消登录");
+      if (status.status === "cancelled") throw new WeChatLoginError("Login was cancelled on the phone");
       if (status.status === "expired") {
-        if (attempt < maxQrRefreshes) print("二维码已过期，正在刷新…");
+        if (attempt < maxQrRefreshes) print("The QR code expired; refreshing…");
         break;
       }
       await delay(pollIntervalMs, undefined, { signal: opts.signal });
     }
   }
-  throw new WeChatLoginError(`二维码连续 ${maxQrRefreshes} 次过期，登录失败`);
+  throw new WeChatLoginError(`The QR code expired ${maxQrRefreshes} times in a row; login failed`);
 }

@@ -51,7 +51,7 @@ describe("SessionManager", () => {
     const manager = makeManager();
     await manager.init();
     const meta = await manager.createWeb();
-    expect(meta).toMatchObject({ title: "新对话", titled: false });
+    expect(meta).toMatchObject({ title: "New chat", titled: false });
     expect(busEvents).toContainEqual({ type: "sessions_changed" });
 
     const again = makeManager();
@@ -75,7 +75,7 @@ describe("SessionManager", () => {
     const wechat = await manager.get(WECHAT_SESSION_KEY);
     wechat.send("hi");
     await wechat.whenIdle();
-    expect(prompts).toEqual(["网页会话「新对话」", "微信"]);
+    expect(prompts).toEqual(['WebChat conversation "New chat"', "WeChat"]);
     expect((await stat(join(paths.sessions, "wechat.jsonl"))).isFile()).toBe(true);
   });
 
@@ -117,7 +117,7 @@ describe("SessionManager", () => {
     await session.whenIdle();
     expect(generateTitle).not.toHaveBeenCalled();
     expect(manager.listWeb()[0]?.title).toBe("我的标题");
-    expect(manager.windowLabel(webSessionKey(meta.id))).toBe("网页会话「我的标题」");
+    expect(manager.windowLabel(webSessionKey(meta.id))).toBe('WebChat conversation "我的标题"');
   });
 
   it("orders sessions by latest activity", async () => {
@@ -259,7 +259,7 @@ describe("SessionManager", () => {
     await writeFile(join(paths.webSessions, "index.json"), "{not json", "utf8");
     const manager = makeManager();
     await manager.init();
-    expect(manager.listWeb()).toEqual([expect.objectContaining({ id: "abc", title: "未命名对话", titled: true })]);
+    expect(manager.listWeb()).toEqual([expect.objectContaining({ id: "abc", title: "Untitled chat", titled: true })]);
     expect(JSON.parse(await readFile(join(paths.webSessions, "index.json"), "utf8"))).toHaveLength(1);
   });
 
@@ -281,8 +281,8 @@ describe("SessionManager", () => {
     const manager = makeManager();
     await manager.init();
     const opened = manager.shutdown();
-    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd 正在关闭");
+    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd is shutting down");
     await opened;
-    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd 正在关闭");
+    await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd is shutting down");
   });
 });

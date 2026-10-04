@@ -45,7 +45,7 @@ describe("read", () => {
   it("supports offset and limit and says how to continue", async () => {
     await writeFile(join(ws, "a.txt"), "1\n2\n3\n4\n5", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt", offset: 2, limit: 2 });
-    expect(textOf(result)).toBe("2\t2\n3\t3\n…（共 5 行，用 offset 继续读取）");
+    expect(textOf(result)).toBe("2\t2\n3\t3\n… (5 lines in total; use offset to continue reading)");
   });
 
   it("throws for a missing file", async () => {
@@ -57,7 +57,7 @@ describe("write", () => {
   it("creates parent directories", async () => {
     const result = await createWriteTool(ws).execute("1", { path: "memory/2026-10-02.md", content: "note" });
     expect(await readFile(join(ws, "memory/2026-10-02.md"), "utf8")).toBe("note");
-    expect(textOf(result)).toBe("已写入 memory/2026-10-02.md（4 字节）");
+    expect(textOf(result)).toBe("Wrote memory/2026-10-02.md (4 bytes)");
   });
 });
 
@@ -67,17 +67,17 @@ describe("edit", () => {
   it("replaces a unique occurrence literally", async () => {
     const result = await createEditTool(ws).execute("1", { path: "f.md", oldText: "b", newText: "$&c" });
     expect(await readFile(join(ws, "f.md"), "utf8")).toBe("a $&c a $1");
-    expect(textOf(result)).toBe("已修改 f.md（替换 1 处）");
+    expect(textOf(result)).toBe("Edited f.md (1 replacement(s))");
   });
 
   it("refuses an ambiguous match unless replaceAll is set", async () => {
-    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x" })).rejects.toThrow(/出现了 2 次/);
+    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x" })).rejects.toThrow(/occurs 2 times/);
     await createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x", replaceAll: true });
     expect(await readFile(join(ws, "f.md"), "utf8")).toBe("x b x $1");
   });
 
   it("fails when the text is absent or empty", async () => {
-    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "zzz", newText: "x" })).rejects.toThrow(/没有找到/);
-    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "", newText: "x" })).rejects.toThrow(/不能为空/);
+    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "zzz", newText: "x" })).rejects.toThrow(/was not found/);
+    await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "", newText: "x" })).rejects.toThrow(/must not be empty/);
   });
 });

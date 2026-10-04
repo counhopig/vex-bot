@@ -41,7 +41,7 @@ describe("loginWithQr", () => {
     const output: string[] = [];
     const result = await loginWithQr(new WeChatClient({ baseUrl: ilink.baseUrl }), (t) => output.push(t), { pollIntervalMs: 1 });
     expect(result).toEqual({ token: "tok", accountId: "bot1", baseUrl: "https://api2.example", userId: "owner1" });
-    expect(output[0]).toBe("用手机微信扫描下面的二维码登录：");
+    expect(output[0]).toBe("Scan the QR code below with WeChat on your phone to sign in:");
     expect(output[1]).toContain("▄");
   });
 
@@ -50,7 +50,7 @@ describe("loginWithQr", () => {
     const output: string[] = [];
     await loginWithQr(new WeChatClient({ baseUrl: ilink.baseUrl }), (t) => output.push(t), { pollIntervalMs: 1 });
     expect(qrCount).toBe(2);
-    expect(output).toContain("二维码已过期，正在刷新…");
+    expect(output).toContain("The QR code expired; refreshing…");
   });
 
   it("gives up after repeated expiry, cancellation or persistent errors", async () => {
@@ -58,7 +58,7 @@ describe("loginWithQr", () => {
     statuses({ status: "expired" }, { status: "expired" });
     await expect(loginWithQr(client, () => {}, { pollIntervalMs: 1, maxQrRefreshes: 2 })).rejects.toThrow(WeChatLoginError);
     statuses({ status: "cancel" });
-    await expect(loginWithQr(client, () => {}, { pollIntervalMs: 1 })).rejects.toThrow(/取消/);
+    await expect(loginWithQr(client, () => {}, { pollIntervalMs: 1 })).rejects.toThrow(/cancelled/);
     ilink.on("/ilink/bot/get_qrcode_status", () => 500);
     await expect(loginWithQr(client, () => {}, { pollIntervalMs: 1, maxConsecutiveErrors: 2 })).rejects.toThrow(/HTTP 500/);
   });
@@ -79,8 +79,8 @@ describe("runWeChatLogin", () => {
     const store = new WeChatStore(paths.wechat);
     expect(await store.loadCredentials()).toEqual({ token: "tok", accountId: "bot1", baseUrl: "https://api2.example", userId: "owner1" });
     expect((await stat(store.credentialsFile)).mode & 0o777).toBe(0o600);
-    expect(output).toContain("已绑定微信，主人是扫码的这个微信号（owner1）。");
-    expect(output.at(-1)).toBe("vexd 运行中会在几秒内自动接入。");
+    expect(output).toContain("WeChat linked; the owner is the account that scanned the code (owner1).");
+    expect(output.at(-1)).toBe("A running vexd will connect within a few seconds.");
   });
 
   it("stores a login base URL only when it is https", async () => {

@@ -194,7 +194,7 @@ export class Gateway {
   private async onClientMessage(ws: WebSocket, raw: string): Promise<void> {
     const message = parseClientMessage(raw);
     if (!message) {
-      send(ws, { type: "error", message: "无法识别的请求" });
+      send(ws, { type: "error", message: "Unrecognized request" });
       return;
     }
     try {
@@ -261,7 +261,7 @@ export class Gateway {
           send(ws, { type: "file_saved", name: message.name, ok: true });
         } catch (err) {
           this.opts.log.warn({ err, file: message.name }, "saving workspace file failed");
-          send(ws, { type: "file_saved", name: message.name, ok: false, error: "保存失败，详见 vexd 日志" });
+          send(ws, { type: "file_saved", name: message.name, ok: false, error: "Save failed; see the vexd log" });
         }
         return;
       case "get_config":

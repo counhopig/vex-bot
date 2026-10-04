@@ -4,8 +4,8 @@ import { Type } from "typebox";
 import { baseInstructionsSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
 
 const DelegateParams = Type.Object({
-  task: Type.String({ minLength: 1, description: "交给子 agent 的独立任务" }),
-  tools: Type.Optional(Type.Array(Type.String(), { description: "允许使用的工具名称；缺省使用全部非 delegate 工具" })),
+  task: Type.String({ minLength: 1, description: "A self-contained task for the sub-agent" }),
+  tools: Type.Optional(Type.Array(Type.String(), { description: "Names of the tools it may use; defaults to every tool except delegate" })),
 });
 
 export interface DelegateOptions {
@@ -21,8 +21,8 @@ export interface DelegateOptions {
 export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof DelegateParams> {
   return {
     name: "delegate",
-    label: "委派任务",
-    description: "将独立任务交给没有当前对话历史的子 agent，返回其最终回复。子 agent 不能继续委派。",
+    label: "Delegate task",
+    description: "Hands a self-contained task to a sub-agent that has no conversation history and returns its final reply. The sub-agent cannot delegate further.",
     parameters: DelegateParams,
     executionMode: "parallel",
     async execute(_id, { task, tools }, signal, onUpdate) {
@@ -30,14 +30,14 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
       const available = (opts.getTools?.() ?? opts.tools ?? []).filter((tool) => tool.name !== "delegate");
       const names = new Set(available.map((tool) => tool.name));
       for (const name of tools ?? []) {
-        if (!names.has(name)) throw new Error(`子 agent 不可使用工具：${name}`);
+        if (!names.has(name)) throw new Error(`The sub-agent cannot use the tool: ${name}`);
       }
       const selected = tools ? available.filter((tool) => tools.includes(tool.name)) : available;
       const prompt = await new SystemPromptBuilder([
         baseInstructionsSection(opts.workspace),
         residentFileSection({ workspace: opts.workspace, file: "SOUL.md", maxLines: 200 }),
-        () => `## 任务\n${task}`,
-      ]).build({ now: new Date(), windowLabel: "子 agent" });
+        () => `## Task\n${task}`,
+      ]).build({ now: new Date(), windowLabel: "sub-agent" });
       signal?.throwIfAborted();
       const agent = new Agent({
         initialState: { model: opts.model, systemPrompt: prompt, tools: selected, messages: [] },
@@ -59,9 +59,9 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
         await agent.prompt(task);
         signal?.throwIfAborted();
         const last = [...agent.state.messages].reverse().find((message) => message.role === "assistant");
-        if (!last || last.role !== "assistant") throw new Error("子 agent 未返回回复");
+        if (!last || last.role !== "assistant") throw new Error("The sub-agent returned no reply");
         if (last.stopReason === "error" || last.stopReason === "aborted") {
-          throw new Error(last.errorMessage ?? "子 agent 已中断");
+          throw new Error(last.errorMessage ?? "The sub-agent was interrupted");
         }
         return { content: [{ type: "text", text: last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("") }], details: {} };
       } finally {

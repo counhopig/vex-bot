@@ -37,18 +37,18 @@ export function extractText(items: InboundItem[]): string {
         break;
       }
       case 2:
-        parts.push("[图片]");
+        parts.push("[image]");
         break;
       case 3: {
         const text = item.voice_item?.text ?? "";
-        parts.push(text.trim() ? text : "[语音]");
+        parts.push(text.trim() ? text : "[voice]");
         break;
       }
       case 4:
-        parts.push("[文件]");
+        parts.push("[file]");
         break;
       case 5:
-        parts.push("[视频]");
+        parts.push("[video]");
         break;
       default:
         break;
@@ -79,20 +79,20 @@ export function splitMessage(text: string, max = MAX_MESSAGE_CHARS): string[] {
 }
 
 export function formatClock(ms: number, timeZone?: string): string {
-  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(ms);
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(ms);
 }
 
 export function formatApprovalPrompt(request: ApprovalRequest, pendingCount: number, timeZone?: string): string {
   let detail = request.detail;
   if (detail.length > MAX_APPROVAL_DETAIL_CHARS) {
     const cut = safeCutPoint(detail, MAX_APPROVAL_DETAIL_CHARS);
-    detail = `${detail.slice(0, cut)}\n…（内容过长，完整内容请在网页查看）`;
+    detail = `${detail.slice(0, cut)}\n… (content too long; see the full text in WebChat)`;
   }
   const lines = [
-    `【需要你批准】${request.windowLabel}想执行 ${request.toolName}：`,
+    `[Approval needed] ${request.windowLabel} wants to run ${request.toolName}:`,
     detail,
-    `回复 /y 允许，/ya 本会话总是允许，/n 拒绝（${formatClock(request.expiresAt, timeZone)} 前不回复将自动拒绝）`,
+    `Reply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
   ];
-  if (pendingCount > 1) lines.push(`（共有 ${pendingCount} 条待批准，按先后顺序处理）`);
+  if (pendingCount > 1) lines.push(`(${pendingCount} approvals are pending; they are handled in order)`);
   return lines.join("\n");
 }

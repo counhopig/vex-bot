@@ -7,7 +7,7 @@ import { ToolPolicy } from "../src/policy/policy.js";
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 
-const input = { sessionKey: "web:1", windowLabel: "网页会话「测试」", toolName: "bash", args: { command: "ls" } };
+const input = { sessionKey: "web:1", windowLabel: "WebChat conversation 'Test'", toolName: "bash", args: { command: "ls" } };
 
 describe("ApprovalManager", () => {
   it("lists a pending request and resolves it with the first answer", async () => {
@@ -15,7 +15,7 @@ describe("ApprovalManager", () => {
     const approvals = new ApprovalManager({ onChange, now: () => 1000 });
     const outcome = approvals.request(input);
     const [request] = approvals.pending();
-    expect(request).toMatchObject({ sessionKey: "web:1", windowLabel: "网页会话「测试」", toolName: "bash", summary: "ls", detail: "ls", createdAt: 1000, expiresAt: 601000 });
+    expect(request).toMatchObject({ sessionKey: "web:1", windowLabel: "WebChat conversation 'Test'", toolName: "bash", summary: "ls", detail: "ls", createdAt: 1000, expiresAt: 601000 });
     expect(approvals.answer(request!.id, "allow")).toBe(true);
     expect(approvals.answer(request!.id, "deny")).toBe(false);
     await expect(outcome).resolves.toEqual({ allowed: true });
@@ -27,7 +27,7 @@ describe("ApprovalManager", () => {
     const approvals = new ApprovalManager();
     const outcome = approvals.request(input);
     approvals.answer(approvals.pending()[0]!.id, "deny");
-    await expect(outcome).resolves.toEqual({ allowed: false, reason: "主人拒绝了这次 bash 调用。" });
+    await expect(outcome).resolves.toEqual({ allowed: false, reason: "The owner denied this bash call." });
   });
 
   it("remembers allow_session for that session and tool only", async () => {
@@ -44,7 +44,7 @@ describe("ApprovalManager", () => {
     const approvals = new ApprovalManager();
     const outcome = approvals.request(input);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
-    await expect(outcome).resolves.toEqual({ allowed: false, reason: "主人 10 分钟内没有答复，这次 bash 调用已取消。" });
+    await expect(outcome).resolves.toEqual({ allowed: false, reason: "The owner did not answer within 10 minutes; this bash call was cancelled." });
     expect(approvals.pending()).toEqual([]);
   });
 
@@ -53,9 +53,9 @@ describe("ApprovalManager", () => {
     const controller = new AbortController();
     const outcome = approvals.request({ ...input, signal: controller.signal });
     controller.abort();
-    await expect(outcome).resolves.toEqual({ allowed: false, reason: "本轮已被中断。" });
+    await expect(outcome).resolves.toEqual({ allowed: false, reason: "This turn was interrupted." });
     const already = approvals.request({ ...input, signal: controller.signal });
-    await expect(already).resolves.toEqual({ allowed: false, reason: "本轮已被中断。" });
+    await expect(already).resolves.toEqual({ allowed: false, reason: "This turn was interrupted." });
   });
 
   it("carries the full bash command in detail while the summary stays short", () => {
@@ -76,7 +76,7 @@ describe("ApprovalManager", () => {
     const [write, edit, long, other] = approvals.pending();
     expect(write!.detail).toBe("/ws/notes/a.md\nhello");
     expect(edit!.detail).toBe("/x.md");
-    expect(long!.detail).toBe(`${"x".repeat(10000)}…（已截断，共 10050 字符）`);
+    expect(long!.detail).toBe(`${"x".repeat(10000)}… (truncated; 10050 characters in total)`);
     expect(other!.detail).toBe('{"a":1}');
   });
 
@@ -85,8 +85,8 @@ describe("ApprovalManager", () => {
     const a = approvals.request(input);
     const b = approvals.request({ ...input, toolName: "write" });
     approvals.dispose();
-    await expect(a).resolves.toEqual({ allowed: false, reason: "vexd 正在关闭。" });
-    await expect(b).resolves.toEqual({ allowed: false, reason: "vexd 正在关闭。" });
+    await expect(a).resolves.toEqual({ allowed: false, reason: "vexd is shutting down." });
+    await expect(b).resolves.toEqual({ allowed: false, reason: "vexd is shutting down." });
   });
 });
 
@@ -104,21 +104,21 @@ describe("createToolGate", () => {
 
   it("lets allowed tools through without asking", async () => {
     const approvals = new ApprovalManager();
-    const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => "网页" });
+    const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => "WebChat" });
     await expect(gate(ctx("read", { path: "/etc/hosts" }))).resolves.toBeUndefined();
     expect(approvals.pending()).toEqual([]);
   });
 
   it("blocks denied tools", async () => {
-    const gate = createToolGate({ policy, approvals: new ApprovalManager(), sessionKey: "web:1", windowLabel: () => "网页" });
-    await expect(gate(ctx("find", {}))).resolves.toEqual({ block: true, reason: "工具 find 已被禁用。" });
+    const gate = createToolGate({ policy, approvals: new ApprovalManager(), sessionKey: "web:1", windowLabel: () => "WebChat" });
+    await expect(gate(ctx("find", {}))).resolves.toEqual({ block: true, reason: "The tool find is disabled." });
   });
 
   it("asks for approval and maps the outcome", async () => {
     const approvals = new ApprovalManager();
-    const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => "网页会话「A」" });
+    const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => 'WebChat conversation "A"' });
     const allowed = gate(ctx("bash", { command: "ls" }));
-    expect(approvals.pending()[0]?.windowLabel).toBe("网页会话「A」");
+    expect(approvals.pending()[0]?.windowLabel).toBe('WebChat conversation "A"');
     approvals.answer(approvals.pending()[0]!.id, "allow_session");
     await expect(allowed).resolves.toBeUndefined();
     await expect(gate(ctx("bash", { command: "pwd" }))).resolves.toBeUndefined();
@@ -126,6 +126,6 @@ describe("createToolGate", () => {
 
     const denied = gate(ctx("write", { path: "/etc/x" }));
     approvals.answer(approvals.pending()[0]!.id, "deny");
-    await expect(denied).resolves.toEqual({ block: true, reason: "主人拒绝了这次 write 调用。" });
+    await expect(denied).resolves.toEqual({ block: true, reason: "The owner denied this write call." });
   });
 });

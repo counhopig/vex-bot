@@ -41,7 +41,7 @@ describe("context compaction", () => {
     const complete = vi.fn(async () => fauxAssistantMessage("主人喜欢香港摘要"));
     const events: unknown[] = [];
     const opts = {
-      key: "wechat", transcriptPath: path, model, tools: [], streamFn: ((m, ctx, opts) => getCurrentSystemPrompt(ctx.messages).includes("静默抢救") ? fauxStreamFn(rescueFaux)(m, ctx, opts) : fauxStreamFn(faux)(m, ctx, opts)) satisfies import("@earendil-works/pi-agent-core").StreamFn, getApiKey: () => undefined,
+      key: "wechat", transcriptPath: path, model, tools: [], streamFn: ((m, ctx, opts) => getCurrentSystemPrompt(ctx.messages).includes("silently rescuing") ? fauxStreamFn(rescueFaux)(m, ctx, opts) : fauxStreamFn(faux)(m, ctx, opts)) satisfies import("@earendil-works/pi-agent-core").StreamFn, getApiKey: () => undefined,
       buildSystemPrompt: async () => "SYSTEM", emit: (e: unknown) => { events.push(e); },
       compaction: { backgroundModel: model, complete, workspace: dir, keepTurns: 2, now: () => new Date(2026, 9, 3) },
     };
@@ -138,7 +138,7 @@ describe("context compaction", () => {
     expect(inputs.join("")).toContain("首部关键事实");
     expect(inputs.join("")).toContain("尾部关键事实");
     expect(estimateTokens(projected)).toBeLessThan(model.contextWindow * 0.85);
-    expect(projected.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "big", content: [{ type: "text", text: "工具结果摘要：关键事实摘要" }] });
+    expect(projected.at(-1)).toMatchObject({ role: "toolResult", toolCallId: "big", content: [{ type: "text", text: "Tool result summary: 关键事实摘要" }] });
     expect(messages.at(-1)?.content).toEqual([{ type: "text", text: payload }]);
     expect(saved?.replacements).toHaveLength(1);
     expect(await new ContextCompactor(opts, saved).transform(messages)).toEqual(projected);
@@ -234,7 +234,7 @@ describe("context compaction", () => {
     const summarizing = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, keepTurns: 1, threshold: 0.01, save: vi.fn(),
       complete: async (_m, ctx) => { inputs.push(JSON.stringify(ctx.messages)); return fauxAssistantMessage("摘要"); } });
     await summarizing.transform([...messages, user("再看"), fauxAssistantMessage("好")]);
-    expect(inputs.join("")).toContain("[图片]");
+    expect(inputs.join("")).toContain("[image]");
     expect(inputs.join("")).not.toContain("QUJD");
   });
 
@@ -248,12 +248,12 @@ describe("context compaction", () => {
   });
 
   it("labels marked user messages by source and tolerates tool calls without arguments", () => {
-    const marked = { ...user("请聊点什么"), vexSource: "主动聊天" };
+    const marked = { ...user("请聊点什么"), vexSource: "proactive chat" };
     const call = fauxAssistantMessage(fauxToolCall("read", {}, { id: "c" }), { stopReason: "toolUse" });
     (call.content[0] as { arguments?: unknown }).arguments = undefined;
     const text = renderMessages([marked, call, user("你好")]);
-    expect(text).toContain("主动聊天：请聊点什么");
-    expect(text).toContain("主人：你好");
+    expect(text).toContain("proactive chat: 请聊点什么");
+    expect(text).toContain("Owner: 你好");
     expect(() => estimateTokens([call])).not.toThrow();
   });
 

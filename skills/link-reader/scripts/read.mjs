@@ -12,7 +12,7 @@ import { xiaohongshu } from "./xiaohongshu.mjs";
 import { youtube } from "./youtube.mjs";
 
 const PLATFORMS = [bilibili, youtube, douyin, xiaohongshu];
-const TRANSCRIBABLE = new Set(["B站", "YouTube"]);
+const TRANSCRIBABLE = new Set(["Bilibili", "YouTube"]);
 const MAX_TRANSCRIPT = 500_000;
 const RAW_LIMIT = 30_000;
 const FALLBACK_LIMIT = 20_000;
@@ -29,57 +29,57 @@ function createHttp(platform, { fetchPublicPage, request, signal }) {
 }
 
 function duration(seconds) {
-  if (!seconds) return "未知";
+  if (!seconds) return "unknown";
   const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60), rest = seconds % 60;
-  return hours ? `${hours}小时${minutes}分${rest}秒` : `${minutes}分${rest}秒`;
+  return hours ? `${hours}h ${minutes}m ${rest}s` : `${minutes}m ${rest}s`;
 }
 
 function header(content) {
   const description = content.description?.trim().replace(/\s+/g, " ");
   return [
-    `平台：${content.platform}`,
-    `标题：${content.title || "（无标题）"}`,
-    `作者：${content.author || "（未知）"}`,
-    `时长：${duration(content.durationSeconds)}`,
-    `链接：${content.url}`,
-    ...(description ? [`简介：${description.length > 500 ? `${description.slice(0, 500)}…` : description}`] : []),
-    ...(content.extra?.length ? [`其他：${content.extra.join("；")}`] : []),
-    ...(content.cover ? [`封面：${content.cover}`] : []),
+    `Platform: ${content.platform}`,
+    `Title: ${content.title || "(untitled)"}`,
+    `Author: ${content.author || "(unknown)"}`,
+    `Duration: ${duration(content.durationSeconds)}`,
+    `Link: ${content.url}`,
+    ...(description ? [`Description: ${description.length > 500 ? `${description.slice(0, 500)}…` : description}`] : []),
+    ...(content.extra?.length ? [`More: ${content.extra.join("; ")}`] : []),
+    ...(content.cover ? [`Cover: ${content.cover}`] : []),
   ];
 }
 
 export async function readLink(text, { fetchPublicPage, request, ask, sessdata, raw = false, signal, stt, runCommand, sttFetch } = {}) {
   const platform = findPlatform(text);
-  if (!platform) throw new Error(`暂不支持这个链接，目前支持：${PLATFORMS.map((item) => item.name).join("、")}`);
+  if (!platform) throw new Error(`This link is not supported; supported: ${PLATFORMS.map((item) => item.name).join(", ")}`);
   const content = await platform.read(text, createHttp(platform, { fetchPublicPage, request, signal }), { sessdata });
   let note;
   if (!content.text && TRANSCRIBABLE.has(content.platform)) {
     if (!stt) {
-      note = "（未配置语音转文字；在配置的 stt 中填写服务后，没有字幕的视频会转写音频）";
+      note = "(Speech to text is not configured; once a service is set under stt, videos without subtitles are transcribed)";
     } else {
       try {
         const spoken = await transcribeVideo(content, stt, { runCommand, fetchFn: sttFetch, signal });
-        if (spoken) { content.text = spoken; content.textKind = "语音转写"; }
-        else note = "（语音转写没有识别出内容）";
+        if (spoken) { content.text = spoken; content.textKind = "transcript"; }
+        else note = "(Speech to text recognised nothing)";
       } catch (error) {
         signal?.throwIfAborted();
-        note = `（语音转写失败：${error.message}）`;
+        note = `(Speech to text failed: ${error.message})`;
       }
     }
   }
   const lines = header(content);
   const body = content.text?.slice(0, MAX_TRANSCRIPT);
-  const kind = content.textKind ?? "正文";
+  const kind = content.textKind ?? "text";
   if (!body) {
-    lines.push("", "该链接没有可读取的字幕或正文，只能提供上面的基本信息。", ...(note ? [note] : []));
+    lines.push("", "This link has no readable subtitles or text, so only the basic information above is available.", ...(note ? [note] : []));
   } else if (raw || !ask) {
-    lines.push("", `${kind}原文：`, body.length > RAW_LIMIT ? `${body.slice(0, RAW_LIMIT)}\n…（已截断，共 ${body.length} 字）` : body);
+    lines.push("", `Original ${kind}:`, body.length > RAW_LIMIT ? `${body.slice(0, RAW_LIMIT)}\n… (truncated; ${body.length} characters in total)` : body);
   } else {
     try {
-      lines.push("", `${kind}摘要：`, await summarizeText(body, kind, ask));
+      lines.push("", `Summary of the ${kind}:`, await summarizeText(body, kind, ask));
     } catch (error) {
       signal?.throwIfAborted();
-      lines.push("", `（摘要失败：${error.message}。以下为${kind}原文，已截断）`, body.slice(0, FALLBACK_LIMIT));
+      lines.push("", `(Summary failed: ${error.message}. Below is the original ${kind}, truncated)`, body.slice(0, FALLBACK_LIMIT));
     }
   }
   return lines.join("\n");
@@ -93,7 +93,7 @@ async function importCompiled(path) {
 
 async function main(args) {
   const [argument, ...flags] = args;
-  if (!argument) throw new Error("用法：read.mjs 链接（或 - 从标准输入读取整段分享文字） [--raw] [--config 路径]");
+  if (!argument) throw new Error("Usage: read.mjs LINK (or - to read the whole share text from standard input) [--raw] [--config PATH]");
   let target = argument;
   if (argument === "-") {
     target = "";
@@ -103,7 +103,7 @@ async function main(args) {
   for (let i = 0; i < flags.length; i++) {
     if (flags[i] === "--raw") raw = true;
     else if (flags[i] === "--config" && flags[i + 1]) configFlag = flags[++i];
-    else throw new Error("无效脚本参数");
+    else throw new Error("Invalid script argument");
   }
   const { fetchPublicPage } = await importCompiled("tools/web.js");
   const { createModelRegistry } = await importCompiled("providers/models.js");
@@ -115,7 +115,7 @@ async function main(args) {
   const ask = async (prompt) => {
     const result = await registry.completeSimple(
       model,
-      { systemPrompt: "你是严谨的内容摘要助手，只依据给出的内容总结。", messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+      { systemPrompt: "You are a careful summarizer; summarize only what the given content says.", messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
       { apiKey: registry.getApiKey(model.provider), maxTokens: 1500, signal: AbortSignal.timeout(120_000) },
     );
     if (result.stopReason === "error" || result.stopReason === "aborted") throw new Error(result.errorMessage ?? result.stopReason);

@@ -1,14 +1,14 @@
 ---
 name: weather
-description: 查询指定地点的当前天气与未来三天天气预报。
+description: Look up the current weather and the three-day forecast for a place.
 ---
 
-# 天气
+# Weather
 
-使用本目录中的 `scripts/weather.mjs` 查询 wttr.in 天气服务。城市名或经纬度必须由用户请求或工作区资料确定。
+Use `scripts/weather.mjs` in this directory to query the wttr.in weather service. The city name or coordinates must come from the owner's request or from workspace material.
 
 ```bash
-node "<本技能目录>/scripts/weather.mjs" "香港"
+node "<this skill's directory>/scripts/weather.mjs" "Hong Kong"
 ```
 
-输出为 JSON，包含地点、当前天气与未来三天预报。向主人说明温度、天气状况和预报；服务失败时如实说明，不编造天气。
+The output is JSON with the location, the current conditions and a three-day forecast. Tell the owner the temperature, the conditions and the forecast; if the service fails, say so and never make up weather.

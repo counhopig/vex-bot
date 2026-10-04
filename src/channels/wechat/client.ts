@@ -9,7 +9,7 @@ export class WeChatApiError extends Error {
     readonly errcode: number,
     readonly errmsg: string,
   ) {
-    super(`微信接口 ${endpoint} 失败：ret=${ret} errcode=${errcode} ${errmsg}`);
+    super(`WeChat API ${endpoint} failed: ret=${ret} errcode=${errcode} ${errmsg}`);
     this.name = "WeChatApiError";
   }
 }
@@ -66,7 +66,7 @@ export class WeChatClient {
     });
     const qrcode = typeof data.qrcode === "string" ? data.qrcode.trim() : "";
     const url = typeof data.qrcode_img_content === "string" ? data.qrcode_img_content.trim() : "";
-    if (!qrcode || !url) throw new Error("微信登录二维码响应格式不正确");
+    if (!qrcode || !url) throw new Error("The WeChat login QR response is malformed");
     return { qrcode, url };
   }
 
@@ -80,7 +80,7 @@ export class WeChatClient {
     const status = typeof data.status === "string" ? data.status : "wait";
     if (status === "confirmed") {
       const token = typeof data.bot_token === "string" ? data.bot_token : "";
-      if (!token) throw new Error("微信登录已确认，但没有返回 token");
+      if (!token) throw new Error("WeChat login was confirmed but returned no token");
       return {
         status: "confirmed",
         token,
@@ -147,7 +147,7 @@ export class WeChatClient {
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
-    if (!response.ok) throw new Error(`微信接口 ${endpoint} 返回 HTTP ${response.status}`);
+    if (!response.ok) throw new Error(`WeChat API ${endpoint} returned HTTP ${response.status}`);
     const parsed: unknown = await response.json();
     const data = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
     // The API reports failures in the body even on HTTP 200.

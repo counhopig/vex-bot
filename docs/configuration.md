@@ -17,23 +17,23 @@ The settings page has six tabs:
 
 | Tab | What it edits |
 |---|---|
-| 模型 | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
-| 微信 | Whether WeChat is on, the owner account, and the live connection state |
-| 语音与链接 | Speech to text, the Bilibili `SESSDATA`, web search |
-| 作息 | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
-| 人设与记忆 | `SOUL.md`, `USER.md`, `MEMORY.md` and `HEARTBEAT.md` |
-| 高级 | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
+| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
+| WeChat | Whether WeChat is on, the owner account, and the live connection state |
+| Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
+| Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
+| Persona & memory | `SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md` and the editable instruction files (see Workspace files) |
+| Advanced | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
-The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "已设置，留空保持不变", typing replaces it, and "清除已保存的值" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
+The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "Set; leave empty to keep it", typing replaces it, and "Clear the saved value" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
 
 ## Applying changes
 
 Saving in WebChat settings applies the change without a manual restart:
 
 - `stt` and `links` settings are read by the skills on every run, so they apply instantly.
-- Everything else (models, keys, WeChat, search, rest hours, tool policy, MCP servers, …) is applied by restarting vexd in place: it waits up to 30 seconds for running turns to finish, shuts down, and starts again as the same process (same pid, so Docker and `vex stop` keep working). The page shows "正在应用设置" and reconnects within a few seconds. Conversations, memory, mood and the WeChat link are kept; unanswered approvals are cancelled.
+- Everything else (models, keys, WeChat, search, rest hours, tool policy, MCP servers, …) is applied by restarting vexd in place: it waits up to 30 seconds for running turns to finish, shuts down, and starts again as the same process (same pid, so Docker and `vex stop` keep working). The page shows "Saved; applying the settings" and reconnects within a few seconds. Conversations, memory, mood and the WeChat link are kept; unanswered approvals are cancelled.
 - Before writing, vexd checks that the main and background models can be resolved and rejects the save otherwise. If a saved configuration still cannot start (for example a port that is already taken), vexd restores the previous `config.yaml` on the next start, keeps running, and the status line under the chat box says why.
-- Where the platform cannot re-execute a process (Windows), the page says "重启 vexd 后生效" instead.
+- Where the platform cannot re-execute a process (Windows), the page says "Saved; takes effect after vexd restarts" instead.
 
 ## Settings
 
@@ -114,7 +114,7 @@ Vex does not load `.env` files. Inside the shell tool, `VEX_CONFIG_PATH` points 
 
 ## Workspace files
 
-Edit these Markdown files to shape Vex; the next message sees the change. WebChat settings edits `config.yaml` (as forms or as text) and these four files; you can also ask Vex in conversation to change them, or edit them on disk.
+Edit these Markdown files to shape Vex; the next message sees the change. WebChat settings edits `config.yaml` (as forms or as text) and every file below marked editable; you can also ask Vex in conversation to change them, or edit them on disk.
 
 | File | Purpose | Loaded |
 |---|---|---|
@@ -125,7 +125,20 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `memory/YYYY-MM-DD.md` | Daily notes written by the agent | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
-Templates for the first four are created on first start.
+Templates for these files are created on first start, together with the instruction files below.
+
+### Editable instructions
+
+The text Vex is given is not hidden in the code: these files hold it, are read again on every use, and can be edited in WebChat (Persona & memory) or on disk. While a file is missing or empty the built-in default applies, so clearing a file and saving restores the default.
+
+| File | What it controls | Placeholders |
+|---|---|---|
+| `INSTRUCTIONS.md` | The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. Also used by sub-agents | `{{workspace}}` |
+| `prompts/heartbeat.md` | The instruction given at each heartbeat (the checklist itself is `HEARTBEAT.md`) | |
+| `prompts/consolidation.md` | The nightly memory consolidation task | `{{dates}}`: paths of the last seven daily notes |
+| `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself | |
+
+The internal prompts for compaction, conversation titles, the mood phrasing and the link summaries stay in the code.
 
 ## Skills
 
@@ -135,7 +148,7 @@ The `image` skill uses the primary model unless its script receives `--provider`
 
 ## Web search
 
-`web_search` supports three services; pick one with `webSearch.provider` (or in the settings page, 语音与链接 tab):
+`web_search` supports three services; pick one with `webSearch.provider` (or in the settings page, Voice & links tab):
 
 | Service | Cost | Needs |
 |---|---|---|
