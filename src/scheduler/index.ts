@@ -166,7 +166,7 @@ export class Scheduler {
     let text: string;
     try { text = await readFile(join(this.options.workspace, "HEARTBEAT.md"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
     if (!text.trim() || this.stopped) return;
-    const result = await this.options.hooks.runTemporary(await loadPrompt(this.options.workspace, "prompts/heartbeat.md"), "heartbeat", this.abort.signal);
+    const result = await this.options.hooks.runTemporary("Read HEARTBEAT.md in the workspace and check each item. Reply with only HEARTBEAT_OK when there is nothing to tell the owner.", "heartbeat", this.abort.signal);
     if (!this.stopped && result.trim() && result.trim() !== "HEARTBEAT_OK") await this.options.hooks.deliverHeartbeat(result, this.abort.signal);
   }
   private async consolidate(now: number): Promise<void> {

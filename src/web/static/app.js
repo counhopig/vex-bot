@@ -15,7 +15,9 @@ const state = {
   statusInfo: null,
   settings: null,
   settingsTab: "model",
-  fileName: "SOUL.md",
+  filePage: "soul",
+  fileAreas: new Map(),
+  pendingSaves: 0,
 };
 
 function send(message) {
@@ -95,13 +97,16 @@ function handle(msg) {
       if (state.settingsTab === "yaml") $("settings-text").value = msg.text;
       break;
     case "file":
-      if (state.settingsTab === "persona" && state.fileName === msg.name) $("settings-text").value = msg.text;
+      if (state.fileAreas.has(msg.name)) state.fileAreas.get(msg.name).value = msg.text;
       break;
     case "config_saved":
       showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
       break;
     case "file_saved":
-      if (state.fileName === msg.name) showSaved(msg.ok, "Saved; takes effect from the next message", msg.error);
+      if (state.fileAreas.has(msg.name)) {
+        if (!msg.ok) { state.pendingSaves = 0; showSaved(false, "", msg.error); }
+        else if (--state.pendingSaves <= 0) showSaved(true, "Saved; applies from its next use");
+      }
       break;
     case "error":
       flash(msg.message);
@@ -685,21 +690,21 @@ const SETTINGS_TABS = [
       { path: "persona.outreach.quietHours", label: "Hours of silence before reaching out", type: "number", min: 0 },
     ] },
   ] },
-  { id: "persona", label: "Persona & memory", files: ["SOUL.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "INSTRUCTIONS.md", "prompts/heartbeat.md", "prompts/consolidation.md", "prompts/outreach.md"] },
+  { id: "persona", label: "Persona & memory", pages: true },
   { id: "yaml", label: "Advanced", yaml: true },
 ];
 
-const FILE_LABELS = { "SOUL.md": "Persona", "USER.md": "About me", "MEMORY.md": "Memory", "HEARTBEAT.md": "Heartbeat", "INSTRUCTIONS.md": "Instructions", "prompts/heartbeat.md": "Heartbeat task", "prompts/consolidation.md": "Consolidation task", "prompts/outreach.md": "Proactive chat" };
-const FILE_HINTS = {
-  "SOUL.md": "Persona, tone and rules of conduct. Takes effect from the next message.",
-  "USER.md": "What it knows about you: how to address you, who you are, preferences and habits. Takes effect from the next message.",
-  "MEMORY.md": "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message.",
-  "HEARTBEAT.md": "The periodic self-check list; leave it empty to skip checks. Takes effect from the next heartbeat.",
-  "INSTRUCTIONS.md": "The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. {{workspace}} becomes the workspace path. Clear the text and save to restore the built-in default. Takes effect from the next message.",
-  "prompts/heartbeat.md": "The instruction given at each heartbeat; the checklist itself is the Heartbeat file. Clear the text and save to restore the default.",
-  "prompts/consolidation.md": "The instruction for the nightly memory consolidation; {{dates}} becomes the paths of the last seven daily notes. Clear the text and save to restore the default.",
-  "prompts/outreach.md": "The instruction used when Vex starts a conversation on its own. Clear the text and save to restore the default.",
-};
+const FILE_PAGES = [
+  { id: "soul", label: "Persona", files: [{ name: "SOUL.md", hint: "Persona, tone and rules of conduct. Takes effect from the next message." }] },
+  { id: "user", label: "About me", files: [{ name: "USER.md", hint: "What it knows about you: how to address you, who you are, preferences and habits. Takes effect from the next message." }] },
+  { id: "memory", label: "Memory", files: [{ name: "MEMORY.md", hint: "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message." }] },
+  { id: "instructions", label: "Instructions", files: [{ name: "INSTRUCTIONS.md", hint: "The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. {{workspace}} becomes the workspace path. Clear the text and save to restore the built-in default. Takes effect from the next message." }] },
+  { id: "background", label: "Background tasks", files: [
+    { name: "HEARTBEAT.md", title: "Heartbeat checklist", hint: "Checked at every heartbeat; write any instructions for the heartbeat here too. Leave it empty to skip the checks." },
+    { name: "prompts/consolidation.md", title: "Memory consolidation", hint: "The nightly consolidation task; {{dates}} becomes the paths of the last seven daily notes. Clear the text and save to restore the default." },
+    { name: "prompts/outreach.md", title: "Proactive chat", hint: "The instruction used when Vex starts a conversation on its own. Clear the text and save to restore the default." },
+  ] },
+];
 const YAML_HINT = "The full config.yaml. Change settings the forms do not cover (tool policy, MCP servers, the web token and so on) here; saving applies them automatically.";
 
 const isFormTab = (id) => !!SETTINGS_TABS.find((tab) => tab.id === id)?.sections;
@@ -948,15 +953,33 @@ function renderSettingsTabs() {
   }
 }
 
-function renderFileTabs(files) {
+function renderFileTabs() {
   const tabs = $("file-tabs");
   tabs.replaceChildren();
-  for (const name of files) {
-    const button = element("button", name === state.fileName ? "active" : "", FILE_LABELS[name]);
+  for (const page of FILE_PAGES) {
+    const button = element("button", page.id === state.filePage ? "active" : "", page.label);
     button.type = "button";
-    button.addEventListener("click", () => { state.fileName = name; openSettingsTab(); });
+    button.addEventListener("click", () => { state.filePage = page.id; openSettingsTab(); });
     tabs.append(button);
   }
+}
+
+function renderFileEditors(page) {
+  const box = $("file-editors");
+  box.replaceChildren();
+  box.className = page.files.length > 1 ? "multi" : "";
+  state.fileAreas = new Map();
+  for (const file of page.files) {
+    const section = element("div", "editor");
+    if (file.title) section.append(element("h3", "", file.title));
+    section.append(element("p", "hint", file.hint));
+    const area = element("textarea", "file-text");
+    area.spellcheck = false;
+    section.append(area);
+    box.append(section);
+    state.fileAreas.set(file.name, area);
+  }
+  for (const file of page.files) send({ type: "get_file", name: file.name });
 }
 
 function openSettingsTab() {
@@ -965,17 +988,19 @@ function openSettingsTab() {
   $("settings-result").textContent = "";
   $("settings-form").hidden = !tab.sections;
   $("settings-editor").hidden = !!tab.sections;
-  $("file-tabs").hidden = !tab.files;
+  $("file-tabs").hidden = !tab.pages;
+  $("file-editors").hidden = !tab.pages;
+  $("settings-text").hidden = !!tab.pages;
+  $("settings-hint").hidden = !!tab.pages;
   if (tab.sections) {
     renderSettingsForm();
     if (!state.settings) send({ type: "get_settings" });
     return;
   }
   $("settings-text").value = "";
-  if (tab.files) {
-    renderFileTabs(tab.files);
-    $("settings-hint").textContent = FILE_HINTS[state.fileName];
-    send({ type: "get_file", name: state.fileName });
+  if (tab.pages) {
+    renderFileTabs();
+    renderFileEditors(FILE_PAGES.find((page) => page.id === state.filePage));
   } else {
     $("settings-hint").textContent = YAML_HINT;
     send({ type: "get_config" });
@@ -991,8 +1016,10 @@ function saveSettings() {
     const patch = buildPatch(state.settings);
     if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "No changes"); return; }
     send({ type: "save_settings", ...patch });
-  } else if (tab.files) {
-    send({ type: "save_file", name: state.fileName, text: $("settings-text").value });
+  } else if (tab.pages) {
+    const page = FILE_PAGES.find((item) => item.id === state.filePage);
+    state.pendingSaves = page.files.length;
+    for (const file of page.files) send({ type: "save_file", name: file.name, text: state.fileAreas.get(file.name).value });
   } else {
     send({ type: "save_config", text: $("settings-text").value });
   }

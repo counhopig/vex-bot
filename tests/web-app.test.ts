@@ -176,38 +176,64 @@ describe("web app", () => {
     expect(patch.unset.sort()).toEqual(["backgroundModel.id", "backgroundModel.provider", "heartbeat.every", "links.bilibili.sessdata"]);
   });
 
-  it("switches between the persona files and the raw configuration", async () => {
+  it("switches between the persona pages and the raw configuration", async () => {
     const { get, socket, context } = await loadApp();
+    const area = (name: string) => runInContext(`state.fileAreas.get(${JSON.stringify(name)})`, context) as Element;
     get("open-settings").dispatch("click");
     get("settings-tabs").children[4]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "SOUL.md" }));
     runInContext('handle({ type: "file", name: "USER.md", text: "过期的回复" })', context);
-    expect(get("settings-text").value).toBe("");
+    expect(area("SOUL.md").value).toBe("");
     runInContext('handle({ type: "file", name: "SOUL.md", text: "你是一只猫" })', context);
-    expect(get("settings-text").value).toBe("你是一只猫");
+    expect(area("SOUL.md").value).toBe("你是一只猫");
     get("file-tabs").children[1]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "USER.md" }));
-    get("settings-text").value = "喜欢咖啡";
+    area("USER.md").value = "喜欢咖啡";
     get("save-settings").dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡" }));
     runInContext('handle({ type: "file_saved", name: "USER.md", ok: true })', context);
-    expect(get("settings-result").textContent).toBe("Saved; takes effect from the next message");
+    expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
+    expect(get("settings-text").hidden).toBe(true);
     get("settings-tabs").children[5]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_config" }));
+    expect(get("settings-text").hidden).toBe(false);
+    expect(get("file-editors").hidden).toBe(true);
     runInContext('handle({ type: "config", text: "model: {}" })', context);
     expect(get("settings-text").value).toBe("model: {}");
     get("save-settings").dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
   });
 
-  it("lists the instruction files next to the persona files", async () => {
-    const { get, socket } = await loadApp();
+  it("groups the persona and instruction files into five pages, with the background tasks together", async () => {
+    const { get, socket, context } = await loadApp();
+    const area = (name: string) => runInContext(`state.fileAreas.get(${JSON.stringify(name)})`, context) as Element;
     get("open-settings").dispatch("click");
     get("settings-tabs").children[4]!.dispatch("click");
-    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Heartbeat", "Instructions", "Heartbeat task", "Consolidation task", "Proactive chat"]);
-    get("file-tabs").children[4]!.dispatch("click");
+    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Instructions", "Background tasks"]);
+    get("file-tabs").children[3]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "INSTRUCTIONS.md" }));
-    expect(get("settings-hint").textContent).toContain("{{workspace}}");
+    expect(textOf(get("file-editors"))).toContain("{{workspace}}");
+    get("file-tabs").children[4]!.dispatch("click");
+    const requested = socket.send.mock.calls.slice(-3).map((call) => JSON.parse(call[0]).name);
+    expect(requested).toEqual(["HEARTBEAT.md", "prompts/consolidation.md", "prompts/outreach.md"]);
+    expect(get("file-editors").className).toBe("multi");
+    expect(textOf(get("file-editors"))).toContain("Heartbeat checklist");
+    area("HEARTBEAT.md").value = "check mail";
+    area("prompts/outreach.md").value = "say hi";
+    get("save-settings").dispatch("click");
+    const saves = socket.send.mock.calls.slice(-3).map((call) => JSON.parse(call[0]));
+    expect(saves).toEqual([
+      { type: "save_file", name: "HEARTBEAT.md", text: "check mail" },
+      { type: "save_file", name: "prompts/consolidation.md", text: "" },
+      { type: "save_file", name: "prompts/outreach.md", text: "say hi" },
+    ]);
+    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("Saving…");
+    runInContext('handle({ type: "file_saved", name: "prompts/consolidation.md", ok: true })', context);
+    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
+    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: false, error: "Save failed" })', context);
+    expect(get("settings-result").textContent).toBe("Save failed");
   });
 
   it("parses Markdown blocks and inline spans", async () => {

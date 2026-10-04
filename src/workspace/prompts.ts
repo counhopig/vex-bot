@@ -1,7 +1,7 @@
 import { readWorkspaceFile } from "./workspace.js";
 
 /** Prompt files the owner can edit in the workspace; the built-in text is used while a file is missing or empty. */
-export const PROMPT_FILES = ["INSTRUCTIONS.md", "prompts/heartbeat.md", "prompts/consolidation.md", "prompts/outreach.md"] as const;
+export const PROMPT_FILES = ["INSTRUCTIONS.md", "prompts/consolidation.md", "prompts/outreach.md"] as const;
 export type PromptFile = (typeof PROMPT_FILES)[number];
 
 const MAX_PROMPT_CHARS = 30_000;
@@ -29,7 +29,6 @@ export const DEFAULT_PROMPTS: Record<PromptFile, string> = {
     "Reading and writing files inside the workspace needs no approval; writing outside it and running bash commands need the owner's approval. If a request is denied, accept the result and either continue another way or explain to the owner.",
     "",
   ].join("\n"),
-  "prompts/heartbeat.md": "Read HEARTBEAT.md in the workspace and check each item. Reply with only HEARTBEAT_OK when there is nothing to tell the owner.\n",
   "prompts/consolidation.md": [
     "Read the daily notes of the last seven days ({{dates}}; skip files that do not exist), plus MEMORY.md and USER.md.",
     "Distil what recurs or is clearly important into MEMORY.md and USER.md, merge duplicate entries, remove stale ones, and keep MEMORY.md under 100 lines.",
