@@ -676,11 +676,12 @@ const SETTINGS_TABS = [
   ] }] },
   { id: "voice", label: "Voice & links", sections: [
     { title: "Speech to text", fields: [
-      { path: "stt.baseUrl", label: "Service address", type: "text", placeholder: "https://api.openai.com/v1", help: "Any service compatible with OpenAI /audio/transcriptions. Bilibili and YouTube videos without subtitles are transcribed with it." },
-      { path: "stt.model", label: "Model", type: "text", placeholder: "whisper-1" },
+      { path: "stt.provider", label: "Service type", type: "select", options: ["", "mimo"], rerender: true, labels: { "": "OpenAI compatible (/audio/transcriptions)", mimo: "Xiaomi MiMo" }, help: "Bilibili and YouTube videos without subtitles are transcribed with this service." },
+      { path: "stt.baseUrl", label: "Service address", type: "text", placeholder: (draft) => draft["stt.provider"] === "mimo" ? "https://api.xiaomimimo.com/v1" : "https://api.openai.com/v1" },
+      { path: "stt.model", label: "Model", type: "text", placeholder: (draft) => draft["stt.provider"] === "mimo" ? "mimo-v2.5-asr" : "whisper-1" },
       { path: "stt.apiKey", label: "API Key", type: "secret" },
       { path: "stt.language", label: "Language hint", type: "text", placeholder: "zh" },
-      { path: "stt.chunkMinutes", label: "Minutes per part", type: "number", min: 1, max: 30, help: "Lower it when the service limits the upload size; default 10." },
+      { path: "stt.chunkMinutes", label: "Minutes per part", type: "number", min: 1, max: 30, help: "Lower it when the service limits the upload size; default 10. MiMo uses at most 15." },
       { path: "stt.maxMinutes", label: "Longest video (minutes)", type: "number", min: 1, max: 600, help: "Longer videos are not transcribed; default 90." },
     ] },
     { title: "Reading links", fields: [
@@ -885,7 +886,7 @@ function renderField(field, draft) {
       input.type = "text";
       input.id = id;
       input.value = draft[field.path] ?? "";
-      if (field.placeholder) input.placeholder = field.placeholder;
+      if (field.placeholder) input.placeholder = typeof field.placeholder === "function" ? field.placeholder(draft) : field.placeholder;
       input.addEventListener("input", () => { draft[field.path] = input.value.trim(); });
       wrap.append(label, input);
     }

@@ -12,7 +12,7 @@ const ALLOWED = [
   /^backgroundModel\.(provider|id|thinking)$/,
   new RegExp(`^providers\\.${NAME}\\.(apiKey|baseUrl|api)$`),
   /^wechat\.(enabled|ownerId)$/,
-  /^stt\.(baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
+  /^stt\.(provider|baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
   /^webSearch\.(provider|apiKey|baseUrl)$/,
   /^heartbeat\.(every|activeHours)$/,

@@ -65,6 +65,7 @@ export const ConfigSchema = Type.Object({
   })),
   webSearch: Type.Optional(Type.Object({ provider: Type.Union([Type.Literal("brave"), Type.Literal("tavily"), Type.Literal("searxng")]), apiKey: Type.Optional(Type.String()), baseUrl: Type.Optional(Type.String({ minLength: 1 })) })),
   stt: Type.Optional(Type.Object({
+    provider: Type.Optional(Type.Union([Type.Literal("openai"), Type.Literal("mimo")])),
     baseUrl: Type.String({ minLength: 1 }),
     model: Type.String({ minLength: 1 }),
     apiKey: Type.Optional(Type.String()),
@@ -105,7 +106,7 @@ export interface VexConfig {
   heartbeat?: { every?: string; activeHours?: [string, string] };
   persona?: { sleep?: [string, string]; outreach?: { enabled?: boolean; checkEvery?: string; socialThreshold?: number; quietHours?: number; dailyLimit?: number } };
   webSearch?: { provider: "brave" | "tavily" | "searxng"; apiKey?: string; baseUrl?: string };
-  stt?: { baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
+  stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;
 }
 

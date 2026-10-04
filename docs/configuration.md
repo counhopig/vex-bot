@@ -69,10 +69,11 @@ Saving in WebChat settings applies the change without a manual restart:
 | `webSearch.provider` | none | `tavily`, `searxng` or `brave`; without it `web_search` reports that no service is configured |
 | `webSearch.apiKey` | none | Key for `tavily` or `brave`; may come from `TAVILY_API_KEY` / `BRAVE_API_KEY` |
 | `webSearch.baseUrl` | none | Address of your SearXNG, required for `searxng` |
-| `stt.baseUrl`, `stt.model` | none | Speech-to-text service: an OpenAI-compatible API root (for example `https://api.openai.com/v1`) and a model name. Both are required to enable it |
+| `stt.provider` | `openai` | `openai` for any service with the OpenAI transcription API, `mimo` for Xiaomi MiMo speech recognition |
+| `stt.baseUrl`, `stt.model` | none | Speech-to-text service: the API root (for example `https://api.openai.com/v1`) and a model name. Both are required to enable it |
 | `stt.apiKey` | none | Bearer token for the service; omit for a local service |
-| `stt.language` | auto | Language hint such as `zh` |
-| `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30); lower it for services with small upload limits |
+| `stt.language` | auto | Language hint such as `zh`; MiMo accepts `auto`, `zh` and `en` |
+| `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30; at most 15 with MiMo); lower it for services with small upload limits |
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
@@ -177,6 +178,17 @@ Then set `webSearch: { provider: searxng, baseUrl: "http://searxng:8080" }`; the
 stt:
   baseUrl: "https://api.openai.com/v1"
   model: whisper-1
+  apiKey: "YOUR_API_KEY"
+  language: zh
+```
+
+Xiaomi MiMo speech recognition takes Base64 audio through its chat completions API; set `provider: mimo`:
+
+```yaml
+stt:
+  provider: mimo
+  baseUrl: "https://api.xiaomimimo.com/v1"
+  model: mimo-v2.5-asr
   apiKey: "YOUR_API_KEY"
   language: zh
 ```

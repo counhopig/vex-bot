@@ -104,6 +104,8 @@ describe("parseConfig", () => {
     const config = parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1", model: whisper-1, language: zh, chunkMinutes: 5 }\n`, paths);
     expect(config.stt).toEqual({ baseUrl: "https://stt.example/v1", model: "whisper-1", language: "zh", chunkMinutes: 5 });
     expect(() => parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1" }\n`, paths)).toThrow(/\/stt/);
+    expect(parseConfig(`${minimal}stt: { provider: mimo, baseUrl: "https://api.xiaomimimo.com/v1", model: mimo-v2.5-asr }\n`, paths).stt?.provider).toBe("mimo");
+    expect(() => parseConfig(`${minimal}stt: { provider: other, baseUrl: "https://x", model: m }\n`, paths)).toThrow(/provider/);
     expect(() => parseConfig(`${minimal}stt: { baseUrl: "https://x", model: m, chunkMinutes: 0 }\n`, paths)).toThrow(/chunkMinutes/);
   });
 

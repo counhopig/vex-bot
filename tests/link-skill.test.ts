@@ -265,6 +265,24 @@ describe("speech to text", () => {
     await expect(transcribeFile(join(dir, "part000.mp3"), stt, { fetchFn: async () => new Response("quota", { status: 429 }) })).rejects.toThrow("HTTP 429: quota");
   });
 
+  it("posts Base64 audio to MiMo chat completions", async () => {
+    const { writeFile, mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "stt-test-"));
+    await writeFile(join(dir, "part000.mp3"), "bytes");
+    const fetchFn = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify({ choices: [{ message: { content: " 你好 " } }] })));
+    const mimo = { provider: "mimo", baseUrl: "https://api.xiaomimimo.com/v1", model: "mimo-v2.5-asr", apiKey: "KEY", language: "zh" };
+    expect(await transcribeFile(join(dir, "part000.mp3"), mimo, { fetchFn })).toBe("你好");
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(url).toBe("https://api.xiaomimimo.com/v1/chat/completions");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer KEY");
+    expect(JSON.parse(init.body as string)).toEqual({
+      model: "mimo-v2.5-asr",
+      messages: [{ role: "user", content: [{ type: "input_audio", input_audio: { data: `data:audio/mpeg;base64,${Buffer.from("bytes").toString("base64")}` } }] }],
+      asr_options: { language: "zh" },
+    });
+  });
+
   it("downloads through yt-dlp, cuts and transcribes the parts in order, then removes the temporary files", async () => {
     const { runCommand, calls } = runner(3);
     const text = await transcribeVideo({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", durationSeconds: 1500 }, { ...stt, chunkMinutes: 5 }, { runCommand, fetchFn: router });
