@@ -698,7 +698,6 @@ const FILE_PAGES = [
   { id: "soul", label: "Persona", files: [{ name: "SOUL.md", hint: "Persona, tone and rules of conduct. Takes effect from the next message." }] },
   { id: "user", label: "About me", files: [{ name: "USER.md", hint: "What it knows about you: how to address you, who you are, preferences and habits. Takes effect from the next message." }] },
   { id: "memory", label: "Memory", files: [{ name: "MEMORY.md", hint: "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message." }] },
-  { id: "instructions", label: "Instructions", files: [{ name: "INSTRUCTIONS.md", hint: "The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. {{workspace}} becomes the workspace path. Clear the text and save to restore the built-in default. Takes effect from the next message." }] },
   { id: "background", label: "Background tasks", files: [
     { name: "HEARTBEAT.md", title: "Heartbeat checklist", hint: "Checked at every heartbeat; write any instructions for the heartbeat here too. Leave it empty to skip the checks." },
     { name: "prompts/consolidation.md", title: "Memory consolidation", hint: "The nightly consolidation task; {{dates}} becomes the paths of the last seven daily notes. Clear the text and save to restore the default." },

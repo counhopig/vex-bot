@@ -21,7 +21,7 @@ The settings page has six tabs:
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
-| Persona & memory | Five pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`), Instructions (`INSTRUCTIONS.md`) and Background tasks, which holds the heartbeat checklist (`HEARTBEAT.md`), the memory consolidation task and the proactive chat instruction on one page (see Workspace files) |
+| Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`) and Background tasks, which holds the heartbeat checklist (`HEARTBEAT.md`), the memory consolidation task and the proactive chat instruction on one page (see Workspace files) |
 | Advanced | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
 The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "Set; leave empty to keep it", typing replaces it, and "Clear the saved value" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
@@ -129,15 +129,14 @@ Templates for these files are created on first start, together with the instruct
 
 ### Editable instructions
 
-The text Vex is given is not hidden in the code: these files hold it, are read again on every use, and can be edited in WebChat (Persona & memory) or on disk. While a file is missing or empty the built-in default applies, so clearing a file and saving restores the default.
+The instructions for the background tasks live in these files, are read again on every use, and can be edited in WebChat (Persona & memory, Background tasks) or on disk. While a file is missing or empty the built-in default applies, so clearing a file and saving restores the default.
 
 | File | What it controls | Placeholders |
 |---|---|---|
-| `INSTRUCTIONS.md` | The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. Also used by sub-agents | `{{workspace}}` |
 | `prompts/consolidation.md` | The nightly memory consolidation task | `{{dates}}`: paths of the last seven daily notes |
 | `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself | |
 
-The heartbeat has no separate instruction file: its fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The internal prompts for compaction, conversation titles, the mood phrasing and the link summaries stay in the code.
+The heartbeat has no separate instruction file: its fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries, are built in; shape Vex's personality and habits through `SOUL.md` instead.
 
 ## Skills
 

@@ -61,7 +61,7 @@ Conversation history is per session; workspace, tools and configuration are glob
 
 ### System prompt
 
-In order: base instructions (the editable `INSTRUCTIONS.md`), `SOUL.md`, `USER.md`, mood and rest-hours description, `MEMORY.md`, skill list (name, description, path), current time and source window. Resident files are truncated at their line limit (200, 200, 100) with a note asking the agent to shorten them. The prompt is rebuilt every turn, so file edits take effect on the next message.
+In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours description, `MEMORY.md`, skill list (name, description, path), current time and source window. Resident files are truncated at their line limit (200, 200, 100) with a note asking the agent to shorten them. The prompt is rebuilt every turn, so file edits take effect on the next message.
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. Instructions for background tasks (heartbeat, consolidation, proactive chat) come from the editable `prompts/` files.
 
