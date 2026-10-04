@@ -289,6 +289,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return { restarting: await commitConfig(before, text, text !== before) };
       },
     },
+    schedules: {
+      list: () => ({
+        tasks: scheduler.list(),
+        targets: [{ id: "wechat", label: "WeChat" }, ...sessions.listWeb().map((meta) => ({ id: meta.id, label: meta.title }))],
+      }),
+      save: async ({ id, ...input }) => {
+        const saved = id ? await scheduler.update(id, input) : await scheduler.create(input);
+        log.info({ name: saved.name, enabled: saved.enabled }, id ? "scheduled task updated" : "scheduled task created");
+        return saved;
+      },
+      remove: async (id) => {
+        if (!await scheduler.delete(id)) throw new Error("No such scheduled task");
+        log.info({ id }, "scheduled task deleted");
+      },
+    },
     status: async () => {
       const mood = persona.snapshot();
       const channel = wechatRuntime?.channel;

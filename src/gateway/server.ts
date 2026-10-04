@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import { WebSocket, WebSocketServer } from "ws";
 import { ConfigError } from "../config/load.js";
 import type { SettingsPatch, SettingsView } from "../config/settings.js";
+import type { ScheduledTask, ScheduleRule } from "../scheduler/index.js";
 import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
@@ -20,6 +21,11 @@ export interface GatewayOptions {
   bus: EventBus;
   config: { read: () => Promise<string>; save: (text: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
+  schedules: {
+    list: () => { tasks: ScheduledTask[]; targets: { id: string; label: string }[] };
+    save: (input: { id?: string; name: string; prompt: string; target: string; enabled: boolean; schedule: ScheduleRule }) => Promise<unknown>;
+    remove: (id: string) => Promise<unknown>;
+  };
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
   workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
   staticDir: string;
@@ -236,6 +242,20 @@ export class Gateway {
         return;
       case "approve":
         this.opts.approvals.answer(message.id, message.answer);
+        return;
+      case "get_schedules":
+        send(ws, { type: "schedules", ...this.opts.schedules.list() });
+        return;
+      case "save_schedule":
+      case "delete_schedule":
+        try {
+          if (message.type === "delete_schedule") await this.opts.schedules.remove(message.id);
+          else await this.opts.schedules.save({ id: message.id, name: message.name, prompt: message.prompt, target: message.target, enabled: message.enabled, schedule: message.schedule });
+          send(ws, { type: "schedule_saved", ok: true });
+        } catch (err) {
+          send(ws, { type: "schedule_saved", ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+        send(ws, { type: "schedules", ...this.opts.schedules.list() });
         return;
       case "get_status":
         send(ws, { type: "status", status: await this.opts.status() });

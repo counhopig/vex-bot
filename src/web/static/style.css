@@ -292,6 +292,18 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #settings-result.warn { color: var(--warn); }
 #settings-result.bad { color: var(--danger); white-space: pre-wrap; }
 
+#schedule-list { display: flex; flex-direction: column; gap: 14px; padding-bottom: 8px; }
+.schedule-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+.schedule-head .hint { flex: 1; }
+.task-title { display: flex; gap: 10px; align-items: center; }
+.task-title h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.badge.on { color: var(--ok); border-color: var(--ok); }
+.task.off { opacity: 0.75; }
+.task-prompt { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.task-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#schedule-list .file-text { min-height: 110px; flex: none; }
+
 /* Login */
 .login-page { display: grid; place-items: center; height: 100vh; height: 100dvh; }
 #login { display: flex; flex-direction: column; gap: 10px; width: min(300px, 86vw); }

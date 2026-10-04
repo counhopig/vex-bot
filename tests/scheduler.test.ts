@@ -46,6 +46,31 @@ describe("scheduler", () => {
     expect(f.scheduler.list()[0]?.enabled).toBe(false);
     await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
   });
+  it("updates a task in place: text, rule, target and pause or resume", async () => {
+    const f = await fixture(); await f.scheduler.start();
+    const task = await f.scheduler.create({ name: "news", prompt: "a", target: "wechat", schedule: { cron: "0 9 * * *" } });
+    await f.scheduler.create({ name: "other", prompt: "b", target: "wechat", schedule: { every: "1h" } });
+    const edited = await f.scheduler.update(task.id, { prompt: "search news", schedule: { cron: "30 13 * * *" }, target: "web-1" });
+    expect(edited).toMatchObject({ id: task.id, name: "news", prompt: "search news", target: "web-1", nextAt: new Date(2026, 9, 3, 13, 30).getTime() });
+    expect(f.scheduler.list().find((item) => item.id === task.id)?.prompt).toBe("search news");
+    await expect(f.scheduler.update(task.id, { name: "other" })).rejects.toThrow("already exists");
+    await expect(f.scheduler.update("missing", { prompt: "x" })).rejects.toThrow("No such scheduled task");
+    expect((await f.scheduler.update(task.id, { enabled: false })).enabled).toBe(false);
+    f.advance(2 * 3_600_000);
+    expect((await f.scheduler.update(task.id, { enabled: true })).nextAt).toBe(new Date(2026, 9, 4, 13, 30).getTime());
+    const restored = new Scheduler({ dataDir: f.dataDir, workspace: f.workspace, hooks: f.hooks, now: f.time }); schedulers.push(restored); await restored.start();
+    expect(restored.list().find((item) => item.id === task.id)).toMatchObject({ prompt: "search news", enabled: true });
+  });
+
+  it("refuses to resume or move a one-time task into the past", async () => {
+    const f = await fixture(); await f.scheduler.start();
+    const once = await f.scheduler.create({ name: "once", prompt: "x", target: "wechat", schedule: { once: new Date(f.time() + 60_000).toISOString() } });
+    await f.scheduler.update(once.id, { enabled: false });
+    f.advance(120_000);
+    await expect(f.scheduler.update(once.id, { enabled: true })).rejects.toThrow("in the past");
+    await expect(f.scheduler.update(once.id, { schedule: { once: new Date(f.time() + 60_000).toISOString() }, enabled: true })).resolves.toMatchObject({ enabled: true });
+  });
+
   it("moves missed recurring tasks to their next time without delivering", async () => {
     const f = await fixture();
     const dueAt = f.time() - 3_600_000;

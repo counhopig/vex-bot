@@ -78,6 +78,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     approvals,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
+    schedules: { list: () => ({ tasks: [], targets: [{ id: "wechat", label: "WeChat" }] }), save: async () => undefined, remove: async () => undefined },
     status: () => ({ model: "faux/model", wechat: "unlinked", persona: { energy: 80, mood: 70, social: 50, resting: false } }),
     settings: {
       read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: { providers: ["faux"], models: { faux: ["model"] } } }),

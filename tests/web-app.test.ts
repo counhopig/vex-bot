@@ -65,7 +65,7 @@ async function loadApp() {
     WebSocket: Socket,
     location: { protocol: "http:", host: "localhost" },
     localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } },
-    setTimeout: vi.fn(), clearTimeout: vi.fn(), setInterval: vi.fn(), prompt,
+    setTimeout: vi.fn(), clearTimeout: vi.fn(), setInterval: vi.fn(), prompt, confirm: () => true,
   });
   runInContext(await readFile(new URL("../src/web/static/app.js", import.meta.url), "utf8"), context);
   runInContext('handle({ type: "sessions", sessions: [{ id: "one", title: "一" }, { id: "two", title: "二" }] })', context);
@@ -194,7 +194,7 @@ describe("web app", () => {
     runInContext('handle({ type: "file_saved", name: "USER.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
     expect(get("settings-text").hidden).toBe(true);
-    get("settings-tabs").children[5]!.dispatch("click");
+    get("settings-tabs").children[6]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_config" }));
     expect(get("settings-text").hidden).toBe(false);
     expect(get("file-editors").hidden).toBe(true);
@@ -237,6 +237,58 @@ describe("web app", () => {
     expect(get("settings-result").className).toBe("warn");
     runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: false, error: "Save failed" })', context);
     expect(get("settings-result").textContent).toBe("Save failed");
+  });
+
+  it("lists, pauses, deletes and creates scheduled tasks from the Schedules tab", async () => {
+    const { get, socket, context } = await loadApp();
+    const last = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[5]!.dispatch("click");
+    expect(last()).toEqual({ type: "get_schedules" });
+    expect(get("save-settings").hidden).toBe(true);
+    const task = { id: "t1", name: "Morning news", prompt: "search AI news", target: "wechat", enabled: true, schedule: { cron: "0 9 * * *" }, nextAt: 1791162000000 };
+    runInContext(`handle(${JSON.stringify({ type: "schedules", tasks: [task], targets: [{ id: "wechat", label: "WeChat" }, { id: "one", label: "一" }] })})`, context);
+    const list = get("schedule-list");
+    expect(textOf(list)).toContain("Morning news");
+    expect(textOf(list)).toContain("Every day at 09:00");
+    expect(textOf(list)).toContain("To WeChat");
+    const button = (label: string) => find(list, (el) => el.tagName === "button" && el.textContent === label)!;
+    button("Pause").dispatch("click");
+    expect(last()).toEqual({ type: "save_schedule", id: "t1", name: "Morning news", prompt: "search AI news", target: "wechat", enabled: false, schedule: { cron: "0 9 * * *" } });
+    button("Delete").dispatch("click");
+    expect(last()).toEqual({ type: "delete_schedule", id: "t1" });
+    button("New task").dispatch("click");
+    const form = get("schedule-list");
+    const input = (id: string) => find(form, (el) => el.id === id)!;
+    input("schedule-name").value = "Stretch"; input("schedule-name").dispatch("input");
+    input("schedule-value").value = "*/30 * * * *"; input("schedule-value").dispatch("input");
+    input("schedule-target").value = "one"; input("schedule-target").dispatch("change");
+    input("schedule-prompt").value = "remind me to stretch"; input("schedule-prompt").dispatch("input");
+    find(form, (el) => el.tagName === "button" && el.textContent === "Save task")!.dispatch("click");
+    expect(last()).toEqual({ type: "save_schedule", name: "Stretch", prompt: "remind me to stretch", target: "one", enabled: true, schedule: { cron: "*/30 * * * *" } });
+    runInContext('handle({ type: "schedule_saved", ok: false, error: "Invalid schedule rule" })', context);
+    expect(get("settings-result").textContent).toBe("Invalid schedule rule");
+    runInContext('handle({ type: "schedule_saved", ok: true })', context);
+    expect(runInContext("state.editingSchedule", context)).toBeNull();
+  });
+
+  it("describes schedule rules and converts a one-time pick to an absolute time", async () => {
+    const { get, socket, context, call } = await loadApp();
+    expect(call('describeRule({ cron: "30 22 * * 1-5" })')).toBe("Weekdays at 22:30");
+    expect(call('describeRule({ cron: "0 */2 * * *" })')).toBe("Cron 0 */2 * * *");
+    expect(call('describeRule({ every: "45m" })')).toBe("Every 45m");
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[5]!.dispatch("click");
+    runInContext('handle({ type: "schedules", tasks: [], targets: [{ id: "wechat", label: "WeChat" }] })', context);
+    find(get("schedule-list"), (el) => el.tagName === "button" && el.textContent === "New task")!.dispatch("click");
+    const input = (id: string) => find(get("schedule-list"), (el) => el.id === id)!;
+    input("schedule-kind").value = "once"; input("schedule-kind").dispatch("change");
+    input("schedule-name").value = "Call mum"; input("schedule-name").dispatch("input");
+    input("schedule-value").value = "2030-01-02T08:30"; input("schedule-value").dispatch("input");
+    input("schedule-prompt").value = "remind me to call mum"; input("schedule-prompt").dispatch("input");
+    find(get("schedule-list"), (el) => el.tagName === "button" && el.textContent === "Save task")!.dispatch("click");
+    const sent = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(sent.schedule.once).toBe(new Date("2030-01-02T08:30").toISOString());
   });
 
   it("parses Markdown blocks and inline spans", async () => {
