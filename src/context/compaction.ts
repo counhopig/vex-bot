@@ -32,6 +32,7 @@ export interface CompactionOptions {
   getApiKey: (provider: string) => string | undefined;
   save: (record: CompactionRecord) => Promise<void>;
   onError?: (err: unknown) => void;
+  onCompact?: (info: { replaced: number; summaryChars: number }) => void;
   now?: () => Date;
 }
 
@@ -120,6 +121,7 @@ export class ContextCompactor {
       await this.opts.save(record);
       this.record = record;
       this.failure = undefined;
+      this.opts.onCompact?.({ replaced: through, summaryChars: summary.length });
       return this.project(system, history);
     } catch (err) {
       if (signal?.aborted) return projected;

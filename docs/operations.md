@@ -94,6 +94,10 @@ WeChat commands: `/stop` interrupts the current reply; `/y`, `/ya` and `/n` answ
 
 Transcripts, workspace, `config.yaml`, `schedules.json`, `state/` and `wechat/` are the data worth backing up; the index is rebuilt from them. Compaction never removes transcript content.
 
+## Logs
+
+`vex logs -f` (or `docker compose logs -f`) follows `logs/vexd.log`, one JSON object per line. At the default level it records: startup with a configuration summary (models, WeChat, MCP servers, search provider, speech to text), each message received (source and length), each run's start and duration, every tool call (name and a shortened summary), replies (length and stop reason), approvals requested and answered, scheduled messages, heartbeat and consolidation runs, context compaction, MCP connections, WeChat traffic (lengths only), saved settings (keys only) and restarts, plus all warnings and errors. Message and reply text, API keys and cookies are never logged. Set `VEX_LOG_LEVEL=debug` for more detail.
+
 ## Approvals
 
 When a tool needs approval, the request appears in WeChat and in every open WebChat window. Answer in either; the first answer wins and the other prompts clear. Unanswered requests are denied after ten minutes. Adjust defaults with `tools.policy`.

@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VexConfig } from "../src/config/schema.js";
 import { startDaemon, type Daemon } from "../src/daemon.js";
 import { createLogger } from "../src/logger.js";
@@ -201,6 +201,80 @@ describe("startDaemon", () => {
     await writeFile(join(paths.home, "schedules.json"), "not JSON");
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
     expect((await readdir(paths.home)).some(name => name.startsWith("schedules.json.bad-"))).toBe(true);
+  });
+
+  describe("applying saved settings", () => {
+    async function startWithRestart(restart: () => Promise<void>) {
+      await writeFile(paths.config, `# mine\nmodel: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
+      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models(), restart });
+      client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    }
+    const saved = () => client!.waitFor((m) => m.type === "settings_saved");
+
+    it("restarts in place after a setting that needs it, remembering how to roll back", async () => {
+      const restart = vi.fn(async () => {});
+      await startWithRestart(restart);
+      client!.send({ type: "save_settings", set: { "heartbeat.every": "45m" } });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: true, restarting: true });
+      await vi.waitFor(() => expect(restart).toHaveBeenCalledTimes(1), { timeout: 3000 });
+      expect(await readFile(paths.config, "utf8")).toContain("heartbeat");
+      const pending = JSON.parse(await readFile(join(paths.home, "state", "pending-reload.json"), "utf8"));
+      expect(pending.previous).toContain("# mine");
+      expect(pending.previous).not.toContain("heartbeat");
+    });
+
+    it("does not restart for settings the skills read on every run", async () => {
+      const restart = vi.fn(async () => {});
+      await startWithRestart(restart);
+      client!.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      expect(restart).not.toHaveBeenCalled();
+    });
+
+    it("refuses a model that cannot be used and leaves the configuration alone", async () => {
+      const restart = vi.fn(async () => {});
+      await startWithRestart(restart);
+      const before = await readFile(paths.config, "utf8");
+      client!.send({ type: "save_settings", set: { "model.provider": "nonexistent", "model.id": "x" } });
+      expect(await saved()).toMatchObject({ ok: false, error: expect.stringContaining("模型无法使用") });
+      expect(await readFile(paths.config, "utf8")).toBe(before);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(restart).not.toHaveBeenCalled();
+    });
+
+    it("saves the raw configuration and restarts only when its text changed", async () => {
+      const restart = vi.fn(async () => {});
+      await startWithRestart(restart);
+      const text = await readFile(paths.config, "utf8");
+      client!.send({ type: "save_config", text });
+      expect(await client!.waitFor((m) => m.type === "config_saved")).toMatchObject({ ok: true, restarting: false });
+      client!.send({ type: "save_config", text: `${text}wechat: { enabled: false }\n` });
+      expect(await client!.waitFor((m) => m.type === "config_saved" && m.restarting === true)).toBeTruthy();
+      await vi.waitFor(() => expect(restart).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    });
+
+    it("only reports that a restart is needed when the host cannot restart itself", async () => {
+      await writeFile(paths.config, `model: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
+      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+      client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+      client.send({ type: "save_settings", set: { "heartbeat.every": "45m" } });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: true, restarting: false });
+    });
+
+    it("shows why the previous configuration was restored", async () => {
+      await mkdir(join(paths.home, "state"), { recursive: true });
+      await writeFile(join(paths.home, "state", "reload-error.json"), JSON.stringify({ message: "port busy", at: 1 }));
+      await writeFile(paths.config, `model: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
+      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+      client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+      client.send({ type: "get_status" });
+      expect(await client.waitFor((m) => m.type === "status")).toMatchObject({ status: { reloadError: "port busy" } });
+      client.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
+      expect(await saved()).toMatchObject({ ok: true });
+      client.send({ type: "get_status" });
+      expect(await client.waitFor((m) => m.type === "status" && m.status.reloadError === undefined)).toBeTruthy();
+    });
   });
 
   it("refuses a public address without a token", async () => {

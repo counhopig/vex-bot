@@ -49,6 +49,7 @@ export interface StatusInfo {
   model: string;
   wechat: "connected" | "connecting" | "unlinked" | "expired" | "disabled";
   persona: { energy: number; mood: number; social: number; resting: boolean };
+  reloadError?: string;
 }
 
 export type ServerMessage =
@@ -61,9 +62,9 @@ export type ServerMessage =
   | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string }
   | { type: "status"; status: StatusInfo }
   | { type: "settings"; values: Record<string, string | number | boolean | string[]>; secrets: string[]; catalog: { providers: string[]; models: Record<string, string[]> } }
-  | { type: "settings_saved"; ok: boolean; error?: string; restartRequired?: boolean }
+  | { type: "settings_saved"; ok: boolean; error?: string; restartRequired?: boolean; restarting?: boolean }
   | { type: "config"; text: string }
-  | { type: "config_saved"; ok: boolean; error?: string }
+  | { type: "config_saved"; ok: boolean; error?: string; restarting?: boolean }
   | { type: "error"; message: string };
 
 export function parseClientMessage(raw: string): ClientMessage | undefined {

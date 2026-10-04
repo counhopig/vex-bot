@@ -18,6 +18,7 @@ export interface McpServerConfig {
 export interface McpBridgeOptions {
   onToolsChanged?: () => void;
   onError?: (server: string, error: unknown) => void;
+  onConnected?: (server: string, tools: number) => void;
   reconnectDelayMs?: number;
   maxReconnectDelayMs?: number;
   connectTimeoutMs?: number;
@@ -145,6 +146,7 @@ export class McpBridge {
         aborted,
       ]);
       connection.connected = true;
+      this.options.onConnected?.(connection.name, connection.tools.length);
       clearTimeout(connection.stable);
       connection.stable = setTimeout(() => { connection.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
       connection.stable.unref();

@@ -139,8 +139,12 @@ export class WeChatChannel {
     }
 
     const text = extractText(message.items);
-    if (!text) return;
+    if (!text) {
+      this.opts.log.debug({ items: message.items.length }, "wechat message without text ignored");
+      return;
+    }
     const command = parseCommand(text);
+    this.opts.log.info({ chars: text.length, command: command.kind === "chat" ? undefined : command.kind }, "wechat message received");
     if (command.kind === "approve") {
       this.answerOldest(command.answer);
       return;
@@ -251,6 +255,7 @@ export class WeChatChannel {
           return false;
         }
       }
+      this.opts.log.info({ chars: text.length, parts: chunks.length }, "wechat message sent");
       return true;
     });
     this.outbox = sending.then(() => {});
