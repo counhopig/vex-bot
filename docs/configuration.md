@@ -13,7 +13,7 @@ Samples (`docs/samples/`):
 
 ## WebChat settings
 
-The settings page has six tabs:
+The settings page has seven tabs:
 
 | Tab | What it edits |
 |---|---|
@@ -22,6 +22,7 @@ The settings page has six tabs:
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
 | Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`) and Background tasks, which holds the heartbeat checklist (`HEARTBEAT.md`), the memory consolidation task and the proactive chat instruction on one page (see Workspace files) |
+| Schedules | Every scheduled task with its rule, next run and target: pause or resume, edit, delete, or create one (repeating cron rule, fixed interval, or a single date and time) |
 | Advanced | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
 The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "Set; leave empty to keep it", typing replaces it, and "Clear the saved value" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
@@ -193,4 +194,4 @@ Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin or 
 
 ## Scheduled messages
 
-Ask Vex in conversation: "remind me at 18:00 every weekday to stretch". The `schedule` tool accepts a unique `name`, a `prompt`, a `target` (the current conversation by default) and one rule: `cron` expression, `every` interval such as `30m`, or `once` as an ISO timestamp with a time zone (it must be in the future). Tasks are stored in `schedules.json`.
+Ask Vex in conversation: "remind me at 18:00 every weekday to stretch". The `schedule` tool accepts a unique `name`, a `prompt`, a `target` (the current conversation by default) and one rule: `cron` expression, `every` interval such as `30m`, or `once` as an ISO timestamp with a time zone (it must be in the future). Tasks are stored in `schedules.json`; the Schedules tab in WebChat settings lists them and can pause, edit, delete or create them.

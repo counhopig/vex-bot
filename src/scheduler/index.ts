@@ -118,6 +118,26 @@ export class Scheduler {
       this.tasks.push(task); try { await this.save(); } catch (error) { this.tasks.pop(); throw error; } return structuredClone(task);
     });
   }
+  update(id: string, changes: { name?: string; schedule?: ScheduleRule; prompt?: string; target?: string; enabled?: boolean }): Promise<ScheduledTask> {
+    return this.mutate(async () => {
+      if (this.stopped) throw new Error("The scheduler is closed");
+      const index = this.tasks.findIndex(task => task.id === id);
+      if (index < 0) throw new Error("No such scheduled task");
+      const old = this.tasks[index]!;
+      const task: ScheduledTask = { ...structuredClone(old), ...structuredClone(changes) };
+      if (!task.name.trim() || !task.prompt.trim() || !task.target.trim()) throw new Error("Name, message and target must not be empty");
+      if (this.tasks.some(other => other.id !== id && other.name === task.name)) throw new Error("A scheduled task with that name already exists");
+      if (Object.keys(task.schedule).length !== 1) throw new Error("Specify exactly one schedule rule");
+      const ruleChanged = JSON.stringify(task.schedule) !== JSON.stringify(old.schedule);
+      if (ruleChanged || (task.enabled && !old.enabled)) {
+        if ("once" in task.schedule && task.enabled && Date.parse(task.schedule.once) <= this.now()) throw new Error("That one-time schedule is already in the past");
+        task.nextAt = next(task.schedule, this.now());
+      }
+      this.tasks[index] = task;
+      try { await this.save(); } catch (error) { this.tasks[index] = old; throw error; }
+      return structuredClone(task);
+    });
+  }
   delete(idOrName: string): Promise<boolean> {
     return this.mutate(async () => { const old = this.tasks; this.tasks = old.filter(t => t.id !== idOrName && t.name !== idOrName); if (old.length === this.tasks.length) return false; try { await this.save(); } catch (error) { this.tasks = old; throw error; } return true; });
   }

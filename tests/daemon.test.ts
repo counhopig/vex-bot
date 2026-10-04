@@ -7,6 +7,7 @@ import { startDaemon, type Daemon } from "../src/daemon.js";
 import { createLogger } from "../src/logger.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { createModelRegistry, type ModelRegistry } from "../src/providers/models.js";
+import type { ServerMessage } from "../src/protocol/messages.js";
 import { TestClient } from "./helpers/client.js";
 import { createFaux, fauxModels } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -300,6 +301,26 @@ describe("startDaemon", () => {
     await client.waitFor((m) => m.type === "file_saved" && m.ok);
     client.send({ type: "get_file", name: "prompts/outreach.md" });
     expect(await client.waitFor((m) => m.type === "file" && m.text.includes("Proactive chat") && m.text !== "Say hello warmly.")).toBeTruthy();
+  });
+
+  it("lists, creates, updates and deletes scheduled tasks for the settings page", async () => {
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    const latest = () => [...client!.messages].reverse().find((m) => m.type === "schedules") as Extract<ServerMessage, { type: "schedules" }>;
+    client.send({ type: "get_schedules" });
+    await client.waitFor((m) => m.type === "schedules");
+    expect(latest().targets[0]).toEqual({ id: "wechat", label: "WeChat" });
+    client.send({ type: "save_schedule", name: "news", prompt: "search AI news", target: "wechat", enabled: true, schedule: { cron: "0 9 * * *" } });
+    await client.waitFor((m) => m.type === "schedule_saved" && m.ok);
+    await vi.waitFor(() => expect(latest().tasks).toHaveLength(1));
+    const id = latest().tasks[0]!.id;
+    client.send({ type: "save_schedule", id, name: "news", prompt: "search AI news", target: "wechat", enabled: false, schedule: { cron: "0 9 * * *" } });
+    await vi.waitFor(() => expect(latest().tasks[0]?.enabled).toBe(false));
+    client.send({ type: "save_schedule", name: "bad", prompt: "x", target: "wechat", enabled: true, schedule: { cron: "not a cron" } });
+    await client.waitFor((m) => m.type === "schedule_saved" && !m.ok);
+    client.send({ type: "delete_schedule", id });
+    await vi.waitFor(() => expect(latest().tasks).toEqual([]));
+    expect(JSON.parse(await readFile(join(paths.home, "schedules.json"), "utf8"))).toEqual([]);
   });
 
   it("refuses a public address without a token", async () => {

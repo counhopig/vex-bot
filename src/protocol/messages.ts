@@ -3,6 +3,7 @@ import { Value } from "typebox/value";
 import type { HistoryItem, SessionEvent } from "../core/events.js";
 import type { WebSessionMeta } from "../core/webSessions.js";
 import type { ApprovalRequest } from "../policy/approvals.js";
+import type { ScheduledTask } from "../scheduler/index.js";
 
 const SessionId = Type.String({ minLength: 1, maxLength: 100 });
 
@@ -41,6 +42,21 @@ export const ClientMessageSchema = Type.Union([
     set: Type.Optional(Type.Record(Type.String({ maxLength: 100 }), Type.Union([Type.String({ maxLength: 2000 }), Type.Number(), Type.Boolean(), Type.Array(Type.String({ maxLength: 100 }), { maxItems: 10 })]), { maxProperties: 60 })),
     unset: Type.Optional(Type.Array(Type.String({ maxLength: 100 }), { maxItems: 60 })),
   }),
+  Type.Object({ type: Type.Literal("get_schedules") }),
+  Type.Object({
+    type: Type.Literal("save_schedule"),
+    id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+    name: Type.String({ minLength: 1, maxLength: 100 }),
+    prompt: Type.String({ minLength: 1, maxLength: 4000 }),
+    target: Type.String({ minLength: 1, maxLength: 100 }),
+    enabled: Type.Boolean(),
+    schedule: Type.Union([
+      Type.Object({ cron: Type.String({ minLength: 1, maxLength: 100 }) }),
+      Type.Object({ every: Type.String({ minLength: 1, maxLength: 20 }) }),
+      Type.Object({ once: Type.String({ minLength: 1, maxLength: 40 }) }),
+    ]),
+  }),
+  Type.Object({ type: Type.Literal("delete_schedule"), id: Type.String({ minLength: 1, maxLength: 100 }) }),
   Type.Object({ type: Type.Literal("get_config") }),
   Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }) }),
 ]);
@@ -65,6 +81,8 @@ export type ServerMessage =
   | { type: "status"; status: StatusInfo }
   | { type: "settings"; values: Record<string, string | number | boolean | string[]>; secrets: string[]; catalog: { providers: string[]; models: Record<string, string[]> } }
   | { type: "settings_saved"; ok: boolean; error?: string; restartRequired?: boolean; restarting?: boolean }
+  | { type: "schedules"; tasks: ScheduledTask[]; targets: { id: string; label: string }[] }
+  | { type: "schedule_saved"; ok: boolean; error?: string }
   | { type: "config"; text: string }
   | { type: "config_saved"; ok: boolean; error?: string; restarting?: boolean }
   | { type: "error"; message: string };
