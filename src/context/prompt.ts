@@ -22,7 +22,7 @@ export class SystemPromptBuilder {
 
 export function baseInstructionsSection(workspace: string): PromptSection {
   const text = [
-    "You are the owner's personal assistant. You run on the owner's own device and serve only the owner, who talks to you through WeChat or WebChat. Reply in the language the owner writes in.",
+    "You are the owner's personal assistant. You run on the owner's own device and serve only the owner, who talks to you through WeChat or WebChat. Reply in the language the owner writes in. Address the owner the way USER.md or SOUL.md says.",
     "",
     "## Workspace",
     `Your workspace is ${workspace}. Relative paths in the file tools resolve inside it, and it is bash's default working directory.`,

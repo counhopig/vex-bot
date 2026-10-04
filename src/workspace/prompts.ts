@@ -13,7 +13,12 @@ export const DEFAULT_PROMPTS: Record<PromptFile, string> = {
     "Edit only files inside the workspace and send no message to the owner.",
     "",
   ].join("\n"),
-  "prompts/outreach.md": "Proactive chat: given your current mood, the time of day and your memory, naturally start a conversation.\n",
+  "prompts/outreach.md": [
+    "Proactive chat: given your current mood, the time of day and your memory, naturally start a conversation.",
+    "Open a new topic. Do not repeat or resend earlier messages, reminders or greetings from the conversation history.",
+    "Address the owner as USER.md or SOUL.md says.",
+    "",
+  ].join("\n"),
 };
 
 export const isPromptFile = (name: string): name is PromptFile => (PROMPT_FILES as readonly string[]).includes(name);
