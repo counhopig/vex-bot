@@ -21,7 +21,7 @@ The settings page has six tabs:
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
-| Persona & memory | `SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md` and the editable instruction files (see Workspace files) |
+| Persona & memory | Five pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`), Instructions (`INSTRUCTIONS.md`) and Background tasks, which holds the heartbeat checklist (`HEARTBEAT.md`), the memory consolidation task and the proactive chat instruction on one page (see Workspace files) |
 | Advanced | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
 The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "Set; leave empty to keep it", typing replaces it, and "Clear the saved value" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
@@ -121,7 +121,7 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `SOUL.md` | Persona, tone, rules (200 lines) | Every turn |
 | `USER.md` | What Vex knows about the owner (200 lines) | Every turn |
 | `MEMORY.md` | Distilled long-term facts and decisions (100 lines) | Every turn |
-| `HEARTBEAT.md` | Checklist for periodic checks; empty skips the model call | At each heartbeat |
+| `HEARTBEAT.md` | Checklist for periodic checks, and the place for any instructions to the heartbeat; empty skips the model call | At each heartbeat |
 | `memory/YYYY-MM-DD.md` | Daily notes written by the agent | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
@@ -134,11 +134,10 @@ The text Vex is given is not hidden in the code: these files hold it, are read a
 | File | What it controls | Placeholders |
 |---|---|---|
 | `INSTRUCTIONS.md` | The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. Also used by sub-agents | `{{workspace}}` |
-| `prompts/heartbeat.md` | The instruction given at each heartbeat (the checklist itself is `HEARTBEAT.md`) | |
 | `prompts/consolidation.md` | The nightly memory consolidation task | `{{dates}}`: paths of the last seven daily notes |
 | `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself | |
 
-The internal prompts for compaction, conversation titles, the mood phrasing and the link summaries stay in the code.
+The heartbeat has no separate instruction file: its fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The internal prompts for compaction, conversation titles, the mood phrasing and the link summaries stay in the code.
 
 ## Skills
 

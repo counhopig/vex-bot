@@ -12,7 +12,6 @@ const WorkspaceFileName = Type.Union([
   Type.Literal("MEMORY.md"),
   Type.Literal("HEARTBEAT.md"),
   Type.Literal("INSTRUCTIONS.md"),
-  Type.Literal("prompts/heartbeat.md"),
   Type.Literal("prompts/consolidation.md"),
   Type.Literal("prompts/outreach.md"),
 ]);
