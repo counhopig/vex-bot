@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWeChat, type WeChatRuntime } from "./channels/wechat/setup.js";
-import { ConfigError, saveConfigText } from "./config/load.js";
+import { ConfigError, parseConfig, saveConfigText } from "./config/load.js";
+import { clearReloadError, readReloadError, writePendingReload } from "./config/reload.js";
+import { setTimeout as delay } from "node:timers/promises";
 import { applySettings, readSettings } from "./config/settings.js";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { VexConfig } from "./config/schema.js";
@@ -39,6 +41,7 @@ import { McpBridge } from "./tools/mcp.js";
 import { createDelegateTool } from "./tools/delegate.js";
 import { skillsSection } from "./skills/index.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { SessionEvent } from "./core/events.js";
 
 export interface DaemonOptions {
   paths: VexPaths;
@@ -46,6 +49,8 @@ export interface DaemonOptions {
   log: Logger;
   models?: ModelRegistry;
   staticDir?: string;
+  /** Restarts the process in place so saved settings take effect; absent where that is unsupported. */
+  restart?: () => Promise<void>;
 }
 
 export interface Daemon {
@@ -76,7 +81,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const getApiKey = (provider: string) => models.getApiKey(provider);
 
   const bus = new EventBus((err) => log.error({ err }, "event listener failed"));
-  const approvals = new ApprovalManager({ onChange: () => bus.emit({ type: "approvals_changed" }), workspace: config.workspace });
+  const approvals = new ApprovalManager({
+    onChange: () => bus.emit({ type: "approvals_changed" }),
+    workspace: config.workspace,
+    onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
+  });
   const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy });
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const startupCleanup: (() => Promise<void> | void)[] = [() => approvals.dispose(), () => memoryIndex.close()];
@@ -90,6 +99,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const mcp = new McpBridge(config.mcpServers ?? {}, {
     onToolsChanged: () => { for (const [session, getTools] of live) session.setTools(getTools()); },
     onError: (server, err) => log.warn({ server, err }, "MCP connection failed"),
+    onConnected: (server, tools) => log.info({ server, tools }, "MCP server connected"),
   });
   startupCleanup.push(() => mcp.close());
   await mcp.start();
@@ -104,6 +114,36 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     timeSection(),
   ]);
+
+  const runStarted = new Map<string, number>();
+  const logSessionEvent = (key: string, event: SessionEvent) => {
+    switch (event.kind) {
+      case "user_message":
+        log.info({ session: key, source: event.source, chars: event.text.length }, "message received");
+        break;
+      case "busy":
+        if (event.busy) {
+          runStarted.set(key, Date.now());
+          log.info({ session: key, source: event.source }, "run started");
+        } else {
+          log.info({ session: key, ms: Date.now() - (runStarted.get(key) ?? Date.now()) }, "run finished");
+          runStarted.delete(key);
+        }
+        break;
+      case "tool_start":
+        log.info({ session: key, tool: event.toolName, summary: event.summary.slice(0, 120) }, "tool call");
+        break;
+      case "tool_end":
+        (event.isError ? log.warn : log.debug).call(log, { session: key, tool: event.toolName }, event.isError ? "tool failed" : "tool finished");
+        break;
+      case "assistant_message":
+        (event.stopReason === "error" || event.stopReason === "aborted" ? log.warn : log.info).call(log, { session: key, chars: event.text.length, stopReason: event.stopReason }, "reply");
+        break;
+      case "error":
+        log.warn({ session: key, message: event.message }, "run error");
+        break;
+    }
+  };
 
   const openSession = async (key: string, transcriptPath: string, windowLabel: () => string, temporary: false | "heartbeat" | "consolidation" = false): Promise<Session> => {
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
@@ -132,11 +172,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         getApiKey,
         buildSystemPrompt: () => prompt.build({ windowLabel: windowLabel(), now: new Date() }),
         beforeToolCall,
-        emit: (event) => { if (!temporary) bus.emit({ type: "session", sessionKey: key, event }); },
+        emit: (event) => { if (!temporary) { logSessionEvent(key, event); bus.emit({ type: "session", sessionKey: key, event }); } },
         onOwnerMessage: temporary ? undefined : () => { if (key === "wechat") wechatInbound++; persona.userMessage(key === "wechat" ? "wechat" : "web"); },
         onOwnerInteraction: temporary ? undefined : async (count) => { for (let i = 0; i < count; i++) persona.interactionCompleted(); await persona.save(); },
         onError: (err) => log.error({ err, session: key }, "session run failed"),
-        compaction: { backgroundModel, complete: models.completeSimple, workspace: config.workspace, threshold: config.compaction?.threshold, onError: (err) => log.warn({ err, session: key }, "context compaction failed") },
+        compaction: { backgroundModel, complete: models.completeSimple, workspace: config.workspace, threshold: config.compaction?.threshold, onError: (err) => log.warn({ err, session: key }, "context compaction failed"), onCompact: (info) => log.info({ session: key, ...info }, "context compacted") },
         onRunEnd: () => memoryIndex.sync().catch((err: unknown) => log.warn({ err }, "memory index sync failed")),
         onDispose: () => live.delete(session),
       });
@@ -169,10 +209,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     hooks: {
       log: (err) => log.warn({ err }, "scheduled task failed"),
       targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
-      deliver: (target, text, kind, signal) => deliver(target, text, kind === "missed" ? "错过的定时任务" : "定时任务", signal),
+      deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "错过的定时任务" : "定时任务", signal); },
       runTemporary: async (text, kind, signal) => {
         signal.throwIfAborted();
         const id = randomUUID();
+        const startedAt = Date.now();
+        log.info({ kind }, "background run started");
         const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
         const session = await openSession(`run:${id}`, transcript, () => kind === "heartbeat" ? "心跳" : "记忆整理", kind);
         const abort = () => session.stop();
@@ -180,10 +222,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         try {
           signal.throwIfAborted(); session.send(text, kind); await session.whenIdle(); signal.throwIfAborted();
           if (!session.successfulReply) throw new Error("后台任务未完成");
+          log.info({ kind, ms: Date.now() - startedAt, chars: session.successfulReply.length }, "background run finished");
           return session.successfulReply;
         } finally { signal.removeEventListener("abort", abort); await session.dispose(); live.delete(session); await rm(transcript, { force: true }); }
       },
-      deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); await (await sessions.get("wechat")).injectAssistant(text, signal); },
+      deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get("wechat")).injectAssistant(text, signal); },
       checkOutreach: async (signal) => {
         const wechat = wechatRuntime?.channel;
         if (!wechat?.available) return;
@@ -193,12 +236,43 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         signal.throwIfAborted();
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
+        log.info("proactive chat started");
         try { session.send("主动聊天：结合当前情绪、时段与记忆，自然地开启一个话题。", "主动聊天"); await session.whenIdle(); }
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },
     },
   });
+
+  let restarting = false;
+  const scheduleRestart = (): boolean => {
+    if (!opts.restart) return false;
+    if (restarting) return true;
+    restarting = true;
+    void (async () => {
+      await delay(400);
+      if ([...live.keys()].some((session) => session.busy)) log.info("waiting for running turns to finish before restarting");
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline && [...live.keys()].some((session) => session.busy)) await delay(500);
+      await opts.restart!();
+    })().catch((err: unknown) => { restarting = false; log.error({ err }, "applying settings by restart failed"); });
+    return true;
+  };
+  const ensureStartable = (text: string) => {
+    const next = parseConfig(text, paths);
+    const registry = opts.models ?? createModelRegistry(next.providers);
+    try { registry.resolve(next.model); registry.resolve(next.backgroundModel); }
+    catch (err) { throw new ConfigError(`模型无法使用：${err instanceof Error ? err.message : String(err)}`); }
+  };
+  const commitConfig = async (before: string, text: string, restartRequired: boolean, keys?: string[]): Promise<boolean> => {
+    ensureStartable(text);
+    if (restartRequired && opts.restart) await writePendingReload(paths, before);
+    await saveConfigText(paths, text);
+    await clearReloadError(paths);
+    const restarting = restartRequired && scheduleRestart();
+    log.info({ keys, restartRequired, restarting }, "configuration saved");
+    return restarting;
+  };
 
   const gateway = new Gateway({
     host: config.web.host,
@@ -207,22 +281,30 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     sessions,
     approvals,
     bus,
-    config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
-    status: () => {
+    config: {
+      read: () => readFile(paths.config, "utf8"),
+      save: async (text) => {
+        const before = await readFile(paths.config, "utf8");
+        return { restarting: await commitConfig(before, text, text !== before) };
+      },
+    },
+    status: async () => {
       const mood = persona.snapshot();
       const channel = wechatRuntime?.channel;
       return {
         model: `${model.provider}/${model.id}`,
         wechat: !config.wechat.enabled ? "disabled" : !channel ? "unlinked" : channel.expired ? "expired" : channel.available ? "connected" : "connecting",
         persona: { energy: Math.round(mood.energy), mood: Math.round(mood.mood), social: Math.round(mood.social), resting: persona.isResting() },
+        reloadError: await readReloadError(paths),
       };
     },
     settings: {
       read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: catalog() }),
       save: async (patch) => {
-        const next = applySettings(await readFile(paths.config, "utf8"), patch, paths);
-        await saveConfigText(paths, next.text);
-        return { restartRequired: next.restartRequired };
+        const before = await readFile(paths.config, "utf8");
+        const next = applySettings(before, patch, paths);
+        const restarting = await commitConfig(before, next.text, next.restartRequired, [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])]);
+        return { restartRequired: next.restartRequired, restarting };
       },
     },
     workspace: { read: (name) => readWorkspaceFile(config.workspace, name), save: (name, text) => writeFileAtomic(join(config.workspace, name), text, 0o644) },
@@ -237,7 +319,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   await scheduler.start();
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;
-  log.info({ url, model: `${model.provider}/${model.id}` }, "vexd started");
+  log.info({
+    url,
+    model: `${model.provider}/${model.id}`,
+    backgroundModel: `${backgroundModel.provider}/${backgroundModel.id}`,
+    wechat: config.wechat.enabled,
+    mcpServers: Object.keys(config.mcpServers ?? {}).length,
+    webSearch: config.webSearch?.provider,
+    speechToText: !!config.stt,
+    heartbeat: config.heartbeat?.every ?? "30m",
+  }, "vexd started");
 
   const step = async (name: string, fn: () => Promise<void> | void) => {
     try {

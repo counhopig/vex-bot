@@ -24,6 +24,8 @@ interface Pending {
   settle: (outcome: ApprovalOutcome) => void;
 }
 
+export interface ApprovalEvent { type: "requested" | "allowed" | "denied"; toolName: string; windowLabel: string; reason?: string }
+
 const ABORTED: ApprovalOutcome = { allowed: false, reason: "本轮已被中断。" };
 
 export class ApprovalManager {
@@ -33,12 +35,14 @@ export class ApprovalManager {
   private readonly now: () => number;
   private readonly onChange: () => void;
   private readonly workspace: string | undefined;
+  private readonly onEvent: (event: ApprovalEvent) => void;
 
-  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string } = {}) {
+  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string; onEvent?: (event: ApprovalEvent) => void } = {}) {
     this.timeoutMs = opts.timeoutMs ?? 10 * 60_000;
     this.now = opts.now ?? Date.now;
     this.onChange = opts.onChange ?? (() => {});
     this.workspace = opts.workspace;
+    this.onEvent = opts.onEvent ?? (() => {});
   }
 
   request(input: {
@@ -72,10 +76,12 @@ export class ApprovalManager {
         clearTimeout(timer);
         input.signal?.removeEventListener("abort", onAbort);
         resolve(outcome);
+        this.onEvent({ type: outcome.allowed ? "allowed" : "denied", toolName: input.toolName, windowLabel: input.windowLabel, reason: outcome.allowed ? undefined : outcome.reason });
         this.onChange();
       };
       input.signal?.addEventListener("abort", onAbort, { once: true });
       this.pendingById.set(request.id, { request, settle: finish });
+      this.onEvent({ type: "requested", toolName: input.toolName, windowLabel: input.windowLabel });
       this.onChange();
     });
   }

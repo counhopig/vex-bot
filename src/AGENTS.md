@@ -41,6 +41,7 @@
 - Browser protocol handling is handwritten; check both history replay and live events when changing message shapes.
 - Dynamic browser content uses `textContent` or DOM nodes built by `renderMarkdown`; never `innerHTML`. DOM IDs and state classes match the HTML and CSS.
 - Settings edits are limited to the keys in `config/settings.ts`; the form definition in `web/static/app.js` must stay in step with it.
+- A saved change that needs a restart is applied by `process.execve` from `cli/index.ts` after `commitConfig` in `daemon.ts`; `config/reload.ts` keeps the rollback marker. Never log message text or secrets.
 
 ## ANTI-PATTERNS
 

@@ -6,7 +6,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../config/load.js";
-import { startDaemon } from "../daemon.js";
+import { startDaemon, type Daemon } from "../daemon.js";
+import { clearPendingReload, readPendingReload, rollbackReload } from "../config/reload.js";
 import { createLogger } from "../logger.js";
 import { resolvePaths, type VexPaths } from "../paths.js";
 import { runOnboard } from "./onboard.js";
@@ -67,16 +68,46 @@ async function ensureConfig(paths: VexPaths): Promise<void> {
   if (await onboard(paths, false) !== 0) throw new Error("初始化未完成");
 }
 
+/** Replaces this process with a fresh vexd, keeping the pid, so saved settings apply without a manual restart. */
+function reexec(): never {
+  process.execve!(process.execPath, [process.execPath, ...process.execArgv, ...process.argv.slice(1)], process.env);
+  throw new Error("execve returned");
+}
+
 async function startForeground(paths: VexPaths): Promise<number> {
   await ensureConfig(paths);
-  const { config } = await loadConfig(paths);
   const existing = await runningPid(paths);
-  if (existing) {
+  if (existing && existing !== process.pid) {
     console.error(`vexd 已在运行（pid ${existing}）`);
     return 1;
   }
   const log = createLogger({ file: paths.logFile, stdout: process.env.VEX_LOG_STDOUT === "1" });
-  const daemon = await startDaemon({ paths, config, log });
+  const canRestart = typeof process.execve === "function";
+  const pending = await readPendingReload(paths);
+  let daemon: Daemon | undefined;
+  try {
+    const { config } = await loadConfig(paths);
+    daemon = await startDaemon({
+      paths,
+      config,
+      log,
+      restart: canRestart ? async () => {
+        log.info("restarting to apply saved settings");
+        await daemon!.stop();
+        log.flush();
+        reexec();
+      } : undefined,
+    });
+  } catch (err) {
+    if (pending && canRestart) {
+      log.error({ err }, "saved settings could not start; restoring the previous configuration");
+      await rollbackReload(paths, pending, err);
+      log.flush();
+      reexec();
+    }
+    throw err;
+  }
+  await clearPendingReload(paths);
   await writePid(paths.pidFile, process.pid);
   console.log(`vexd 已启动：${daemon.url}`);
   return new Promise((resolve) => {
@@ -84,7 +115,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
     const shutdown = () => {
       if (stopping) return;
       stopping = true;
-      void daemon
+      void daemon!
         .stop()
         .then(() => removePid(paths.pidFile))
         .catch((err: unknown) => log.error({ err }, "shutdown failed"))

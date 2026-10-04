@@ -18,9 +18,9 @@ export interface GatewayOptions {
   sessions: SessionManager;
   approvals: ApprovalManager;
   bus: EventBus;
-  config: { read: () => Promise<string>; save: (text: string) => Promise<void> };
-  status: () => StatusInfo;
-  settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean }> };
+  config: { read: () => Promise<string>; save: (text: string) => Promise<{ restarting?: boolean } | void> };
+  status: () => StatusInfo | Promise<StatusInfo>;
+  settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
   workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<void> };
   staticDir: string;
   log: Logger;
@@ -178,8 +178,12 @@ export class Gateway {
 
   private onConnection(ws: WebSocket): void {
     this.clients.add(ws);
+    this.opts.log.info({ clients: this.clients.size }, "webchat connected");
     ws.on("error", (err) => this.opts.log.warn({ err }, "websocket error"));
-    ws.on("close", () => this.clients.delete(ws));
+    ws.on("close", () => {
+      this.clients.delete(ws);
+      this.opts.log.debug({ clients: this.clients.size }, "webchat disconnected");
+    });
     ws.on("message", (data) => {
       void this.onClientMessage(ws, data.toString());
     });
@@ -234,15 +238,15 @@ export class Gateway {
         this.opts.approvals.answer(message.id, message.answer);
         return;
       case "get_status":
-        send(ws, { type: "status", status: this.opts.status() });
+        send(ws, { type: "status", status: await this.opts.status() });
         return;
       case "get_settings":
         send(ws, { type: "settings", ...(await this.opts.settings.read()) });
         return;
       case "save_settings":
         try {
-          const { restartRequired } = await this.opts.settings.save({ set: message.set, unset: message.unset });
-          send(ws, { type: "settings_saved", ok: true, restartRequired });
+          const { restartRequired, restarting } = await this.opts.settings.save({ set: message.set, unset: message.unset });
+          send(ws, { type: "settings_saved", ok: true, restartRequired, restarting });
         } catch (err) {
           if (!(err instanceof ConfigError)) throw err;
           send(ws, { type: "settings_saved", ok: false, error: err.message });
@@ -265,8 +269,8 @@ export class Gateway {
         return;
       case "save_config":
         try {
-          await this.opts.config.save(message.text);
-          send(ws, { type: "config_saved", ok: true });
+          const saved = await this.opts.config.save(message.text);
+          send(ws, { type: "config_saved", ok: true, restarting: saved?.restarting });
         } catch (err) {
           if (!(err instanceof ConfigError)) throw err;
           send(ws, { type: "config_saved", ok: false, error: err.message });

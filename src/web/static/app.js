@@ -39,6 +39,7 @@ function connect() {
     setStatus("");
     if (state.currentId) send({ type: "open", sessionId: state.currentId });
     send({ type: "get_status" });
+    if (!$("settings").hidden && isFormTab(state.settingsTab)) send({ type: "get_settings" });
   });
   ws.addEventListener("message", (event) => handle(JSON.parse(event.data)));
   ws.addEventListener("close", () => {
@@ -84,7 +85,7 @@ function handle(msg) {
       break;
     case "settings_saved":
       if (msg.ok) {
-        showSaved(true, msg.restartRequired ? "已保存，重启 vexd 后生效" : "已保存，立即生效");
+        showSaved(true, savedMessage(msg.restarting, msg.restartRequired));
         send({ type: "get_settings" });
       } else {
         showSaved(false, "", msg.error);
@@ -97,7 +98,7 @@ function handle(msg) {
       if (state.settingsTab === "persona" && state.fileName === msg.name) $("settings-text").value = msg.text;
       break;
     case "config_saved":
-      showSaved(msg.ok, "已保存，重启 vexd 后生效", msg.error);
+      showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
       break;
     case "file_saved":
       if (state.fileName === msg.name) showSaved(msg.ok, "已保存，下一条消息起生效", msg.error);
@@ -591,6 +592,7 @@ function renderStatusLine() {
   line.append(wechat);
   const { energy, mood, social, resting } = info.persona;
   line.append(element("span", "", `精力 ${energy} · 心情 ${mood} · 社交 ${social}${resting ? " · 休息中" : ""}`));
+  if (info.reloadError) line.append(element("span", "warn", `上次保存的设置无法启动，已恢复原配置：${info.reloadError}`));
 }
 
 function openDrawer() { $("app").className = "drawer-open"; $("scrim").hidden = false; }
@@ -646,7 +648,7 @@ const BACKGROUND_FIELDS = [
 const SETTINGS_TABS = [
   { id: "model", label: "模型", sections: [{ title: "主模型", fields: MODEL_FIELDS }, { title: "后台模型", fields: BACKGROUND_FIELDS }] },
   { id: "channel", label: "微信", sections: [{ title: "微信", status: true, fields: [
-    { path: "wechat.enabled", label: "启用微信", type: "bool", help: "关闭后不连接微信；修改需要重启。" },
+    { path: "wechat.enabled", label: "启用微信", type: "bool", help: "关闭后不连接微信。" },
     { path: "wechat.ownerId", label: "主人的微信号 ID", type: "text", help: "留空则使用扫码绑定的账号。只有主人的消息会得到回复。" },
   ] }] },
   { id: "voice", label: "语音与链接", sections: [
@@ -694,7 +696,7 @@ const FILE_HINTS = {
   "MEMORY.md": "提炼后的长期事实与决定，保持在 100 行以内。保存后下一条消息起生效。",
   "HEARTBEAT.md": "定期自查清单，留空则不检查。下一次心跳起生效。",
 };
-const YAML_HINT = "完整的 config.yaml。表单没有覆盖的设置（工具审批、MCP 服务、网页令牌等）在这里修改，保存后重启 vexd 生效。";
+const YAML_HINT = "完整的 config.yaml。表单没有覆盖的设置（工具审批、MCP 服务、网页令牌等）在这里修改，保存后自动应用。";
 
 const isFormTab = (id) => !!SETTINGS_TABS.find((tab) => tab.id === id)?.sections;
 const secretPath = (field, draft) => field.type === "secret" ? field.path : `providers.${draft[field.of]}.apiKey`;
@@ -918,6 +920,11 @@ function buildPatch(settings) {
   for (const [path, value] of Object.entries(typed)) if (value) set[path] = value;
   for (const path of cleared) if (secrets.has(path) && !typed[path]) unset.push(path);
   return { set, unset: [...new Set(unset)] };
+}
+
+function savedMessage(restarting, restartRequired) {
+  if (restarting) return "已保存，正在应用设置，几秒后自动重新连接…";
+  return restartRequired ? "已保存，重启 vexd 后生效" : "已保存，立即生效";
 }
 
 function showSaved(ok, message, error) {

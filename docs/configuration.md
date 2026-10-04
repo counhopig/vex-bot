@@ -1,6 +1,6 @@
 # Configuration
 
-Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or use WebChat settings (below). Changes take effect after a restart, except the `stt` and `links` settings, which the skills read on every run. Invalid files are rejected with the path of the failing key.
+Vex reads one file, `config.yaml`, from the data directory (`~/.vex`, or `$VEX_HOME`). Create it with `vex onboard`, edit it by hand, or use WebChat settings (below). Saving in WebChat applies the change automatically (see below); after editing the file by hand, restart vexd.
 
 Samples (`docs/samples/`):
 
@@ -24,7 +24,16 @@ The settings page has six tabs:
 | 人设与记忆 | `SOUL.md`, `USER.md`, `MEMORY.md` and `HEARTBEAT.md` |
 | 高级 | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
-The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "已设置，留空保持不变", typing replaces it, and "清除已保存的值" removes it. After saving, the page says whether a restart is needed. Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
+The forms change only the fields you touch and keep the rest of the file, comments included. A value that fails validation is rejected with the failing key and nothing is written. API keys and cookies are never sent back to the browser: a saved secret shows as "已设置，留空保持不变", typing replaces it, and "清除已保存的值" removes it. After saving, the change applies by itself (see Applying changes). Below the chat box a status line shows the model, the WeChat connection and the mood values; the sidebar button switches between light, dark and system themes.
+
+## Applying changes
+
+Saving in WebChat settings applies the change without a manual restart:
+
+- `stt` and `links` settings are read by the skills on every run, so they apply instantly.
+- Everything else (models, keys, WeChat, search, rest hours, tool policy, MCP servers, …) is applied by restarting vexd in place: it waits up to 30 seconds for running turns to finish, shuts down, and starts again as the same process (same pid, so Docker and `vex stop` keep working). The page shows "正在应用设置" and reconnects within a few seconds. Conversations, memory, mood and the WeChat link are kept; unanswered approvals are cancelled.
+- Before writing, vexd checks that the main and background models can be resolved and rejects the save otherwise. If a saved configuration still cannot start (for example a port that is already taken), vexd restores the previous `config.yaml` on the next start, keeps running, and the status line under the chat box says why.
+- Where the platform cannot re-execute a process (Windows), the page says "重启 vexd 后生效" instead.
 
 ## Settings
 
@@ -96,6 +105,7 @@ Tools appear as `mcp__<server>__<tool>`, sanitised to `[A-Za-z0-9_-]` and at mos
 | `VEX_HOME` | Data directory (default `~/.vex`). Use the same value for every command that addresses an instance |
 | `VEX_WEB_HOST` | Overrides `web.host`; when it is not a loopback address, `vex onboard` skips the port question and generates an access token |
 | `VEX_WEB_TOKEN` | Overrides `web.token` |
+| `VEX_LOG_LEVEL` | `trace`, `debug`, `info` (default), `warn`, `error`. `debug` adds ignored WeChat traffic, finished tool calls and disconnects |
 | `VEX_LOG_STDOUT` | `1` also writes logs to standard output (set in the Docker image) |
 | `TAVILY_API_KEY`, `BRAVE_API_KEY` | Search key when `webSearch.apiKey` is absent |
 | Provider variables such as `DEEPSEEK_API_KEY` | API key when `providers.<name>.apiKey` is absent |
