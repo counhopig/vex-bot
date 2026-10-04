@@ -29,6 +29,7 @@ describe("scheduler", () => {
     const f = await fixture(); await f.scheduler.start();
     await createScheduleTool(f.scheduler, "web-one").execute("id", { action: "create", name: "提醒", prompt: "喝水", schedule: { every: "1m" } });
     expect(f.scheduler.list()[0]?.target).toBe("web-one");
+    expect(createScheduleTool(f.scheduler, "web-one").description).toContain("handle with all your tools");
     await expect(f.scheduler.create({ name: "提醒", prompt: "重复", target: "wechat", schedule: { every: "1m" } })).rejects.toThrow("already exists");
     await f.scheduler.close();
     const restored = new Scheduler({ dataDir: f.dataDir, workspace: f.workspace, hooks: f.hooks, now: f.time }); schedulers.push(restored); await restored.start();

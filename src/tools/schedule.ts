@@ -9,7 +9,7 @@ const Params = Type.Object({
   schedule: Type.Optional(Type.Union([Type.Object({ cron: Type.String() }), Type.Object({ every: Type.String() }), Type.Object({ once: Type.String() })])),
 });
 export function createScheduleTool(scheduler: Scheduler, source: string): AgentTool<typeof Params> {
-  return { name: "schedule", label: "Scheduled tasks", description: "Creates, lists or deletes scheduled messages. Names are unique; the rule is cron, every (such as 30m) or once (an ISO time with a time zone). Delivered to the current conversation by default.", parameters: Params,
+  return { name: "schedule", label: "Scheduled tasks", description: "Creates, lists or deletes scheduled messages. Names are unique; the rule is cron, every (such as 30m) or once (an ISO time with a time zone). Delivered to the current conversation by default. At the set time the prompt arrives as a message that you handle with all your tools (web_search, files, skills and so on), so write it as an instruction to yourself, for example \"search today's AI news and summarise the top five\", rather than only the text to send.", parameters: Params,
     async execute(_id, params) {
       let result: unknown;
       if (params.action === "list") result = scheduler.list();
