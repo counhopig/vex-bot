@@ -61,7 +61,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "file"; name: WorkspaceFile; text: string }
-  | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string }
+  | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string; warning?: string }
   | { type: "status"; status: StatusInfo }
   | { type: "settings"; values: Record<string, string | number | boolean | string[]>; secrets: string[]; catalog: { providers: string[]; models: Record<string, string[]> } }
   | { type: "settings_saved"; ok: boolean; error?: string; restartRequired?: boolean; restarting?: boolean }

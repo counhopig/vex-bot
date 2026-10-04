@@ -289,6 +289,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .field .clear { font-size: 12px; font-weight: 400; display: flex; gap: 6px; align-items: center; color: var(--muted); }
 .settings-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-bottom: env(safe-area-inset-bottom); }
 #settings-result.ok { color: var(--ok); }
+#settings-result.warn { color: var(--warn); }
 #settings-result.bad { color: var(--danger); white-space: pre-wrap; }
 
 /* Login */

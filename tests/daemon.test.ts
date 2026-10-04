@@ -277,6 +277,17 @@ describe("startDaemon", () => {
     });
   });
 
+  it("warns when a saved persona file is longer than the model will see", async () => {
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    client.send({ type: "save_file", name: "SOUL.md", text: Array.from({ length: 250 }, (_, index) => `rule ${index}`).join("\n") });
+    expect(await client.waitFor((m) => m.type === "file_saved")).toMatchObject({ ok: true, warning: expect.stringContaining("only the first 200") });
+    client.send({ type: "save_file", name: "USER.md", text: "short" });
+    const saved = await client.waitFor((m) => m.type === "file_saved" && m.name === "USER.md");
+    expect(saved).toMatchObject({ ok: true });
+    expect("warning" in saved && saved.warning).toBeFalsy();
+  });
+
   it("opens prompt files with their default text and restores it when the text is cleared", async () => {
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
     client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);

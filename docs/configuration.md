@@ -125,7 +125,7 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `memory/YYYY-MM-DD.md` | Daily notes written by the agent | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
-Templates for these files are created on first start, together with the instruction files below.
+The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). Templates for these files are created on first start, together with the instruction files below.
 
 ### Editable instructions
 

@@ -18,6 +18,7 @@ const state = {
   filePage: "soul",
   fileAreas: new Map(),
   pendingSaves: 0,
+  saveWarnings: [],
 };
 
 function send(message) {
@@ -104,8 +105,15 @@ function handle(msg) {
       break;
     case "file_saved":
       if (state.fileAreas.has(msg.name)) {
-        if (!msg.ok) { state.pendingSaves = 0; showSaved(false, "", msg.error); }
-        else if (--state.pendingSaves <= 0) showSaved(true, "Saved; applies from its next use");
+        if (!msg.ok) { state.pendingSaves = 0; showSaved(false, "", msg.error); break; }
+        if (msg.warning) state.saveWarnings.push(msg.warning);
+        if (--state.pendingSaves > 0) break;
+        if (state.saveWarnings.length) {
+          $("settings-result").textContent = `Saved. ${state.saveWarnings.join(" ")}`;
+          $("settings-result").className = "warn";
+        } else {
+          showSaved(true, "Saved; applies from its next use");
+        }
       }
       break;
     case "error":
@@ -1018,6 +1026,7 @@ function saveSettings() {
   } else if (tab.pages) {
     const page = FILE_PAGES.find((item) => item.id === state.filePage);
     state.pendingSaves = page.files.length;
+    state.saveWarnings = [];
     for (const file of page.files) send({ type: "save_file", name: file.name, text: state.fileAreas.get(file.name).value });
   } else {
     send({ type: "save_config", text: $("settings-text").value });

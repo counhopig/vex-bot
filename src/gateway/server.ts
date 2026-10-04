@@ -21,7 +21,7 @@ export interface GatewayOptions {
   config: { read: () => Promise<string>; save: (text: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
-  workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<void> };
+  workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
   staticDir: string;
   log: Logger;
 }
@@ -257,8 +257,8 @@ export class Gateway {
         return;
       case "save_file":
         try {
-          await this.opts.workspace.save(message.name, message.text);
-          send(ws, { type: "file_saved", name: message.name, ok: true });
+          const saved = await this.opts.workspace.save(message.name, message.text);
+          send(ws, { type: "file_saved", name: message.name, ok: true, warning: saved?.warning });
         } catch (err) {
           this.opts.log.warn({ err, file: message.name }, "saving workspace file failed");
           send(ws, { type: "file_saved", name: message.name, ok: false, error: "Save failed; see the vexd log" });

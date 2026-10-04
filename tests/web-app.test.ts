@@ -229,6 +229,12 @@ describe("web app", () => {
     runInContext('handle({ type: "file_saved", name: "prompts/consolidation.md", ok: true })', context);
     runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
+    get("save-settings").dispatch("click");
+    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true })', context);
+    runInContext('handle({ type: "file_saved", name: "prompts/consolidation.md", ok: true, warning: "Too long." })', context);
+    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("Saved. Too long.");
+    expect(get("settings-result").className).toBe("warn");
     runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: false, error: "Save failed" })', context);
     expect(get("settings-result").textContent).toBe("Save failed");
   });

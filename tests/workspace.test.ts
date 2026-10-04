@@ -2,7 +2,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WORKSPACE_TEMPLATES } from "../src/workspace/templates.js";
-import { ensureWorkspace, readWorkspaceFile } from "../src/workspace/workspace.js";
+import { ensureWorkspace, readWorkspaceFile, residentLimitWarning } from "../src/workspace/workspace.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -32,5 +32,20 @@ describe("ensureWorkspace", () => {
 describe("readWorkspaceFile", () => {
   it("returns an empty string for a missing file", async () => {
     expect(await readWorkspaceFile(dir, "nope.md")).toBe("");
+  });
+});
+
+describe("residentLimitWarning", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index}`).join("\n");
+
+  it("warns when an always-loaded file is longer than the part the model sees", () => {
+    expect(residentLimitWarning("SOUL.md", lines(201))).toBe("SOUL.md has 201 lines; only the first 200 reach the model. Shorten it to keep everything.");
+    expect(residentLimitWarning("MEMORY.md", lines(101))).toContain("only the first 100");
+  });
+
+  it("stays quiet within the limit, for trailing blank lines and for other files", () => {
+    expect(residentLimitWarning("SOUL.md", `${lines(200)}\n\n\n`)).toBeUndefined();
+    expect(residentLimitWarning("USER.md", "")).toBeUndefined();
+    expect(residentLimitWarning("HEARTBEAT.md", lines(500))).toBeUndefined();
   });
 });

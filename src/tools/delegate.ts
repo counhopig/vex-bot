@@ -2,6 +2,7 @@ import { Agent, type AgentOptions, type AgentTool, type StreamFn } from "@earend
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { baseInstructionsSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
+import { RESIDENT_LINE_LIMITS } from "../workspace/workspace.js";
 
 const DelegateParams = Type.Object({
   task: Type.String({ minLength: 1, description: "A self-contained task for the sub-agent" }),
@@ -35,7 +36,7 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
       const selected = tools ? available.filter((tool) => tools.includes(tool.name)) : available;
       const prompt = await new SystemPromptBuilder([
         baseInstructionsSection(opts.workspace),
-        residentFileSection({ workspace: opts.workspace, file: "SOUL.md", maxLines: 200 }),
+        residentFileSection({ workspace: opts.workspace, file: "SOUL.md", maxLines: RESIDENT_LINE_LIMITS["SOUL.md"]! }),
         () => `## Task\n${task}`,
       ]).build({ now: new Date(), windowLabel: "sub-agent" });
       signal?.throwIfAborted();
