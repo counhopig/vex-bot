@@ -31,17 +31,17 @@ async function* single(file: string): AsyncGenerator<string> {
 }
 
 const GrepParams = Type.Object({
-  pattern: Type.String({ description: "JavaScript 正则表达式" }),
-  path: Type.Optional(Type.String({ description: "要搜索的文件或目录，默认工作区" })),
-  glob: Type.Optional(Type.String({ description: "只搜索匹配该 glob 的文件（相对搜索目录），例如 **/*.md" })),
-  ignoreCase: Type.Optional(Type.Boolean({ description: "忽略大小写" })),
+  pattern: Type.String({ description: "JavaScript regular expression" }),
+  path: Type.Optional(Type.String({ description: "File or directory to search; defaults to the workspace" })),
+  glob: Type.Optional(Type.String({ description: "Only search files matching this glob (relative to the search directory), for example **/*.md" })),
+  ignoreCase: Type.Optional(Type.Boolean({ description: "Ignore case" })),
 });
 
 export function createGrepTool(workspace: string): AgentTool<typeof GrepParams> {
   return {
     name: "grep",
-    label: "搜索内容",
-    description: "按正则表达式搜索文件内容，输出「路径:行号:内容」。",
+    label: "Search contents",
+    description: "Searches file contents with a regular expression and prints path:line:content.",
     parameters: GrepParams,
     async execute(_id, { pattern, path, glob, ignoreCase = false }) {
       const regex = new RegExp(pattern, ignoreCase ? "i" : "");
@@ -73,23 +73,23 @@ export function createGrepTool(workspace: string): AgentTool<typeof GrepParams> 
       }
       const text =
         matches.length === 0
-          ? "没有匹配"
-          : matches.join("\n") + (truncated ? `\n…（结果超过 ${MAX_GREP_MATCHES} 条，已截断）` : "");
+          ? "No matches"
+          : matches.join("\n") + (truncated ? `\n… (more than ${MAX_GREP_MATCHES} results; truncated)` : "");
       return { content: [{ type: "text", text }], details: { count: matches.length } };
     },
   };
 }
 
 const FindParams = Type.Object({
-  pattern: Type.String({ description: "glob 模式（相对搜索目录），例如 **/*.md" }),
-  path: Type.Optional(Type.String({ description: "搜索目录，默认工作区" })),
+  pattern: Type.String({ description: "Glob pattern (relative to the search directory), for example **/*.md" }),
+  path: Type.Optional(Type.String({ description: "Directory to search; defaults to the workspace" })),
 });
 
 export function createFindTool(workspace: string): AgentTool<typeof FindParams> {
   return {
     name: "find",
-    label: "查找文件",
-    description: "按 glob 模式查找文件，输出相对搜索目录的路径。",
+    label: "Find files",
+    description: "Finds files matching a glob pattern and prints paths relative to the search directory.",
     parameters: FindParams,
     async execute(_id, { pattern, path }) {
       const base = resolveToolPath(workspace, path ?? ".");
@@ -102,8 +102,8 @@ export function createFindTool(workspace: string): AgentTool<typeof FindParams> 
       const shown = found.slice(0, MAX_FIND_RESULTS);
       const text =
         shown.length === 0
-          ? "没有找到匹配的文件"
-          : shown.join("\n") + (found.length > shown.length ? `\n…（共 ${found.length} 个，只列出前 ${MAX_FIND_RESULTS} 个）` : "");
+          ? "No matching files found"
+          : shown.join("\n") + (found.length > shown.length ? `\n… (${found.length} in total; showing the first ${MAX_FIND_RESULTS})` : "");
       return { content: [{ type: "text", text }], details: { count: found.length } };
     },
   };

@@ -18,11 +18,11 @@ function snippet(text: string, terms: string[]): string {
 }
 
 export function createMemorySearchTool(index: MemoryIndex): AgentTool<typeof Params> {
-  return { name: "memory_search", label: "检索记忆", description: "检索记忆文件与历史对话，返回片段、来源、日期和会话。", parameters: Params,
+  return { name: "memory_search", label: "Search memory", description: "Searches memory files and past conversations and returns snippets with their source, date and session.", parameters: Params,
     async execute(_id, { query, limit, scope }) {
       await index.sync();
       const terms = tokenize(query);
       const results: MemoryResult[] = index.search(query, limit, scope).map((r) => ({ ...r, text: snippet(r.text, terms) }));
-      return { content: [{ type: "text", text: results.length ? JSON.stringify(results, null, 2) : "没有匹配的记忆" }], details: { results } };
+      return { content: [{ type: "text", text: results.length ? JSON.stringify(results, null, 2) : "No matching memories" }], details: { results } };
     } };
 }

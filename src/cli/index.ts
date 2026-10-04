@@ -15,13 +15,13 @@ import { isAlive, readPid, removePid, tailLines, waitUntil, writePid } from "./p
 import { runWeChatLogin } from "./wechat.js";
 
 const USAGE = [
-  "用法：vex <命令>",
-  "  start [-d]          启动 vexd（-d 在后台运行）",
-  "  stop                停止后台运行的 vexd",
-  "  status              查看运行状态",
-  "  logs [-f]           查看日志（-f 持续输出）",
-  "  onboard [--force]   生成初始配置",
-  "  wechat login        扫码绑定微信",
+  "Usage: vex <command>",
+  "  start [-d]          start vexd (-d runs it in the background)",
+  "  stop                stop the background vexd",
+  "  status              show whether it is running",
+  "  logs [-f]           show the log (-f follows it)",
+  "  onboard [--force]   create the initial configuration",
+  "  wechat login        link WeChat by QR code",
 ].join("\n");
 
 async function main(argv: string[]): Promise<number> {
@@ -64,8 +64,8 @@ async function runningPid(paths: VexPaths): Promise<number | undefined> {
 
 async function ensureConfig(paths: VexPaths): Promise<void> {
   if (!process.stdin.isTTY || (await stat(paths.config).then(() => true, () => false))) return;
-  console.log("尚未配置，开始初始化。");
-  if (await onboard(paths, false) !== 0) throw new Error("初始化未完成");
+  console.log("Not configured yet; starting setup.");
+  if (await onboard(paths, false) !== 0) throw new Error("Setup did not finish");
 }
 
 /** Replaces this process with a fresh vexd, keeping the pid, so saved settings apply without a manual restart. */
@@ -78,7 +78,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
   await ensureConfig(paths);
   const existing = await runningPid(paths);
   if (existing && existing !== process.pid) {
-    console.error(`vexd 已在运行（pid ${existing}）`);
+    console.error(`vexd is already running (pid ${existing})`);
     return 1;
   }
   const log = createLogger({ file: paths.logFile, stdout: process.env.VEX_LOG_STDOUT === "1" });
@@ -109,7 +109,7 @@ async function startForeground(paths: VexPaths): Promise<number> {
   }
   await clearPendingReload(paths);
   await writePid(paths.pidFile, process.pid);
-  console.log(`vexd 已启动：${daemon.url}`);
+  console.log(`vexd started: ${daemon.url}`);
   return new Promise((resolve) => {
     let stopping = false;
     const shutdown = () => {
@@ -134,7 +134,7 @@ async function startBackground(paths: VexPaths): Promise<number> {
   const { config } = await loadConfig(paths);
   const existing = await runningPid(paths);
   if (existing) {
-    console.error(`vexd 已在运行（pid ${existing}）`);
+    console.error(`vexd is already running (pid ${existing})`);
     return 1;
   }
   await mkdir(paths.logs, { recursive: true });
@@ -148,10 +148,10 @@ async function startBackground(paths: VexPaths): Promise<number> {
   await out.close();
   const started = await waitUntil(async () => (await runningPid(paths)) === child.pid, 15_000);
   if (!started) {
-    console.error("vexd 未能启动，运行 vex logs 查看原因");
+    console.error("vexd failed to start; run vex logs to see why");
     return 1;
   }
-  console.log(`vexd 已在后台启动（pid ${child.pid}）：http://${config.web.host}:${config.web.port}`);
+  console.log(`vexd started in the background (pid ${child.pid}): http://${config.web.host}:${config.web.port}`);
   return 0;
 }
 
@@ -159,23 +159,23 @@ async function stop(paths: VexPaths): Promise<number> {
   const pid = await runningPid(paths);
   if (!pid) {
     await removePid(paths.pidFile);
-    console.log("vexd 未在运行");
+    console.log("vexd is not running");
     return 0;
   }
   process.kill(pid, "SIGTERM");
   const stopped = await waitUntil(async () => (await runningPid(paths)) !== pid, 10_000);
-  console.log(stopped ? "vexd 已停止" : `vexd 未在 10 秒内退出（pid ${pid}）`);
+  console.log(stopped ? "vexd stopped" : `vexd did not exit within 10 seconds (pid ${pid})`);
   return stopped ? 0 : 1;
 }
 
 async function status(paths: VexPaths): Promise<number> {
   const pid = await runningPid(paths);
   if (!pid) {
-    console.log("vexd 未在运行");
+    console.log("vexd is not running");
     return 1;
   }
   const { config } = await loadConfig(paths);
-  console.log(`vexd 运行中（pid ${pid}）：http://${config.web.host}:${config.web.port}`);
+  console.log(`vexd is running (pid ${pid}): http://${config.web.host}:${config.web.port}`);
   return 0;
 }
 

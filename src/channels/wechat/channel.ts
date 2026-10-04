@@ -35,9 +35,9 @@ interface Turn {
 const SEEN_LIMIT = 500;
 
 const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string) => string> = {
-  allow: (tool) => `已允许：${tool}`,
-  allow_session: (tool) => `已允许，本会话之后不再询问 ${tool}`,
-  deny: (tool) => `已拒绝：${tool}`,
+  allow: (tool) => `Allowed: ${tool}`,
+  allow_session: (tool) => `Allowed; ${tool} will not be asked about again in this conversation`,
+  deny: (tool) => `Denied: ${tool}`,
 };
 
 export class WeChatChannel {
@@ -114,7 +114,7 @@ export class WeChatChannel {
           this.sessionExpired = true;
           this.syncBuf = undefined;
           await this.saveState();
-          this.opts.log.error("微信登录已失效，运行 vex wechat login 重新登录后重启 vexd");
+          this.opts.log.error("The WeChat login has expired; run vex wechat login to sign in again, then restart vexd");
           return;
         }
         this.opts.log.warn({ err }, "wechat poll failed");
@@ -152,7 +152,7 @@ export class WeChatChannel {
     const session = await this.opts.sessions.get(WECHAT_SESSION_KEY);
     if (command.kind === "stop") {
       if (session.busy) session.stop();
-      else this.send("现在没有在运行的任务。");
+      else this.send("Nothing is running right now.");
       return;
     }
     session.send(command.text);
@@ -169,7 +169,7 @@ export class WeChatChannel {
   private answerOldest(answer: ApprovalAnswer): void {
     const oldest = this.opts.approvals.pending()[0];
     if (!oldest) {
-      this.send("没有待批准的请求。");
+      this.send("There are no pending requests.");
       return;
     }
     this.opts.approvals.answer(oldest.id, answer);
@@ -198,7 +198,7 @@ export class WeChatChannel {
   private onSessionEvent(event: SessionEvent): void {
     switch (event.kind) {
       case "busy":
-        if (event.busy) this.beginTurn(event.source === "主动聊天");
+        if (event.busy) this.beginTurn(event.source === "proactive chat");
         else this.endTurn(event.discardReply);
         return;
       case "assistant_message":
@@ -223,7 +223,7 @@ export class WeChatChannel {
     this.lastReply = Promise.resolve(false);
     if (this.turn) clearTimeout(this.turn.timer);
     const timer = setTimeout(() => {
-      if (!silent && this.turn?.timer === timer) this.send("处理中…");
+      if (!silent && this.turn?.timer === timer) this.send("Working on it…");
     }, this.opts.processingNoticeMs ?? 15_000);
     this.turn = { texts: [], aborted: false, timer };
   }
@@ -235,7 +235,7 @@ export class WeChatChannel {
     this.turn = undefined;
     if (discard) return;
     const reply = turn.texts.join("\n\n");
-    if (turn.aborted) this.send(reply ? `${reply}\n（已中断）` : "已中断。");
+    if (turn.aborted) this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.");
     else if (reply) this.lastReply = this.send(reply);
   }
 

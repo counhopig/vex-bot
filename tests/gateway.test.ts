@@ -242,7 +242,7 @@ describe("Gateway chat", () => {
 
     const asked = await client.waitFor((m) => m.type === "approvals" && m.pending.length === 1);
     if (asked.type !== "approvals") throw new Error("unreachable");
-    expect(asked.pending[0]).toMatchObject({ toolName: "bash", summary: "echo hi", detail: "echo hi", windowLabel: "网页会话「新对话」" });
+    expect(asked.pending[0]).toMatchObject({ toolName: "bash", summary: "echo hi", detail: "echo hi", windowLabel: 'WebChat conversation "New chat"' });
 
     client.send({ type: "approve", id: asked.pending[0]!.id, answer: "allow" });
     await client.waitFor((m) => m.type === "event" && m.event.kind === "tool_end" && !m.event.isError);
@@ -294,7 +294,7 @@ describe("Gateway chat", () => {
     await client.waitFor((m) => m.type === "config" && m.text.includes("deepseek-v4-pro"));
 
     client.send({ type: "save_config", text: "model: 1\n" });
-    await client.waitFor((m) => m.type === "config_saved" && !m.ok && /校验失败/.test(m.error ?? ""));
+    await client.waitFor((m) => m.type === "config_saved" && !m.ok && /failed validation/.test(m.error ?? ""));
 
     client.send({ type: "save_config", text: "model: { provider: deepseek, id: deepseek-flash }\n" });
     await client.waitFor((m) => m.type === "config_saved" && m.ok);
@@ -305,6 +305,6 @@ describe("Gateway chat", () => {
     const host = await start();
     const client = await connect(host);
     client.send({ type: "open", sessionId: "missing" });
-    await client.waitFor((m) => m.type === "error" && m.message.includes("没有这个会话"));
+    await client.waitFor((m) => m.type === "error" && m.message.includes("No such conversation"));
   });
 });

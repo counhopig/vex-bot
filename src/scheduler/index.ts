@@ -3,6 +3,7 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
+import { loadPrompt } from "../workspace/prompts.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
 export interface ScheduledTask { id: string; name: string; schedule: ScheduleRule; prompt: string; target: string; enabled: boolean; nextAt: number | null }
@@ -24,13 +25,13 @@ export interface SchedulerOptions {
 }
 export function duration(value: string): number {
   const match = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(value);
-  if (!match) throw new Error("间隔必须是正数加 s、m、h 或 d");
+  if (!match) throw new Error("The interval must be a positive number followed by s, m, h or d");
   const result = Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!] ?? 0);
-  if (!Number.isFinite(result) || result < 1000) throw new Error("间隔至少为一秒");
+  if (!Number.isFinite(result) || result < 1000) throw new Error("The interval must be at least one second");
   return result;
 }
 function minute(value: string): number {
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error("时间必须是 HH:mm");
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error("The time must be HH:mm");
   const [h, m] = value.split(":").map(Number); return h! * 60 + m!;
 }
 export function activeAt(now: number, hours: [string, string]): boolean {
@@ -43,10 +44,10 @@ function stamp(at: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 function next(rule: ScheduleRule, now: number): number | null {
-  if (!rule || typeof rule !== "object" || Object.keys(rule).length !== 1 || !("every" in rule || "once" in rule || "cron" in rule)) throw new Error("时间规则无效");
+  if (!rule || typeof rule !== "object" || Object.keys(rule).length !== 1 || !("every" in rule || "once" in rule || "cron" in rule)) throw new Error("Invalid schedule rule");
   if ("every" in rule) return now + duration(rule.every);
-  if ("once" in rule) { const time = Date.parse(rule.once); if (!Number.isFinite(time)) throw new Error("一次性时间无效"); return time; }
-  if (typeof rule.cron !== "string" || !rule.cron.trim()) throw new Error("cron 规则不能为空");
+  if ("once" in rule) { const time = Date.parse(rule.once); if (!Number.isFinite(time)) throw new Error("Invalid one-time schedule"); return time; }
+  if (typeof rule.cron !== "string" || !rule.cron.trim()) throw new Error("The cron rule must not be empty");
   const cron = new Cron(rule.cron, { paused: true });
   try { return cron.nextRun(new Date(now))?.getTime() ?? null; } finally { cron.stop(); }
 }
@@ -77,24 +78,24 @@ export class Scheduler {
   }
   private save(): Promise<void> { return writeFileAtomic(join(this.options.dataDir, "schedules.json"), JSON.stringify(this.tasks, null, 2), 0o600); }
   async start(): Promise<void> {
-    if (this.stopped) throw new Error("调度器已关闭");
+    if (this.stopped) throw new Error("The scheduler is closed");
     if (this.timer) return;
     const file = join(this.options.dataDir, "schedules.json");
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-      if (!Array.isArray(parsed)) throw new Error("定时任务文件无效");
+      if (!Array.isArray(parsed)) throw new Error("The scheduled tasks file is invalid");
       const names = new Set<string>();
       for (const item of parsed) {
-        if (!item || typeof item.id !== "string" || typeof item.name !== "string" || !item.name.trim() || names.has(item.name) || typeof item.prompt !== "string" || typeof item.target !== "string" || typeof item.enabled !== "boolean" || !item.schedule || Object.keys(item.schedule).length !== 1) throw new Error("定时任务文件无效");
+        if (!item || typeof item.id !== "string" || typeof item.name !== "string" || !item.name.trim() || names.has(item.name) || typeof item.prompt !== "string" || typeof item.target !== "string" || typeof item.enabled !== "boolean" || !item.schedule || Object.keys(item.schedule).length !== 1) throw new Error("The scheduled tasks file is invalid");
         next(item.schedule, this.now()); names.add(item.name);
-        if (item.nextAt !== null && (!Number.isFinite(item.nextAt) || typeof item.nextAt !== "number")) throw new Error("定时任务触发时间无效");
+        if (item.nextAt !== null && (!Number.isFinite(item.nextAt) || typeof item.nextAt !== "number")) throw new Error("Invalid trigger time in the scheduled tasks file");
       }
       this.tasks = parsed;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         const backup = `${file}.bad-${this.now()}`;
         const moved = await rename(file, backup).then(() => true, () => false);
-        this.options.hooks.log(new Error(`定时任务文件无法读取${moved ? `，已移至 ${backup}` : ""}：${error instanceof Error ? error.message : String(error)}`));
+        this.options.hooks.log(new Error(`The scheduled tasks file could not be read${moved ? `; moved to ${backup}` : ""}: ${error instanceof Error ? error.message : String(error)}`));
       }
     }
     const now = this.now();
@@ -108,11 +109,11 @@ export class Scheduler {
   list(): ScheduledTask[] { return structuredClone(this.tasks); }
   create(input: { name: string; schedule: ScheduleRule; prompt: string; target: string; enabled?: boolean }): Promise<ScheduledTask> {
     return this.mutate(async () => {
-      if (this.stopped) throw new Error("调度器已关闭");
-      if (!input.name.trim() || !input.prompt.trim() || !input.target.trim()) throw new Error("名称、消息和目标不能为空");
-      if (this.tasks.some(task => task.name === input.name)) throw new Error("定时任务名称已存在");
-      if (Object.keys(input.schedule).length !== 1) throw new Error("只能指定一个时间规则");
-      if ("once" in input.schedule && Date.parse(input.schedule.once) <= this.now()) throw new Error("一次性时间已过");
+      if (this.stopped) throw new Error("The scheduler is closed");
+      if (!input.name.trim() || !input.prompt.trim() || !input.target.trim()) throw new Error("Name, message and target must not be empty");
+      if (this.tasks.some(task => task.name === input.name)) throw new Error("A scheduled task with that name already exists");
+      if (Object.keys(input.schedule).length !== 1) throw new Error("Specify exactly one schedule rule");
+      if ("once" in input.schedule && Date.parse(input.schedule.once) <= this.now()) throw new Error("That one-time schedule is already in the past");
       const task: ScheduledTask = { ...structuredClone(input), id: randomUUID(), enabled: input.enabled ?? true, nextAt: next(input.schedule, this.now()) };
       this.tasks.push(task); try { await this.save(); } catch (error) { this.tasks.pop(); throw error; } return structuredClone(task);
     });
@@ -144,7 +145,7 @@ export class Scheduler {
           this.launch(task.id, async () => {
             const target = task.target === "wechat" || await this.options.hooks.targetExists(task.target) ? task.target : "wechat";
             const missed = startup && once;
-            const label = missed ? `【错过的定时任务「${task.name}」，原定 ${stamp(dueAt)}】` : `【定时任务「${task.name}」】`;
+            const label = missed ? `[Missed scheduled task "${task.name}", originally due ${stamp(dueAt)}] ` : `[Scheduled task "${task.name}"] `;
             if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);
           });
         }
@@ -165,13 +166,13 @@ export class Scheduler {
     let text: string;
     try { text = await readFile(join(this.options.workspace, "HEARTBEAT.md"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
     if (!text.trim() || this.stopped) return;
-    const result = await this.options.hooks.runTemporary("读取工作区 HEARTBEAT.md，逐项检查。无需告知主人时仅回复 HEARTBEAT_OK。", "heartbeat", this.abort.signal);
+    const result = await this.options.hooks.runTemporary(await loadPrompt(this.options.workspace, "prompts/heartbeat.md"), "heartbeat", this.abort.signal);
     if (!this.stopped && result.trim() && result.trim() !== "HEARTBEAT_OK") await this.options.hooks.deliverHeartbeat(result, this.abort.signal);
   }
   private async consolidate(now: number): Promise<void> {
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) { const date = new Date(now); date.setDate(date.getDate() - i); dates.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`); }
-    await this.options.hooks.runTemporary(`读取最近七天每日笔记（${dates.map(date => `memory/${date}.md`).join("、")}；不存在的文件跳过），以及 MEMORY.md 与 USER.md。把反复出现或明确重要的内容提炼进 MEMORY.md / USER.md，合并重复条目、删除失效条目，保持 MEMORY.md 不超过 100 行。只编辑工作区内文件，不向主人发送消息。`, "consolidation", this.abort.signal);
+    await this.options.hooks.runTemporary(await loadPrompt(this.options.workspace, "prompts/consolidation.md", { dates: dates.map(date => `memory/${date}.md`).join(", ") }), "consolidation", this.abort.signal);
   }
   async close(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.abort.abort(); await this.mutations; await Promise.allSettled([...this.running.values()]); }
 }

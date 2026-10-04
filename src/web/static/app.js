@@ -27,7 +27,7 @@ function send(message) {
       // The connection can close between the ready-state check and send.
     }
   }
-  setStatus("连接已断开，正在重连…");
+  setStatus("Connection lost; reconnecting…");
   return false;
 }
 
@@ -43,7 +43,7 @@ function connect() {
   });
   ws.addEventListener("message", (event) => handle(JSON.parse(event.data)));
   ws.addEventListener("close", () => {
-    setStatus("连接已断开，正在重连…");
+    setStatus("Connection lost; reconnecting…");
     setTimeout(connect, state.retryMs);
     state.retryMs = Math.min(state.retryMs * 2, 10000);
   });
@@ -67,7 +67,7 @@ function handle(msg) {
       if (msg.sessionId === state.currentId) applyEvent(msg.event);
       else if (msg.event.kind === "user_message" && msg.event.source) {
         const session = state.sessions.find(s => s.id === msg.sessionId);
-        flash(`${session?.title ?? "网页会话"}：${msg.event.source}`);
+        flash(`${session?.title ?? "WebChat conversation"}: ${msg.event.source}`);
       }
       break;
     case "approvals":
@@ -101,7 +101,7 @@ function handle(msg) {
       showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
       break;
     case "file_saved":
-      if (state.fileName === msg.name) showSaved(msg.ok, "已保存，下一条消息起生效", msg.error);
+      if (state.fileName === msg.name) showSaved(msg.ok, "Saved; takes effect from the next message", msg.error);
       break;
     case "error":
       flash(msg.message);
@@ -271,8 +271,8 @@ function renderInline(parent, nodes) {
 
 function copyText(button, text) {
   const done = () => {
-    button.textContent = "已复制";
-    setTimeout(() => { button.textContent = "复制"; }, 1500);
+    button.textContent = "Copied";
+    setTimeout(() => { button.textContent = "Copy"; }, 1500);
   };
   if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text).then(done, () => {});
 }
@@ -298,8 +298,8 @@ function renderBlocks(parent, blocks) {
       case "code": {
         const wrap = element("div", "code");
         const head = element("div", "code-head");
-        head.append(element("span", "", block.lang || "代码"));
-        const copy = element("button", "", "复制");
+        head.append(element("span", "", block.lang || "code"));
+        const copy = element("button", "", "Copy");
         copy.type = "button";
         copy.addEventListener("click", () => copyText(copy, block.text));
         head.append(copy);
@@ -365,7 +365,7 @@ function selectSession(id) {
 }
 
 function renameSession(session) {
-  const next = prompt("会话名称", session.title);
+  const next = prompt("Conversation name", session.title);
   if (next && next.trim()) send({ type: "rename_session", sessionId: session.id, title: next.trim() });
 }
 
@@ -379,24 +379,24 @@ function renderSessions() {
     const title = document.createElement("span");
     title.className = "title";
     title.textContent = session.title;
-    title.title = "双击改名";
+    title.title = "Double-click to rename";
     title.addEventListener("click", () => selectSession(session.id));
     title.addEventListener("dblclick", () => renameSession(session));
     const rename = document.createElement("button");
     rename.type = "button";
     rename.className = "icon";
     rename.textContent = "✎\uFE0E";
-    rename.title = "改名";
-    rename.setAttribute("aria-label", `重命名「${session.title}」`);
+    rename.title = "Rename";
+    rename.setAttribute("aria-label", `Rename "${session.title}"`);
     rename.addEventListener("click", () => renameSession(session));
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "icon";
     remove.textContent = "×";
-    remove.title = "删除";
-    remove.setAttribute("aria-label", `删除「${session.title}」`);
+    remove.title = "Delete";
+    remove.setAttribute("aria-label", `Delete "${session.title}"`);
     remove.addEventListener("click", () => {
-      if (confirm(`删除「${session.title}」？`)) send({ type: "delete_session", sessionId: session.id });
+      if (confirm(`Delete "${session.title}"?`)) send({ type: "delete_session", sessionId: session.id });
     });
     li.append(title, rename, remove);
     list.append(li);
@@ -501,7 +501,7 @@ function addBubble(kind, text, aborted = false) {
   if (aborted) {
     const tag = document.createElement("div");
     tag.className = "tag";
-    tag.textContent = "（已中断）";
+    tag.textContent = "(interrupted)";
     el.append(tag);
   }
   $("messages").append(el);
@@ -554,16 +554,16 @@ function renderApprovals() {
     card.className = "approval";
     const head = document.createElement("div");
     head.className = "approval-head";
-    const deadline = new Date(request.expiresAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-    head.textContent = `${request.windowLabel} 请求执行 ${request.toolName}（${deadline} 前未答复将自动拒绝）`;
+    const deadline = new Date(request.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    head.textContent = `${request.windowLabel} wants to run ${request.toolName} (denied automatically if there is no answer by ${deadline})`;
     const detail = document.createElement("pre");
     detail.textContent = request.detail;
     const actions = document.createElement("div");
     actions.className = "approval-actions";
     for (const [answer, label, cls] of [
-      ["allow", "允许", ""],
-      ["allow_session", "本会话总是允许", "secondary"],
-      ["deny", "拒绝", "danger"],
+      ["allow", "Allow", ""],
+      ["allow_session", "Always allow in this conversation", "secondary"],
+      ["deny", "Deny", "danger"],
     ]) {
       const button = document.createElement("button");
       button.type = "button";
@@ -579,7 +579,7 @@ function renderApprovals() {
 
 /* ---------- Status line, drawer and theme ---------- */
 
-const WECHAT_LABELS = { connected: "微信已连接", connecting: "微信连接中", unlinked: "微信未绑定", expired: "微信已过期", disabled: "微信已关闭" };
+const WECHAT_LABELS = { connected: "WeChat connected", connecting: "WeChat connecting", unlinked: "WeChat not linked", expired: "WeChat expired", disabled: "WeChat off" };
 
 function renderStatusLine() {
   const line = $("statusline");
@@ -591,14 +591,14 @@ function renderStatusLine() {
   wechat.append(element("span", `dot ${info.wechat}`), document.createTextNode(WECHAT_LABELS[info.wechat] ?? info.wechat));
   line.append(wechat);
   const { energy, mood, social, resting } = info.persona;
-  line.append(element("span", "", `精力 ${energy} · 心情 ${mood} · 社交 ${social}${resting ? " · 休息中" : ""}`));
-  if (info.reloadError) line.append(element("span", "warn", `上次保存的设置无法启动，已恢复原配置：${info.reloadError}`));
+  line.append(element("span", "", `Energy ${energy} · Mood ${mood} · Social ${social}${resting ? " · Resting" : ""}`));
+  if (info.reloadError) line.append(element("span", "warn", `The last saved settings could not start; the previous configuration was restored: ${info.reloadError}`));
 }
 
 function openDrawer() { $("app").className = "drawer-open"; $("scrim").hidden = false; }
 function closeDrawer() { $("app").className = ""; $("scrim").hidden = true; }
 
-const THEMES = [["", "跟随系统"], ["light", "浅色"], ["dark", "深色"]];
+const THEMES = [["", "System"], ["light", "Light"], ["dark", "Dark"]];
 
 function currentTheme() {
   try {
@@ -629,74 +629,78 @@ function cycleTheme() {
 /* ---------- Settings ---------- */
 
 const MODEL_FIELDS = [
-  { path: "model.provider", label: "提供方", type: "provider", help: "内置提供方可从候选里选；自建的 OpenAI / Anthropic 兼容服务直接填名称。" },
-  { path: "model.id", label: "模型", type: "model", of: "model.provider", help: "区分大小写。" },
-  { path: "model.thinking", label: "思考强度", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], help: "留空使用提供方默认。" },
+  { path: "model.provider", label: "Provider", type: "provider", help: "Pick a built-in provider from the suggestions, or type the name of your own OpenAI- or Anthropic-compatible service." },
+  { path: "model.id", label: "Model", type: "model", of: "model.provider", help: "Case-sensitive." },
+  { path: "model.thinking", label: "Thinking level", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], help: "Leave empty for the provider default." },
   { path: "key:model.provider", label: "API Key", type: "providerKey", of: "model.provider" },
-  { path: "api:model.provider", label: "接口协议", type: "providerApi", of: "model.provider" },
-  { path: "base:model.provider", label: "接口地址", type: "providerBase", of: "model.provider", help: "自建服务的 baseUrl，例如 https://example.com/v1。" },
+  { path: "api:model.provider", label: "API protocol", type: "providerApi", of: "model.provider" },
+  { path: "base:model.provider", label: "API address", type: "providerBase", of: "model.provider", help: "The baseUrl of your own service, for example https://example.com/v1." },
 ];
 
 const BACKGROUND_FIELDS = [
-  { path: "background.same", label: "后台任务使用与主模型相同的模型", type: "bool", help: "后台模型用于会话标题、上下文摘要、心跳、记忆整理和链接摘要。" },
-  { path: "backgroundModel.provider", label: "提供方", type: "provider", when: (draft) => !draft["background.same"] },
-  { path: "backgroundModel.id", label: "模型", type: "model", of: "backgroundModel.provider", when: (draft) => !draft["background.same"] },
-  { path: "backgroundModel.thinking", label: "思考强度", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], when: (draft) => !draft["background.same"] },
+  { path: "background.same", label: "Use the main model for background work", type: "bool", help: "The background model writes conversation titles, context summaries, heartbeats, memory consolidation and link summaries." },
+  { path: "backgroundModel.provider", label: "Provider", type: "provider", when: (draft) => !draft["background.same"] },
+  { path: "backgroundModel.id", label: "Model", type: "model", of: "backgroundModel.provider", when: (draft) => !draft["background.same"] },
+  { path: "backgroundModel.thinking", label: "Thinking level", type: "select", options: ["", "off", "minimal", "low", "medium", "high", "xhigh", "max"], when: (draft) => !draft["background.same"] },
   { path: "key:backgroundModel.provider", label: "API Key", type: "providerKey", of: "backgroundModel.provider", when: (draft) => !draft["background.same"] && draft["backgroundModel.provider"] !== draft["model.provider"] },
 ];
 
 const SETTINGS_TABS = [
-  { id: "model", label: "模型", sections: [{ title: "主模型", fields: MODEL_FIELDS }, { title: "后台模型", fields: BACKGROUND_FIELDS }] },
-  { id: "channel", label: "微信", sections: [{ title: "微信", status: true, fields: [
-    { path: "wechat.enabled", label: "启用微信", type: "bool", help: "关闭后不连接微信。" },
-    { path: "wechat.ownerId", label: "主人的微信号 ID", type: "text", help: "留空则使用扫码绑定的账号。只有主人的消息会得到回复。" },
+  { id: "model", label: "Model", sections: [{ title: "Main model", fields: MODEL_FIELDS }, { title: "Background model", fields: BACKGROUND_FIELDS }] },
+  { id: "channel", label: "WeChat", sections: [{ title: "WeChat", status: true, fields: [
+    { path: "wechat.enabled", label: "Enable WeChat", type: "bool", help: "When off, vexd does not connect to WeChat." },
+    { path: "wechat.ownerId", label: "Owner's WeChat id", type: "text", help: "Leave empty to use the account that scanned the QR code. Only the owner's messages are answered." },
   ] }] },
-  { id: "voice", label: "语音与链接", sections: [
-    { title: "语音转文字", fields: [
-      { path: "stt.baseUrl", label: "服务地址", type: "text", placeholder: "https://api.openai.com/v1", help: "任何兼容 OpenAI /audio/transcriptions 的服务。没有字幕的 B站和 YouTube 视频会用它转写。" },
-      { path: "stt.model", label: "模型", type: "text", placeholder: "whisper-1" },
+  { id: "voice", label: "Voice & links", sections: [
+    { title: "Speech to text", fields: [
+      { path: "stt.baseUrl", label: "Service address", type: "text", placeholder: "https://api.openai.com/v1", help: "Any service compatible with OpenAI /audio/transcriptions. Bilibili and YouTube videos without subtitles are transcribed with it." },
+      { path: "stt.model", label: "Model", type: "text", placeholder: "whisper-1" },
       { path: "stt.apiKey", label: "API Key", type: "secret" },
-      { path: "stt.language", label: "语言提示", type: "text", placeholder: "zh" },
-      { path: "stt.chunkMinutes", label: "每段时长（分钟）", type: "number", min: 1, max: 30, help: "服务限制上传大小时调小，默认 10。" },
-      { path: "stt.maxMinutes", label: "最长转写（分钟）", type: "number", min: 1, max: 600, help: "更长的视频不转写，默认 90。" },
+      { path: "stt.language", label: "Language hint", type: "text", placeholder: "zh" },
+      { path: "stt.chunkMinutes", label: "Minutes per part", type: "number", min: 1, max: 30, help: "Lower it when the service limits the upload size; default 10." },
+      { path: "stt.maxMinutes", label: "Longest video (minutes)", type: "number", min: 1, max: 600, help: "Longer videos are not transcribed; default 90." },
     ] },
-    { title: "链接读取", fields: [
-      { path: "links.bilibili.sessdata", label: "B站 SESSDATA", type: "secret", help: "登录 bilibili.com 后，在浏览器开发者工具 → Application → Cookies 里复制 SESSDATA。多数字幕需要登录才能读取；它相当于你的登录凭证，请妥善保管。保存后立即生效。" },
+    { title: "Reading links", fields: [
+      { path: "links.bilibili.sessdata", label: "Bilibili SESSDATA", type: "secret", help: "After signing in to bilibili.com, copy SESSDATA from the browser developer tools under Application → Cookies. Most subtitles need a login to read; it is as good as your login credential, so keep it safe. Takes effect as soon as it is saved." },
     ] },
-    { title: "网页搜索", fields: [
-      { path: "webSearch.provider", label: "搜索服务", type: "select", options: ["", "tavily", "searxng", "brave"], rerender: true, labels: { "": "关闭", tavily: "Tavily（每月 1000 次免费）", searxng: "SearXNG（自己部署，免费）", brave: "Brave Search（收费）" } },
-      { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave"].includes(draft["webSearch.provider"]), help: "对应所选服务的 key；也可以用环境变量 TAVILY_API_KEY 或 BRAVE_API_KEY。" },
-      { path: "webSearch.baseUrl", label: "SearXNG 地址", type: "text", placeholder: "http://searxng:8080", when: (draft) => draft["webSearch.provider"] === "searxng", help: "SearXNG 需要在 settings.yml 里开启 json 格式，部署方法见文档。" },
-    ] },
-  ] },
-  { id: "life", label: "作息", sections: [
-    { title: "心跳与整理", fields: [
-      { path: "heartbeat.every", label: "心跳间隔", type: "text", placeholder: "30m", help: "数字加 s、m、h 或 d。HEARTBEAT.md 为空时不会调用模型。" },
-      { path: "heartbeat.activeHours", label: "心跳时段", type: "times" },
-      { path: "memory.consolidateAt", label: "每日记忆整理时间", type: "time" },
-      { path: "compaction.threshold", label: "上下文压缩阈值", type: "number", min: 0.1, max: 1, step: 0.05, help: "历史超过模型上下文窗口的这个比例时压缩，默认 0.7。" },
-    ] },
-    { title: "作息与主动聊天", fields: [
-      { path: "persona.sleep", label: "休息时段", type: "times", help: "休息时段内回复更困倦，也不会主动聊天。" },
-      { path: "persona.outreach.enabled", label: "允许主动聊天", type: "bool" },
-      { path: "persona.outreach.checkEvery", label: "检查间隔", type: "text", placeholder: "30m" },
-      { path: "persona.outreach.dailyLimit", label: "每天最多主动聊几次", type: "number", min: 0 },
-      { path: "persona.outreach.socialThreshold", label: "社交需求阈值（0-100）", type: "number", min: 0, max: 100 },
-      { path: "persona.outreach.quietHours", label: "多久没聊过才主动（小时）", type: "number", min: 0 },
+    { title: "Web search", fields: [
+      { path: "webSearch.provider", label: "Search service", type: "select", options: ["", "tavily", "searxng", "brave"], rerender: true, labels: { "": "Off", tavily: "Tavily (1000 free searches a month)", searxng: "SearXNG (self-hosted, free)", brave: "Brave Search (paid)" } },
+      { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave"].includes(draft["webSearch.provider"]), help: "The key for the chosen service; the environment variable TAVILY_API_KEY or BRAVE_API_KEY also works." },
+      { path: "webSearch.baseUrl", label: "SearXNG address", type: "text", placeholder: "http://searxng:8080", when: (draft) => draft["webSearch.provider"] === "searxng", help: "SearXNG must have the json format enabled in settings.yml; see the documentation for how to deploy it." },
     ] },
   ] },
-  { id: "persona", label: "人设与记忆", files: ["SOUL.md", "USER.md", "MEMORY.md", "HEARTBEAT.md"] },
-  { id: "yaml", label: "高级", yaml: true },
+  { id: "life", label: "Routine", sections: [
+    { title: "Heartbeat and consolidation", fields: [
+      { path: "heartbeat.every", label: "Heartbeat interval", type: "text", placeholder: "30m", help: "A number followed by s, m, h or d. The model is not called while HEARTBEAT.md is empty." },
+      { path: "heartbeat.activeHours", label: "Heartbeat hours", type: "times" },
+      { path: "memory.consolidateAt", label: "Daily memory consolidation time", type: "time" },
+      { path: "compaction.threshold", label: "Context compaction threshold", type: "number", min: 0.1, max: 1, step: 0.05, help: "History is compacted once it exceeds this share of the model's context window; default 0.7." },
+    ] },
+    { title: "Rest hours and proactive chat", fields: [
+      { path: "persona.sleep", label: "Rest hours", type: "times", help: "During rest hours replies sound sleepier and there is no proactive chat." },
+      { path: "persona.outreach.enabled", label: "Allow proactive chat", type: "bool" },
+      { path: "persona.outreach.checkEvery", label: "Check interval", type: "text", placeholder: "30m" },
+      { path: "persona.outreach.dailyLimit", label: "Most proactive chats per day", type: "number", min: 0 },
+      { path: "persona.outreach.socialThreshold", label: "Social need threshold (0-100)", type: "number", min: 0, max: 100 },
+      { path: "persona.outreach.quietHours", label: "Hours of silence before reaching out", type: "number", min: 0 },
+    ] },
+  ] },
+  { id: "persona", label: "Persona & memory", files: ["SOUL.md", "USER.md", "MEMORY.md", "HEARTBEAT.md", "INSTRUCTIONS.md", "prompts/heartbeat.md", "prompts/consolidation.md", "prompts/outreach.md"] },
+  { id: "yaml", label: "Advanced", yaml: true },
 ];
 
-const FILE_LABELS = { "SOUL.md": "人设", "USER.md": "关于我", "MEMORY.md": "长期记忆", "HEARTBEAT.md": "心跳清单" };
+const FILE_LABELS = { "SOUL.md": "Persona", "USER.md": "About me", "MEMORY.md": "Memory", "HEARTBEAT.md": "Heartbeat", "INSTRUCTIONS.md": "Instructions", "prompts/heartbeat.md": "Heartbeat task", "prompts/consolidation.md": "Consolidation task", "prompts/outreach.md": "Proactive chat" };
 const FILE_HINTS = {
-  "SOUL.md": "人设、语气和行为准则，保存后下一条消息起生效。",
-  "USER.md": "它对你的了解：称呼、身份、偏好、习惯。保存后下一条消息起生效。",
-  "MEMORY.md": "提炼后的长期事实与决定，保持在 100 行以内。保存后下一条消息起生效。",
-  "HEARTBEAT.md": "定期自查清单，留空则不检查。下一次心跳起生效。",
+  "SOUL.md": "Persona, tone and rules of conduct. Takes effect from the next message.",
+  "USER.md": "What it knows about you: how to address you, who you are, preferences and habits. Takes effect from the next message.",
+  "MEMORY.md": "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message.",
+  "HEARTBEAT.md": "The periodic self-check list; leave it empty to skip checks. Takes effect from the next heartbeat.",
+  "INSTRUCTIONS.md": "The operating instructions at the top of every system prompt: workspace layout, memory conventions, approval rules. {{workspace}} becomes the workspace path. Clear the text and save to restore the built-in default. Takes effect from the next message.",
+  "prompts/heartbeat.md": "The instruction given at each heartbeat; the checklist itself is the Heartbeat file. Clear the text and save to restore the default.",
+  "prompts/consolidation.md": "The instruction for the nightly memory consolidation; {{dates}} becomes the paths of the last seven daily notes. Clear the text and save to restore the default.",
+  "prompts/outreach.md": "The instruction used when Vex starts a conversation on its own. Clear the text and save to restore the default.",
 };
-const YAML_HINT = "完整的 config.yaml。表单没有覆盖的设置（工具审批、MCP 服务、网页令牌等）在这里修改，保存后自动应用。";
+const YAML_HINT = "The full config.yaml. Change settings the forms do not cover (tool policy, MCP servers, the web token and so on) here; saving applies them automatically.";
 
 const isFormTab = (id) => !!SETTINGS_TABS.find((tab) => tab.id === id)?.sections;
 const secretPath = (field, draft) => field.type === "secret" ? field.path : `providers.${draft[field.of]}.apiKey`;
@@ -746,7 +750,7 @@ function renderField(field, draft) {
       const select = element("select");
       select.id = id;
       for (const value of field.options) {
-        const option = element("option", "", field.labels?.[value] ?? (value || "默认"));
+        const option = element("option", "", field.labels?.[value] ?? (value || "Default"));
         option.value = value;
         select.append(option);
       }
@@ -776,7 +780,7 @@ function renderField(field, draft) {
       if (!isCustomProvider(draft[field.of])) return undefined;
       const select = element("select");
       select.id = id;
-      for (const value of ["", "openai-completions", "anthropic-messages"]) { const option = element("option", "", value || "请选择"); option.value = value; select.append(option); }
+      for (const value of ["", "openai-completions", "anthropic-messages"]) { const option = element("option", "", value || "Choose"); option.value = value; select.append(option); }
       const key = `providers.${draft[field.of]}.api`;
       select.value = draft[key] ?? "";
       select.addEventListener("change", () => { draft[key] = select.value; });
@@ -803,7 +807,7 @@ function renderField(field, draft) {
       input.id = id;
       input.autocomplete = "new-password";
       input.value = state.settings.typed[path] ?? "";
-      input.placeholder = state.settings.secrets.has(path) ? "已设置，留空保持不变" : "未设置";
+      input.placeholder = state.settings.secrets.has(path) ? "Set; leave empty to keep it" : "Not set";
       input.addEventListener("input", () => { state.settings.typed[path] = input.value; });
       wrap.append(label, input);
       if (state.settings.secrets.has(path)) {
@@ -812,7 +816,7 @@ function renderField(field, draft) {
         box.type = "checkbox";
         box.checked = state.settings.cleared.has(path);
         box.addEventListener("change", () => { if (box.checked) state.settings.cleared.add(path); else state.settings.cleared.delete(path); });
-        clear.append(box, document.createTextNode("清除已保存的值"));
+        clear.append(box, document.createTextNode("Clear the saved value"));
         wrap.append(clear);
       }
       break;
@@ -845,11 +849,11 @@ function renderField(field, draft) {
         const input = element("input");
         input.type = "time";
         input.value = current[index] ?? "";
-        input.setAttribute("aria-label", index === 0 ? `${field.label}开始` : `${field.label}结束`);
+        input.setAttribute("aria-label", index === 0 ? `${field.label} start` : `${field.label} end`);
         input.addEventListener("input", () => { draft[field.path] = [inputs[0].value, inputs[1].value]; });
         return input;
       });
-      pair.append(inputs[0], document.createTextNode("至"), inputs[1]);
+      pair.append(inputs[0], document.createTextNode("to"), inputs[1]);
       wrap.append(element("span", "label", field.label), pair);
       break;
     }
@@ -871,7 +875,7 @@ function updateWechatStatus() {
   const hint = $("wechat-status");
   if (!hint) return;
   const info = state.statusInfo;
-  hint.textContent = info ? `当前状态：${WECHAT_LABELS[info.wechat] ?? info.wechat}。未绑定或已过期时，vexd 会在日志里显示二维码，用手机微信扫码即可，无需重启。` : "正在读取状态…";
+  hint.textContent = info ? `Status: ${WECHAT_LABELS[info.wechat] ?? info.wechat}. When WeChat is not linked or has expired, vexd shows a QR code in its log; scan it with WeChat on your phone, no restart needed.` : "Reading status…";
 }
 
 function renderSettingsForm() {
@@ -879,7 +883,7 @@ function renderSettingsForm() {
   form.replaceChildren();
   const tab = SETTINGS_TABS.find((item) => item.id === state.settingsTab);
   if (!tab?.sections) return;
-  if (!state.settings) { form.append(element("p", "hint", "正在读取…")); return; }
+  if (!state.settings) { form.append(element("p", "hint", "Loading…")); return; }
   for (const group of tab.sections) {
     const section = element("div", "section");
     section.append(element("h3", "", group.title));
@@ -923,8 +927,8 @@ function buildPatch(settings) {
 }
 
 function savedMessage(restarting, restartRequired) {
-  if (restarting) return "已保存，正在应用设置，几秒后自动重新连接…";
-  return restartRequired ? "已保存，重启 vexd 后生效" : "已保存，立即生效";
+  if (restarting) return "Saved; applying the settings, reconnecting automatically in a few seconds…";
+  return restartRequired ? "Saved; takes effect after vexd restarts" : "Saved; takes effect immediately";
 }
 
 function showSaved(ok, message, error) {
@@ -980,12 +984,12 @@ function openSettingsTab() {
 
 function saveSettings() {
   const tab = SETTINGS_TABS.find((item) => item.id === state.settingsTab);
-  $("settings-result").textContent = "保存中…";
+  $("settings-result").textContent = "Saving…";
   $("settings-result").className = "";
   if (tab.sections) {
     if (!state.settings) return;
     const patch = buildPatch(state.settings);
-    if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "没有改动"); return; }
+    if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "No changes"); return; }
     send({ type: "save_settings", ...patch });
   } else if (tab.files) {
     send({ type: "save_file", name: state.fileName, text: $("settings-text").value });
@@ -1086,7 +1090,7 @@ $("save-settings").addEventListener("click", saveSettings);
 
 applyTheme(currentTheme());
 renderSettingsTabs();
-$("input").placeholder = isTouchDevice() ? "说点什么…" : "说点什么…（Enter 发送，Shift+Enter 换行）";
+$("input").placeholder = isTouchDevice() ? "Say something…" : "Say something… (Enter sends, Shift+Enter adds a line)";
 setInterval(() => { if (!document.hidden) send({ type: "get_status" }); }, 20000);
 
 connect();

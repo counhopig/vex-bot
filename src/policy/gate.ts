@@ -11,7 +11,7 @@ export function createToolGate(deps: {
   return async ({ toolCall, args }, signal) => {
     const decision = deps.policy.decide(toolCall.name, args);
     if (decision === "allow") return undefined;
-    if (decision === "deny") return { block: true, reason: `工具 ${toolCall.name} 已被禁用。` };
+    if (decision === "deny") return { block: true, reason: `The tool ${toolCall.name} is disabled.` };
     if (deps.approvals.isSessionAllowed(deps.sessionKey, toolCall.name)) return undefined;
     const outcome = await deps.approvals.request({
       sessionKey: deps.sessionKey,

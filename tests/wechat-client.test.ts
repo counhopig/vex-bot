@@ -20,7 +20,7 @@ describe("WeChatClient login endpoints", () => {
 
   it("rejects a malformed QR response", async () => {
     ilink.on("/ilink/bot/get_bot_qrcode", () => ({ qrcode: "q1" }));
-    await expect(new WeChatClient({ baseUrl: ilink.baseUrl }).getQrCode()).rejects.toThrow(/格式不正确/);
+    await expect(new WeChatClient({ baseUrl: ilink.baseUrl }).getQrCode()).rejects.toThrow(/malformed/);
   });
 
   it("maps QR status values", async () => {
@@ -41,7 +41,7 @@ describe("WeChatClient login endpoints", () => {
     await expect(client.getQrStatus("q1")).resolves.toEqual({
       status: "confirmed", token: "tok", accountId: "bot1", baseUrl: "https://api2.example", userId: "owner1",
     });
-    await expect(client.getQrStatus("q1")).rejects.toThrow(/没有返回 token/);
+    await expect(client.getQrStatus("q1")).rejects.toThrow(/returned no token/);
     expect(ilink.requests[0]?.headers["ilink-app-clientversion"]).toBe("1");
     expect(ilink.requests[0]?.query.get("qrcode")).toBe("q1");
   });

@@ -62,7 +62,7 @@ export function createModelRegistry(
       if (entry) {
         if (entry.declared?.length && !entry.declared.some((m) => m.id === ref.id)) {
           throw new ModelResolutionError(
-            `提供方 ${ref.provider} 未声明模型 "${ref.id}"。已声明：${entry.declared.map((m) => m.id).join(", ")}`,
+            `Provider ${ref.provider} does not declare model "${ref.id}". Declared: ${entry.declared.map((m) => m.id).join(", ")}`,
           );
         }
         return customModel(ref.provider, entry, ref.id);
@@ -70,13 +70,13 @@ export function createModelRegistry(
       if (!base.getProvider(ref.provider)) {
         const known = base.getProviders().map((p) => p.id);
         throw new ModelResolutionError(
-          `未知的模型提供方 "${ref.provider}"。内置提供方：${known.join(", ")}；自定义提供方需在 providers.${ref.provider} 中声明 api 与 baseUrl`,
+          `Unknown model provider "${ref.provider}". Built-in providers: ${known.join(", ")}; a custom provider must declare api and baseUrl under providers.${ref.provider}`,
         );
       }
       const model = base.getModel(ref.provider, ref.id);
       if (!model) {
         const ids = base.getModels(ref.provider).map((m) => m.id);
-        throw new ModelResolutionError(`提供方 ${ref.provider} 没有模型 "${ref.id}"。可用：${ids.join(", ")}`);
+        throw new ModelResolutionError(`Provider ${ref.provider} has no model "${ref.id}". Available: ${ids.join(", ")}`);
       }
       return model;
     },

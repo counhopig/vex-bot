@@ -23,13 +23,13 @@ describe("scheduler", () => {
     await f.scheduler.create({ name: "停用", prompt: "不发送", target: "wechat", schedule: { every: "1s" }, enabled: false });
     f.advance(59_000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).not.toHaveBeenCalled();
     f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
-    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "【定时任务「cron」】整点", "scheduled", expect.any(AbortSignal));
+    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "[Scheduled task \"cron\"] 整点", "scheduled", expect.any(AbortSignal));
   });
   it("persists unique names and defaults tool targets to the source", async () => {
     const f = await fixture(); await f.scheduler.start();
     await createScheduleTool(f.scheduler, "web-one").execute("id", { action: "create", name: "提醒", prompt: "喝水", schedule: { every: "1m" } });
     expect(f.scheduler.list()[0]?.target).toBe("web-one");
-    await expect(f.scheduler.create({ name: "提醒", prompt: "重复", target: "wechat", schedule: { every: "1m" } })).rejects.toThrow("已存在");
+    await expect(f.scheduler.create({ name: "提醒", prompt: "重复", target: "wechat", schedule: { every: "1m" } })).rejects.toThrow("already exists");
     await f.scheduler.close();
     const restored = new Scheduler({ dataDir: f.dataDir, workspace: f.workspace, hooks: f.hooks, now: f.time }); schedulers.push(restored); await restored.start();
     expect(restored.list()).toHaveLength(1);
@@ -41,7 +41,7 @@ describe("scheduler", () => {
     await writeFile(join(f.dataDir, "schedules.json"), JSON.stringify([{ id: "1", name: "一次", prompt: "提醒", target: "deleted", enabled: true, schedule: { once: new Date(dueAt).toISOString() }, nextAt: dueAt }]));
     vi.mocked(f.hooks.targetExists).mockReturnValue(false);
     await f.scheduler.start(); await f.flush();
-    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "【错过的定时任务「一次」，原定 2026-10-03 11:59】提醒", "missed", expect.any(AbortSignal));
+    expect(f.hooks.deliver).toHaveBeenCalledWith("wechat", "[Missed scheduled task \"一次\", originally due 2026-10-03 11:59] 提醒", "missed", expect.any(AbortSignal));
     expect(f.scheduler.list()[0]?.enabled).toBe(false);
     await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
   });
@@ -55,7 +55,7 @@ describe("scheduler", () => {
   });
   it("rejects one-shot times in the past", async () => {
     const f = await fixture(); await f.scheduler.start();
-    await expect(f.scheduler.create({ name: "过期", prompt: "x", target: "wechat", schedule: { once: new Date(f.time() - 1000).toISOString() } })).rejects.toThrow("已过");
+    await expect(f.scheduler.create({ name: "过期", prompt: "x", target: "wechat", schedule: { once: new Date(f.time() - 1000).toISOString() } })).rejects.toThrow("in the past");
   });
   it("sets a corrupt schedule file aside and starts with no tasks", async () => {
     const f = await fixture();
@@ -86,9 +86,21 @@ describe("scheduler", () => {
     expect(f.hooks.deliverHeartbeat).toHaveBeenCalledWith("今天有预约", expect.any(AbortSignal));
     f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runTemporary).toHaveBeenCalledTimes(2);
   });
+  it("uses the owner's heartbeat and consolidation prompts", async () => {
+    const f = await fixture(); await f.scheduler.start();
+    await mkdir(join(f.workspace, "prompts"), { recursive: true });
+    await writeFile(join(f.workspace, "prompts", "heartbeat.md"), "Custom heartbeat task");
+    await writeFile(join(f.workspace, "prompts", "consolidation.md"), "Tidy up using {{dates}}");
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), "check things");
+    f.advance(30 * 60_000); await f.scheduler.tick();
+    await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledWith("Custom heartbeat task", "heartbeat", expect.any(AbortSignal)));
+    f.advance(15 * 3_600_000); await f.scheduler.tick();
+    await vi.waitFor(() => expect(vi.mocked(f.hooks.runTemporary).mock.calls.some(([text, kind]) => kind === "consolidation" && /^Tidy up using memory\/2026-10-04\.md, /.test(text))).toBe(true));
+  });
+
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {
-    const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick(); await f.flush();
-    expect(f.hooks.runTemporary).toHaveBeenCalledWith(expect.stringContaining("memory/2026-10-04.md"), "consolidation", expect.any(AbortSignal));
+    const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick();
+    await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledWith(expect.stringContaining("memory/2026-10-04.md"), "consolidation", expect.any(AbortSignal)));
     expect(vi.mocked(f.hooks.runTemporary).mock.calls[0]?.[0].match(/memory\/\d{4}-\d{2}-\d{2}\.md/g)).toHaveLength(7);
     expect(f.hooks.checkOutreach).toHaveBeenCalled();
   });

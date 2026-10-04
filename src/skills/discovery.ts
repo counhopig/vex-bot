@@ -20,7 +20,7 @@ async function readSkills(directory: string, warn?: Warn): Promise<SkillInfo[]> 
   let entries;
   try { entries = await readdir(directory, { withFileTypes: true }); }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`无法读取技能目录 ${directory}：${(error as Error).message}`);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`Cannot read the skills directory ${directory}: ${(error as Error).message}`);
     return [];
   }
   const skills: SkillInfo[] = [];
@@ -30,7 +30,7 @@ async function readSkills(directory: string, warn?: Warn): Promise<SkillInfo[]> 
     let text: string;
     try { text = await readFile(path, "utf8"); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`无法读取技能 ${path}：${(error as Error).message}`);
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") warn?.(`Cannot read the skill ${path}: ${(error as Error).message}`);
       continue;
     }
     const match = text.replace(/^\uFEFF/, "").match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
@@ -58,12 +58,12 @@ export function skillsSection(workspace: string, builtinDir?: string, warn?: War
   return async () => {
     let skills: SkillInfo[];
     try { skills = await discoverSkills({ workspace, builtinDir, warn }); }
-    catch (error) { warn?.(`技能发现失败：${(error as Error).message}`); return undefined; }
+    catch (error) { warn?.(`Skill discovery failed: ${(error as Error).message}`); return undefined; }
     if (!skills.length) return undefined;
     return [
       "## Skills",
-      "需要技能时，先用 read 读取对应 SKILL.md，再遵循其中说明运行脚本。脚本执行仍需遵守 bash 审批。",
-      ...skills.map(({ name, description, path }) => `- ${JSON.stringify(name)}：${JSON.stringify(description)}；路径：${JSON.stringify(path)}`),
+      "When a skill applies, read its SKILL.md first with the read tool, then follow it to run its scripts. Running scripts still follows bash approval.",
+      ...skills.map(({ name, description, path }) => `- ${JSON.stringify(name)}: ${JSON.stringify(description)}; path: ${JSON.stringify(path)}`),
     ].join("\n");
   };
 }

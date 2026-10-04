@@ -31,5 +31,5 @@ export function approvalDetail(toolName: string, args: unknown, workspace?: stri
   } else {
     text = JSON.stringify(args ?? {});
   }
-  return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL)}…（已截断，共 ${text.length} 字符）` : text;
+  return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL)}… (truncated; ${text.length} characters in total)` : text;
 }

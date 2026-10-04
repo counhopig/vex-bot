@@ -40,7 +40,7 @@ describe("grep", () => {
   });
 
   it("says so when nothing matches and rejects bad regexes", async () => {
-    expect(textOf(await createGrepTool(ws).execute("1", { pattern: "zzz" }))).toBe("没有匹配");
+    expect(textOf(await createGrepTool(ws).execute("1", { pattern: "zzz" }))).toBe("No matches");
     await expect(createGrepTool(ws).execute("1", { pattern: "(" })).rejects.toThrow();
   });
 
@@ -48,7 +48,7 @@ describe("grep", () => {
     await writeFile(join(ws, "many.txt"), "hit\n".repeat(300), "utf8");
     const out = textOf(await createGrepTool(ws).execute("1", { pattern: "hit", path: "many.txt" }));
     expect(out.split("\n")).toHaveLength(201);
-    expect(out.endsWith("…（结果超过 200 条，已截断）")).toBe(true);
+    expect(out.endsWith("… (more than 200 results; truncated)")).toBe(true);
   });
 });
 
@@ -73,7 +73,7 @@ describe("find", () => {
   it("lists matching files relative to the search directory", async () => {
     expect(textOf(await createFindTool(ws).execute("1", { pattern: "**/*.md" }))).toBe("MEMORY.md\nmemory/2026-10-01.md");
     expect(textOf(await createFindTool(ws).execute("1", { pattern: "*.txt", path: "memory" }))).toBe("notes.txt");
-    expect(textOf(await createFindTool(ws).execute("1", { pattern: "*.zip" }))).toBe("没有找到匹配的文件");
+    expect(textOf(await createFindTool(ws).execute("1", { pattern: "*.zip" }))).toBe("No matching files found");
   });
 });
 

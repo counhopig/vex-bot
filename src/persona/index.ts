@@ -52,7 +52,7 @@ export class Persona {
       if (!valid(parsed)) throw new Error("Invalid mood state");
       state = parsed;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") options.warn?.("mood.json 损坏，以初始值重建");
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") options.warn?.("mood.json is corrupt; rebuilding it from the initial values");
       rebuild = true;
     }
     const persona = new Persona(options, state);
@@ -133,15 +133,15 @@ export class Persona {
   }
   describe(): string {
     const s = this.snapshot(), parts: string[] = [];
-    if (s.energy < 20) parts.push("累到不想动"); else if (s.energy < 50) parts.push("有点疲惫"); else if (s.energy > 80) parts.push("精力充沛");
-    if (s.mood < 20) parts.push("心情低落"); else if (s.mood < 50) parts.push("兴致不高"); else if (s.mood > 80) parts.push("心情很好");
-    if (s.social > 80) parts.push("很想找人说话"); else if (s.social >= 50) parts.push("有点想聊天");
+    if (s.energy < 20) parts.push("You feel exhausted"); else if (s.energy < 50) parts.push("You feel a bit tired"); else if (s.energy > 80) parts.push("You are full of energy");
+    if (s.mood < 20) parts.push("You are feeling down"); else if (s.mood < 50) parts.push("You are not in high spirits"); else if (s.mood > 80) parts.push("You are in a very good mood");
+    if (s.social > 80) parts.push("You really want someone to talk to"); else if (s.social >= 50) parts.push("You feel like chatting");
     for (const f of s.feelings) {
       const fraction = Math.min(1, Math.max(0, 1 - (this.now() - f.at) / (f.hours * HOUR)));
-      if (fraction >= 0.1 && (f.mood !== 0 || f.energy !== 0)) parts.push(`${fraction > 0.66 ? "强烈的" : fraction > 0.33 ? "有些" : "淡淡的"}${f.reason}`);
+      if (fraction >= 0.1 && (f.mood !== 0 || f.energy !== 0)) parts.push(`${fraction > 0.66 ? "A strong" : fraction > 0.33 ? "Some" : "A faint"} feeling lingers: ${f.reason}`);
     }
-    if (this.isResting()) parts.push("现在是你的休息时间，语气更困倦，回复更简短");
-    return `${parts.length ? parts.join("；") + "。" : ""}情绪只影响语气与话量，不影响完成主人请求的质量。`;
+    if (this.isResting()) parts.push("It is your rest time, so sound sleepier and keep replies shorter");
+    return `${parts.length ? parts.join(". ") + ". " : ""}Mood only affects tone and how much you say, never the quality of the owner's requests.`;
   }
   save(): Promise<void> {
     this.update();

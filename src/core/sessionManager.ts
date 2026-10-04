@@ -40,8 +40,8 @@ export class SessionManager {
   }
 
   get(key: string): Promise<Session> {
-    if (this.closing) return Promise.reject(new Error("vexd 正在关闭，无法打开会话。"));
-    if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`没有这个会话：${key}`));
+    if (this.closing) return Promise.reject(new Error("vexd is shutting down and cannot open a conversation."));
+    if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`No such conversation: ${key}`));
     const existing = this.sessions.get(key);
     if (existing) return this.availableSession(key, existing);
     let transcriptPath: string;
@@ -57,14 +57,14 @@ export class SessionManager {
   }
 
   assertAvailable(key: string): void {
-    if (this.deleting.has(key)) throw new UnknownSessionError(`没有这个会话：${key}`);
+    if (this.deleting.has(key)) throw new UnknownSessionError(`No such conversation: ${key}`);
     this.transcriptPath(key);
   }
 
   windowLabel(key: string): string {
-    if (key === WECHAT_SESSION_KEY) return "微信";
+    if (key === WECHAT_SESSION_KEY) return "WeChat";
     const meta = this.index.get(key.slice(WEB_PREFIX.length));
-    return `网页会话「${meta?.title ?? "未命名"}」`;
+    return `WebChat conversation "${meta?.title ?? "untitled"}"`;
   }
 
   listWeb(): WebSessionMeta[] {
@@ -79,14 +79,14 @@ export class SessionManager {
 
   async renameWeb(id: string, title: string): Promise<void> {
     const updated = await this.index.update(id, { title: title.trim().slice(0, 100), titled: true });
-    if (!updated) throw new UnknownSessionError(`没有这个网页会话：${id}`);
+    if (!updated) throw new UnknownSessionError(`No such WebChat conversation: ${id}`);
     this.untitledFirstMessage.delete(id);
     this.opts.bus.emit({ type: "sessions_changed" });
   }
 
   async deleteWeb(id: string): Promise<void> {
     const key = webSessionKey(id);
-    if (!this.index.get(id) || this.deleting.has(key)) throw new UnknownSessionError(`没有这个网页会话：${id}`);
+    if (!this.index.get(id) || this.deleting.has(key)) throw new UnknownSessionError(`No such WebChat conversation: ${id}`);
     const transcriptPath = this.transcriptPath(key);
     this.deleting.add(key);
     const loaded = this.sessions.get(key);
@@ -127,7 +127,7 @@ export class SessionManager {
       const id = key.slice(WEB_PREFIX.length);
       if (this.index.get(id)) return join(this.opts.paths.webSessions, `${id}.jsonl`);
     }
-    throw new UnknownSessionError(`没有这个会话：${key}`);
+    throw new UnknownSessionError(`No such conversation: ${key}`);
   }
 
   private availableSession(key: string, opening: Promise<Session>): Promise<Session> {

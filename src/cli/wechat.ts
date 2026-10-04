@@ -10,9 +10,9 @@ export async function runWeChatLogin(
 ): Promise<void> {
   const { config } = await loadConfig(paths);
   const result = await linkWeChat({ paths, baseUrl: opts.baseUrl ?? config.wechat.baseUrl, print, login: opts });
-  print(result.userId ? `已绑定微信，主人是扫码的这个微信号（${result.userId}）。` : "已绑定微信。");
+  print(result.userId ? `WeChat linked; the owner is the account that scanned the code (${result.userId}).` : "WeChat linked.");
   if (!result.userId && !config.wechat.ownerId) {
-    print("没有拿到扫码人的微信 id：请在 config.yaml 中设置 wechat.ownerId，否则 vexd 不会回复任何微信消息。");
+    print("Could not read the scanning account's WeChat id: set wechat.ownerId in config.yaml, otherwise vexd will not answer any WeChat message.");
   }
-  if (opts.restartHint !== false) print("vexd 运行中会在几秒内自动接入。");
+  if (opts.restartHint !== false) print("A running vexd will connect within a few seconds.");
 }

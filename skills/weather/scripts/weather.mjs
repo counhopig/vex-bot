@@ -1,15 +1,15 @@
 import { pathToFileURL } from "node:url";
 
 export async function queryWeather(location, fetchFn = fetch) {
-  if (typeof location !== "string" || !location.trim()) throw new Error("请提供城市名或经纬度");
+  if (typeof location !== "string" || !location.trim()) throw new Error("Provide a city name or coordinates");
   const url = new URL(`https://wttr.in/${encodeURIComponent(location.trim())}`);
   url.searchParams.set("format", "j1");
   url.searchParams.set("lang", "zh");
   const response = await fetchFn(url, { signal: AbortSignal.timeout(15_000), redirect: "error" });
-  if (!response.ok) throw new Error(`天气服务返回 HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`The weather service returned HTTP ${response.status}`);
   const data = await response.json();
   const current = data.current_condition?.[0];
-  if (!current || !Array.isArray(data.weather)) throw new Error("天气服务返回无效数据");
+  if (!current || !Array.isArray(data.weather)) throw new Error("The weather service returned invalid data");
   return {
     location: data.nearest_area?.[0]?.areaName?.[0]?.value ?? location,
     current: {

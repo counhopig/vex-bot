@@ -122,11 +122,11 @@ export class Session {
       .catch((err: unknown) => {
         this.runFailed = true;
         this.opts.onError?.(err);
-        if (this.runSource !== "主动聊天" || this.pendingOwner) this.opts.emit({ kind: "error", message: `处理消息时出错：${err instanceof Error ? err.message : String(err)}` });
+        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
       })
       .finally(() => {
         this.current = undefined;
-        this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "主动聊天" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
+        this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "proactive chat" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
         this.pendingOwner = 0;
         for (const queued of this.afterStop.splice(0)) this.send(queued.text, queued.source);
       });
@@ -158,7 +158,7 @@ export class Session {
   async injectAssistant(text: string, signal?: AbortSignal): Promise<void> {
     while (this.busy) {
       await new Promise<void>((resolve, reject) => {
-        const aborted = () => { signal?.removeEventListener("abort", aborted); reject(signal?.reason ?? new Error("已取消")); };
+        const aborted = () => { signal?.removeEventListener("abort", aborted); reject(signal?.reason ?? new Error("Cancelled")); };
         signal?.addEventListener("abort", aborted, { once: true });
         if (signal?.aborted) { aborted(); return; }
         this.whenIdle().then(() => { signal?.removeEventListener("abort", aborted); resolve(); }, err => { signal?.removeEventListener("abort", aborted); reject(err); });
@@ -166,7 +166,7 @@ export class Session {
       signal?.throwIfAborted();
     }
     signal?.throwIfAborted();
-    if (this.closing) throw new Error("会话正在关闭");
+    if (this.closing) throw new Error("The conversation is closing");
     const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text }],
       api: this.opts.model.api, provider: this.opts.model.provider, model: this.opts.model.id,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -235,9 +235,9 @@ export class Session {
       if (this.stopRequested) return;
       if (attempt > attempts) {
         this.runFailed = true;
-        const error = new Error(`模型调用失败：${last.errorMessage ?? "未知错误"}`);
+        const error = new Error(`Model call failed: ${last.errorMessage ?? "unknown error"}`);
         this.opts.onError?.(error);
-        if (this.runSource !== "主动聊天" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
+        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
         return;
       }
       const backoff = new AbortController();
@@ -274,7 +274,7 @@ export class Session {
         } else if (message.role === "assistant") {
           this.lastResponse = message;
           const text = assistantText(message);
-          if ((text || message.stopReason === "aborted") && !(this.runSource === "主动聊天" && !this.pendingOwner && message.stopReason === "aborted")) {
+          if ((text || message.stopReason === "aborted") && !(this.runSource === "proactive chat" && !this.pendingOwner && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }
         }
@@ -293,9 +293,9 @@ export class Session {
         return;
       case "tool_execution_update":
         const details = event.partialResult.details;
-        const progress = details?.type === "tool_execution_start" ? `开始 ${details.toolName}：${summarizeArgs(details.toolName, details.args)}`
-          : details?.type === "tool_execution_end" ? `${details.toolName} ${details.isError ? "失败" : "完成"}`
-          : details?.type === "tool_execution_update" ? `${details.toolName} 执行中` : "";
+        const progress = details?.type === "tool_execution_start" ? `Started ${details.toolName}: ${summarizeArgs(details.toolName, details.args)}`
+          : details?.type === "tool_execution_end" ? `${details.toolName} ${details.isError ? "failed" : "finished"}`
+          : details?.type === "tool_execution_update" ? `${details.toolName} running` : "";
         this.opts.emit({ kind: "tool_update", toolCallId: event.toolCallId, toolName: event.toolName,
           text: progress ? `\n${progress}\n` : event.partialResult.content.flatMap((c: { type: string; text?: string }) => c.type === "text" ? [c.text ?? ""] : []).join("") });
         return;
@@ -319,7 +319,7 @@ function withSystemPrompt(messages: AgentMessage[], prompt: string): AgentMessag
 
 function contentText(content: string | (TextContent | ImageContent)[]): string {
   if (typeof content === "string") return content;
-  return content.map((c) => (c.type === "text" ? c.text : "[图片]")).join("");
+  return content.map((c) => (c.type === "text" ? c.text : "[image]")).join("");
 }
 
 function assistantText(message: AssistantMessage): string {

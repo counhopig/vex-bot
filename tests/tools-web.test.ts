@@ -36,7 +36,7 @@ describe("public webpage access", () => {
   });
   it("blocks redirects to internal hosts before making a second request", async () => {
     const request = vi.fn(async () => ({ status: 302, headers: { location: "http://127.0.0.1/private" }, body: "" }));
-    await expect(fetchPublicPage("https://example.com", { request })).rejects.toThrow("内网");
+    await expect(fetchPublicPage("https://example.com", { request })).rejects.toThrow("private");
     expect(request).toHaveBeenCalledTimes(1);
   });
   it("follows relative redirects and limits loops", async () => {
@@ -44,7 +44,7 @@ describe("public webpage access", () => {
       ? { status: 200, headers: {}, body: "ok" }
       : { status: 302, headers: { location: "/next" }, body: "" });
     expect((await fetchPublicPage("https://example.com", { request })).url).toBe("https://example.com/next");
-    await expect(fetchPublicPage("https://example.com", { request: async () => ({ status: 302, headers: { location: "/loop" }, body: "" }) })).rejects.toThrow("5 次");
+    await expect(fetchPublicPage("https://example.com", { request: async () => ({ status: 302, headers: { location: "/loop" }, body: "" }) })).rejects.toThrow("5 times");
   });
   it("converts headings, links and code to Markdown without scripts", async () => {
     const tool = createWebFetchTool({ request: async () => ({ status: 200, headers: { "content-type": "text/html" },
@@ -85,9 +85,9 @@ describe("configured Tavily and SearXNG search", () => {
     expect(url.searchParams.get("language")).toBe("cn");
     expect(JSON.parse((result.content[0] as { text: string }).text).results).toHaveLength(1);
     await expect(createWebSearchTool({ provider: "searxng" }).execute("1", { query: "q" })).rejects.toThrow("baseUrl");
-    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "not a url" }).execute("1", { query: "q" })).rejects.toThrow("有效的地址");
+    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "not a url" }).execute("1", { query: "q" })).rejects.toThrow("valid address");
     await expect(createWebSearchTool({ provider: "searxng", baseUrl: "http://s" }, { fetch: async () => new Response("", { status: 403 }) }).execute("1", { query: "q" })).rejects.toThrow("search.formats");
-    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "http://127.0.0.1:1" }).execute("1", { query: "q" })).rejects.toThrow("无法连接搜索服务（searxng）");
+    await expect(createWebSearchTool({ provider: "searxng", baseUrl: "http://127.0.0.1:1" }).execute("1", { query: "q" })).rejects.toThrow("Cannot reach the search service (searxng)");
   });
 });
 
@@ -102,8 +102,8 @@ describe("configured Brave search", () => {
     expect(result.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("Snippet") });
   });
   it("reports missing config, unsupported providers and HTTP failure", async () => {
-    await expect(createWebSearchTool().execute("1", { query: "q" })).rejects.toThrow("配置");
-    await expect(createWebSearchTool({ provider: "unsupported" as "brave" }).execute("1", { query: "q" })).rejects.toThrow("brave、tavily、searxng");
+    await expect(createWebSearchTool().execute("1", { query: "q" })).rejects.toThrow("Configure");
+    await expect(createWebSearchTool({ provider: "unsupported" as "brave" }).execute("1", { query: "q" })).rejects.toThrow("brave, tavily, searxng");
     const tool = createWebSearchTool({ provider: "brave", apiKey: "test" }, { fetch: async () => new Response("secret", { status: 403 }) });
     await expect(tool.execute("1", { query: "q" })).rejects.toThrow("HTTP 403");
   });

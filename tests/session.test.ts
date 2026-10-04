@@ -97,7 +97,7 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
     const session = await open({ retry: { attempts: 0, baseDelayMs: 1 } });
-    session.send("internal", "主动聊天");
+    session.send("internal", "proactive chat");
     await session.whenIdle();
     expect(events.some(e => e.kind === "error")).toBe(false);
     expect(events.at(-1)).toMatchObject({ kind: "busy", busy: false, discardReply: true });
@@ -131,7 +131,7 @@ describe("Session", () => {
     faux.setResponses([fauxAssistantMessage(fauxToolCall("echo", { text: "x" }, { id: "progress" }), { stopReason: "toolUse" }), fauxAssistantMessage("done")]);
     const session = await open({ tools: [progressing] });
     session.send("run"); await session.whenIdle();
-    expect(events).toContainEqual({ kind: "tool_update", toolCallId: "progress", toolName: "echo", text: "\n开始 read：MEMORY.md\n" });
+    expect(events).toContainEqual({ kind: "tool_update", toolCallId: "progress", toolName: "echo", text: "\nStarted read: MEMORY.md\n" });
   });
 
   it("restores history from the transcript", async () => {
@@ -184,11 +184,11 @@ describe("Session", () => {
         return fauxAssistantMessage(`model saw: ${text}`);
       },
     ]);
-    const session = await open({ beforeToolCall: async () => ({ block: true, reason: "主人拒绝了这次 echo 调用。" }) });
+    const session = await open({ beforeToolCall: async () => ({ block: true, reason: "The owner denied this echo call." }) });
     session.send("go");
     await session.whenIdle();
     expect(events.find((e) => e.kind === "tool_end")).toMatchObject({ isError: true });
-    expect(events.at(-2)).toMatchObject({ text: "model saw: 主人拒绝了这次 echo 调用。" });
+    expect(events.at(-2)).toMatchObject({ text: "model saw: The owner denied this echo call." });
   });
 
   it("injects a message sent while busy into the same run", async () => {
@@ -242,7 +242,7 @@ describe("Session", () => {
     const session = await open();
     session.send("go");
     await session.whenIdle();
-    expect(events).toContainEqual({ kind: "error", message: "模型调用失败：boom" });
+    expect(events).toContainEqual({ kind: "error", message: "Model call failed: boom" });
     expect(faux.getPendingResponseCount()).toBe(0);
     expect(session.history().items.map((i) => i.kind)).toEqual(["user"]);
   });

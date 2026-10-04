@@ -19,9 +19,9 @@ export async function run(command, args, { signal, timeoutMs = 600_000 } = {}) {
   try {
     await execFileAsync(command, args, { signal, timeout: timeoutMs, maxBuffer: 10_000_000 });
   } catch (error) {
-    if (error.code === "ENOENT") throw new Error(`没有找到 ${command}，转写音频需要先安装它`);
+    if (error.code === "ENOENT") throw new Error(`${command} was not found; install it to transcribe audio`);
     const detail = String(error.stderr ?? error.message).trim().split("\n").slice(-3).join(" ");
-    throw new Error(`${command} 运行失败：${detail}`);
+    throw new Error(`${command} failed: ${detail}`);
   }
 }
 
@@ -37,16 +37,16 @@ export async function transcribeFile(path, stt, { fetchFn = fetch, signal } = {}
     body: form,
     signal: AbortSignal.any([AbortSignal.timeout(300_000), ...(signal ? [signal] : [])]),
   });
-  if (!response.ok) throw new Error(`语音转写服务返回 HTTP ${response.status}：${(await response.text()).slice(0, 200)}`);
+  if (!response.ok) throw new Error(`The speech-to-text service returned HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
   const data = await response.json();
   return String(data.text ?? "").trim();
 }
 
 async function downloadAudio({ url, headers }, target, { fetchFn = fetch, signal }) {
-  if (!url.startsWith("https:") || !hostMatches(url, AUDIO_HOSTS)) throw new Error("音频地址不在允许的域名内");
+  if (!url.startsWith("https:") || !hostMatches(url, AUDIO_HOSTS)) throw new Error("The audio address is not on an allowed domain");
   const response = await fetchFn(url, { headers, signal: AbortSignal.any([AbortSignal.timeout(600_000), ...(signal ? [signal] : [])]) });
-  if (!response.ok || !response.body) throw new Error(`下载音频失败：HTTP ${response.status}`);
-  if (Number(response.headers.get("content-length")) > MAX_DOWNLOAD_BYTES) throw new Error("音频文件过大");
+  if (!response.ok || !response.body) throw new Error(`Downloading the audio failed: HTTP ${response.status}`);
+  if (Number(response.headers.get("content-length")) > MAX_DOWNLOAD_BYTES) throw new Error("The audio file is too large");
   await pipeline(Readable.fromWeb(response.body), createWriteStream(target));
 }
 
@@ -56,7 +56,7 @@ async function downloadAudio({ url, headers }, target, { fetchFn = fetch, signal
  */
 export async function transcribeVideo(content, stt, { runCommand = run, fetchFn, signal } = {}) {
   const maxMinutes = stt.maxMinutes ?? DEFAULT_MAX_MINUTES;
-  if (content.durationSeconds && content.durationSeconds > maxMinutes * 60) throw new Error(`视频时长超过 ${maxMinutes} 分钟上限，不转写`);
+  if (content.durationSeconds && content.durationSeconds > maxMinutes * 60) throw new Error(`The video is longer than the ${maxMinutes}-minute limit and is not transcribed`);
   const dir = await mkdtemp(join(tmpdir(), "vex-stt-"));
   try {
     if (content.audioSource) {
@@ -65,11 +65,11 @@ export async function transcribeVideo(content, stt, { runCommand = run, fetchFn,
       await runCommand("yt-dlp", ["--no-playlist", "--no-progress", "-q", "-f", "bestaudio/best", "--js-runtimes", "node", "-o", join(dir, "source.%(ext)s"), content.url], { signal });
     }
     const source = (await readdir(dir)).find((name) => name.startsWith("source."));
-    if (!source) throw new Error("没有取到音频");
+    if (!source) throw new Error("No audio was obtained");
     const chunkSeconds = (stt.chunkMinutes ?? DEFAULT_CHUNK_MINUTES) * 60;
     await runCommand("ffmpeg", ["-v", "error", "-i", join(dir, source), "-vn", "-ac", "1", "-b:a", "48k", "-f", "segment", "-segment_time", String(chunkSeconds), join(dir, "part%03d.mp3")], { signal });
     const parts = (await readdir(dir)).filter((name) => /^part\d+\.mp3$/.test(name)).sort();
-    if (!parts.length) throw new Error("没有取到音频");
+    if (!parts.length) throw new Error("No audio was obtained");
     const texts = await mapLimited(parts, CONCURRENCY, (name) => transcribeFile(join(dir, name), stt, { fetchFn, signal }));
     return texts.filter(Boolean).join("\n");
   } finally {

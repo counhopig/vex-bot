@@ -29,7 +29,7 @@ describe("buildChildEnv", () => {
 describe("truncateMiddle", () => {
   it("keeps short text and elides the middle of long text", () => {
     expect(truncateMiddle("abc", 10)).toBe("abc");
-    expect(truncateMiddle("aaaaXXXXbbbb", 8)).toBe("aaaa\n…（省略 4 个字符）…\nbbbb");
+    expect(truncateMiddle("aaaaXXXXbbbb", 8)).toBe("aaaa\n… (4 characters omitted) …\nbbbb");
   });
 });
 
@@ -47,7 +47,7 @@ describe("bash tool", () => {
 
   it("reports an empty output explicitly", async () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
-    expect(textOf(await tool.execute("1", { command: "true" }))).toBe("(无输出)");
+    expect(textOf(await tool.execute("1", { command: "true" }))).toBe("(no output)");
   });
 
   it("does not leak secrets from the parent environment", async () => {
@@ -64,13 +64,13 @@ describe("bash tool", () => {
 
   it("throws with output and exit code on failure", async () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
-    await expect(tool.execute("1", { command: "echo bad; exit 3" })).rejects.toThrow("bad\n\n[退出码 3]");
+    await expect(tool.execute("1", { command: "echo bad; exit 3" })).rejects.toThrow("bad\n\n[exit code 3]");
   });
 
   it("kills the command on timeout", async () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
     const started = Date.now();
-    await expect(tool.execute("1", { command: "echo start; sleep 30", timeout: 1 })).rejects.toThrow(/超时（1 秒）/);
+    await expect(tool.execute("1", { command: "echo start; sleep 30", timeout: 1 })).rejects.toThrow(/timed out after 1 seconds/);
     expect(Date.now() - started).toBeLessThan(5000);
   });
 
@@ -78,7 +78,7 @@ describe("bash tool", () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 200);
-    await expect(tool.execute("1", { command: "sleep 30" }, controller.signal)).rejects.toThrow("命令已中断");
+    await expect(tool.execute("1", { command: "sleep 30" }, controller.signal)).rejects.toThrow("Command interrupted");
   });
 
   it.skipIf(spawnSync("setsid", ["true"]).status !== 0).each(["timeout", "abort"])(
@@ -90,7 +90,7 @@ describe("bash tool", () => {
       const abortTimer = reason === "abort" ? setTimeout(() => controller.abort(), 300) : undefined;
       try {
         const result = tool.execute("1", { command: "setsid sleep 30 & echo $! > escaped.pid; echo start; sleep 30", timeout: 1 }, controller.signal);
-        await expect(result).rejects.toThrow(reason === "timeout" ? /超时（1 秒）.*已终止\nstart/s : "命令已中断");
+        await expect(result).rejects.toThrow(reason === "timeout" ? /timed out after 1 seconds and was terminated\nstart/s : "Command interrupted");
         expect(Date.now() - started).toBeLessThan(2500);
       } finally {
         clearTimeout(abortTimer);
@@ -104,7 +104,7 @@ describe("bash tool", () => {
     const tool = createBashTool({ workspace: ws, envPassthrough: [] });
     const text = textOf(await tool.execute("1", { command: "head -c 100000 /dev/zero | tr '\\0' a; echo; echo END" }));
     expect(text.length).toBeLessThan(31_000);
-    expect(text).toContain("…（省略");
+    expect(text).toContain("… (");
     expect(text.endsWith("END\n")).toBe(true);
   });
 });

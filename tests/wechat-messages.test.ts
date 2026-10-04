@@ -21,7 +21,7 @@ describe("extractText", () => {
         { type: 99 },
         { type: 1, text_item: { text: "  " } },
       ]),
-    ).toBe("看这个\n[图片]\n语音转文字\n[语音]\n[文件]\n[视频]");
+    ).toBe("看这个\n[image]\n语音转文字\n[voice]\n[file]\n[video]");
   });
 });
 
@@ -71,7 +71,7 @@ describe("formatApprovalPrompt", () => {
   const request: ApprovalRequest = {
     id: "a1",
     sessionKey: "web:1",
-    windowLabel: "网页会话「整理」",
+    windowLabel: "WebChat conversation 'Tidy'",
     toolName: "bash",
     summary: "ls",
     detail: "ls -la",
@@ -81,14 +81,14 @@ describe("formatApprovalPrompt", () => {
 
   it("names the source, tool, command and deadline", () => {
     expect(formatApprovalPrompt(request, 1, "Asia/Shanghai")).toBe(
-      "【需要你批准】网页会话「整理」想执行 bash：\nls -la\n回复 /y 允许，/ya 本会话总是允许，/n 拒绝（14:10 前不回复将自动拒绝）",
+      "[Approval needed] WebChat conversation 'Tidy' wants to run bash:\nls -la\nReply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by 14:10)",
     );
   });
 
   it("mentions the queue and truncates long details", () => {
     const text = formatApprovalPrompt({ ...request, detail: "x".repeat(2000) }, 3, "Asia/Shanghai");
-    expect(text).toContain(`${"x".repeat(1500)}\n…（内容过长，完整内容请在网页查看）`);
-    expect(text.endsWith("（共有 3 条待批准，按先后顺序处理）")).toBe(true);
+    expect(text).toContain(`${"x".repeat(1500)}\n… (content too long; see the full text in WebChat)`);
+    expect(text.endsWith("(3 approvals are pending; they are handled in order)")).toBe(true);
     expect(text.length).toBeLessThan(2000);
   });
 
