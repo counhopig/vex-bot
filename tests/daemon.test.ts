@@ -289,18 +289,18 @@ describe("startDaemon", () => {
     expect("warning" in saved && saved.warning).toBeFalsy();
   });
 
-  it("opens prompt files with their default text and restores it when the text is cleared", async () => {
+  it("lists, opens and saves the daily notes", async () => {
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await writeFile(join(dir, "workspace", "memory", "2026-10-04.md"), "older");
+    await writeFile(join(dir, "workspace", "memory", "2026-10-05.md"), "# 2026-10-05\n- deploy cmp");
     client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
-    client.send({ type: "get_file", name: "prompts/outreach.md" });
-    expect(await client.waitFor((m) => m.type === "file" && m.name === "prompts/outreach.md")).toMatchObject({ text: expect.stringContaining("Proactive chat") });
-    client.send({ type: "save_file", name: "prompts/outreach.md", text: "Say hello warmly." });
+    client.send({ type: "list_notes" });
+    expect(await client.waitFor((m) => m.type === "notes")).toEqual({ type: "notes", names: ["memory/2026-10-05.md", "memory/2026-10-04.md"] });
+    client.send({ type: "get_file", name: "memory/2026-10-05.md" });
+    expect(await client.waitFor((m) => m.type === "file")).toEqual({ type: "file", name: "memory/2026-10-05.md", text: "# 2026-10-05\n- deploy cmp" });
+    client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "- deploy cmp on Friday" });
     await client.waitFor((m) => m.type === "file_saved" && m.ok);
-    expect(await readFile(join(dir, "workspace", "prompts", "outreach.md"), "utf8")).toBe("Say hello warmly.");
-    client.send({ type: "save_file", name: "prompts/outreach.md", text: "" });
-    await client.waitFor((m) => m.type === "file_saved" && m.ok);
-    client.send({ type: "get_file", name: "prompts/outreach.md" });
-    expect(await client.waitFor((m) => m.type === "file" && m.text.includes("Proactive chat") && m.text !== "Say hello warmly.")).toBeTruthy();
+    expect(await readFile(join(dir, "workspace", "memory", "2026-10-05.md"), "utf8")).toBe("- deploy cmp on Friday");
   });
 
   it("lists, creates, updates and deletes scheduled tasks for the settings page", async () => {

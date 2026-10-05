@@ -1,8 +1,8 @@
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WORKSPACE_TEMPLATES } from "../src/workspace/templates.js";
-import { ensureWorkspace, readWorkspaceFile, residentLimitWarning } from "../src/workspace/workspace.js";
+import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning } from "../src/workspace/workspace.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -32,6 +32,15 @@ describe("ensureWorkspace", () => {
 describe("readWorkspaceFile", () => {
   it("returns an empty string for a missing file", async () => {
     expect(await readWorkspaceFile(dir, "nope.md")).toBe("");
+  });
+});
+
+describe("listDailyNotes", () => {
+  it("lists only dated notes, newest first", async () => {
+    expect(await listDailyNotes(dir)).toEqual([]);
+    await mkdir(join(dir, "memory", "2026-10-06.md"), { recursive: true });
+    for (const name of ["2026-10-04.md", "2026-10-05.md", "draft.md", "2026-10-05.txt"]) await writeFile(join(dir, "memory", name), "x");
+    expect(await listDailyNotes(dir)).toEqual(["memory/2026-10-06.md", "memory/2026-10-05.md", "memory/2026-10-04.md"]);
   });
 });
 

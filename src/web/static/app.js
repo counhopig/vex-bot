@@ -17,6 +17,7 @@ const state = {
   settingsTab: "model",
   filePage: "soul",
   fileAreas: new Map(),
+  notes: null,
   pendingSaves: 0,
   saveWarnings: [],
   schedules: null,
@@ -109,6 +110,9 @@ function handle(msg) {
       break;
     case "file":
       if (state.fileAreas.has(msg.name)) state.fileAreas.get(msg.name).value = msg.text;
+      break;
+    case "notes":
+      renderNotes(msg.names);
       break;
     case "config_saved":
       showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
@@ -717,13 +721,10 @@ const SETTINGS_TABS = [
 const FILE_PAGES = [
   { id: "soul", label: "Persona", files: [{ name: "SOUL.md", hint: "Persona, tone and rules of conduct. Takes effect from the next message." }] },
   { id: "user", label: "About me", files: [{ name: "USER.md", hint: "What it knows about you: how to address you, who you are, preferences and habits. Takes effect from the next message." }] },
-  { id: "memory", label: "Memory", files: [{ name: "MEMORY.md", hint: "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message." }] },
-  { id: "background", label: "Background tasks", files: [
-    { name: "HEARTBEAT.md", title: "Heartbeat checklist", hint: "Checked at every heartbeat; write any instructions for the heartbeat here too. Leave it empty to skip the checks." },
-    { name: "prompts/consolidation.md", title: "Memory consolidation", hint: "The nightly consolidation task; {{dates}} becomes the paths of the last seven daily notes. Clear the text and save to restore the default." },
-    { name: "prompts/outreach.md", title: "Proactive chat", hint: "The instruction used when Vex starts a conversation on its own. Clear the text and save to restore the default." },
-  ] },
+  { id: "memory", label: "Memory", notes: true, files: [{ name: "MEMORY.md", title: "Long-term memory", hint: "Distilled long-term facts and decisions, kept under 100 lines. Takes effect from the next message." }] },
+  { id: "heartbeat", label: "Heartbeat", files: [{ name: "HEARTBEAT.md", hint: "Checked at every heartbeat; write any instructions for the heartbeat here too. Leave it empty to skip the checks." }] },
 ];
+const NOTES_HINT = "What Vex noted during conversations, one file per day. Every night the memory consolidation distils them into long-term memory.";
 const YAML_HINT = "The full config.yaml. Change settings the forms do not cover (tool policy, MCP servers, the web token and so on) here; saving applies them automatically.";
 
 const isFormTab = (id) => !!SETTINGS_TABS.find((tab) => tab.id === id)?.sections;
@@ -986,8 +987,9 @@ function renderFileTabs() {
 function renderFileEditors(page) {
   const box = $("file-editors");
   box.replaceChildren();
-  box.className = page.files.length > 1 ? "multi" : "";
+  box.className = page.files.length > 1 || page.notes ? "multi" : "";
   state.fileAreas = new Map();
+  state.notes = null;
   for (const file of page.files) {
     const section = element("div", "editor");
     if (file.title) section.append(element("h3", "", file.title));
@@ -999,6 +1001,45 @@ function renderFileEditors(page) {
     state.fileAreas.set(file.name, area);
   }
   for (const file of page.files) send({ type: "get_file", name: file.name });
+  if (page.notes) {
+    const section = element("div", "editor");
+    const select = element("select");
+    select.id = "note-select";
+    select.setAttribute("aria-label", "Daily note");
+    const area = element("textarea", "file-text");
+    area.spellcheck = false;
+    const empty = element("p", "hint", "No daily notes yet.");
+    select.hidden = area.hidden = empty.hidden = true;
+    select.addEventListener("change", () => openNote(select.value));
+    section.append(element("h3", "", "Daily notes"), element("p", "hint", NOTES_HINT), select, area, empty);
+    box.append(section);
+    state.notes = { select, area, empty, name: null };
+    send({ type: "list_notes" });
+  }
+}
+
+function renderNotes(names) {
+  if (!state.notes) return;
+  const { select, area, empty } = state.notes;
+  select.replaceChildren();
+  for (const name of names) {
+    const option = element("option", "", name.slice("memory/".length, -".md".length));
+    option.value = name;
+    select.append(option);
+  }
+  select.hidden = area.hidden = !names.length;
+  empty.hidden = !!names.length;
+  if (names.length) openNote(names[0]);
+}
+
+function openNote(name) {
+  const notes = state.notes;
+  if (notes.name) state.fileAreas.delete(notes.name);
+  notes.name = name;
+  notes.select.value = name;
+  notes.area.value = "";
+  state.fileAreas.set(name, notes.area);
+  send({ type: "get_file", name });
 }
 
 function openSettingsTab() {
@@ -1207,10 +1248,9 @@ function saveSettings() {
     if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "No changes"); return; }
     send({ type: "save_settings", ...patch });
   } else if (tab.pages) {
-    const page = FILE_PAGES.find((item) => item.id === state.filePage);
-    state.pendingSaves = page.files.length;
+    state.pendingSaves = state.fileAreas.size;
     state.saveWarnings = [];
-    for (const file of page.files) send({ type: "save_file", name: file.name, text: state.fileAreas.get(file.name).value });
+    for (const [name, area] of state.fileAreas) send({ type: "save_file", name, text: area.value });
   } else {
     send({ type: "save_config", text: $("settings-text").value });
   }

@@ -20,7 +20,7 @@ src/
 ├── scheduler/             # Persistent schedules and temporary background turns
 ├── index/                 # Memory indexing, tokenization and search
 ├── persona/               # Mood, rest and proactive conversation state
-├── workspace/             # Owner files, templates and editable prompts
+├── workspace/             # Owner files, templates and daily notes
 ├── skills/                # Skill discovery and prompt integration
 ├── store/                 # Atomic writes and append-only JSONL
 ├── providers/             # Model registration and streaming
@@ -35,7 +35,7 @@ src/
 | Change a streamed event | `core/events.ts`, `core/session.ts`, `channels/wechat/channel.ts`, `web/static/app.js` |
 | Add a browser command | `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change editable settings | `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
-| Add an editable prompt | `workspace/prompts.ts`, `workspace/workspace.ts`, `protocol/messages.ts`, `daemon.ts`, `web/static/app.js` |
+| Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
 
@@ -47,7 +47,7 @@ src/
 - Validate incoming browser messages with `parseClientMessage`; keep outgoing responses in `ServerMessage`.
 - Browser Markdown uses text nodes and validated links; dynamic content uses `textContent` or constructed DOM nodes.
 - Settings forms accept only `ALLOWED` paths, return secret presence separately, preserve unknown YAML keys/comments and validate the complete resulting configuration.
-- Prompt filenames, workspace access, protocol literals and browser controls form one contract. `loadPrompt` reads fresh, falls back for missing/empty files and substitutes named placeholders.
+- Workspace file names in `WorkspaceFileName` (fixed names plus the `memory/YYYY-MM-DD.md` pattern) are the only paths WebChat can read or write; `listDailyNotes` uses the same pattern. Keep both and the browser pages in step.
 - Rebuild the system prompt before each model request so workspace content, time and window labels remain current.
 
 ## INVARIANTS AND ANTI-PATTERNS
@@ -64,5 +64,5 @@ src/
 - Credential changes are reconciled by stopping the previous channel before starting its replacement; missing/expired login triggers the runtime QR flow (`channels/wechat/setup.ts:93`).
 - Restarting configuration saves retain the previous configuration; failed startup restores it and records the reload error (`config/reload.ts:19`, `config/reload.ts:34`, `cli/index.ts:104`).
 - Persist a schedule's advanced trigger/one-time disable state before launching delivery; serialize mutations and restore in-memory state on save failure (`scheduler/index.ts:76`, `scheduler/index.ts:160`).
-- Each proactive-chat turn appends the current time and quiet-period facts to `prompts/outreach.md`; an identical repeated prompt makes the model copy its previous reply from the history (`daemon.ts:242`, `persona/index.ts`).
+- Each proactive-chat prompt carries the current time and quiet-period facts; an identical repeated prompt makes the model copy its previous reply from the history (`persona/index.ts:141`, `daemon.ts:241`).
 - Memory indexing excludes temporary `sessions/runs` transcripts and messages with `vexSource`; temporary heartbeat/consolidation transcripts are removed on disposal (`index/memory.ts:74`, `index/memory.ts:105`, `daemon.ts:229`).

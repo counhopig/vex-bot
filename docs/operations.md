@@ -79,7 +79,7 @@ WeChat commands: `/stop` interrupts the current reply; `/y`, `/ya` and `/n` answ
 ```text
 <data dir>/                     ~/.vex, or $VEX_HOME, or /data in Docker
 ├── config.yaml                 0600
-├── workspace/                  SOUL.md, USER.md, MEMORY.md, HEARTBEAT.md, prompts/, memory/, skills/
+├── workspace/                  SOUL.md, USER.md, MEMORY.md, HEARTBEAT.md, memory/, skills/
 ├── sessions/
 │   ├── wechat.jsonl
 │   ├── web/<id>.jsonl

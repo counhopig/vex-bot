@@ -32,8 +32,7 @@ import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
-import { DEFAULT_PROMPTS, isPromptFile, loadPrompt } from "./workspace/prompts.js";
-import { ensureWorkspace, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
+import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -239,8 +238,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
         log.info("proactive chat started");
-        const situation = `Now: ${formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)}. ${persona.outreachSituation()}`;
-        try { session.send(`${await loadPrompt(config.workspace, "prompts/outreach.md")}\n\n${situation}`, "proactive chat"); await session.whenIdle(); }
+        try { session.send(persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)), "proactive chat"); await session.whenIdle(); }
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },
@@ -325,7 +323,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return { restartRequired: next.restartRequired, restarting };
       },
     },
-    workspace: { read: async (name) => (await readWorkspaceFile(config.workspace, name)).trim() || (isPromptFile(name) ? DEFAULT_PROMPTS[name] : ""), save: async (name, text) => { await writeFileAtomic(join(config.workspace, name), text, 0o644); return { warning: residentLimitWarning(name, text) }; } },
+    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text) => { await writeFileAtomic(join(config.workspace, name), text, 0o644); return { warning: residentLimitWarning(name, text) }; } },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });

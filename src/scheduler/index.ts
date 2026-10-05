@@ -3,7 +3,6 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
-import { loadPrompt } from "../workspace/prompts.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
 export interface ScheduledTask { id: string; name: string; schedule: ScheduleRule; prompt: string; target: string; enabled: boolean; nextAt: number | null }
@@ -192,7 +191,12 @@ export class Scheduler {
   private async consolidate(now: number): Promise<void> {
     const dates: string[] = [];
     for (let i = 0; i < 7; i++) { const date = new Date(now); date.setDate(date.getDate() - i); dates.push(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`); }
-    await this.options.hooks.runTemporary(await loadPrompt(this.options.workspace, "prompts/consolidation.md", { dates: dates.map(date => `memory/${date}.md`).join(", ") }), "consolidation", this.abort.signal);
+    const prompt = [
+      `Read the daily notes of the last seven days (${dates.map(date => `memory/${date}.md`).join(", ")}; skip files that do not exist), plus MEMORY.md and USER.md.`,
+      "Distil what recurs or is clearly important into MEMORY.md and USER.md, merge duplicate entries, remove stale ones, and keep MEMORY.md under 100 lines.",
+      "Edit only files inside the workspace and send no message to the owner.",
+    ].join("\n");
+    await this.options.hooks.runTemporary(prompt, "consolidation", this.abort.signal);
   }
   async close(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.abort.abort(); await this.mutations; await Promise.allSettled([...this.running.values()]); }
 }

@@ -27,7 +27,7 @@ export interface GatewayOptions {
     remove: (id: string) => Promise<unknown>;
   };
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
-  workspace: { read: (name: WorkspaceFile) => Promise<string>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
+  workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
   staticDir: string;
   log: Logger;
 }
@@ -274,6 +274,9 @@ export class Gateway {
         return;
       case "get_file":
         send(ws, { type: "file", name: message.name, text: await this.opts.workspace.read(message.name) });
+        return;
+      case "list_notes":
+        send(ws, { type: "notes", names: await this.opts.workspace.notes() });
         return;
       case "save_file":
         try {

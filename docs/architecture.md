@@ -63,7 +63,7 @@ Conversation history is per session; workspace, tools and configuration are glob
 
 In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours description, `MEMORY.md`, skill list (name, description, path), current time and source window. Resident files are truncated at their line limit (200, 200, 100) with a note asking the agent to shorten them. The prompt is rebuilt every turn, so file edits take effect on the next message.
 
-Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. Instructions for memory consolidation and proactive chat come from the editable `prompts/` files; the heartbeat instruction is fixed.
+Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
 ### Compaction
 
@@ -140,7 +140,7 @@ Decay is computed lazily from elapsed real time, including time the daemon was s
 
 `feel` adds a temporary change: mood and energy deltas of −30 to +30 lasting up to 24 hours, fading linearly; at most five at once. The current values become a short natural-language description in the system prompt (for example "a bit tired, would like to chat"). Mood changes tone and length only, never the quality of the work. During rest hours the prompt asks for sleepier, shorter replies; the owner is still answered.
 
-Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message and no proactive chat for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. The prompt from `prompts/outreach.md` is followed by the current time, how long the owner has been quiet and how many proactive chats were started today; it is not sent to the owner, the reply is. If the owner does not answer within two hours, mood drops by 10.
+Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message and no proactive chat for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. Its built-in prompt carries the current time, how long the owner has been quiet and how many proactive chats were started today, so no two prompts are identical (an identical one makes the model copy its previous reply from the history); the prompt is not sent to the owner, the reply is. If the owner does not answer within two hours, mood drops by 10.
 
 ## Scheduler
 
@@ -163,7 +163,7 @@ The channel talks to the iLink OC API (`getupdates` long polling with a persiste
 ## Gateway and WebChat
 
 - Listens on `127.0.0.1` by default. A non-loopback host requires `web.token`; login sets an HttpOnly cookie. Host and Origin headers are checked, and failed logins are rate limited.
-- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, status and settings requests, config and workspace file (`SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`) read/save from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, notices and errors from the server.
+- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, status and settings requests, config and workspace file (`SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`, `memory/YYYY-MM-DD.md`) read/save and the daily note list from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, notices and errors from the server.
 - Settings edits go through a fixed list of keys. The server applies them to `config.yaml` as a YAML document edit (comments and unmanaged keys survive), validates the result, and applies it (instantly for skill-read settings, otherwise by restarting the process in place after running turns finish; a configuration that cannot start is rolled back and the reason is shown in the status line); secrets are reported only as set or unset. Status (model, WeChat state, mood values) is polled every 20 seconds.
 - The front end is static files served by vexd; there is no front-end build step. Assistant replies are rendered from Markdown (headings, lists, tables, code blocks with a copy button, links) into DOM nodes without `innerHTML`, and only `http`, `https` and `mailto` links are active. On phones the session list is a drawer under a top bar, inputs are 16 px so browsers do not zoom, and Enter starts a new line (the send button sends); light, dark and system themes are stored in the browser.
 

@@ -13,6 +13,9 @@ describe("parseClientMessage", () => {
       { type: "approve", id: "a", answer: "allow_session" },
       { type: "get_file", name: "SOUL.md" },
       { type: "save_file", name: "USER.md", text: "x" },
+      { type: "get_file", name: "memory/2026-10-05.md" },
+      { type: "save_file", name: "memory/2026-10-05.md", text: "x" },
+      { type: "list_notes" },
       { type: "get_config" },
       { type: "save_config", text: "model: {}" },
     ];
@@ -26,5 +29,8 @@ describe("parseClientMessage", () => {
     expect(parseClientMessage(JSON.stringify({ type: "unknown" }))).toBeUndefined();
     expect(parseClientMessage(JSON.stringify({ type: "get_file", name: "../config.yaml" }))).toBeUndefined();
     expect(parseClientMessage(JSON.stringify({ type: "save_file", name: "NOTES.md", text: "x" }))).toBeUndefined();
+    for (const name of ["prompts/outreach.md", "memory/../config.yaml", "memory/2026-10-05.md/x", "memory/notes.md", "memory/2026-10-05.md\n"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "get_file", name }))).toBeUndefined();
+    }
   });
 });

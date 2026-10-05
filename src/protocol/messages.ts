@@ -12,8 +12,7 @@ const WorkspaceFileName = Type.Union([
   Type.Literal("USER.md"),
   Type.Literal("MEMORY.md"),
   Type.Literal("HEARTBEAT.md"),
-  Type.Literal("prompts/consolidation.md"),
-  Type.Literal("prompts/outreach.md"),
+  Type.String({ pattern: "^memory/[0-9]{4}-[0-9]{2}-[0-9]{2}\\.md$" }),
 ]);
 export type WorkspaceFile = Static<typeof WorkspaceFileName>;
 
@@ -34,6 +33,7 @@ export const ClientMessageSchema = Type.Union([
     answer: Type.Union([Type.Literal("allow"), Type.Literal("allow_session"), Type.Literal("deny")]),
   }),
   Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
+  Type.Object({ type: Type.Literal("list_notes") }),
   Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }) }),
   Type.Object({ type: Type.Literal("get_status") }),
   Type.Object({ type: Type.Literal("get_settings") }),
@@ -77,6 +77,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "file"; name: WorkspaceFile; text: string }
+  | { type: "notes"; names: string[] }
   | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string; warning?: string }
   | { type: "status"; status: StatusInfo }
   | { type: "settings"; values: Record<string, string | number | boolean | string[]>; secrets: string[]; catalog: { providers: string[]; models: Record<string, string[]> } }

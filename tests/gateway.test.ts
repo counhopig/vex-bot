@@ -84,7 +84,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
       read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: { providers: ["faux"], models: { faux: ["model"] } } }),
       save: async (patch) => { const next = applySettings(await readFile(paths.config, "utf8"), patch, paths); await saveConfigText(paths, next.text); return { restartRequired: next.restartRequired }; },
     },
-    workspace: { read: (name) => readFile(join(paths.home, name), "utf8").catch(() => ""), save: (name, text) => writeFile(join(paths.home, name), text, "utf8") },
+    workspace: { read: (name) => readFile(join(paths.home, name), "utf8").catch(() => ""), notes: async () => [], save: (name, text) => writeFile(join(paths.home, name), text, "utf8") },
     staticDir,
     log: pino({ level: "silent" }),
   });
