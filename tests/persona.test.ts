@@ -113,4 +113,15 @@ describe("persona", () => {
     advance(2);
     expect(persona.snapshot().mood).toBeCloseTo(mood - 3.2);
   });
+  it("describes how long the owner has been quiet and how many proactive chats were started today", async () => {
+    const { persona, advance } = await setup(new Date(2026, 9, 5, 7).getTime());
+    persona.userMessage("wechat");
+    expect(persona.outreachSituation()).toBe("The owner last wrote less than an hour ago. You have started 0 proactive chats today.");
+    advance(1);
+    persona.outreachSent();
+    expect(persona.outreachSituation()).toBe("The owner last wrote 1 hour ago. You have started 1 proactive chat today.");
+    advance(2.5);
+    persona.outreachSent();
+    expect(persona.outreachSituation()).toBe("The owner last wrote 3 hours ago. You have started 2 proactive chats today.");
+  });
 });

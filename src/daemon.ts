@@ -11,6 +11,7 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import type { VexConfig } from "./config/schema.js";
 import {
   baseInstructionsSection,
+  formatNow,
   residentFileSection,
   SystemPromptBuilder,
   timeSection,
@@ -238,7 +239,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         const abort = () => session.stop();
         signal.addEventListener("abort", abort, { once: true });
         log.info("proactive chat started");
-        try { session.send(await loadPrompt(config.workspace, "prompts/outreach.md"), "proactive chat"); await session.whenIdle(); }
+        const situation = `Now: ${formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)}. ${persona.outreachSituation()}`;
+        try { session.send(`${await loadPrompt(config.workspace, "prompts/outreach.md")}\n\n${situation}`, "proactive chat"); await session.whenIdle(); }
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },

@@ -131,6 +131,12 @@ export class Persona {
   outreachSent(replied = false): void {
     this.update(); this.state.outreachCount++; if (!replied) this.state.pendingOutreach.push(this.now());
   }
+  /** Facts that differ on every proactive chat, so the model does not repeat its previous one from the history. */
+  outreachSituation(): string {
+    const s = this.snapshot(), hours = Math.floor((this.now() - s.lastWechatMessage) / HOUR);
+    const since = hours < 1 ? "less than an hour ago" : hours === 1 ? "1 hour ago" : `${hours} hours ago`;
+    return `The owner last wrote ${since}. You have started ${s.outreachCount} proactive ${s.outreachCount === 1 ? "chat" : "chats"} today.`;
+  }
   describe(): string {
     const s = this.snapshot(), parts: string[] = [];
     if (s.energy < 20) parts.push("You feel exhausted"); else if (s.energy < 50) parts.push("You feel a bit tired"); else if (s.energy > 80) parts.push("You are full of energy");
