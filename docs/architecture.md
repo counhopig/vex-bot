@@ -63,7 +63,7 @@ Conversation history is per session; workspace, tools and configuration are glob
 
 In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours description, `MEMORY.md`, skill list (name, description, path), current time and source window. Resident files are truncated at their line limit (200, 200, 100) with a note asking the agent to shorten them. The prompt is rebuilt every turn, so file edits take effect on the next message.
 
-Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. Instructions for background tasks (heartbeat, consolidation, proactive chat) come from the editable `prompts/` files.
+Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. Instructions for memory consolidation and proactive chat come from the editable `prompts/` files; the heartbeat instruction is fixed.
 
 ### Compaction
 
@@ -117,7 +117,7 @@ The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run thro
 
 Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000.
 
-A Bilibili or YouTube video without subtitles is transcribed when `stt` is configured: the audio is fetched (Bilibili's own audio stream, or YouTube through `yt-dlp`), re-encoded by `ffmpeg` into mono MP3 parts of `stt.chunkMinutes` (10) minutes, and each part is sent to an OpenAI-compatible `/audio/transcriptions` endpoint, three at a time; the joined text then goes through the same summary. Videos longer than `stt.maxMinutes` (90) are not transcribed. Douyin and Xiaohongshu are never transcribed.
+A Bilibili or YouTube video without subtitles is transcribed when `stt` is configured: the audio is fetched (Bilibili's own audio stream, or YouTube through `yt-dlp`), re-encoded by `ffmpeg` into mono MP3 parts of `stt.chunkMinutes` (10) minutes, and each part is sent to the speech-to-text service, three at a time (an OpenAI-compatible `/audio/transcriptions` endpoint, or Base64 audio through MiMo's `/chat/completions`); the joined text then goes through the same summary. Videos longer than `stt.maxMinutes` (90) are not transcribed. Douyin and Xiaohongshu are never transcribed.
 
 ## Memory
 
