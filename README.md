@@ -38,7 +38,7 @@ One daemon, `vexd`, connects both interfaces to the same workspace, long-term me
 - **Tasks on your schedule.** Create recurring or one-time tasks in conversation or under Settings → Schedules. Heartbeat checks and proactive WeChat messages follow configurable rest hours.
 - **Your assistant, your workspace.** Edit its persona, what it knows about you, memory and daily notes directly in WebChat. Run one Node.js process or one container, with configuration and stored data under one data directory.
 
-Bundled Skills cover weather, image generation and share-link reading for Bilibili, YouTube, Douyin and Xiaohongshu. Videos without subtitles can be transcribed through a configured OpenAI-compatible speech-to-text service. Web search supports Tavily, Brave and self-hosted SearXNG.
+Bundled Skills cover weather, image understanding and share-link reading for Bilibili, YouTube, Douyin and Xiaohongshu. Bilibili and YouTube videos without subtitles can be transcribed through a configured OpenAI-compatible speech-to-text service or Xiaomi MiMo. Web search supports Tavily, Brave and self-hosted SearXNG.
 
 ## Quick start
 
@@ -50,7 +50,7 @@ docker-compose run --rm vex onboard
 docker-compose up -d
 ```
 
-The setup wizard asks for your model provider, API key and port, offers optional WeChat QR login, and prints the WebChat access token.
+The setup wizard asks for your model provider and API key, offers optional WeChat QR login, and prints the WebChat access token. To change the host port, edit `compose.yaml`.
 
 Open <http://127.0.0.1:7860> and sign in with the token. If WeChat is not linked, run `docker-compose logs -f` and scan the QR code shown in the log.
 
