@@ -68,7 +68,7 @@ persona:
     enabled: true
     checkEvery: 30m
     socialThreshold: 70            # 0-100
-    quietHours: 3                  # hours since the owner's last WeChat message
+    quietHours: 3                  # hours since the owner's last WeChat message and since the last proactive chat
     dailyLimit: 3
 
 # tavily (1000 free searches a month), searxng (self-hosted, free) or brave (paid).

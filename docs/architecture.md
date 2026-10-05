@@ -140,7 +140,7 @@ Decay is computed lazily from elapsed real time, including time the daemon was s
 
 `feel` adds a temporary change: mood and energy deltas of −30 to +30 lasting up to 24 hours, fading linearly; at most five at once. The current values become a short natural-language description in the system prompt (for example "a bit tired, would like to chat"). Mood changes tone and length only, never the quality of the work. During rest hours the prompt asks for sleepier, shorter replies; the owner is still answered.
 
-Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. The internal prompt is not sent to the owner; the reply is. If the owner does not answer within two hours, mood drops by 10.
+Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message and no proactive chat for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. The prompt from `prompts/outreach.md` is followed by the current time, how long the owner has been quiet and how many proactive chats were started today; it is not sent to the owner, the reply is. If the owner does not answer within two hours, mood drops by 10.
 
 ## Scheduler
 
