@@ -130,17 +130,28 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 `state/mood.json` holds three values from 0 to 100, shared by both windows.
 
-| Value | Start | Without contact | Per owner message answered |
-|---|---|---|---|
-| energy | 80 | −2 per hour | +3 |
-| mood | 70 | −1.6 per hour | +3.6 |
-| social | 50 | +5 per hour | −15 |
+| Value | Start | Over time | Per owner message answered | Proactive chat |
+|---|---|---|---|---|
+| energy | 80 | −4 per hour awake, +12 per hour during rest hours (`persona.sleep`) | −1.5 | |
+| mood | 60 | Returns toward 60; the distance halves every 4 hours | Moves 5% of the way to 100 | +6 when the owner replies within two hours, −8 when not |
+| social | 50 | +5 per hour | −15 | |
 
-Decay is computed lazily from elapsed real time, including time the daemon was stopped. During rest hours (`persona.sleep`) energy rises by 10 per hour instead of falling.
+Changes are computed lazily from elapsed real time, including time the daemon was stopped.
 
-`feel` adds a temporary change: mood and energy deltas of −30 to +30 lasting up to 24 hours, fading linearly; at most five at once. The current values become a short natural-language description in the system prompt (for example "a bit tired, would like to chat"). Mood changes tone and length only, never the quality of the work. During rest hours the prompt asks for sleepier, shorter replies; the owner is still answered.
+`feel` adds a temporary change: mood and energy deltas of −30 to +30 lasting up to 24 hours, fading linearly; at most five at once. The system prompt turns the values into concrete guidance, and says nothing in the normal range:
 
-Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message and no proactive chat for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. Its built-in prompt carries the current time, how long the owner has been quiet and how many proactive chats were started today, so no two prompts are identical (an identical one makes the model copy its previous reply from the history); the prompt is not sent to the owner, the reply is. If the owner does not answer within two hours, mood drops by 10.
+| Range | Guidance |
+|---|---|
+| energy 40–69 | Keep small talk brief |
+| energy 20–39 | Short replies, no new topics, offer to continue anything long later |
+| energy below 20 | Small talk in a sentence or two unless the owner needs more |
+| mood 80 and above | Playful and warm, emoji, riff and ask back |
+| mood 35–54 | Calm tone, few emoji or jokes |
+| mood below 35 | Say little in a plain tone, no emoji or jokes, no asking to be comforted |
+
+Lingering feelings are named with their reasons, and social above 50 adds a wish to chat. Energy and mood change only the tone and length of small talk; requested work is always done completely. During rest hours the prompt asks for sleepier, shorter replies; the owner is still answered.
+
+Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when all of these hold — outside rest hours, social above `socialThreshold`, no owner message and no proactive chat for `quietHours`, fewer than `dailyLimit` today, the WeChat session idle. Its built-in prompt carries the current time, how long the owner has been quiet and how many proactive chats were started today, so no two prompts are identical (an identical one makes the model copy its previous reply from the history); the prompt is not sent to the owner, the reply is. The owner's reply within two hours lifts mood; silence lowers it (see the table above).
 
 ## Scheduler
 
