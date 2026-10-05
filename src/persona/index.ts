@@ -7,7 +7,7 @@ export interface Feeling { mood: number; energy: number; reason: string; at: num
 export interface PersonaState {
   energy: number; mood: number; social: number; updatedAt: number;
   feelings: Feeling[]; lastWechatMessage: number; outreachDay: string;
-  outreachCount: number; pendingOutreach: number[];
+  outreachCount: number; pendingOutreach: number[]; lastOutreach?: number;
 }
 export interface PersonaOptions {
   path: string; now?: () => number; warn?: (message: string) => void;
@@ -28,6 +28,7 @@ function valid(value: unknown): value is PersonaState {
   const s = value as PersonaState;
   return [s.energy, s.mood, s.social].every(n => Number.isFinite(n) && n >= 0 && n <= 100)
     && [s.updatedAt, s.lastWechatMessage, s.outreachCount].every(n => Number.isFinite(n) && n >= 0)
+    && (s.lastOutreach === undefined || (Number.isFinite(s.lastOutreach) && s.lastOutreach >= 0))
     && Number.isInteger(s.outreachCount) && typeof s.outreachDay === "string"
     && Array.isArray(s.pendingOutreach) && s.pendingOutreach.every(n => Number.isFinite(n) && n >= 0)
     && Array.isArray(s.feelings) && s.feelings.length <= 5 && s.feelings.every(f => f && typeof f.reason === "string"
@@ -122,14 +123,16 @@ export class Persona {
     this.state.feelings = this.state.feelings.slice(-5);
   }
   shouldOutreach(wechatIdle: boolean): boolean {
-    const s = this.snapshot(), config = this.options.outreach;
+    const s = this.snapshot(), config = this.options.outreach, quiet = (config?.quietHours ?? 3) * HOUR;
     return (config?.enabled ?? true) && wechatIdle && !this.isResting()
       && s.social > (config?.socialThreshold ?? 70)
-      && this.now() - s.lastWechatMessage > (config?.quietHours ?? 3) * HOUR
+      && this.now() - s.lastWechatMessage > quiet
+      && this.now() - (s.lastOutreach ?? 0) > quiet
       && s.outreachCount < (config?.dailyLimit ?? 3);
   }
   outreachSent(replied = false): void {
-    this.update(); this.state.outreachCount++; if (!replied) this.state.pendingOutreach.push(this.now());
+    this.update(); this.state.outreachCount++; this.state.lastOutreach = this.now();
+    if (!replied) this.state.pendingOutreach.push(this.now());
   }
   /** Facts that differ on every proactive chat, so the model does not repeat its previous one from the history. */
   outreachSituation(): string {

@@ -53,6 +53,26 @@ describe("persona", () => {
     expect(persona.snapshot().mood).toBeCloseTo(replied - 1.6);
     expect(persona.shouldOutreach(false)).toBe(false);
   });
+  it("waits the quiet period after its own proactive chat before starting another", async () => {
+    const { persona, advance } = await setup(new Date(2026, 9, 5, 7).getTime());
+    persona.userMessage("wechat");
+    advance(4.5);
+    expect(persona.shouldOutreach(true)).toBe(true);
+    persona.outreachSent();
+    advance(0.5);
+    expect(persona.shouldOutreach(true)).toBe(false);
+    advance(2.6);
+    expect(persona.shouldOutreach(true)).toBe(true);
+  });
+  it("reads state saved before the last proactive chat was recorded", async () => {
+    const { path } = await setup();
+    const state = JSON.parse(await readFile(path, "utf8"));
+    delete state.lastOutreach;
+    await writeFile(path, JSON.stringify(state));
+    const warnings: string[] = [];
+    await Persona.open({ path, warn: message => warnings.push(message) });
+    expect(warnings).toEqual([]);
+  });
   it("recovers corrupt state and persists atomically", async () => {
     const { path } = await setup();
     await writeFile(path, '{"energy":null}');

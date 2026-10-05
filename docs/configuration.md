@@ -64,7 +64,7 @@ Saving in WebChat settings applies the change without a manual restart:
 | `persona.outreach.enabled` | `true` | Proactive conversations |
 | `persona.outreach.checkEvery` | `30m` | Same duration format as `heartbeat.every` |
 | `persona.outreach.socialThreshold` | `70` | 0–100 |
-| `persona.outreach.quietHours` | `3` | Hours without an owner message |
+| `persona.outreach.quietHours` | `3` | Hours without an owner message, and since the last proactive chat |
 | `persona.outreach.dailyLimit` | `3` | Proactive conversations per day |
 | `webSearch.provider` | none | `tavily`, `searxng` or `brave`; without it `web_search` reports that no service is configured |
 | `webSearch.apiKey` | none | Key for `tavily` or `brave`; may come from `TAVILY_API_KEY` / `BRAVE_API_KEY` |
