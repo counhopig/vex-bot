@@ -134,11 +134,20 @@ export class Persona {
     this.update(); this.state.outreachCount++; this.state.lastOutreach = this.now();
     if (!replied) this.state.pendingOutreach.push(this.now());
   }
-  /** Facts that differ on every proactive chat, so the model does not repeat its previous one from the history. */
-  outreachSituation(): string {
+  /**
+   * The instruction for a proactive chat. Its facts differ on every call; an identical repeated
+   * instruction makes the model copy its previous reply from the history.
+   */
+  outreachPrompt(now: string): string {
     const s = this.snapshot(), hours = Math.floor((this.now() - s.lastWechatMessage) / HOUR);
     const since = hours < 1 ? "less than an hour ago" : hours === 1 ? "1 hour ago" : `${hours} hours ago`;
-    return `The owner last wrote ${since}. You have started ${s.outreachCount} proactive ${s.outreachCount === 1 ? "chat" : "chats"} today.`;
+    return [
+      "Proactive chat: given your current mood, the time of day and your memory, naturally start a conversation.",
+      "Open a new topic. Do not repeat or resend earlier messages, reminders or greetings from the conversation history.",
+      "Address the owner as USER.md or SOUL.md says.",
+      "",
+      `Now: ${now}. The owner last wrote ${since}. You have started ${s.outreachCount} proactive ${s.outreachCount === 1 ? "chat" : "chats"} today.`,
+    ].join("\n");
   }
   describe(): string {
     const s = this.snapshot(), parts: string[] = [];

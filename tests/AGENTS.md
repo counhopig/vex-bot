@@ -17,7 +17,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | WeChat | `wechat-client`, `wechat-login`, `wechat-channel`, `wechat-messages`, `wechat-store`, `daemon-wechat` | iLink requests, QR state, polling, delivery and credentials |
 | Tools and approvals | `tools-*`, `policy`, `approvals` | Execution, access boundaries, cancellation and approval lifecycle |
 | Background work | `scheduler`, `persona`, `memory-index` | Scheduled delivery, persona state and FTS memory |
-| Workspace and prompts | `workspace`, `prompt`, `prompts` | File boundaries, templates and prompt composition |
+| Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
 
 Suite names in the table omit `.test.ts`.
 

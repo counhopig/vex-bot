@@ -204,39 +204,55 @@ describe("web app", () => {
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
   });
 
-  it("groups the persona files into four pages, with the background tasks together", async () => {
+  it("groups the persona files into four pages and saves every editor on the open page", async () => {
     const { get, socket, context } = await loadApp();
-    const area = (name: string) => runInContext(`state.fileAreas.get(${JSON.stringify(name)})`, context) as Element;
     get("open-settings").dispatch("click");
     get("settings-tabs").children[4]!.dispatch("click");
-    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Background tasks"]);
+    expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Heartbeat"]);
     get("file-tabs").children[3]!.dispatch("click");
-    const requested = socket.send.mock.calls.slice(-3).map((call) => JSON.parse(call[0]).name);
-    expect(requested).toEqual(["HEARTBEAT.md", "prompts/consolidation.md", "prompts/outreach.md"]);
-    expect(get("file-editors").className).toBe("multi");
-    expect(textOf(get("file-editors"))).toContain("Heartbeat checklist");
-    area("HEARTBEAT.md").value = "check mail";
-    area("prompts/outreach.md").value = "say hi";
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "HEARTBEAT.md" }));
+    runInContext('state.fileAreas.get("HEARTBEAT.md").value = "check mail"', context);
     get("save-settings").dispatch("click");
-    const saves = socket.send.mock.calls.slice(-3).map((call) => JSON.parse(call[0]));
-    expect(saves).toEqual([
-      { type: "save_file", name: "HEARTBEAT.md", text: "check mail" },
-      { type: "save_file", name: "prompts/consolidation.md", text: "" },
-      { type: "save_file", name: "prompts/outreach.md", text: "say hi" },
-    ]);
-    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true })', context);
-    expect(get("settings-result").textContent).toBe("Saving…");
-    runInContext('handle({ type: "file_saved", name: "prompts/consolidation.md", ok: true })', context);
-    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: true })', context);
-    expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
-    get("save-settings").dispatch("click");
-    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true })', context);
-    runInContext('handle({ type: "file_saved", name: "prompts/consolidation.md", ok: true, warning: "Too long." })', context);
-    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: true })', context);
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "HEARTBEAT.md", text: "check mail" }));
+    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true, warning: "Too long." })', context);
     expect(get("settings-result").textContent).toBe("Saved. Too long.");
     expect(get("settings-result").className).toBe("warn");
-    runInContext('handle({ type: "file_saved", name: "prompts/outreach.md", ok: false, error: "Save failed" })', context);
+    get("save-settings").dispatch("click");
+    runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: false, error: "Save failed" })', context);
     expect(get("settings-result").textContent).toBe("Save failed");
+  });
+
+  it("shows the daily notes under long-term memory, newest first, and saves the open one", async () => {
+    const { get, socket, context } = await loadApp();
+    const sent = () => socket.send.mock.calls.map((call) => JSON.parse(call[0]));
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[4]!.dispatch("click");
+    get("file-tabs").children[2]!.dispatch("click");
+    expect(sent().slice(-2)).toEqual([{ type: "get_file", name: "MEMORY.md" }, { type: "list_notes" }]);
+    expect(textOf(get("file-editors"))).toContain("Daily notes");
+    runInContext('handle({ type: "notes", names: [] })', context);
+    expect(textOf(get("file-editors"))).toContain("No daily notes yet.");
+    runInContext('handle({ type: "notes", names: ["memory/2026-10-05.md", "memory/2026-10-04.md"] })', context);
+    const select = runInContext("state.notes.select", context) as Element & { value: string };
+    expect(select.children.map((option) => option.textContent)).toEqual(["2026-10-05", "2026-10-04"]);
+    expect(sent().at(-1)).toEqual({ type: "get_file", name: "memory/2026-10-05.md" });
+    runInContext('handle({ type: "file", name: "memory/2026-10-05.md", text: "- deploy cmp" })', context);
+    expect(runInContext('state.notes.area.value', context)).toBe("- deploy cmp");
+    select.value = "memory/2026-10-04.md";
+    select.dispatch("change");
+    expect(sent().at(-1)).toEqual({ type: "get_file", name: "memory/2026-10-04.md" });
+    runInContext('handle({ type: "file", name: "memory/2026-10-05.md", text: "stale" })', context);
+    expect(runInContext('state.notes.area.value', context)).toBe("");
+    runInContext('state.notes.area.value = "older note"; state.fileAreas.get("MEMORY.md").value = "facts"', context);
+    get("save-settings").dispatch("click");
+    expect(sent().slice(-2)).toEqual([
+      { type: "save_file", name: "MEMORY.md", text: "facts" },
+      { type: "save_file", name: "memory/2026-10-04.md", text: "older note" },
+    ]);
+    runInContext('handle({ type: "file_saved", name: "MEMORY.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("Saving…");
+    runInContext('handle({ type: "file_saved", name: "memory/2026-10-04.md", ok: true })', context);
+    expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
   });
 
   it("lists, pauses, deletes and creates scheduled tasks from the Schedules tab", async () => {

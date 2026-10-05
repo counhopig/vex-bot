@@ -112,13 +112,6 @@ describe("scheduler", () => {
     expect(f.hooks.deliverHeartbeat).toHaveBeenCalledWith("今天有预约", expect.any(AbortSignal));
     f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runTemporary).toHaveBeenCalledTimes(2);
   });
-  it("uses the owner's consolidation prompt", async () => {
-    const f = await fixture(); await f.scheduler.start();
-    await mkdir(join(f.workspace, "prompts"), { recursive: true });
-    await writeFile(join(f.workspace, "prompts", "consolidation.md"), "Tidy up using {{dates}}");
-    f.advance(15 * 3_600_000); await f.scheduler.tick();
-    await vi.waitFor(() => expect(vi.mocked(f.hooks.runTemporary).mock.calls.some(([text, kind]) => kind === "consolidation" && /^Tidy up using memory\/2026-10-04\.md, /.test(text))).toBe(true));
-  });
 
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {
     const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick();

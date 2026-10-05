@@ -1,15 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { dirname } from "node:path";
-import { DEFAULT_PROMPTS } from "./prompts.js";
 import { WORKSPACE_TEMPLATES } from "./templates.js";
 
 export async function ensureWorkspace(dir: string): Promise<void> {
   await mkdir(join(dir, "memory"), { recursive: true });
   await mkdir(join(dir, "skills"), { recursive: true });
-  for (const [name, content] of Object.entries({ ...WORKSPACE_TEMPLATES, ...DEFAULT_PROMPTS })) {
+  for (const [name, content] of Object.entries(WORKSPACE_TEMPLATES)) {
     try {
-      await mkdir(dirname(join(dir, name)), { recursive: true });
       await writeFile(join(dir, name), content, { encoding: "utf8", flag: "wx" });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
@@ -24,6 +21,20 @@ export async function readWorkspaceFile(dir: string, name: string): Promise<stri
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw err;
   }
+}
+
+export const DAILY_NOTE = /^memory\/\d{4}-\d{2}-\d{2}\.md$/;
+
+/** Daily notes as workspace paths, newest first. */
+export async function listDailyNotes(dir: string): Promise<string[]> {
+  let names: string[];
+  try {
+    names = await readdir(join(dir, "memory"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw err;
+  }
+  return names.map((name) => `memory/${name}`).filter((name) => DAILY_NOTE.test(name)).sort().reverse();
 }
 
 /** Lines of each always-loaded file that reach the model; the rest is cut off. */

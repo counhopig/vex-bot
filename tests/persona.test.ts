@@ -133,15 +133,15 @@ describe("persona", () => {
     advance(2);
     expect(persona.snapshot().mood).toBeCloseTo(mood - 3.2);
   });
-  it("describes how long the owner has been quiet and how many proactive chats were started today", async () => {
+  it("gives each proactive chat the current time, how long the owner has been quiet and how many chats were started today", async () => {
     const { persona, advance } = await setup(new Date(2026, 9, 5, 7).getTime());
     persona.userMessage("wechat");
-    expect(persona.outreachSituation()).toBe("The owner last wrote less than an hour ago. You have started 0 proactive chats today.");
+    expect(persona.outreachPrompt("07:00")).toMatch(/^Proactive chat: [\s\S]*\n\nNow: 07:00\. The owner last wrote less than an hour ago\. You have started 0 proactive chats today\.$/);
     advance(1);
     persona.outreachSent();
-    expect(persona.outreachSituation()).toBe("The owner last wrote 1 hour ago. You have started 1 proactive chat today.");
+    expect(persona.outreachPrompt("08:00")).toContain("Now: 08:00. The owner last wrote 1 hour ago. You have started 1 proactive chat today.");
     advance(2.5);
     persona.outreachSent();
-    expect(persona.outreachSituation()).toBe("The owner last wrote 3 hours ago. You have started 2 proactive chats today.");
+    expect(persona.outreachPrompt("10:30")).toContain("Now: 10:30. The owner last wrote 3 hours ago. You have started 2 proactive chats today.");
   });
 });

@@ -21,7 +21,7 @@ The settings page has seven tabs:
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
-| Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`) and Background tasks, which holds the heartbeat checklist (`HEARTBEAT.md`), the memory consolidation task and the proactive chat instruction on one page (see Workspace files) |
+| Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`, plus the daily notes in `memory/`, newest first) and Heartbeat (`HEARTBEAT.md`) |
 | Schedules | Every scheduled task with its rule, next run and target: pause or resume, edit, delete, or create one (repeating cron rule, fixed interval, or a single date and time) |
 | Advanced | The whole `config.yaml`, for everything the forms do not cover (tool policy, MCP servers, the web token) |
 
@@ -124,21 +124,12 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `USER.md` | What Vex knows about the owner (200 lines) | Every turn |
 | `MEMORY.md` | Distilled long-term facts and decisions (100 lines) | Every turn |
 | `HEARTBEAT.md` | Checklist for periodic checks, and the place for any instructions to the heartbeat; empty skips the model call | At each heartbeat |
-| `memory/YYYY-MM-DD.md` | Daily notes written by the agent | Through `memory_search` |
+| `memory/YYYY-MM-DD.md` | Daily notes written by the agent; editable in WebChat under Memory | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
-The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). Templates for these files are created on first start, together with the instruction files below.
+The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). Templates for these files are created on first start.
 
-### Editable instructions
-
-The instructions for the background tasks live in these files, are read again on every use, and can be edited in WebChat (Persona & memory, Background tasks) or on disk. While a file is missing or empty the built-in default applies, so clearing a file and saving restores the default.
-
-| File | What it controls | Placeholders |
-|---|---|---|
-| `prompts/consolidation.md` | The nightly memory consolidation task | `{{dates}}`: paths of the last seven daily notes |
-| `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself; Vex appends the current time, how long the owner has been quiet and how many proactive chats it started today | |
-
-The heartbeat has no separate instruction file: its fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries, are built in; shape Vex's personality and habits through `SOUL.md` instead.
+The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), the instructions for memory consolidation and proactive chat, and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries are built in; shape Vex's personality and habits through `SOUL.md` instead.
 
 ## Skills
 

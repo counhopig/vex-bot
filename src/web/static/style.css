@@ -256,6 +256,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #file-editors h3 { margin: 0; font-size: 15px; }
 #file-editors.multi .editor { flex: none; }
 #file-editors.multi .file-text { min-height: 150px; flex: none; }
+#file-editors #note-select { width: auto; align-self: flex-start; }
 #settings-editor { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 #settings-text, .file-text {
   flex: 1;
@@ -272,7 +273,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .section h3 { margin: 0; font-size: 15px; }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field label, .field .label { font-size: 13px; font-weight: 600; }
-.field input[type="text"], .field input[type="number"], .field input[type="password"], .field input[type="time"], .field select {
+.field input[type="text"], .field input[type="number"], .field input[type="password"], .field input[type="time"], .field select, #note-select {
   font: inherit;
   padding: 8px 10px;
   border: 1px solid var(--border);
@@ -354,7 +355,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .bubble { max-width: 94%; }
   #statusline { padding: 4px 12px 0; }
   #composer { padding: 8px 12px calc(10px + env(safe-area-inset-bottom)); }
-  #input, .field input, .field select, #settings-text, .file-text { font-size: 16px; }
+  #input, .field input, .field select, #note-select, #settings-text, .file-text { font-size: 16px; }
   #settings { padding: 12px; }
   #settings-text, .file-text { min-height: 50dvh; }
   #file-editors.multi .file-text { min-height: 30dvh; }
