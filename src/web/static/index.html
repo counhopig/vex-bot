@@ -16,16 +16,19 @@
 </head>
 <body>
   <div id="app">
-    <header id="topbar">
-      <button id="menu" type="button" class="icon" aria-label="Conversations">☰</button>
-      <span id="topbar-title">Vex</span>
-      <button id="topbar-new" type="button" class="icon" aria-label="New chat">＋</button>
-    </header>
     <div id="scrim" hidden></div>
     <aside id="sidebar">
       <div class="sidebar-head">
-        <span class="brand">Vex</span>
-        <button id="new-session" type="button">New chat</button>
+        <span class="brand">
+          <svg class="vex-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+            <path class="portal-frame" d="M29 4H18L4 18V29H10V21L21 10H29ZM35 4H46L60 18V29H54V21L43 10H35ZM60 35V46L46 60H35V54H43L54 43V35ZM29 60H18L4 46V35H10V43L21 54H29Z"/>
+            <path class="portal-depth" d="M21 10L25 18M43 10L39 18M54 21L46 25M54 43L46 39M43 54L39 46M21 54L25 46M10 43L18 39M10 21L18 25"/>
+            <path class="portal-aperture" d="M25 18H39L46 25V39L39 46H25L18 39V25Z"/>
+            <path class="portal-threshold" d="M27 25H37L39 27V37L37 39H27L25 37V27Z"/>
+          </svg>
+          <span>Vex</span>
+        </span>
+        <button id="new-session" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New chat</button>
       </div>
       <ul id="session-list"></ul>
       <div class="sidebar-foot">
@@ -34,13 +37,18 @@
       </div>
     </aside>
     <main id="main">
+      <header id="topbar">
+        <button id="menu" type="button" class="icon" aria-label="Conversations"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+        <span id="topbar-title">Vex</span>
+        <button id="topbar-new" type="button" class="icon" aria-label="New chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      </header>
       <div id="status" role="status" hidden></div>
       <section id="approvals"></section>
       <section id="chat">
         <div id="messages"></div>
         <div id="statusline"></div>
         <form id="composer">
-          <textarea id="input" rows="1" placeholder="Say something…" enterkeyhint="send"></textarea>
+          <textarea id="input" rows="1" placeholder="Say something…" aria-label="Message" enterkeyhint="send"></textarea>
           <button id="stop" type="button" class="secondary" hidden>Stop</button>
           <button id="send" type="submit">Send</button>
         </form>

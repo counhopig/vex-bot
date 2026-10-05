@@ -5,11 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vex · Sign in</title>
   <link rel="stylesheet" href="/style.css">
+  <script>
+    try {
+      const mode = localStorage.getItem("vex.theme");
+      if (mode === "light" || mode === "dark") document.documentElement.dataset.theme = mode;
+    } catch {
+      // Storage can be unavailable in private windows.
+    }
+  </script>
 </head>
 <body class="login-page">
   <form id="login">
-    <h1>Vex</h1>
-    <input id="token" type="password" autocomplete="current-password" placeholder="Access token" required>
+    <h1 class="brand">
+      <svg class="vex-mark" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+        <path class="portal-frame" d="M29 4H18L4 18V29H10V21L21 10H29ZM35 4H46L60 18V29H54V21L43 10H35ZM60 35V46L46 60H35V54H43L54 43V35ZM29 60H18L4 46V35H10V43L21 54H29Z"/>
+        <path class="portal-depth" d="M21 10L25 18M43 10L39 18M54 21L46 25M54 43L46 39M43 54L39 46M21 54L25 46M10 43L18 39M10 21L18 25"/>
+        <path class="portal-aperture" d="M25 18H39L46 25V39L39 46H25L18 39V25Z"/>
+        <path class="portal-threshold" d="M27 25H37L39 27V37L37 39H27L25 37V27Z"/>
+      </svg>
+      <span>Vex</span>
+    </h1>
+    <input id="token" type="password" autocomplete="current-password" placeholder="Access token" aria-label="Access token" required>
     <button type="submit">Enter</button>
     <p id="login-error" hidden>Incorrect token</p>
   </form>
