@@ -52,7 +52,7 @@ node dist/cli/index.js start -d
 
 WebChat is at <http://127.0.0.1:7860> by default. On WeChat only the owner's messages are answered; `/stop` interrupts a reply, and `/y`, `/ya` and `/n` answer the oldest pending approval.
 
-Shape Vex by editing Markdown files in the workspace: `SOUL.md` (persona), `USER.md` (what it knows about you), `MEMORY.md` (long-term facts), `HEARTBEAT.md` (periodic checks), and the `prompts/` files (instructions for its background tasks). All of them are editable in WebChat settings. Ask it in conversation to schedule messages or write new Skills.
+Shape Vex by editing Markdown files in the workspace: `SOUL.md` (persona), `USER.md` (what it knows about you), `MEMORY.md` (long-term facts), `HEARTBEAT.md` (periodic checks), and the `prompts/` files (instructions for its background tasks). All of them are editable in WebChat settings. Ask it in conversation to schedule messages (and manage them under Settings → Schedules) or write new Skills.
 
 A minimal `~/.vex/config.yaml`:
 

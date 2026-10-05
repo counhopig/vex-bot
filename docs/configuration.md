@@ -136,7 +136,7 @@ The instructions for the background tasks live in these files, are read again on
 | File | What it controls | Placeholders |
 |---|---|---|
 | `prompts/consolidation.md` | The nightly memory consolidation task | `{{dates}}`: paths of the last seven daily notes |
-| `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself | |
+| `prompts/outreach.md` | The instruction used when Vex starts a conversation by itself; Vex appends the current time, how long the owner has been quiet and how many proactive chats it started today | |
 
 The heartbeat has no separate instruction file: its fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries, are built in; shape Vex's personality and habits through `SOUL.md` instead.
 
@@ -172,7 +172,7 @@ Then set `webSearch: { provider: searxng, baseUrl: "http://searxng:8080" }`; the
 
 ## Speech to text
 
-`stt` points Vex at any service that implements the OpenAI transcription API (`POST <baseUrl>/audio/transcriptions` with `file` and `model`), such as OpenAI Whisper, Groq, SiliconFlow's SenseVoice, or a self-hosted faster-whisper server:
+With the default `provider: openai`, `stt` points Vex at any service that implements the OpenAI transcription API (`POST <baseUrl>/audio/transcriptions` with `file` and `model`), such as OpenAI Whisper, Groq, SiliconFlow's SenseVoice, or a self-hosted faster-whisper server:
 
 ```yaml
 stt:
