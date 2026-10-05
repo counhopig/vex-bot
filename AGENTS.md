@@ -81,8 +81,8 @@ npm run dev
 npm run lint
 npm test
 npm run build
-docker compose run --rm vex onboard
-docker compose up -d
+docker-compose run --rm vex onboard
+docker-compose up -d
 ```
 
 ## NOTES

@@ -165,7 +165,7 @@ webSearch:
 For SearXNG, the repository ships `compose.searxng.yaml`, which adds a ready-to-use container whose settings enable the JSON format Vex needs:
 
 ```bash
-docker compose -f compose.yaml -f compose.searxng.yaml up -d
+docker-compose -f compose.yaml -f compose.searxng.yaml up -d
 ```
 
 Then set `webSearch: { provider: searxng, baseUrl: "http://searxng:8080" }`; the name resolves because both containers share the Compose network. The container is not published on any port. Set `SEARXNG_SECRET` in `.env` to use your own secret key. A SearXNG you already run works too, as long as `json` is listed under `search.formats` in its `settings.yml`; otherwise it answers 403 and Vex says so. Results depend on the engines behind SearXNG and can be thinner when an engine rate-limits it.

@@ -1,5 +1,5 @@
 # Optional SearXNG search service for web_search. Start it next to Vex with:
-#   docker compose -f compose.yaml -f compose.searxng.yaml up -d
+#   docker-compose -f compose.yaml -f compose.searxng.yaml up -d
 # then set, in the WebChat settings or config.yaml:
 #   webSearch: { provider: searxng, baseUrl: "http://searxng:8080" }
 services:
