@@ -2,6 +2,10 @@ import { readFile } from "node:fs/promises";
 import { writeFileAtomic } from "../store/atomic.js";
 
 const HOUR = 3_600_000;
+const MOOD_BASELINE = 60;
+const MOOD_HALF_LIFE_HOURS = 4;
+const ENERGY_AWAKE_PER_HOUR = -4;
+const ENERGY_REST_PER_HOUR = 12;
 const clamp = (value: number) => Math.max(0, Math.min(100, value));
 export interface Feeling { mood: number; energy: number; reason: string; at: number; hours: number }
 export interface PersonaState {
@@ -45,7 +49,7 @@ export class Persona {
   }
   static async open(options: PersonaOptions): Promise<Persona> {
     const now = (options.now ?? Date.now)();
-    let state: PersonaState = { energy: 80, mood: 70, social: 50, updatedAt: now, feelings: [],
+    let state: PersonaState = { energy: 80, mood: MOOD_BASELINE, social: 50, updatedAt: now, feelings: [],
       lastWechatMessage: now, outreachDay: day(now), outreachCount: 0, pendingOutreach: [] };
     let rebuild = false;
     try {
@@ -78,16 +82,16 @@ export class Persona {
           candidate.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
           if (candidate.getTime() > cursor) next = Math.min(next, candidate.getTime());
         }
-        this.state.energy = clamp(this.state.energy + (next - cursor) / HOUR * (this.isResting(cursor) ? 10 : -2));
+        this.state.energy = clamp(this.state.energy + (next - cursor) / HOUR * (this.isResting(cursor) ? ENERGY_REST_PER_HOUR : ENERGY_AWAKE_PER_HOUR));
         cursor = next;
       }
       const hours = (now - this.state.updatedAt) / HOUR;
-      this.state.mood = clamp(this.state.mood - hours * 1.6);
+      this.state.mood = clamp(MOOD_BASELINE + (this.state.mood - MOOD_BASELINE) * 0.5 ** (hours / MOOD_HALF_LIFE_HOURS));
       this.state.social = clamp(this.state.social + hours * 5);
       this.state.updatedAt = now;
     }
     const expired = this.state.pendingOutreach.filter(at => now >= at + 2 * HOUR);
-    this.state.mood = clamp(this.state.mood - expired.length * 10);
+    this.state.mood = clamp(this.state.mood - expired.length * 8);
     this.state.pendingOutreach = this.state.pendingOutreach.filter(at => now < at + 2 * HOUR);
     this.state.feelings = this.state.feelings.filter(f => now < f.at + f.hours * HOUR);
     if (this.state.outreachDay !== day(now)) {
@@ -106,12 +110,15 @@ export class Persona {
   }
   userMessage(source: "wechat" | "web"): void {
     this.update();
-    if (source === "wechat") { this.state.lastWechatMessage = this.now(); this.state.pendingOutreach = []; }
+    if (source === "wechat") {
+      if (this.state.pendingOutreach.length) this.state.mood = clamp(this.state.mood + 6);
+      this.state.lastWechatMessage = this.now(); this.state.pendingOutreach = [];
+    }
   }
   interactionCompleted(): void {
     this.update();
-    this.state.energy = clamp(this.state.energy + 3);
-    this.state.mood = clamp(this.state.mood + 3.6);
+    this.state.energy = clamp(this.state.energy - 1.5);
+    this.state.mood = clamp(this.state.mood + (100 - this.state.mood) * 0.05);
     this.state.social = clamp(this.state.social - 15);
   }
   feel(input: { mood: number; energy?: number; reason: string; hours?: number }): void {
@@ -151,15 +158,19 @@ export class Persona {
   }
   describe(): string {
     const s = this.snapshot(), parts: string[] = [];
-    if (s.energy < 20) parts.push("You feel exhausted"); else if (s.energy < 50) parts.push("You feel a bit tired"); else if (s.energy > 80) parts.push("You are full of energy");
-    if (s.mood < 20) parts.push("You are feeling down"); else if (s.mood < 50) parts.push("You are not in high spirits"); else if (s.mood > 80) parts.push("You are in a very good mood");
+    if (s.energy < 20) parts.push("You are exhausted: unless the owner needs more, answer small talk in a sentence or two");
+    else if (s.energy < 40) parts.push("You are tired: keep replies short, do not branch into new topics, and offer to continue anything long later");
+    else if (s.energy < 70) parts.push("You are a little tired: keep small talk brief");
+    if (s.mood >= 80) parts.push("You are in high spirits: be playful and warm, use emoji freely, riff on what the owner says and ask back");
+    else if (s.mood < 35) parts.push("You are in a low mood: say little in a plain tone, without emoji or jokes; you may mention it briefly when it fits, but do not ask the owner to comfort you");
+    else if (s.mood < 55) parts.push("You feel a bit flat: keep a calm tone with few emoji or jokes");
     if (s.social > 80) parts.push("You really want someone to talk to"); else if (s.social >= 50) parts.push("You feel like chatting");
     for (const f of s.feelings) {
       const fraction = Math.min(1, Math.max(0, 1 - (this.now() - f.at) / (f.hours * HOUR)));
       if (fraction >= 0.1 && (f.mood !== 0 || f.energy !== 0)) parts.push(`${fraction > 0.66 ? "A strong" : fraction > 0.33 ? "Some" : "A faint"} feeling lingers: ${f.reason}`);
     }
     if (this.isResting()) parts.push("It is your rest time, so sound sleepier and keep replies shorter");
-    return `${parts.length ? parts.join(". ") + ". " : ""}Mood only affects tone and how much you say, never the quality of the owner's requests.`;
+    return `${parts.length ? parts.join(". ") + ". " : ""}Energy and mood change only the tone and length of small talk; anything the owner asks you to do (research, files, code, summaries) is done completely regardless.`;
   }
   save(): Promise<void> {
     this.update();
