@@ -1,6 +1,6 @@
 {
   "name": "vex-bot",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "个人 AI 助手",
   "type": "module",
   "bin": {
