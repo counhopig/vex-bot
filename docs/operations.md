@@ -39,12 +39,12 @@ Tags: `latest` and `sha-<commit>` on every push to `main`; `X.Y.Z` and `X.Y` on 
 
 ```bash
 # compose.yaml from the repository root
-docker compose run --rm vex onboard    # asks for model and API key; prints the WebChat token
-docker compose up -d
-docker compose logs -f
+docker-compose run --rm vex onboard    # asks for model and API key; prints the WebChat token
+docker-compose up -d
+docker-compose logs -f
 ```
 
-The commands use the Compose plugin (`docker compose`). With the standalone binary, use `docker-compose` instead.
+The commands use the standalone `docker-compose` binary; with the Compose plugin, `docker compose` takes the same arguments.
 
 Without compose:
 
@@ -62,12 +62,12 @@ Container details:
 - The image includes `ffmpeg` and `yt-dlp` (for the `link-reader` skill's speech to text); a new image carries the current `yt-dlp`, which YouTube support needs to stay up to date with.
 - `compose.searxng.yaml` adds an optional SearXNG search container; see Web search in the configuration guide.
 - A health check requests the WebChat port every 30 seconds.
-- Update: `docker compose pull && docker compose up -d`. Build locally: `docker build -t vex-bot .` and point `image` at it.
+- Update: `docker-compose pull && docker-compose up -d`. Build locally: `docker build -t vex-bot .` and point `image` at it.
 - Back up the volume, for example `docker run --rm -v vex-data:/data -v "$PWD":/backup busybox tar czf /backup/vex-data.tgz -C /data .`
 
 ## Linking WeChat
 
-1. Either answer yes to the question in `vex onboard`, or start `vexd` while WeChat is unlinked: it prints a QR code to its output (`vex logs -f`, `docker compose logs -f`). `vex wechat login` prints one in the terminal; in Docker run `docker compose run --rm vex wechat login`.
+1. Either answer yes to the question in `vex onboard`, or start `vexd` while WeChat is unlinked: it prints a QR code to its output (`vex logs -f`, `docker-compose logs -f`). `vex wechat login` prints one in the terminal; in Docker run `docker-compose run --rm vex wechat login`.
 2. Scan it with the WeChat account that should own Vex. That account becomes the owner unless `wechat.ownerId` is set. Messages from anyone else are ignored.
 
 A QR code expires after a few minutes and is refreshed up to three times. When the session expires later, vexd shows a new QR code; scanning it reconnects without a restart. Set `wechat.enabled: false` to disable the channel.
@@ -96,7 +96,7 @@ Transcripts, workspace, `config.yaml`, `schedules.json`, `state/` and `wechat/` 
 
 ## Logs
 
-`vex logs -f` (or `docker compose logs -f`) follows `logs/vexd.log`, one JSON object per line. At the default level it records: startup with a configuration summary (models, WeChat, MCP servers, search provider, speech to text), each message received (source and length), each run's start and duration, every tool call (name and a shortened summary), replies (length and stop reason), approvals requested and answered, scheduled messages, heartbeat and consolidation runs, context compaction, MCP connections, WeChat traffic (lengths only), saved settings (keys only) and restarts, plus all warnings and errors. Message and reply text, API keys and cookies are never logged. Set `VEX_LOG_LEVEL=debug` for more detail.
+`vex logs -f` (or `docker-compose logs -f`) follows `logs/vexd.log`, one JSON object per line. At the default level it records: startup with a configuration summary (models, WeChat, MCP servers, search provider, speech to text), each message received (source and length), each run's start and duration, every tool call (name and a shortened summary), replies (length and stop reason), approvals requested and answered, scheduled messages, heartbeat and consolidation runs, context compaction, MCP connections, WeChat traffic (lengths only), saved settings (keys only) and restarts, plus all warnings and errors. Message and reply text, API keys and cookies are never logged. Set `VEX_LOG_LEVEL=debug` for more detail.
 
 ## Approvals
 
@@ -118,7 +118,7 @@ When a tool needs approval, the request appears in WeChat and in every open WebC
 | WebChat asks for a token | `web.token` in `config.yaml`, or `VEX_WEB_TOKEN` |
 | No WeChat replies | `vex logs -f`; the account must be the owner; the session may have expired and need a new QR scan |
 | Port already in use | Change `web.port`, or stop the other instance (`vex status`) |
-| Container restarts in a loop | No configuration in the volume: run `docker compose run --rm vex onboard` |
+| Container restarts in a loop | No configuration in the volume: run `docker-compose run --rm vex onboard` |
 | Search finds nothing after upgrade | The index rebuilds itself on first start; wait for the first run to end |
 | Heartbeat never fires | `HEARTBEAT.md` must have content and the time must be inside `heartbeat.activeHours` |
 | Image skill fails | Use a model that accepts images; from source run `npm run build` first |

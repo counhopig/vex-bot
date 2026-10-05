@@ -17,11 +17,11 @@ Vex is a personal AI assistant for one owner. A single daemon, `vexd`, answers o
 
 ```bash
 curl -O https://raw.githubusercontent.com/counhopig/vex-bot/main/compose.yaml
-docker compose run --rm vex onboard    # model, API key, optional WeChat QR; prints the WebChat token
-docker compose up -d
+docker-compose run --rm vex onboard    # model, API key, optional WeChat QR; prints the WebChat token
+docker-compose up -d
 ```
 
-Open <http://127.0.0.1:7860> and sign in with the printed token. While WeChat is unlinked, `docker compose logs -f` shows a QR code to scan.
+Open <http://127.0.0.1:7860> and sign in with the printed token. While WeChat is unlinked, `docker-compose logs -f` shows a QR code to scan.
 
 Images for `linux/amd64` and `linux/arm64`: `ghcr.io/counhopig/vex-bot`, and `<DOCKERHUB_USERNAME>/vex-bot` on Docker Hub when the repository secrets are set.
 
