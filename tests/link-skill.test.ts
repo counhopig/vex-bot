@@ -81,6 +81,13 @@ describe("WeChat articles", () => {
     await expect(run(fake(() => redirect("https://example.com/")).request, link)).rejects.toThrow("Access to example.com is not supported");
     expect(findPlatform("https://mp.weixin.qq.com.evil.example/s/abc")).toBeUndefined();
   });
+
+  it("uses the larger download cap only for WeChat articles", async () => {
+    const fetchPage = vi.fn(async () => ({ url: link, body: article }));
+    await readLink(link, { fetchPublicPage: fetchPage, raw: true });
+    expect(fetchPage.mock.calls[0]).toEqual([link, expect.objectContaining({ maxBytes: 10_000_000 })]);
+    expect(findPlatform("https://youtu.be/dQw4w9WgXcQ")?.maxBytes).toBeUndefined();
+  });
 });
 
 describe("Bilibili", () => {

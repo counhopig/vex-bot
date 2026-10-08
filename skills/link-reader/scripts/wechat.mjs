@@ -6,6 +6,7 @@ const HOSTS = ["mp.weixin.qq.com"];
 export const wechat = {
   name: "WeChat",
   hosts: HOSTS,
+  maxBytes: 10_000_000,
   match: (text) => hostMatches(firstUrl(text) ?? "", HOSTS),
   async read(text, http) {
     const page = await http.get(firstUrl(text), { "User-Agent": BROWSER_UA });

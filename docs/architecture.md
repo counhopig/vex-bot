@@ -114,7 +114,7 @@ The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run thro
 | YouTube | title, author, duration, description (innertube player API) | Captions, preferring the owner's language and manual tracks over automatic ones |
 | Douyin | author and caption from the pasted share text (the caption may be cut by Douyin), publish date and likes from the share page; no duration or counts | None |
 | Xiaohongshu | title, author, tags, counts (share page state; `xhslink.com` and `xhslink.cn` short links resolved) | The note body |
-| WeChat | title and account name (`mp.weixin.qq.com` article page) | Article body converted to Markdown; scripts, styles and surrounding page text are excluded |
+| WeChat | title and account name (`mp.weixin.qq.com` article page, up to 10 MB) | Article body converted to Markdown; scripts, styles and surrounding page text are excluded |
 
 Text is summarised by the background model: up to 12,000 characters in one call, longer text in 8,000-character parts (four at a time) merged into one summary, up to 500,000 characters. `summarize: false` returns the original instead, cut at 30,000 characters; a failed summary falls back to the first 20,000.
 

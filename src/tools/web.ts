@@ -71,7 +71,8 @@ export interface PageInit { method?: "GET" | "POST"; headers?: Record<string, st
 
 export type PageRequest = (url: URL, signal: AbortSignal, init?: PageInit) => Promise<PageResponse>;
 
-export function createPublicPageRequest(resolver?: ResolveAddresses): PageRequest {
+export function createPublicPageRequest(resolver?: ResolveAddresses, maxBytes = MAX_BYTES): PageRequest {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 10_000_000) throw new Error("Page size limit must be between 1 and 10000000 bytes");
   return (url, signal, init) => new Promise((resolve, reject) => {
     assertPublicUrl(url);
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
@@ -102,7 +103,7 @@ export function createPublicPageRequest(resolver?: ResolveAddresses): PageReques
       let bytes = 0;
       response.on("data", (chunk: Buffer) => {
         bytes += chunk.length;
-        if (bytes > MAX_BYTES) response.destroy(new Error("The page exceeds the 2 MB limit"));
+        if (bytes > maxBytes) response.destroy(new Error(`The page exceeds the ${maxBytes / 1_000_000} MB limit`));
         else chunks.push(chunk);
       });
       response.on("error", reject);
@@ -115,10 +116,10 @@ export function createPublicPageRequest(resolver?: ResolveAddresses): PageReques
 
 export async function fetchPublicPage(
   rawUrl: string,
-  options: { signal?: AbortSignal; timeoutMs?: number; request?: PageRequest; init?: PageInit; hosts?: (hostname: string) => boolean } = {},
+  options: { signal?: AbortSignal; timeoutMs?: number; request?: PageRequest; init?: PageInit; hosts?: (hostname: string) => boolean; maxBytes?: number } = {},
 ): Promise<PageResponse & { url: string }> {
   const signal = AbortSignal.any([AbortSignal.timeout(options.timeoutMs ?? 30_000), ...(options.signal ? [options.signal] : [])]);
-  const request = options.request ?? createPublicPageRequest();
+  const request = options.request ?? createPublicPageRequest(undefined, options.maxBytes);
   let url = new URL(rawUrl);
   for (let redirects = 0; ; redirects++) {
     signal.throwIfAborted();
