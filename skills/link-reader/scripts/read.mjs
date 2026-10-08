@@ -21,7 +21,7 @@ const FALLBACK_LIMIT = 20_000;
 export const findPlatform = (text) => PLATFORMS.find((platform) => platform.match(text));
 
 function createHttp(platform, { fetchPublicPage, request, signal }) {
-  const call = (url, init) => fetchPublicPage(url, { signal, request, timeoutMs: 30_000, hosts: (host) => hostMatches(`https://${host}`, platform.hosts), init })
+  const call = (url, init) => fetchPublicPage(url, { signal, request, timeoutMs: 30_000, hosts: (host) => hostMatches(`https://${host}`, platform.hosts), maxBytes: platform.maxBytes, init })
     .then((page) => ({ url: page.url, body: page.body }));
   return {
     get: (url, headers) => call(url, { headers }),
