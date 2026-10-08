@@ -3,7 +3,7 @@ services:
     image: ghcr.io/counhopig/vex-bot:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:7860:7860"
+      - "127.0.0.1:34201:7860"
     environment:
       TZ: Asia/Shanghai
     volumes:
