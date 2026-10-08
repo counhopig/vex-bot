@@ -188,11 +188,12 @@ The `link-reader` skill uses it for Bilibili and YouTube videos that have no sub
 
 ## Reading share links
 
-Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin or Xiaohongshu, and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
+Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`), and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
 
 - A Bilibili or YouTube video without subtitles is transcribed only when `stt` is set (see below); otherwise you get title, author, duration and description only. Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
 - Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
+- For WeChat articles, copy the article link and send it as text. Reading returns the title, account name and article body; verification pages, deleted articles and articles without a readable body return an error.
 - Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.
 
 ## Scheduled messages

@@ -42,6 +42,47 @@ const bilibiliRoute: Route = (url) => {
   return undefined;
 };
 
+describe("WeChat articles", () => {
+  const link = "https://mp.weixin.qq.com/s?__biz=TEST&mid=123&idx=1&sn=TOKEN";
+  const article = `<html><body><h1 id="activity-name">标题 &amp; 示例</h1><a id="js_name">测试公众号</a><div>关注和广告</div><div id="js_content" style="visibility: hidden"><p>第一段<strong>重点</strong></p><section><p>第二段 &lt;示例&gt;</p></section><script>secret()</script><style>.hidden{}</style></div><footer>阅读量和评论</footer></body></html>`;
+
+  it("reads the article body and metadata from a whole share text, preserving query tokens", async () => {
+    const { request, calls } = fake(() => ok(article));
+    const output = await run(request, `请读这篇 ${link}`, { raw: true });
+    expect(output).toContain("Platform: WeChat");
+    expect(output).toContain("Title: 标题 & 示例");
+    expect(output).toContain("Author: 测试公众号");
+    expect(output).toContain("Original article:");
+    expect(output).toContain("第一段**重点**");
+    expect(output).toContain("第二段 <示例>");
+    for (const excluded of ["关注和广告", "secret()", ".hidden", "阅读量和评论"]) expect(output).not.toContain(excluded);
+    expect(calls[0]!.url).toBe(link);
+  });
+
+  it("summarizes only the body and follows article short links", async () => {
+    const ask = answer();
+    const { request } = fake((url) => url.pathname === "/s/abc" ? redirect(link) : ok(article));
+    const output = await run(request, "https://mp.weixin.qq.com/s/abc", { ask });
+    expect(output).toContain("Summary of the article:\n摘要内容");
+    expect(ask.mock.calls[0]![0]).toContain("第一段**重点**");
+    expect(ask.mock.calls[0]![0]).not.toContain("阅读量和评论");
+    expect(output).toContain(`Link: ${link}`);
+  });
+
+  it("reports verification, deleted and empty articles instead of summarizing unrelated page text", async () => {
+    for (const body of ["<p>环境异常，请完成验证</p>", "<p>该内容已被发布者删除</p>", '<div id="js_content"><script>content()</script></div>']) {
+      const ask = answer();
+      await expect(run(fake(() => ok(body)).request, link, { ask })).rejects.toThrow("no readable body");
+      expect(ask).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses redirects outside the platform and lookalike domains", async () => {
+    await expect(run(fake(() => redirect("https://example.com/")).request, link)).rejects.toThrow("Access to example.com is not supported");
+    expect(findPlatform("https://mp.weixin.qq.com.evil.example/s/abc")).toBeUndefined();
+  });
+});
+
 describe("Bilibili", () => {
   it("signs parameters with the mixin key", () => {
     const query = signWbi({ bvid: "BV1", note: "a!b'c(d)e*f" }, "mixin", 1700000000);

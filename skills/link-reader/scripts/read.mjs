@@ -10,8 +10,9 @@ import { summarizeText } from "./summarize.mjs";
 import { transcribeVideo } from "./stt.mjs";
 import { xiaohongshu } from "./xiaohongshu.mjs";
 import { youtube } from "./youtube.mjs";
+import { wechat } from "./wechat.mjs";
 
-const PLATFORMS = [bilibili, youtube, douyin, xiaohongshu];
+const PLATFORMS = [bilibili, youtube, douyin, xiaohongshu, wechat];
 const TRANSCRIBABLE = new Set(["Bilibili", "YouTube"]);
 const MAX_TRANSCRIPT = 500_000;
 const RAW_LIMIT = 30_000;
