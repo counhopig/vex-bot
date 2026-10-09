@@ -62,4 +62,18 @@ describe("settings", () => {
     expect(() => applySettings(base, { set: { "backgroundModel.provider": "deepseek" } }, paths)).toThrow(ConfigError);
     expect(() => applySettings(base, { set: { "heartbeat.every": "500ms" } }, paths)).toThrow(/heartbeat/);
   });
+
+  it("edits the notes vault and keeps its token secret", () => {
+    const view = readSettings(`${base}vault:\n  url: https://git.example/me/notes.git\n  username: me\n  token: tok\n`);
+    expect(view.values).toMatchObject({ "vault.url": "https://git.example/me/notes.git", "vault.username": "me" });
+    expect(view.secrets).toContain("vault.token");
+    expect(JSON.stringify(view)).not.toContain('"tok"');
+    const folder = applySettings(base, { set: { "vault.path": "/vault" } }, paths);
+    expect(readSettings(folder.text).values).toMatchObject({ "vault.path": "/vault" });
+    expect(folder.restartRequired).toBe(true);
+    const git = applySettings(folder.text, { set: { "vault.url": "https://git.example/me/notes.git" }, unset: ["vault.path"] }, paths);
+    expect(Object.keys(readSettings(git.text).values)).not.toContain("vault.path");
+    expect(() => applySettings(folder.text, { set: { "vault.url": "https://git.example/me/notes.git" } }, paths)).toThrow(/either path or url/);
+    expect(applySettings(git.text, { unset: ["vault.url"] }, paths).text).not.toContain("vault");
+  });
 });
