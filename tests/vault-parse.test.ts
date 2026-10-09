@@ -21,11 +21,12 @@ describe("parseNote", () => {
   });
 
   it("collects wiki links, embeds and markdown links to notes", () => {
-    const text = "[[Alpha]] [[Beta|alias]] [[Gamma#Heading]] [[Folder/Delta]] ![[Epsilon]] ![[photo.png]] [[#local]] "
+    const text = "[[Alpha]] [[Beta|alias]] [[Table\\|cell alias]] [[Gamma#Heading]] [[Folder/Delta]] ![[Epsilon]] ![[photo.png]] [[#local]] "
       + "[x](../Zeta.md#top) [y](https://e.x/a.md) [z](img.png) [w](/Root.md) `[[Code]]` [[Alpha]]";
     expect(parseNote("Notes/a.md", text).links).toEqual([
       { kind: "wiki", target: "Alpha" },
       { kind: "wiki", target: "Beta" },
+      { kind: "wiki", target: "Table" },
       { kind: "wiki", target: "Gamma" },
       { kind: "wiki", target: "Folder/Delta" },
       { kind: "wiki", target: "Epsilon" },
