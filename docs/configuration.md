@@ -19,7 +19,7 @@ The settings page has seven tabs:
 |---|---|
 | Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
-| Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
+| Voice & links | Speech to text, the Bilibili `SESSDATA`, web search, the notes vault |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
 | Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`, plus the daily notes in `memory/`, newest first) and Heartbeat (`HEARTBEAT.md`) |
 | Schedules | Every scheduled task with its rule, next run and target: pause or resume, edit, delete, or create one (repeating cron rule, fixed interval, or a single date and time) |
@@ -76,9 +76,13 @@ Saving in WebChat settings applies the change without a manual restart:
 | `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30; at most 15 with MiMo); lower it for services with small upload limits |
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
+| `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
+| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps a read-only copy. The address must not contain credentials |
+| `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
+| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and a read-only access token (some hosts accept any username); only with `vault.url` |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
+Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
 
 ## Models
 
@@ -195,6 +199,45 @@ Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xi
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
 - For WeChat articles, copy the article link and send it as text. Reading returns the title, account name and article body; verification pages, deleted articles and articles without a readable body return an error.
 - Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.
+
+## Notes vault
+
+Vex can read an Obsidian vault, or any folder of Markdown notes, as a personal knowledge base. Access is read-only: Vex never changes your notes. Set exactly one source, `vault.path` or `vault.url`.
+
+**A folder** (`vault.path`). Vex reads the folder directly and never updates it, so keep it current yourself: Syncthing, `git pull` on a timer, rclone, or Obsidian itself on the same machine. In Docker, mount the folder into the container, read-only:
+
+```yaml
+# compose.yaml
+services:
+  vex:
+    volumes:
+      - vex-data:/data
+      - /path/to/vault:/vault:ro
+```
+
+```yaml
+# config.yaml
+vault:
+  path: /vault
+```
+
+**A git repository** (`vault.url`). Vex keeps a read-only copy in `<data dir>/vault`:
+
+```yaml
+vault:
+  url: https://git.example.com/me/notes.git
+  branch: main            # optional
+  username: me            # optional; some hosts require one together with the token
+  token: "READ_ONLY_TOKEN"   # not needed for a public repository
+```
+
+The first time a vault tool runs, Vex clones the repository; later, when you ask about your notes, it fetches again if the last update is more than a minute old. The copy is a mirror, so force pushes are fine. Startup makes no network request. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
+
+Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration.
+
+The agent gets two tools. `vault_search` takes `query` (keywords separated by spaces; matching is by case-insensitive substring and works for Chinese), `tag` (a parent tag also matches its children), `folder`, `since`, `before` and `limit`; without a query it lists notes by last change, newest first, which is how to review a period or browse a tag. `vault_read` returns one note with its tags, outgoing links and backlinks, understanding `[[wikilinks]]`, `[[note|alias]]`, `[[note#heading]]`, frontmatter `tags` and `aliases`, inline `#tags` and relative Markdown links. A note's date is its last git commit time for a git copy (or a folder that is itself a git repository) and its file modification time otherwise.
+
+Files and folders whose names start with `.`, symlinks, non-Markdown files and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call, which stays fast for a few thousand notes. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
 
 ## Scheduled messages
 

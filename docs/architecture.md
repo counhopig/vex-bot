@@ -33,6 +33,7 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
 | `policy/` | Approval policy and pending approvals |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
+| `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
@@ -85,6 +86,7 @@ Messages are rendered to plain text for estimation and summarisation (tool resul
 | `web_fetch` | Public pages only (see Security); output is Markdown |
 | `web_search` | Tavily, SearXNG or Brave Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
+| `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns only its final reply |
@@ -126,6 +128,14 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 - Indexing: `index.sqlite` holds chunks of `memory/*.md`, `MEMORY.md`, `USER.md` and WeChat/WebChat transcripts (not temporary runs, not scheduled or proactive markers). Runs of Chinese, Japanese or Korean text are indexed as single characters and overlapping pairs. Updates are incremental: only bytes appended to a transcript are read, and a rewritten file is re-indexed. The index is versioned and rebuilt when the version changes or the file is corrupt.
 - Retrieval: `memory_search(query, limit?, scope?)` with scope `memory`, `sessions` or `all`; results are snippets with source and date, ranked by BM25.
 - Consolidation: at `memory.consolidateAt` (03:00) a temporary session reads the last seven daily notes plus `MEMORY.md` and `USER.md`, merges duplicates, removes stale entries and keeps `MEMORY.md` under 100 lines. It sends nothing to the owner.
+
+## Notes vault
+
+`vault/` gives the agent read-only access to a Markdown notes folder. Its source is either a folder (`vault.path`, read in place) or a git repository (`vault.url`). For a repository, `GitMirror` keeps a clone in `<data dir>/vault/<hash of url and branch>/`, fetches and resets to the remote when a vault tool runs and the last attempt is more than a minute old, and falls back to the last copy with a note in the tool result when an update fails. Git runs with an allow-listed environment; credentials travel only as an `http.extraHeader` in `GIT_CONFIG_*` variables and are scrubbed from any error text.
+
+`Vault` scans the folder on every call (skipping hidden names, symlinks, non-Markdown files and notes over 1 MB), keeping parsed metadata (title, tags, aliases, links) per file keyed by size and modification time, so only changed notes are parsed again. Bodies are read from disk when a search needs them. Backlinks are computed from the links of all notes when a note is read. A note's date is the last git commit time of its file (one `git log` pass, cached per HEAD), or the file time when there is no repository.
+
+`vault_read` accepts only a relative `.md` path without hidden segments, found in the scan, whose real path is still inside the vault. The session system prompt gains a short `Notes vault` section only when a vault is configured.
 
 ## Mood and rest hours
 

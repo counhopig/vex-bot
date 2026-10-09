@@ -20,6 +20,7 @@ src/
 ├── scheduler/             # Persistent schedules and temporary background turns
 ├── index/                 # Memory indexing, tokenization and search
 ├── persona/               # Mood, rest and proactive conversation state
+├── vault/                 # Read-only notes vault: git mirror, note parsing, search tools
 ├── workspace/             # Owner files, templates and daily notes
 ├── skills/                # Skill discovery and prompt integration
 ├── store/                 # Atomic writes and append-only JSONL
@@ -38,6 +39,7 @@ src/
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
+| Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 
 ## LOCAL CONVENTIONS
 
@@ -66,3 +68,4 @@ src/
 - Persist a schedule's advanced trigger/one-time disable state before launching delivery; serialize mutations and restore in-memory state on save failure (`scheduler/index.ts:76`, `scheduler/index.ts:160`).
 - Each proactive-chat prompt carries the current time and quiet-period facts; an identical repeated prompt makes the model copy its previous reply from the history (`persona/index.ts:141`, `daemon.ts:241`).
 - Memory indexing excludes temporary `sessions/runs` transcripts and messages with `vexSource`; temporary heartbeat/consolidation transcripts are removed on disposal (`index/memory.ts:74`, `index/memory.ts:105`, `daemon.ts:229`).
+- The vault is read-only and its tools have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).

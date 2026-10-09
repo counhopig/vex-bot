@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 FROM node:24-bookworm-slim
 ENV NODE_ENV=production VEX_HOME=/data VEX_LOG_STDOUT=1 VEX_WEB_HOST=0.0.0.0
 WORKDIR /app
+# git keeps the read-only copy of a notes vault repository (vault.url).
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 # ffmpeg and yt-dlp let the link-reader skill transcribe videos that have no subtitles.
 COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=tools /yt-dlp /usr/local/bin/yt-dlp
