@@ -114,6 +114,42 @@ describe("startDaemon", () => {
     expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate"]);
   });
 
+  it("offers the notes vault tools and prompt only when a vault is configured", async () => {
+    await mkdir(join(dir, "notes"), { recursive: true });
+    await writeFile(join(dir, "notes", "Idea.md"), "# Idea\nTry a weekly review\n");
+    let toolNames: string[] = [];
+    let systemPrompt = "";
+    faux.setResponses([
+      (ctx) => {
+        toolNames = getCurrentTools(ctx.messages).map((t) => t.name);
+        systemPrompt = getCurrentSystemPrompt(ctx.messages);
+        return fauxAssistantMessage("ok");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" }, vault: { path: join(dir, "notes") } }), log: createLogger(), models: models() });
+    await chat("hi");
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "vault_search", "vault_read", "schedule", "delegate"]);
+    expect(systemPrompt).toContain("## Notes vault");
+  });
+
+  it("does not mention the notes vault without configuration", async () => {
+    let toolNames: string[] = [];
+    let systemPrompt = "";
+    faux.setResponses([
+      (ctx) => {
+        toolNames = getCurrentTools(ctx.messages).map((t) => t.name);
+        systemPrompt = getCurrentSystemPrompt(ctx.messages);
+        return fauxAssistantMessage("ok");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("hi");
+    expect(toolNames).not.toContain("vault_search");
+    expect(systemPrompt).not.toContain("Notes vault");
+  });
+
   it("loads persona and dynamic skills in order and settles only successful owner interaction", async () => {
     const workspace = join(dir, "workspace");
     await mkdir(join(workspace, "skills", "custom"), { recursive: true });

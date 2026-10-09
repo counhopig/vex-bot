@@ -31,6 +31,13 @@ describe("ToolPolicy", () => {
     for (const tool of ["web_fetch", "web_search", "memory_search", "feel", "schedule", "delegate"]) expect(policy.decide(tool, {})).toBe("allow");
   });
 
+  it("lets the read-only vault tools run without approval", () => {
+    expect(policy.decide("vault_search", { query: "x" })).toBe("allow");
+    expect(policy.decide("vault_read", { path: "a.md" })).toBe("allow");
+    const denying = new ToolPolicy({ workspace: "/ws", overrides: { vault_read: "deny" } });
+    expect(denying.filter([{ name: "vault_search" }, { name: "vault_read" }])).toEqual([{ name: "vault_search" }]);
+  });
+
   it("allows writes inside the workspace only", () => {
     expect(policy.decide("write", { path: "memory/a.md" })).toBe("allow");
     expect(policy.decide("edit", { path: "/ws/SOUL.md" })).toBe("allow");
