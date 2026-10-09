@@ -34,6 +34,7 @@ One daemon, `vexd`, connects both interfaces to the same workspace, long-term me
 - **WeChat and WebChat.** One permanent WeChat conversation and multiple browser conversations. WebChat includes streaming Markdown, code copying, automatic titles, history recovery, response interruption, light and dark themes, and a mobile conversation drawer.
 - **Memory that carries across conversations.** Preferences and long-term facts live in editable Markdown files, with full-text search, memory preservation during context compaction, and nightly consolidation.
 - **Tools that act.** Read and write files, run shell commands, search and fetch the web, and delegate work to isolated sub-agents. Connect MCP servers over stdio or Streamable HTTP, and extend the assistant with Skills.
+- **Your notes as a knowledge base.** Point Vex at an Obsidian vault, from a folder or a git repository, and it searches and reads your notes, read-only, following links and tags.
 - **Shared approvals.** Shell commands, MCP tools and writes outside the workspace ask for approval. Respond from either WeChat or WebChat; the first answer applies.
 - **Tasks on your schedule.** Create recurring or one-time tasks in conversation or under Settings → Schedules. Heartbeat checks and proactive WeChat messages follow configurable rest hours.
 - **Your assistant, your workspace.** Edit its persona, what it knows about you, memory and daily notes directly in WebChat. Run one Node.js process or one container, with configuration and stored data under one data directory.
