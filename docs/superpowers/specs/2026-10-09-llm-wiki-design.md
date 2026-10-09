@@ -71,7 +71,7 @@ Layering stays as it is: `src/wiki/` depends on `src/vault/git.ts`; the daemon w
 1. Acquire the lock. If it is busy, an interactive tool returns "wiki run in progress"; the scheduled tick is skipped and retried later.
 2. `git fetch`, then `git rebase origin/<branch>`. On conflict: abort, restore a clean tree, notify, release. Nothing was written.
 3. **Precondition.** Changes outside `wiki/` and `raw/` mean something wrote past Vex's boundary: abort and alert. Changes inside `wiki/`/`raw/` are a stale batch (a crashed run): discard them with the abort cleanup below and continue.
-4. **Unpushed commits.** If `HEAD` is ahead of `origin/<branch>` (a previous push failed), try to push now. If that fails, abort the run without processing anything and notify; state is unchanged.
+4. **Unpushed commits.** Inspect `git log origin/<branch>..HEAD`. If any unpushed commit is a bootstrap preview (§4.7, §4.8), it is awaiting review: abort the run without processing anything, because a preview must never be pushed by the generic path. Otherwise, if `HEAD` is ahead of `origin/<branch>` (a previous push failed), try to push now; if that fails, abort the run without processing anything and notify; state is unchanged.
 5. Record `baseHead = HEAD`.
 6. Launch a temporary agent run (`temporary: "wiki"`) with the restricted toolset (`read`, `vault_search`, `vault_read`, `wiki_write`, `wiki_edit`). No `bash`, no MCP, no network tools.
 7. Finalize: stage `git add -- wiki/ raw/`, run the boundary check (§8), commit once (unless the bootstrap withholds the push, §4.7), push, advance state, notify.
@@ -121,12 +121,24 @@ Layering stays as it is: `src/wiki/` depends on `src/vault/git.ts`; the daemon w
 
 The first full compile is reviewed before Vex may push anything.
 
-- **Trigger.** On each tick, when `wiki.enabled` is true, `bootstrap` is not `done`, and no preview is awaiting review — that is, `lastBatchCommit` is `null` or already on `origin/<branch>` — the scheduler launches a one-time bootstrap run (separate from the recurring cadence). A failed attempt leaves no commit, so it retries next tick; a preview awaiting review stops the trigger until the owner acts.
+- **Trigger.** When `wiki.enabled` is true, `bootstrap` is not `done`, no preview is awaiting review (none unpushed; §4.8), and the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5), the scheduler launches a one-time bootstrap run (separate from the recurring cadence). The launch is evaluated on the scheduler's one-second tick but gated by the backoff, so a failure does not produce a per-second retry storm. A preview awaiting review stops the trigger until the owner acts.
 - **Run.** The bootstrap run compiles the whole vault in chunks, commits locally, and withholds the push. It records `lastBatchCommit` and notifies the owner with the changed-page summary and commit. `bootstrap` stays `pending`.
 - **Empty vault / no changes.** The run ends as a no-output success and immediately sets `bootstrap: done`; there is nothing to review.
-- **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, and push the pending commit (already-on-remote is fine), set `bootstrap: done`, and arm the cadence. With no pending commit, report that there is nothing to approve.
+- **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, and follow §8's rebase/retry rules to push the pending commit (already-on-remote is fine). On a rebase conflict, abort the rebase, keep the preview commit and `bootstrap: pending`, and notify; never force push. On success, set `bootstrap: done` and arm the cadence. With no pending commit, report that there is nothing to approve.
 - **Reject** (`wiki_bootstrap({ action: "reject" })`): acquire the lock and discard the unpublished commit locally (`git reset --hard <parent>`) — **no push** — keeping `bootstrap: pending` so it can be rebuilt. With no pending commit, report that there is nothing to reject.
 - While `pending`, `wiki_ingest` and `wiki_rollback` refuse; only `wiki_bootstrap` acts. This keeps the unpublished preview from ever reaching the remote.
+
+### 4.8 Preview recognition and state recovery
+
+The bootstrap commit message begins with `wiki: bootstrap preview`. This marker is durable and lets Vex recognise a preview even if the state file is lost or stale.
+
+On startup and before every run, `Wiki` reconciles the marker with the state file:
+
+- An **unpushed** commit whose subject starts with the marker (`git log origin/<branch>..HEAD`) means the preview is awaiting review: set `bootstrap: pending` and `lastBatchCommit` to that commit, and never push it except through `wiki_bootstrap({action:"approve"})`.
+- A marker commit **on `origin/<branch>`** means the preview was approved and pushed: set `bootstrap: done`.
+- No marker anywhere with a missing or partial state file: `bootstrap: pending` and a full scan (conservative).
+
+Preview protection takes precedence over the generic unpushed-commit push (§4.2 step 4), over the no-output advance (§8), and over any other automatic push.
 
 ## 5. Data Model
 
@@ -189,17 +201,20 @@ Stored outside the vault at `<data>/state/wiki.json`, never committed:
   "lastScanCommit": "<sha>",
   "lastRunAt": 1791542100655,
   "lastBatchCommit": "<sha | null>",
-  "bootstrap": "pending | done"
+  "bootstrap": "pending | done",
+  "nextAttemptAt": 1791542400000,
+  "failureStreak": 0
 }
 ```
 
 - `lastScanCommit` advances on a successful push, an already-on-remote HEAD, or a no-output batch with nothing unpushed; never on abort.
 - `lastBatchCommit` is the most recent batch that produced a commit — what `wiki_rollback` reverts — or `null` if no batch has committed yet. No-output batches leave it unchanged.
-- `bootstrap` gates the cadence (§4.7).
+- `bootstrap` gates the cadence (§4.7) and is reconciled from the preview marker on state loss (§4.8).
+- `nextAttemptAt` and `failureStreak` implement the retry backoff: a failed run increments the streak and sets `nextAttemptAt = now + min(1h, 5m x 2^(streak-1))`; a success resets both. The scheduler launches a run only when `now >= nextAttemptAt`.
 
 ### 5.6 State lifecycle
 
-- **Missing or partial state while `wiki.enabled`** is treated as `bootstrap: pending` and a full scan: a lost state file must not let Vex push without review.
+- **Missing or partial state while `wiki.enabled`** is treated as `bootstrap: pending` and a full scan, then reconciled with the preview marker (§4.8): a lost state file must not let Vex push without review.
 - **Disabled** (`wiki.enabled` false): the cadence stops. A pending bootstrap commit is kept. Re-enabling resumes the bootstrap review when `pending`, or the cadence when `done`.
 - **`lastScanCommit` missing or no longer an ancestor of `HEAD`**: full scan.
 
@@ -221,7 +236,7 @@ Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go
 - A run's prompt lists the changed notes (or the on-demand source) and the editorial procedure from `skills/llm-wiki/SKILL.md`.
 - The run toolset is `read`, `vault_search`, `vault_read`, `wiki_write`, `wiki_edit`; no `bash`, MCP, or network tools.
 - The editorial procedure: read changed notes (and deleted-note previous content), identify topics, update or create topic pages, update `_index.md`, add `[[wikilinks]]`, record `sources`, apply the deletion rule, and never copy secret values.
-- `wiki_write` overwrites a page; `wiki_edit` makes a targeted replacement. Both reject paths outside `wiki/`/`raw/`.
+- `wiki_write` overwrites a page; `wiki_edit` makes a targeted replacement. Both reject lexical paths outside `wiki/`/`raw/` and, at write time, any target whose real path escapes those subtrees through a symlink (§9).
 - A failed run leaves state unchanged; the whole diff is retried next attempt. Re-processing compiled notes is idempotent.
 
 ## 8. Git Workflow
@@ -234,7 +249,7 @@ Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go
 - Commit only if there are staged changes; one commit per batch, message `wiki: ingest <date> (<N> notes, <M> pages)`.
 - Push. On rejection (non-fast-forward), fetch + rebase + retry up to 2 times. If it still fails, keep the local commit and notify.
 - **Already-pushed recovery**: after a push error, `git fetch` and check `git merge-base --is-ancestor HEAD origin/<branch>`; if HEAD is already on the remote, treat the push as successful and advance state.
-- **No-output batches** may advance `lastScanCommit` only when `HEAD == origin/<branch>`. If unpushed commits remain, push them first; if that fails, do not advance state and notify. This guarantees local wiki content is eventually published or the owner is told.
+- **No-output batches** may advance `lastScanCommit` only when `HEAD == origin/<branch>`. If unpushed normal commits remain, push them first; if that fails, do not advance state and notify. An unpushed bootstrap preview is never pushed here (§4.2 step 4, §4.8) and stops the run. This guarantees local wiki content is eventually published or the owner is told.
 - Never force push.
 - Credentials come from `vault.username`/`vault.token` through the environment, as today, but the token needs write scope.
 
@@ -242,7 +257,7 @@ Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go
 
 1. **Single writer**: only `wiki_write`/`wiki_edit`, registered only in a locked wiki run, can write the vault; general `write`/`edit` cannot write vault paths at all.
 2. **Policy clamp**: for `write`/`edit`, any vault path is clamped to `deny` and cannot be opened by `tools.policy` overrides. The protected-path check runs before tool overrides.
-3. **Tool binding**: `wiki_write`/`wiki_edit` are bound to `<vault>/wiki` and `<vault>/raw` and reject anything else.
+3. **Tool binding and path safety**: `wiki_write`/`wiki_edit` are bound to `<vault>/wiki` and `<vault>/raw`. At write time they resolve the target's real path and the real subtree roots (following existing symlinks; for a new path, the nearest existing ancestor, reusing the `resolveRealPath` pattern in `policy.ts`) and reject any target that escapes the subtrees, passes through a directory symlink that escapes, or is a dangling symlink. Because abort cleanup cannot restore a file changed outside the subtrees, this check is the primary protection and the finalize boundary check is only a backstop.
 4. **Lock + preconditions**: no other writer can act during a run, and a run refuses to start on a tree with changes outside its subtrees.
 5. **Staging + post-write check**: `git add -- wiki/ raw/` only; `git status --porcelain` must show nothing outside the subtrees.
 6. **Unpublished preview**: a bootstrap commit cannot be pushed except through `wiki_bootstrap({action:"approve"})`.
@@ -268,8 +283,8 @@ Other rules:
 
 | Tool | Parameters | Behaviour |
 |---|---|---|
-| `wiki_write` | `{ path, content }` | Write a page under `wiki/`/`raw/`; reject other paths. |
-| `wiki_edit` | `{ path, oldText, newText, replaceAll? }` | Targeted replacement under `wiki/`/`raw/`; reject other paths. |
+| `wiki_write` | `{ path, content }` | Write a page under `wiki/`/`raw/`; reject other paths and any real path that escapes them (§9). |
+| `wiki_edit` | `{ path, oldText, newText, replaceAll? }` | Targeted replacement under `wiki/`/`raw/`; same path-safety check. |
 
 `read`, `vault_search`, `vault_read` are also available inside wiki runs. All three interactive tools are serialized by the same working-copy lock and report "wiki run in progress" when it is busy.
 
@@ -290,8 +305,8 @@ Other rules:
 
 **Scheduler / daemon**:
 
-- The scheduler gains a `wiki` option. Each tick:
-  - If `wiki.enabled`, `bootstrap` is not `done`, and there is no unpublished pending commit → launch the one-time bootstrap run.
+- The scheduler gains a `wiki` option. Its one-second tick evaluates the wiki schedule but launches only when the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5):
+  - If `wiki.enabled`, `bootstrap` is not `done`, and no preview is awaiting review (§4.8) → launch the one-time bootstrap run.
   - If `wiki.enabled` and `bootstrap: done` → run at `wiki.every`.
 - The daemon opens wiki runs as `temporary: "wiki"` with the restricted toolset and wires the interactive tools to the same `Wiki` service.
 
@@ -302,13 +317,16 @@ Other rules:
 | fetch / rebase conflict | Abort, clean tree, notify, no commit, state unchanged. |
 | Changes outside `wiki/`/`raw/` at run start | Abort and alert; no writes. |
 | Stale `wiki/`/`raw/` changes at run start | Discard as a failed previous run, then continue. |
-| Unpushed commits at run start, push fails | Abort the run, notify, state unchanged, retry next tick. |
+| Unpushed commits at run start, push fails | Abort the run, notify, state unchanged, retry after backoff. |
+| Unpushed bootstrap preview at run start | Abort the run; the preview is never auto-pushed (§4.8). |
+| Bootstrap/model failure | Back off (`nextAttemptAt`); notify at most once per backoff step. |
+| Symlink or `..` escapes the owned subtrees | Reject the write before any bytes are written; report to the run. |
 | Model error or timeout | `abortBatch`; state unchanged; notify. |
 | Guard violation (changes outside subtrees at finalize) | Discard offending paths, abort the batch, alert. |
 | Push rejected | Rebase and retry twice; then keep the local commit and notify. Never force push. |
 | Push error but HEAD already on remote | Treat as success and advance state. |
 | No file changes, nothing unpushed | No-output success: advance scan state; no commit/push/notification. |
-| No file changes but unpushed commits exist | Push first; if that fails, do not advance state and notify. |
+| No file changes but unpushed normal commits exist | Push first; if that fails, do not advance state and notify. A preview stops the run instead. |
 | Lock busy | Interactive tool returns "wiki run in progress"; scheduled tick retries later. |
 | Rollback with a dirty tree | Refuse and notify. |
 | Rollback conflict | `git revert --abort`, keep state, notify for manual resolution. |
@@ -322,7 +340,10 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 
 - Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects; reset/revert helpers.
 - Lock: concurrent runs serialize; a busy lock makes interactive tools report and scheduled ticks skip.
-- Preconditions: run refuses when changes exist outside the subtrees; stale `wiki/`/`raw/` changes are discarded; unpushed commits are pushed or the run aborts.
+- Preconditions: run refuses when changes exist outside the subtrees; stale `wiki/`/`raw/` changes are discarded; unpushed normal commits are pushed or the run aborts; an unpushed bootstrap preview always stops the run and is never pushed.
+- Preview recognition: state loss after a preview commit is reconciled from the commit marker; a pushed marker means `done`.
+- Backoff: consecutive failures space retries by `min(1h, 5m x 2^(streak-1))` and reset on success.
+- Path safety: file symlink, directory symlink, dangling symlink, and `..` bypass are rejected before any write; an escaping symlink is never followed.
 - Change detection: added/modified/deleted, subtree exclusions, non-ancestor fallback, first-run full scan.
 - Chunking: N+1 notes with `maxNotesPerRun = N` produce two model calls and exactly one commit.
 - State: advances on successful push, already-on-remote HEAD, and a no-output batch with nothing unpushed; never with unpushed commits or on abort.
@@ -361,7 +382,10 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 - Bootstrap has a defined trigger, an approve/reject tool, and a no-push reject path; unpublished commits cannot reach the remote.
 - `wiki_rollback` is remote-aware.
 - Unpushed-commit and no-output interactions are defined; state advances only when content is published (or no content exists).
-- State loss and re-enable behaviour are defined.
+- State loss and re-enable behaviour are defined; previews are recognised from a commit marker and protected from automatic push.
+- Failed runs back off instead of retrying every scheduler tick.
+- `wiki_write`/`wiki_edit` reject symlink and `..` escapes at write time, before any bytes are written.
+- Bootstrap approve uses the normal rebase/retry rules and preserves the preview on conflict.
 - Deleted sources keep previous content, clean `sources`, and mark pages `orphaned`.
 - `maxNotesPerRun` bounds one model call; a run makes one commit.
 - `wiki.*` settings are editable in the WebChat settings screen; default cadence `6h`.
