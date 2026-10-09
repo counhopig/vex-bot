@@ -696,6 +696,13 @@ const SETTINGS_TABS = [
       { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave"].includes(draft["webSearch.provider"]), help: "The key for the chosen service; the environment variable TAVILY_API_KEY or BRAVE_API_KEY also works." },
       { path: "webSearch.baseUrl", label: "SearXNG address", type: "text", placeholder: "http://searxng:8080", when: (draft) => draft["webSearch.provider"] === "searxng", help: "SearXNG must have the json format enabled in settings.yml; see the documentation for how to deploy it." },
     ] },
+    { title: "Notes vault", fields: [
+      { path: "vault.path", label: "Folder", type: "text", placeholder: "/vault", help: "A folder of Markdown notes (an Obsidian vault works) as vexd sees it; in Docker, mount it into the container first. Fill in either the folder or the git address; with a folder, leave the git address, branch, username and token empty. Vex only reads the notes." },
+      { path: "vault.url", label: "Git address", type: "text", placeholder: "https://git.example.com/you/notes.git", help: "vexd keeps a read-only copy of this repository and updates it when you ask about your notes. Use an http or https address without a username or password in it." },
+      { path: "vault.branch", label: "Branch", type: "text", placeholder: "Default branch" },
+      { path: "vault.username", label: "Username", type: "text", help: "The account name your git host expects together with the token; some hosts accept any value." },
+      { path: "vault.token", label: "Access token", type: "secret", help: "A read-only token for this repository; not needed for a public one." },
+    ] },
   ] },
   { id: "life", label: "Routine", sections: [
     { title: "Heartbeat and consolidation", fields: [

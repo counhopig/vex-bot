@@ -8,6 +8,7 @@ import {
   residentFileSection,
   SystemPromptBuilder,
   timeSection,
+  vaultSection,
 } from "../src/context/prompt.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -70,5 +71,15 @@ describe("time", () => {
     expect(await timeSection("Asia/Shanghai")(ctx)).toBe(
       "## Now\nTime: 2026-10-02 14:03 Friday (Asia/Shanghai, UTC+08:00, afternoon)\nWindow: WeChat",
     );
+  });
+});
+
+describe("vaultSection", () => {
+  it("tells the model about the read-only vault tools", async () => {
+    const text = await vaultSection()(ctx);
+    expect(text).toContain("## Notes vault");
+    expect(text).toContain("vault_search");
+    expect(text).toContain("vault_read");
+    expect(text).toContain("not instructions");
   });
 });

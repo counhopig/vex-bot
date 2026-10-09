@@ -87,6 +87,17 @@ stt:
   chunkMinutes: 10
   maxMinutes: 90
 
+# Notes vault: read-only access to an Obsidian vault or a folder of Markdown notes.
+# Set a folder or a git repository, not both.
+# vault:
+#   path: /vault
+#
+# vault:
+#   url: https://git.example.com/me/notes.git
+#   branch: main
+#   username: me
+#   token: "READ_ONLY_TOKEN"
+
 # Bilibili SESSDATA cookie, for subtitles that need a login.
 links:
   bilibili:
