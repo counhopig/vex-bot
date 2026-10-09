@@ -146,6 +146,22 @@ describe("GitMirror", () => {
     expect(state.error).toContain("Authentication failed");
   });
 
+  it("points at the token when git cannot authenticate", async () => {
+    const run: GitRunner = async () => { throw new Error("fatal: could not read Username for 'https://git.example': terminal prompts disabled"); };
+    const url = "https://git.example/me/notes.git";
+    const withToken = await mirror(url, { run, token: "s3cr3t" }).refresh();
+    expect(withToken.error).toContain("could not read Username");
+    expect(withToken.error).toContain("check vault.token (needs read access to the repository) and vault.username");
+    const withoutToken = await mirror(url, { run }).refresh();
+    expect(withoutToken.error).toContain("the repository may be private; set vault.token");
+  });
+
+  it("adds no token hint to unrelated failures", async () => {
+    const run: GitRunner = async () => { throw new Error("fatal: repository 'https://git.example/me/notes.git' not found"); };
+    const state = await mirror("https://git.example/me/notes.git", { run, token: "s3cr3t" }).refresh();
+    expect(state.error).not.toContain("vault.token");
+  });
+
   it("says so when git is not installed", async () => {
     const run: GitRunner = async () => { throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }); };
     const state = await mirror("https://git.example/me/notes.git", { run }).refresh();
@@ -161,6 +177,7 @@ describe("gitEnv", () => {
       expect(plain.GIT_CONFIG_COUNT).toBeUndefined();
       expect(plain.HTTPS_PROXY).toBe("http://proxy:3128");
       expect(plain.HOME).toBe("/tmp/h");
+      expect(plain.LC_ALL).toBe("C");
       expect(gitEnv("/tmp/h", { token: "t" }).GIT_CONFIG_VALUE_0).toBe(`Authorization: Basic ${Buffer.from("git:t").toString("base64")}`);
     } finally {
       vi.unstubAllEnvs();

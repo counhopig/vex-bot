@@ -29,6 +29,7 @@ function basicAuth(auth: GitAuth): string | undefined {
 export function gitEnv(home: string, auth: GitAuth = {}, protocols = "http:https"): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { HOME: home, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_ALLOW_PROTOCOL: protocols };
   for (const key of PASSTHROUGH) if (process.env[key] !== undefined) env[key] = process.env[key];
+  env.LC_ALL = "C";
   const basic = basicAuth(auth);
   if (basic) Object.assign(env, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}` });
   return env;
@@ -36,9 +37,15 @@ export function gitEnv(home: string, auth: GitAuth = {}, protocols = "http:https
 
 function scrub(message: string, auth: GitAuth): string {
   let text = message;
-  for (const secret of [auth.token, basicAuth(auth)]) if (secret) text = text.split(secret).join("***");
+  for (const secret of [basicAuth(auth), auth.token]) if (secret) text = text.split(secret).join("***");
   return text.replace(/authorization:[^\n]*/gi, "Authorization: ***");
 }
+
+const AUTH_FAILURE = /could not read Username|terminal prompts disabled|Authentication failed|Access denied|returned error: (401|403)|Invalid (username|credentials)/i;
+
+/** Owner-facing hint for the common "git could not authenticate" failures, which git itself reports without mentioning the token. */
+const authHint = (hasToken: boolean): string =>
+  hasToken ? "check vault.token (needs read access to the repository) and vault.username" : "the repository may be private; set vault.token";
 
 const tail = (message: string): string => {
   const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
@@ -133,7 +140,8 @@ export class GitMirror {
       return await this.run(args, { cwd, env: gitEnv(this.vaultDir, this.opts, this.opts.protocols), timeoutMs });
     } catch (error) {
       if ((error as { code?: unknown }).code === "ENOENT") throw new Error("git was not found; install git to use a vault url");
-      throw new Error(tail(scrub(error instanceof Error ? error.message : String(error), this.opts)));
+      const message = tail(scrub(error instanceof Error ? error.message : String(error), this.opts));
+      throw new Error(AUTH_FAILURE.test(message) ? `${message}; ${authHint(Boolean(this.opts.token))}` : message);
     }
   }
 }

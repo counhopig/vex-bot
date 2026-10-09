@@ -221,7 +221,7 @@ vault:
   path: /vault
 ```
 
-**A git repository** (`vault.url`). Vex keeps a read-only copy in `<data dir>/vault`:
+**A git repository** (`vault.url`). Vex keeps a read-only copy in `<data dir>/vault/<hash>/`:
 
 ```yaml
 vault:
@@ -233,11 +233,13 @@ vault:
 
 The first time a vault tool runs, Vex clones the repository; later, when you ask about your notes, it fetches again if the last update is more than a minute old. The copy is a mirror, so force pushes are fine. Startup makes no network request. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
 
-Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration.
+Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration. Vex sends `vault.username` as the account name, or `git` when you leave it empty.
 
-The agent gets two tools. `vault_search` takes `query` (keywords separated by spaces; matching is by case-insensitive substring and works for Chinese), `tag` (a parent tag also matches its children), `folder`, `since`, `before` and `limit`; without a query it lists notes by last change, newest first, which is how to review a period or browse a tag. `vault_read` returns one note with its tags, outgoing links and backlinks, understanding `[[wikilinks]]`, `[[note|alias]]`, `[[note#heading]]`, frontmatter `tags` and `aliases`, inline `#tags` and relative Markdown links. A note's date is its last git commit time for a git copy (or a folder that is itself a git repository) and its file modification time otherwise.
+The agent gets two tools. `vault_search` takes `query` (keywords separated by spaces; matching is by case-insensitive substring and works for Chinese), `tag` (a parent tag also matches its children), `folder`, `since`, `before` and `limit` (default 10, maximum 30); without a query it lists notes by last change, newest first, which is how to review a period or browse a tag. `vault_read` returns one note with its tags, outgoing links and backlinks, truncated at 30,000 characters, understanding `[[wikilinks]]`, `[[note|alias]]`, `[[note#heading]]`, frontmatter `tags` and `aliases`, inline `#tags` and relative Markdown links. A note's date is its last git commit time for a git copy (or a folder that is itself a git repository) and its file modification time otherwise.
 
-Files and folders whose names start with `.`, symlinks, non-Markdown files and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call, which stays fast for a few thousand notes. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
+Files and folders whose names start with `.`, symlinks, non-Markdown files (`.md`, case-insensitive) and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call; in a measured run, a search over 1,000 notes took about 0.1 s, and over 5,000 notes about 0.46 s warm and about 1 s cold. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
+
+Treat note text as untrusted input, not as instructions: a page you clipped into the vault can carry text aimed at the model. If the vault holds third-party content, set `tools.policy.web_fetch: ask` so a note cannot make Vex fetch an address silently, and set `tools.policy.write` and `tools.policy.edit` to `ask` too if you want the same for files.
 
 ## Scheduled messages
 
