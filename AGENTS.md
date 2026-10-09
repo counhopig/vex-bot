@@ -93,4 +93,4 @@ docker-compose up -d
 - Compose publishes on host loopback; the container listens on `0.0.0.0`.
 - Docker includes FFmpeg and architecture-specific yt-dlp for link-reader transcription.
 - Docker includes git for the notes vault mirror (`vault.url`).
-- CI checks types/tests on Node 24 before amd64/arm64 image builds; pull requests do not publish images.
+- CI runs lint and tests on Node 24 for pushes and pull requests; the amd64/arm64 image is built and published only on `main` and version tags, so pull requests skip the image job.
