@@ -73,6 +73,13 @@ export const ConfigSchema = Type.Object({
     chunkMinutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })),
     maxMinutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 600 })),
   })),
+  vault: Type.Optional(Type.Object({
+    path: Type.Optional(Type.String({ minLength: 1 })),
+    url: Type.Optional(Type.String({ pattern: "^https?://\\S+$" })),
+    branch: Type.Optional(Type.String({ minLength: 1 })),
+    username: Type.Optional(Type.String({ minLength: 1 })),
+    token: Type.Optional(Type.String()),
+  })),
   mcpServers: Type.Optional(Type.Record(Type.String({ pattern: "^[A-Za-z0-9-]{1,32}$" }), Type.Union([
     Type.Object({ command: Type.String({ minLength: 1 }), args: Type.Optional(Type.Array(Type.String())), env: Type.Optional(Type.Record(Type.String(), Type.String())), cwd: Type.Optional(Type.String()) }),
     Type.Object({ url: Type.String({ minLength: 1 }), headers: Type.Optional(Type.Record(Type.String(), Type.String())) }),
@@ -92,6 +99,8 @@ export type ModelRef = Static<typeof ModelRefSchema>;
 export type CustomModelConfig = Static<typeof CustomModelSchema>;
 export type ProviderConfig = Static<typeof ProviderSchema>;
 
+export interface VaultConfig { path?: string; url?: string; branch?: string; username?: string; token?: string }
+
 export interface VexConfig {
   model: ModelRef;
   backgroundModel: ModelRef;
@@ -107,6 +116,7 @@ export interface VexConfig {
   persona?: { sleep?: [string, string]; outreach?: { enabled?: boolean; checkEvery?: string; socialThreshold?: number; quietHours?: number; dailyLimit?: number } };
   webSearch?: { provider: "brave" | "tavily" | "searxng"; apiKey?: string; baseUrl?: string };
   stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
+  vault?: VaultConfig;
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;
 }
 
