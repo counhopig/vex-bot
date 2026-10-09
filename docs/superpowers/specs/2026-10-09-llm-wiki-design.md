@@ -1,7 +1,7 @@
 # LLM Wiki for the Notes Vault — Design
 
 **Date:** 2026-10-09
-**Status:** Rev 2 — revisions after review; awaiting re-review
+**Status:** Rev 3 — write path and transaction model finalized; awaiting re-review
 **Scope:** Architectural. Adds a new subsystem, `src/wiki/`, and makes the configured vault writable inside two owned subtrees.
 
 ## 1. Problem
@@ -24,6 +24,7 @@ Constraints chosen during brainstorming:
 6. **Automatic writes with a safety net**: writes and pushes are automatic; every batch sends a WeChat notification and can be rolled back.
 7. **Consumption is both**: browsable in Obsidian and queryable through Vex with citations.
 8. **Approach 1 (hybrid)**: safety mechanics in core code, editorial flow in a bundled skill.
+9. **Single writer, locked transaction** (finalized after review, supersedes the earlier "reuse `write`/`edit` with a policy allow-list"): only the wiki subsystem writes the vault, through dedicated tools available only inside a locked wiki run. General `write`/`edit` never write the vault. This is what makes the lock cover every actual write without threading session identity into the policy layer.
 
 ## 3. Goals and Non-Goals
 
@@ -31,7 +32,7 @@ Constraints chosen during brainstorming:
 
 - Periodically compile new/changed vault notes into durable topic pages under `<vault>/wiki/`.
 - Answer questions from the wiki first, with citations back to pages and source notes.
-- Keep the vault's non-wiki content strictly read-only for the automatic write path.
+- Keep the vault's non-wiki content strictly read-only, and keep all vault writes inside a locked transaction.
 - Make every automated batch one commit, notified and revertible.
 - Survive concurrent edits on other devices without data loss or force pushes.
 
@@ -48,51 +49,55 @@ Constraints chosen during brainstorming:
 
 | Component | Change | Responsibility |
 |---|---|---|
-| `src/vault/git.ts` | Extend | Add a writable working copy (clone, fetch, rebase, commit, push). Keep the read-only mirror for vault-only setups. |
+| `src/vault/git.ts` | Extend | Add a writable working copy (clone, fetch, rebase, commit, push, reset, revert). Keep the read-only mirror for vault-only setups. |
 | `src/vault/notes.ts` | Small change | Read from the shared writable working copy when the wiki is enabled. |
-| `src/wiki/` (new) | New | Working-copy lifecycle, batch transaction (`beginBatch`/`commitBatch`/`abortBatch`), lock, change detection, state file, subtree write guard, notifications, rollback. |
-| `src/tools/` (new tools) | New | `wiki_commit` (finalize/push a batch) and `wiki_rollback`; `write`/`edit` are used for page writes. |
-| `src/policy/policy.ts` | Extend | Protected-vault-path check that runs **before** tool overrides; `write`/`edit` may auto-write only inside `wiki/` and `raw/`. |
+| `src/wiki/` (new) | New | Working copy, lock, batch transaction, change detection, state file, subtree guards, run orchestration, notifications, bootstrap, rollback. |
+| `src/tools/` (new) | New | Interactive `wiki_ingest`, `wiki_bootstrap`, `wiki_rollback`; run-internal `wiki_write`, `wiki_edit`. |
+| `src/policy/policy.ts` | Small change | Vault paths in `write`/`edit` are clamped to deny; no allow-list opens them. |
 | `skills/llm-wiki/SKILL.md` (new) | New | Editorial procedure: synthesize topic pages, deduplicate, link, maintain the index, handle deletions, never copy secrets. |
-| `src/scheduler/index.ts` | Extend | A `wiki` cadence and a `"wiki"` temporary-run kind. |
+| `src/scheduler/index.ts` | Extend | Bootstrap trigger and `wiki.every` cadence. |
+| `src/daemon.ts` | Extend | Open wiki runs (`temporary: "wiki"`) with a restricted toolset; wire `wiki_ingest`/`wiki_bootstrap`/`wiki_rollback`. |
 | `src/context/prompt.ts` | Extend | A `## Wiki` section describing tools, layout, and boundaries. |
 | `src/config/schema.ts`, `load.ts`, `settings.ts` | Extend | `wiki` configuration and editable settings. |
 
 Layering stays as it is: `src/wiki/` depends on `src/vault/git.ts`; the daemon wires both and injects the shared working copy into `Vault`.
 
-### 4.2 Batch transaction and locking
+### 4.2 Write path and locked transaction
 
-All mutations of the working copy go through one process-wide async mutex per working copy (`Wiki` lock). Participating operations: the scheduled ingest run, interactive `wiki_commit`, and `wiki_rollback`.
+**Single writer.** The vault's `wiki/` and `raw/` subtrees are written only through `wiki_write`/`wiki_edit`, which are registered **only** inside a wiki run and are bound to those two subtrees. General `write`/`edit` never write the vault (their vault paths are denied, §9). The existing `write`/`edit` behavior inside the workspace is unchanged.
 
-- **Acquire** the lock, then `git fetch` and `git rebase origin/<branch>`. On conflict: abort, restore a clean tree, notify, release. Nothing was written.
-- **Precondition**: after the rebase, the tree must hold no changes outside `wiki/` and `raw/`. Changes outside them mean something wrote past Vex's boundary: abort and alert. Changes inside `wiki/` or `raw/` are a stale batch (a crashed run, or an interactive ingest that ended without `wiki_commit`); discard them with the abort cleanup below and continue.
-- **Begin**: record `baseHead = HEAD`.
-- **Attribution**: with the lock held and the tree clean at begin, every change under `wiki/` and `raw/` until commit or abort belongs to this batch.
-- **Abort**: discard only the batch — `git checkout -- wiki/ raw/` plus `git clean -fd -- wiki/ raw/` — and never touch other paths or advance state. (Nothing else can be dirty, by the precondition.)
-- **Commit/push**: stage `git add -- wiki/ raw/`, run the boundary check (§8), commit, push, then advance state.
-- The lock is held for the whole of a batch: one scheduled run (sync → model calls → commit/push), or one interactive ingest from `beginBatch` to `wiki_commit`/abort. A scheduled run that finds the lock busy skips this tick and retries next tick; an interactive operation that finds it busy returns "wiki ingest in progress".
-- The lock is in-process only; it does not coordinate across processes. One Vex daemon owns one working copy.
+**One lock per working copy.** The `Wiki` service owns an in-process async mutex. Every wiki run goes through `Wiki.run(kind, task, signal)`:
+
+1. Acquire the lock. If it is busy, an interactive tool returns "wiki run in progress"; the scheduled tick is skipped and retried later.
+2. `git fetch`, then `git rebase origin/<branch>`. On conflict: abort, restore a clean tree, notify, release. Nothing was written.
+3. **Precondition.** Changes outside `wiki/` and `raw/` mean something wrote past Vex's boundary: abort and alert. Changes inside `wiki/`/`raw/` are a stale batch (a crashed run): discard them with the abort cleanup below and continue.
+4. **Unpushed commits.** If `HEAD` is ahead of `origin/<branch>` (a previous push failed), try to push now. If that fails, abort the run without processing anything and notify; state is unchanged.
+5. Record `baseHead = HEAD`.
+6. Launch a temporary agent run (`temporary: "wiki"`) with the restricted toolset (`read`, `vault_search`, `vault_read`, `wiki_write`, `wiki_edit`). No `bash`, no MCP, no network tools.
+7. Finalize: stage `git add -- wiki/ raw/`, run the boundary check (§8), commit once (unless the bootstrap withholds the push, §4.7), push, advance state, notify.
+8. On any failure: `abortBatch` discards only the batch — `git checkout -- wiki/ raw/` plus `git clean -fd -- wiki/ raw/` — leaves state unchanged, notifies, and releases.
+
+**Attribution.** The lock is held for the whole run and only the run's tools can write the vault, so every `wiki/`/`raw/` change between steps 5 and 7 belongs to this batch. No other session can write those paths, and no session identity is needed.
+
+**Lock scope.** In-process only; one daemon owns one working copy.
 
 ### 4.3 Data flow — scheduled ingest
 
-1. The scheduler fires the `wiki` cadence (only when `wiki.enabled` and the bootstrap is done, §7) and launches a `"wiki"` temporary run.
-2. The run acquires the lock and begins a batch (§4.2).
+1. The scheduler runs at the `wiki.every` cadence only when `wiki.enabled` and `bootstrap: done`.
+2. It calls the daemon's wiki hook, which enters `Wiki.run("scheduled", ...)` (§4.2).
 3. Change detection computes added/modified/deleted notes since `lastScanCommit` (§6), including previous content for deletions.
-4. If nothing changed, the batch ends as a **no-output success**: advance `lastScanCommit` to `baseHead`, leave `lastBatchCommit` unchanged, release; no commit, no push, no model call, no notification.
-5. Otherwise the changed notes are split into chunks (§6). Each chunk is one model call with the editorial procedure from `skills/llm-wiki/SKILL.md`.
-6. The run's toolset is restricted: `read`, `write`, `edit`, `vault_search`, `vault_read`. No `bash`, no MCP, no network tools.
-7. After the last chunk, `commitBatch` stages, boundary-checks, commits once, pushes, advances state, and notifies.
-8. Any failure ends in `abortBatch`; state is unchanged and the owner is notified.
+4. If nothing changed, the run ends as a **no-output success**: advance `lastScanCommit` to `baseHead` (only if `HEAD == origin/<branch>`, §8), leave `lastBatchCommit` unchanged, release; no commit, no push, no model call, no notification.
+5. Otherwise the changed notes are split into chunks; each chunk is one model call following `skills/llm-wiki/SKILL.md`.
+6. After the last chunk the run finalizes as in §4.2 step 7.
 
 ### 4.4 Data flow — on-demand ingest
 
-1. The owner sends a link or text in WeChat/WebChat.
-2. The agent fetches the content (`web_fetch` or the link-reader skill) and begins a batch (`beginBatch`).
-3. It writes the source into `raw/` with provenance frontmatter, then compiles `wiki/` pages.
-4. It calls `wiki_commit` to stage, boundary-check, commit, push, advance state, and notify.
-5. On failure the agent calls `wiki_commit` with nothing staged, which aborts the batch and reports that there is nothing to commit; if the session ends without a commit, the next `beginBatch` discards the stale `wiki/`/`raw/` changes at the precondition.
-
-The interactive toolset is the normal one (the owner is present). The batch boundary is explicit: `wiki_commit` is the only way a normal session commits wiki changes.
+1. The owner sends a link, text, or file in WeChat/WebChat.
+2. The **main session** fetches or extracts the content (`web_fetch`, or the link-reader skill for platforms like Bilibili/YouTube). The owner is present, so the normal toolset and approvals apply.
+3. The main session calls `wiki_ingest({ url?, title?, text })`. `text` carries the extracted content; `url` and `title` are provenance metadata.
+4. `wiki_ingest` starts `Wiki.run("on-demand", ...)` with the provided source. The run writes `raw/`, compiles `wiki/`, commits, pushes, and notifies, then returns a summary (pages changed, commit) to the main session.
+5. While `bootstrap: pending`, `wiki_ingest` refuses and tells the owner to approve or reject the first compile.
+6. If the session ends before the run finishes, the run's transaction either commits or aborts; there is no partially-written working tree left behind.
 
 ### 4.5 Data flow — query
 
@@ -102,13 +107,26 @@ The interactive toolset is the normal one (the owner is present). The batch boun
 
 ### 4.6 Data flow — rollback
 
-1. The owner replies "roll back the last batch" (or equivalent).
-2. `wiki_rollback` acquires the lock and requires a clean tree.
-3. If `lastBatchCommit` is `null` (no batch has ever committed), it reports that there is nothing to roll back and releases.
-4. It `git fetch`es. If the commit is not in `origin/<branch>` and not in local history anymore, it clears `lastBatchCommit` and reports that there is nothing to revert.
-5. It runs `git revert --no-edit <lastBatchCommit>` and pushes. On a revert conflict it runs `git revert --abort`, keeps state, and notifies the owner to resolve manually. Never force push.
-6. On success it sets `lastBatchCommit = null` and reports the new commit.
-7. Rollback does **not** move `lastScanCommit`: the rejected compilation is not regenerated until its source notes change again, so the owner's rollback sticks.
+`wiki_rollback` reverts the most recent committed batch, distinguishing published from unpublished commits. It is refused while `bootstrap: pending`; use `wiki_bootstrap` then.
+
+1. Acquire the lock; if busy, report "wiki run in progress". Require a clean tree.
+2. If `lastBatchCommit` is `null` (no batch has committed), report that there is nothing to roll back.
+3. Fetch. Determine whether `lastBatchCommit` is on `origin/<branch>`.
+   - **Not on the remote** (an unpublished commit, e.g. a bootstrap preview): discard it locally with `git reset --hard <parent>` — **no push**.
+   - **On the remote**: `git revert --no-edit <lastBatchCommit>` and push. On a revert conflict, `git revert --abort`, keep state, and notify for manual resolution. Never force push.
+4. On success set `lastBatchCommit = null` and report the resulting commit.
+5. Rollback does not move `lastScanCommit`: the rejected compilation is not regenerated until its source notes change again, so the owner's rollback sticks.
+
+### 4.7 Bootstrap
+
+The first full compile is reviewed before Vex may push anything.
+
+- **Trigger.** On each tick, when `wiki.enabled` is true, `bootstrap` is not `done`, and no preview is awaiting review — that is, `lastBatchCommit` is `null` or already on `origin/<branch>` — the scheduler launches a one-time bootstrap run (separate from the recurring cadence). A failed attempt leaves no commit, so it retries next tick; a preview awaiting review stops the trigger until the owner acts.
+- **Run.** The bootstrap run compiles the whole vault in chunks, commits locally, and withholds the push. It records `lastBatchCommit` and notifies the owner with the changed-page summary and commit. `bootstrap` stays `pending`.
+- **Empty vault / no changes.** The run ends as a no-output success and immediately sets `bootstrap: done`; there is nothing to review.
+- **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, and push the pending commit (already-on-remote is fine), set `bootstrap: done`, and arm the cadence. With no pending commit, report that there is nothing to approve.
+- **Reject** (`wiki_bootstrap({ action: "reject" })`): acquire the lock and discard the unpublished commit locally (`git reset --hard <parent>`) — **no push** — keeping `bootstrap: pending` so it can be rebuilt. With no pending commit, report that there is nothing to reject.
+- While `pending`, `wiki_ingest` and `wiki_rollback` refuse; only `wiki_bootstrap` acts. This keeps the unpublished preview from ever reaching the remote.
 
 ## 5. Data Model
 
@@ -175,11 +193,17 @@ Stored outside the vault at `<data>/state/wiki.json`, never committed:
 }
 ```
 
-- `lastScanCommit` advances on a successful push, an already-on-remote HEAD, or a no-output batch; never on abort.
+- `lastScanCommit` advances on a successful push, an already-on-remote HEAD, or a no-output batch with nothing unpushed; never on abort.
 - `lastBatchCommit` is the most recent batch that produced a commit — what `wiki_rollback` reverts — or `null` if no batch has committed yet. No-output batches leave it unchanged.
-- `bootstrap` gates the cadence (§7).
+- `bootstrap` gates the cadence (§4.7).
 
-### 5.6 Page naming
+### 5.6 State lifecycle
+
+- **Missing or partial state while `wiki.enabled`** is treated as `bootstrap: pending` and a full scan: a lost state file must not let Vex push without review.
+- **Disabled** (`wiki.enabled` false): the cadence stops. A pending bootstrap commit is kept. Re-enabling resumes the bootstrap review when `pending`, or the cadence when `done`.
+- **`lastScanCommit` missing or no longer an ancestor of `HEAD`**: full scan.
+
+### 5.7 Page naming
 
 Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go in Obsidian `aliases` frontmatter instead of renaming.
 
@@ -190,70 +214,70 @@ Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go
 - If `lastScanCommit` is missing or is no longer an ancestor of `HEAD` (force push, rewritten history, first run), fall back to a full scan.
 - The diff is split into chunks of at most `wiki.maxNotesPerRun` notes. `maxNotesPerRun` bounds **one model call**; a run processes every chunk and still makes exactly one commit.
 - Each deleted path is accompanied by its previous content from `git show <lastScanCommit>:<path>`.
-- Advance `lastScanCommit` to `baseHead` only when the whole diff has been processed and the outcome is a successful push, an already-on-remote HEAD, or a no-output batch.
+- Advance `lastScanCommit` to `baseHead` only per §5.5.
 
-## 7. Bootstrap and Ingest Execution
+## 7. Ingest Execution
 
-**Bootstrap gate**
-
-- Setting `wiki.enabled` records `bootstrap: pending`. The cadence does not run until `bootstrap: done`.
-- The first ingest (at the next tick, or when the owner says "build the wiki") compiles the whole vault in chunks, commits locally, and **withholds the push**. It records `lastBatchCommit` and notifies the owner with the changed-page summary and commit.
-- The owner reviews. Approval (e.g. "push it") calls `wiki_commit`, which pushes the pending commit, sets `bootstrap: done`, and arms the cadence. Rejection calls `wiki_rollback`, which discards the local commit and keeps `bootstrap: pending`.
-
-**Scheduled runs**
-
-- Run only when `wiki.enabled` and `bootstrap: done`.
-- Toolset restricted as in §4.3.
-- A run is one batch: whole diff, chunked calls, one commit.
-- A failed run leaves state unchanged; the whole diff is retried next run. Re-processing compiled notes is idempotent.
-
-**Editorial procedure** (`skills/llm-wiki/SKILL.md`): read changed notes (and deleted-note previous content), identify topics, update or create topic pages, update `_index.md`, add `[[wikilinks]]`, record `sources`, apply the deletion rule, and never copy secret values.
-
-**Writes** use the existing `write`/`edit` tools; `resolveToolPath` accepts absolute paths, so only policy needs to change.
+- A run's prompt lists the changed notes (or the on-demand source) and the editorial procedure from `skills/llm-wiki/SKILL.md`.
+- The run toolset is `read`, `vault_search`, `vault_read`, `wiki_write`, `wiki_edit`; no `bash`, MCP, or network tools.
+- The editorial procedure: read changed notes (and deleted-note previous content), identify topics, update or create topic pages, update `_index.md`, add `[[wikilinks]]`, record `sources`, apply the deletion rule, and never copy secret values.
+- `wiki_write` overwrites a page; `wiki_edit` makes a targeted replacement. Both reject paths outside `wiki/`/`raw/`.
+- A failed run leaves state unchanged; the whole diff is retried next attempt. Re-processing compiled notes is idempotent.
 
 ## 8. Git Workflow
 
 - The wiki uses a normal clone (not the read-only mirror) checked out on the configured branch, stored under the data directory.
-- Fetch + rebase before writing; a conflict aborts the batch.
-- Clean-tree precondition at batch begin (§4.2).
+- Fetch + rebase before a run; a conflict aborts the run.
+- Precondition, unpushed-commit handling, and abort cleanup are in §4.2.
 - Stage `git add -- wiki/ raw/` only.
 - Boundary check: `git status --porcelain` must list nothing outside `wiki/` and `raw/`. If it does, treat it as a guard violation: discard the offending paths, abort the batch, and alert.
 - Commit only if there are staged changes; one commit per batch, message `wiki: ingest <date> (<N> notes, <M> pages)`.
-- Push. On rejection, fetch + rebase + retry up to 2 times. If it still fails, keep the local commit and notify.
+- Push. On rejection (non-fast-forward), fetch + rebase + retry up to 2 times. If it still fails, keep the local commit and notify.
 - **Already-pushed recovery**: after a push error, `git fetch` and check `git merge-base --is-ancestor HEAD origin/<branch>`; if HEAD is already on the remote, treat the push as successful and advance state.
-- Advance `lastScanCommit` and `lastBatchCommit` only per §5.5. Never force push.
+- **No-output batches** may advance `lastScanCommit` only when `HEAD == origin/<branch>`. If unpushed commits remain, push them first; if that fails, do not advance state and notify. This guarantees local wiki content is eventually published or the owner is told.
+- Never force push.
 - Credentials come from `vault.username`/`vault.token` through the environment, as today, but the token needs write scope.
 
 ## 9. Boundaries and Security
 
-Defense in depth for the write boundary:
-
-1. **Policy precedence**: the protected-vault-path check runs **before** tool overrides. For `write`/`edit`, the vault's `wiki/` and `raw/` subtrees may be `allow`; every other vault path is clamped to `ask` (or `deny`). A `tools.policy` override may tighten these paths but never turn a protected path into `allow`.
-2. **Scope of the guarantee**: the automatic-write guarantee covers `write` and `edit` only. `bash` and MCP remain `ask` and are not auto-approved, so they are outside the automatic boundary. Scheduled wiki runs additionally exclude `bash` and MCP from their toolset (§4.3).
-3. **Staging**: `git add -- wiki/ raw/` only.
-4. **Post-write check**: `git status --porcelain` must show nothing outside the subtrees, or the batch aborts.
-5. **Lock + clean-tree precondition**: prevents a batch from sweeping up changes it did not make.
+1. **Single writer**: only `wiki_write`/`wiki_edit`, registered only in a locked wiki run, can write the vault; general `write`/`edit` cannot write vault paths at all.
+2. **Policy clamp**: for `write`/`edit`, any vault path is clamped to `deny` and cannot be opened by `tools.policy` overrides. The protected-path check runs before tool overrides.
+3. **Tool binding**: `wiki_write`/`wiki_edit` are bound to `<vault>/wiki` and `<vault>/raw` and reject anything else.
+4. **Lock + preconditions**: no other writer can act during a run, and a run refuses to start on a tree with changes outside its subtrees.
+5. **Staging + post-write check**: `git add -- wiki/ raw/` only; `git status --porcelain` must show nothing outside the subtrees.
+6. **Unpublished preview**: a bootstrap commit cannot be pushed except through `wiki_bootstrap({action:"approve"})`.
 
 Other rules:
 
-- Note text is untrusted input. The write boundary is the primary mitigation: a malicious clipped note cannot make Vex modify the owner's notes.
+- Note text is untrusted input. The single-writer boundary and the restricted run toolset are the primary mitigations.
 - Wiki pages must not reproduce credentials, tokens, passwords, or secret values; they may describe that a note exists and what it covers.
-- `wiki_rollback` and `wiki_commit` are `allow`; both are lock-serialized and bound by the clean-tree precondition.
+- `wiki_write`/`wiki_edit` exist only inside wiki runs; a normal session cannot obtain them.
 - The existing `vault_read`/`vault_search` tools remain, now reading the shared working copy.
 
 ## 10. Tools, Prompt, Scheduler, Configuration
 
-**Tools**
+**Interactive tools** (registered in normal sessions when the wiki is enabled)
 
-- Reuse `write`, `edit`, `vault_search`, `vault_read`.
-- `wiki_commit` — finalize the current batch: stage `wiki/`+`raw/`, boundary-check, commit, push (unless the bootstrap withholds it), advance state, notify. If the bootstrap withheld a push and a pending commit exists, it pushes that commit and marks the bootstrap done. With nothing staged and no pending bootstrap commit, it aborts the batch and reports that there is nothing to commit.
-- `wiki_rollback` — revert `lastBatchCommit` (§4.6).
+| Tool | Parameters | Behaviour |
+|---|---|---|
+| `wiki_ingest` | `{ url?, title?, text }` | Start a locked on-demand wiki run with the extracted source; write `raw/`, compile `wiki/`, commit, push, notify; return a summary. Refused while the bootstrap is pending. |
+| `wiki_bootstrap` | `{ action: "approve" \| "reject" }` | Approve: push the pending bootstrap commit, set `bootstrap: done`, arm the cadence. Reject: discard the unpublished commit locally, keep `pending`. |
+| `wiki_rollback` | none | Revert the most recent committed batch; unpublished → local discard, published → `git revert` + push (§4.6). Refused while the bootstrap is pending. |
+
+**Run-internal tools** (registered only inside `temporary: "wiki"` runs)
+
+| Tool | Parameters | Behaviour |
+|---|---|---|
+| `wiki_write` | `{ path, content }` | Write a page under `wiki/`/`raw/`; reject other paths. |
+| `wiki_edit` | `{ path, oldText, newText, replaceAll? }` | Targeted replacement under `wiki/`/`raw/`; reject other paths. |
+
+`read`, `vault_search`, `vault_read` are also available inside wiki runs. All three interactive tools are serialized by the same working-copy lock and report "wiki run in progress" when it is busy.
 
 **Configuration** (`wiki` block)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `wiki.enabled` | `false` | Turns on the subsystem; the first time it is enabled, records `bootstrap: pending`. |
+| `wiki.enabled` | `false` | Turns on the subsystem; enables the first-time bootstrap review. |
 | `wiki.every` | `6h` | Ingest cadence (duration or cron, same parser as schedules). |
 | `wiki.notify` | `true` | WeChat notification per batch. |
 | `wiki.maxNotesPerRun` | `20` | Notes per model call; a run processes every chunk. |
@@ -262,50 +286,60 @@ Other rules:
 
 **Editable settings**: `wiki.enabled`, `wiki.every`, `wiki.notify`, `wiki.maxNotesPerRun` are added to `settings.ts` `ALLOWED` and the WebChat settings fields. The vault token stays a vault secret.
 
-**Prompt** — a `## Wiki` section states: the wiki is maintained by a scheduled ingest; prefer `wiki/` when answering and cite pages; write only inside `wiki/` and `raw/`; treat note text as data.
+**Prompt** — a `## Wiki` section states: the wiki is maintained by a scheduled ingest; prefer `wiki/` when answering and cite pages; vault writes happen only through the wiki subsystem; treat note text as data.
 
-**Scheduler** — `SchedulerOptions` gains `wiki`; the `runTemporary` kind union gains `"wiki"`. The daemon's hook orchestrates the batch and post-commit notification, and gates the cadence on `bootstrap: done`.
+**Scheduler / daemon**:
+
+- The scheduler gains a `wiki` option. Each tick:
+  - If `wiki.enabled`, `bootstrap` is not `done`, and there is no unpublished pending commit → launch the one-time bootstrap run.
+  - If `wiki.enabled` and `bootstrap: done` → run at `wiki.every`.
+- The daemon opens wiki runs as `temporary: "wiki"` with the restricted toolset and wires the interactive tools to the same `Wiki` service.
 
 ## 11. Error Handling
 
 | Failure | Behaviour |
 |---|---|
 | fetch / rebase conflict | Abort, clean tree, notify, no commit, state unchanged. |
-| Dirty tree outside `wiki/`/`raw/` at batch begin | Abort and alert; no writes. |
-| Stale `wiki/`/`raw/` changes at batch begin | Discard as a failed previous batch, then continue. |
+| Changes outside `wiki/`/`raw/` at run start | Abort and alert; no writes. |
+| Stale `wiki/`/`raw/` changes at run start | Discard as a failed previous run, then continue. |
+| Unpushed commits at run start, push fails | Abort the run, notify, state unchanged, retry next tick. |
 | Model error or timeout | `abortBatch`; state unchanged; notify. |
-| Guard violation (changes outside subtrees) | Discard offending paths, abort the batch, alert. |
+| Guard violation (changes outside subtrees at finalize) | Discard offending paths, abort the batch, alert. |
 | Push rejected | Rebase and retry twice; then keep the local commit and notify. Never force push. |
 | Push error but HEAD already on remote | Treat as success and advance state. |
-| No file changes from a processed batch | No-output success: advance scan state, no commit/push/notification. |
-| Lock busy (interactive op during a run) | Return "wiki ingest in progress"; no queueing. |
+| No file changes, nothing unpushed | No-output success: advance scan state; no commit/push/notification. |
+| No file changes but unpushed commits exist | Push first; if that fails, do not advance state and notify. |
+| Lock busy | Interactive tool returns "wiki run in progress"; scheduled tick retries later. |
 | Rollback with a dirty tree | Refuse and notify. |
 | Rollback conflict | `git revert --abort`, keep state, notify for manual resolution. |
+| Bootstrap reject/approve | Reject discards locally without pushing; approve pushes the preview. |
 
-Every terminal outcome sends a WeChat notification when `wiki.notify` is on: a success summary (pages changed, commit) or a failure reason. No-output batches are the exception.
+Every terminal outcome sends a WeChat notification when `wiki.notify` is on, except no-output successes.
 
 ## 12. Testing
 
 **Unit**
 
-- Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects.
-- Lock: two concurrent batch attempts serialize; the second returns "in progress".
-- Dirty-tree precondition: begin aborts when `wiki/` or `raw/` is dirty.
+- Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects; reset/revert helpers.
+- Lock: concurrent runs serialize; a busy lock makes interactive tools report and scheduled ticks skip.
+- Preconditions: run refuses when changes exist outside the subtrees; stale `wiki/`/`raw/` changes are discarded; unpushed commits are pushed or the run aborts.
 - Change detection: added/modified/deleted, subtree exclusions, non-ancestor fallback, first-run full scan.
 - Chunking: N+1 notes with `maxNotesPerRun = N` produce two model calls and exactly one commit.
-- State: advances on successful push, on already-on-remote HEAD, and on a no-output batch; never on abort.
+- State: advances on successful push, already-on-remote HEAD, and a no-output batch with nothing unpushed; never with unpushed commits or on abort.
 - Deletion: previous content is supplied; `sources` is cleaned; a page losing all sources becomes `orphaned` and is listed in `_index.md`; no page is deleted.
-- Policy: `wiki/` and `raw/` allowed, other vault paths clamped to `ask`, a `write: allow` override cannot open them.
-- Provenance: inverting `sources` finds the right pages; `_index.md` update.
-- `wiki_commit`: commits and pushes; with nothing to commit it reports so.
-- `wiki_rollback`: reverts and pushes; a second call reports nothing to roll back; a revert conflict aborts cleanly.
-- Bootstrap: the first batch withholds the push, approval pushes and arms the cadence, rejection discards.
+- Policy: vault paths in `write`/`edit` are denied and overrides cannot open them.
+- `wiki_write`/`wiki_edit`: bound to the subtrees; other paths rejected.
+- `wiki_ingest`: the main session supplies text; the run commits once; refused while the bootstrap is pending.
+- Bootstrap: the one-time trigger fires once; no-change completes `done`; approve pushes; reject discards locally and never pushes.
+- `wiki_rollback`: unpublished commit → local discard without push; published commit → revert + push; second call reports nothing to roll back; conflict aborts cleanly.
+- State lifecycle: missing state behaves as `pending`; disable/enable resumes correctly.
 
 **Integration**
 
 - A scheduled ingest with a fake agent produces exactly one commit and one notification.
+- An on-demand `wiki_ingest` produces one commit and does not leave a dirty tree.
 - A guard violation aborts the batch.
-- On-demand flow: fetch → raw/ → compile → `wiki_commit` produces one commit.
+- Run toolset contains `wiki_write`/`wiki_edit` and excludes `bash`/MCP; a normal session's toolset does not contain the wiki write tools.
 
 **Existing suites**
 
@@ -315,22 +349,22 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on: a s
 
 **Risks**
 
-- Synthesis quality: LLM-generated pages may be wrong or noisy. Mitigation: provenance frontmatter, bootstrap preview, and rollback.
-- Prompt injection: mitigated by the write boundary, the restricted scheduled toolset, and the no-secrets rule.
-- Owner editing `wiki/` on another device: a rebase conflict aborts the batch and notifies; the owner's edit wins because Vex abandons the batch.
+- Synthesis quality: LLM-generated pages may be wrong or noisy. Mitigation: provenance frontmatter, bootstrap review, and rollback.
+- Prompt injection: mitigated by the single-writer boundary, the restricted run toolset, and the no-secrets rule.
+- Owner editing `wiki/` on another device: a rebase conflict aborts the run and notifies; the owner's edit wins because Vex abandons the run.
 - Cost: the first full compile is expensive. Mitigation: chunked runs and the bootstrap review.
 
 **Resolved after review**
 
-- `maxNotesPerRun` bounds one model call; a run processes the whole diff and makes one commit.
-- No-output batches advance scan state; already-pushed-HEAD recovery handles false push failures.
-- On-demand ingest has an explicit `wiki_commit` interface and batch boundary.
-- Concurrency is serialized by a lock with a clean-tree precondition and batch attribution.
-- Protected vault paths are checked before tool overrides; the guarantee covers `write`/`edit`.
-- Deleted sources: previous content is supplied, `sources` is cleaned, pages become `orphaned` rather than being deleted.
-- Rollback is idempotent, lock-serialized, and conflict-safe.
-- Bootstrap must be reviewed before the cadence arms.
-- `wiki.*` settings are editable in the WebChat settings screen.
+- Single writer + locked run replaces the `write`/`edit` policy allow-list; the lock now covers every actual vault write without session identity.
+- On-demand ingest is `wiki_ingest` + a locked temporary run; the main session fetches/extracts content.
+- Bootstrap has a defined trigger, an approve/reject tool, and a no-push reject path; unpublished commits cannot reach the remote.
+- `wiki_rollback` is remote-aware.
+- Unpushed-commit and no-output interactions are defined; state advances only when content is published (or no content exists).
+- State loss and re-enable behaviour are defined.
+- Deleted sources keep previous content, clean `sources`, and mark pages `orphaned`.
+- `maxNotesPerRun` bounds one model call; a run makes one commit.
+- `wiki.*` settings are editable in the WebChat settings screen; default cadence `6h`.
 
 **Deferred** (not in this design)
 
@@ -340,8 +374,9 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on: a s
 
 ## 14. Milestones
 
-1. Writable git working copy + policy precedence (protected paths before overrides) — core safety.
-2. Batch transaction, lock, change detection, state file, commit/push with already-pushed recovery.
-3. `skills/llm-wiki/SKILL.md` + prompt section + scheduler cadence + bootstrap gate.
-4. `wiki_commit` (on-demand) and `wiki_rollback`.
-5. Config, editable settings, docs, and full test coverage update.
+1. Writable git working copy + single-writer boundary (`wiki_write`/`wiki_edit`, policy clamp).
+2. `Wiki.run` transaction, lock, change detection, state file, commit/push, unpushed-commit handling.
+3. Wiki run toolset in the daemon + `skills/llm-wiki/SKILL.md` + prompt section.
+4. Scheduler cadence + bootstrap trigger + `wiki_bootstrap`.
+5. `wiki_ingest` and `wiki_rollback`.
+6. Config, editable settings, docs, and full test coverage update.
