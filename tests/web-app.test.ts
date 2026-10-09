@@ -167,6 +167,27 @@ describe("web app", () => {
     expect(find(get("settings-form"), (el) => el.id === "f-webSearch-apiKey")).toBeDefined();
   });
 
+  it("edits the notes vault settings and never fills the saved token", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "x" }, ["vault.token"])})`, context);
+    get("settings-tabs").children[2]!.dispatch("click");
+    const form = get("settings-form");
+    expect(textOf(form)).toContain("Notes vault");
+    const token = find(form, (el) => el.id === "f-vault-token")!;
+    expect(token.value).toBe("");
+    expect((token as unknown as { placeholder: string }).placeholder).toBe("Set; leave empty to keep it");
+    const url = find(form, (el) => el.id === "f-vault-url")!;
+    url.value = "https://git.example/me/notes.git";
+    url.dispatch("input");
+    const user = find(form, (el) => el.id === "f-vault-username")!;
+    user.value = "me";
+    user.dispatch("input");
+    get("save-settings").dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "save_settings", set: { "vault.url": "https://git.example/me/notes.git", "vault.username": "me" }, unset: [] });
+    for (const id of ["f-vault-path", "f-vault-branch"]) expect(find(form, (el) => el.id === id)).toBeDefined();
+  });
+
   it("builds patches for cleared values, paired times and the shared background model", async () => {
     const { context, call } = await loadApp();
     runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "a", "backgroundModel.provider": "deepseek", "backgroundModel.id": "b", "heartbeat.every": "30m", "persona.sleep": ["23:00", "07:00"] }, ["links.bilibili.sessdata"])})`, context);
