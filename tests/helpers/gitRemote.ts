@@ -9,6 +9,7 @@ export function git(cwd: string, args: string[], env: NodeJS.ProcessEnv = {}): s
     cwd,
     encoding: "utf8",
     env: { ...BASE_ENV, ...env },
+    stdio: ["ignore", "pipe", "pipe"],
   });
 }
 
