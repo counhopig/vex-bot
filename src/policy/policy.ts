@@ -7,7 +7,7 @@ export const DEFAULT_DECISIONS: Record<string, Decision> = {
   read: "allow",
   grep: "allow",
   find: "allow",
-  web_fetch: "allow", web_search: "allow", memory_search: "allow", feel: "allow", schedule: "allow", delegate: "allow",
+  web_fetch: "allow", web_search: "allow", memory_search: "allow", vault_search: "allow", vault_read: "allow", feel: "allow", schedule: "allow", delegate: "allow",
   bash: "ask",
 };
 
