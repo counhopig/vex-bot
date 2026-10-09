@@ -15,6 +15,7 @@ import {
   residentFileSection,
   SystemPromptBuilder,
   timeSection,
+  vaultSection,
 } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
 import { Session } from "./core/session.js";
@@ -33,6 +34,8 @@ import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
+import { Vault } from "./vault/notes.js";
+import { createVaultTools } from "./vault/tools.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -104,8 +107,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
   startupCleanup.push(() => mcp.close());
   await mcp.start();
+  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, onWarning: (message) => log.warn(message) }) : undefined;
   const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config }),
-    createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool(), createWebSearchTool(config.webSearch)];
+    createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool(), createWebSearchTool(config.webSearch),
+    ...(vault ? createVaultTools(vault) : [])];
   const prompt = new SystemPromptBuilder([
     baseInstructionsSection(config.workspace),
     residentFileSection({ workspace: config.workspace, file: "SOUL.md", maxLines: RESIDENT_LINE_LIMITS["SOUL.md"]! }),
@@ -113,6 +118,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     () => `## Mood and rest hours\n${persona.describe()}`,
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
+    ...(vault ? [vaultSection()] : []),
     timeSection(),
   ]);
 

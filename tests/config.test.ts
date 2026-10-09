@@ -25,6 +25,25 @@ describe("parseConfig", () => {
       expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(ConfigError);
     }
   });
+  it("validates the notes vault: a folder or a git url, never both", () => {
+    expect(parseConfig(minimal, paths).vault).toBeUndefined();
+    expect(parseConfig(`${minimal}vault: { path: /vault }\n`, paths).vault).toEqual({ path: "/vault" });
+    expect(parseConfig(`${minimal}vault: { path: notes }\n`, paths).vault).toEqual({ path: join(dir, "notes") });
+    expect(parseConfig(`${minimal}vault: { path: "~/notes" }\n`, paths).vault).toEqual({ path: join(homedir(), "notes") });
+    expect(parseConfig(`${minimal}vault: { url: "https://git.example/me/notes.git", branch: main, username: me, token: t }\n`, paths).vault)
+      .toEqual({ url: "https://git.example/me/notes.git", branch: "main", username: "me", token: "t" });
+    expect(parseConfig(`${minimal}vault: { url: "http://gitea:3000/me/notes.git" }\n`, paths).vault).toEqual({ url: "http://gitea:3000/me/notes.git" });
+    const bad: [string, RegExp][] = [
+      ['vault: { path: /v, url: "https://g/x.git" }', /either path or url/],
+      ["vault: {}", /set path/],
+      ["vault: { path: /v, token: t }", /only to a git url/],
+      ['vault: { url: "https://me:pw@g/x.git" }', /must not contain a username or password/],
+      ['vault: { url: "ssh://git@g/x.git" }', /vault\/url/],
+      ['vault: { url: "git@g:me/notes.git" }', /vault\/url/],
+    ];
+    for (const [block, message] of bad) expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(message);
+  });
+
   it("fills defaults for a minimal config", () => {
     const config = parseConfig(minimal, paths);
     expect(config).toEqual({

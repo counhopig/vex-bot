@@ -14,6 +14,7 @@ const ALLOWED = [
   /^wechat\.(enabled|ownerId)$/,
   /^stt\.(provider|baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
+  /^vault\.(path|url|branch|username|token)$/,
   /^webSearch\.(provider|apiKey|baseUrl)$/,
   /^heartbeat\.(every|activeHours)$/,
   /^memory\.consolidateAt$/,
@@ -21,7 +22,7 @@ const ALLOWED = [
   /^persona\.sleep$/,
   /^persona\.outreach\.(enabled|checkEvery|dailyLimit|socialThreshold|quietHours)$/,
 ];
-const SECRET = /\.(apiKey|sessdata)$/;
+const SECRET = /\.(apiKey|sessdata|token)$/;
 // Skills read these on every run, so a saved change applies without a restart.
 const LIVE = /^(stt|links)\./;
 

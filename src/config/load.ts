@@ -4,9 +4,23 @@ import { Value } from "typebox/value";
 import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { writeFileAtomic } from "../store/atomic.js";
-import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VexConfig } from "./schema.js";
+import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
 
 export class ConfigError extends Error {}
+
+function checkVault(vault: VaultConfig, paths: VexPaths): VaultConfig {
+  const fail = (message: string): never => { throw new ConfigError(`config.yaml failed validation: vault: ${message}`); };
+  if (vault.path && vault.url) return fail("set either path or url, not both");
+  if (!vault.path && !vault.url) return fail("set path (a folder of notes) or url (a git repository)");
+  if (vault.path) {
+    if (vault.branch || vault.username || vault.token) return fail("branch, username and token apply only to a git url; remove them when using a folder");
+    return { path: resolve(paths.home, expandHome(vault.path)) };
+  }
+  let address: URL;
+  try { address = new URL(vault.url!); } catch { return fail("url is not a valid address"); }
+  if (address.username || address.password) return fail("url must not contain a username or password; use the username and token settings");
+  return { ...vault };
+}
 
 export function parseConfig(text: string, paths: VexPaths): VexConfig {
   let raw: unknown;
@@ -40,6 +54,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.persona ? { persona: raw.persona } : {}),
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),
+    ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,
