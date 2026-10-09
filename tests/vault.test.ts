@@ -47,6 +47,14 @@ describe("Vault.search", () => {
     expect((await vault().search({ query: "image" })).total).toBe(0);
   });
 
+  it("returns only the best match's snippet when the limit is reached", async () => {
+    await sample();
+    const out = await vault().search({ query: "vex", limit: 1 });
+    expect(out.total).toBe(3);
+    expect(paths(out)).toEqual(["Projects/Vex.md"]);
+    expect(out.results[0]!.snippet).toContain("A personal assistant");
+  });
+
   it("matches Chinese by substring and shows the matching text", async () => {
     await sample();
     const out = await vault().search({ query: "线性代数" });

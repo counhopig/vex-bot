@@ -120,7 +120,7 @@ export class Vault {
     const folder = params.folder?.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
     const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
-    const candidates: { path: string; entry: CacheEntry; changed: number; text?: string; matched: number; weight: number }[] = [];
+    const candidates: { path: string; entry: CacheEntry; changed: number; matched: number; weight: number }[] = [];
     for (const [path, entry] of notes) {
       const changed = changedAt(path);
       if (since !== undefined && changed < since) continue;
@@ -147,14 +147,14 @@ export class Vault {
           candidate.matched++;
           candidate.weight += (inTitle ? 5 : 0) + (inHeadings ? 3 : 0) + (inTags ? 3 : 0) + Math.min(count, 20);
         }
-        if (candidate.matched > 0) ranked.push({ ...candidate, text });
+        if (candidate.matched > 0) ranked.push(candidate);
       }
     }
     ranked.sort((a, b) => b.matched - a.matched || b.weight - a.weight || b.changed - a.changed);
 
     const results: SearchHit[] = [];
     for (const item of ranked.slice(0, limit)) {
-      const text = item.text ?? await readText(root, item.path);
+      const text = await readText(root, item.path);
       results.push({ path: item.path, title: item.entry.meta.title, changed: iso(item.changed), tags: item.entry.meta.tags, snippet: excerpt(bodyOf(text), patterns) });
     }
     return { results, total: ranked.length, source: this.describe(source) };
