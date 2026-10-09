@@ -63,7 +63,7 @@ function linksOf(path: string, prose: string): NoteLink[] {
     links.push({ kind, target });
   };
   for (const match of prose.matchAll(WIKI_LINK)) {
-    const target = ((match[1] ?? "").split("|")[0] ?? "").split("#")[0]?.trim() ?? "";
+    const target = (((match[1] ?? "").split("|")[0] ?? "").split("#")[0] ?? "").replace(/\\$/, "").trim();
     if (target && !ATTACHMENT.test(target)) add("wiki", target);
   }
   for (const match of prose.matchAll(MARKDOWN_LINK)) {
