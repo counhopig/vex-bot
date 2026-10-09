@@ -23,6 +23,7 @@ jobs:
       - run: npm test
 
   image:
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     env:
