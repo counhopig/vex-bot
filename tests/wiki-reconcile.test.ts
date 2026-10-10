@@ -122,6 +122,22 @@ describe("wiki history reconciliation", () => {
     expect(result.alerts.length).toBeGreaterThan(0);
   });
 
+  it("drops an unresolvable state cursor in favour of a published scan base", async () => {
+    const { repo, root } = await seed();
+    const s1 = await writeAndCommit(repo, root, "wiki: notes", "wiki/b.md", "n1");
+    await publish(repo);
+    await writeAndCommit(repo, root, batch("b1", "scheduled", s1));
+    await publish(repo);
+    const result = await reconcile({ repo, state: state({ lastScanCommit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }), marker: null, bootstrapRef: null });
+    expect(result.lastScanCommit).toBe(s1);
+  });
+
+  it("falls back to a full scan when an unresolvable state cursor has no published candidate", async () => {
+    const { repo } = await seed();
+    const result = await reconcile({ repo, state: state({ lastScanCommit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }), marker: null, bootstrapRef: null });
+    expect(result.lastScanCommit).toBeNull();
+  });
+
   it("recovers a revert committed before the state write [Review Focus 5]", async () => {
     const { repo, root, base } = await seed();
     await writeAndCommit(repo, root, batch("b1", "scheduled", base));
