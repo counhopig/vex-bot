@@ -98,6 +98,14 @@ stt:
 #   username: me
 #   token: "READ_ONLY_TOKEN"
 
+# Optional LLM wiki: compile the git-backed vault into wiki/ pages and push the
+# result. Requires vault.url and a token with write access.
+# wiki:
+#   enabled: true
+#   every: 6h
+#   notify: true
+#   maxNotesPerRun: 20
+
 # Bilibili SESSDATA cookie, for subtitles that need a login.
 links:
   bilibili:
