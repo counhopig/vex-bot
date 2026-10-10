@@ -34,7 +34,8 @@ export const ClientMessageSchema = Type.Union([
   }),
   Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
   Type.Object({ type: Type.Literal("list_notes") }),
-  Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }) }),
+  // base is the text the editor loaded; a save is refused when the file has changed since.
+  Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }), base: Type.Optional(Type.String({ maxLength: 200_000 })) }),
   Type.Object({ type: Type.Literal("get_status") }),
   Type.Object({ type: Type.Literal("get_settings") }),
   Type.Object({

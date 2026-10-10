@@ -369,6 +369,21 @@ describe("startDaemon", () => {
     expect(await readFile(join(dir, "workspace", "memory", "2026-10-05.md"), "utf8")).toBe("- deploy cmp on Friday");
   });
 
+  it("refuses to overwrite a workspace file that changed after the editor loaded it", async () => {
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    const note = join(dir, "workspace", "memory", "2026-10-05.md");
+    await writeFile(note, "loaded");
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    await writeFile(note, "loaded\n- added by the assistant");
+    client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "owner edit", base: "loaded" });
+    expect(await client.waitFor((m) => m.type === "file_saved")).toMatchObject({ ok: false, error: expect.stringContaining("changed after it was opened") });
+    expect(await readFile(note, "utf8")).toBe("loaded\n- added by the assistant");
+    client.messages.length = 0;
+    client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "owner edit", base: "loaded\n- added by the assistant" });
+    expect(await client.waitFor((m) => m.type === "file_saved")).toMatchObject({ ok: true });
+    expect(await readFile(note, "utf8")).toBe("owner edit");
+  });
+
   it("lists, creates, updates and deletes scheduled tasks for the settings page", async () => {
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
     client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);

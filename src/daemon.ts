@@ -37,8 +37,7 @@ import { createToolGate } from "./policy/gate.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { createCoreTools } from "./tools/registry.js";
-import { writeFileAtomic } from "./store/atomic.js";
-import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
+import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning, saveWorkspaceFile } from "./workspace/workspace.js";
 import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
 import { Wiki, type WikiRunContext } from "./wiki/service.js";
@@ -486,7 +485,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return { restartRequired: next.restartRequired, restarting };
       },
     },
-    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text) => { await writeFileAtomic(join(config.workspace, name), text, 0o644); return { warning: residentLimitWarning(name, text) }; } },
+    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text, base) => { await saveWorkspaceFile(config.workspace, name, text, base); return { warning: residentLimitWarning(name, text) }; } },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });

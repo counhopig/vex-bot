@@ -2,7 +2,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WORKSPACE_TEMPLATES } from "../src/workspace/templates.js";
-import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning } from "../src/workspace/workspace.js";
+import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile, WorkspaceConflictError } from "../src/workspace/workspace.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -32,6 +32,18 @@ describe("ensureWorkspace", () => {
 describe("readWorkspaceFile", () => {
   it("returns an empty string for a missing file", async () => {
     expect(await readWorkspaceFile(dir, "nope.md")).toBe("");
+  });
+});
+
+describe("saveWorkspaceFile", () => {
+  it("writes when the file still matches what the editor loaded, and refuses otherwise", async () => {
+    await saveWorkspaceFile(dir, "USER.md", "first", "");
+    expect(await readFile(join(dir, "USER.md"), "utf8")).toBe("first");
+    await writeFile(join(dir, "USER.md"), "changed elsewhere");
+    await expect(saveWorkspaceFile(dir, "USER.md", "mine", "first")).rejects.toBeInstanceOf(WorkspaceConflictError);
+    // An editor that was not changed never rewrites the file.
+    await saveWorkspaceFile(dir, "USER.md", "changed elsewhere", "first");
+    expect(await readFile(join(dir, "USER.md"), "utf8")).toBe("changed elsewhere");
   });
 });
 
