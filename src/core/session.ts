@@ -109,26 +109,9 @@ export class Session {
         tools: this.withOutcomeTool(opts.tools),
         messages,
       },
-      streamFn: this.captureBudgetCause(withContextBudget(this.execution
-        ? this.execution.wrap(withEvidenceBoundary(withContextBudget(opts.streamFn), { ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}), tools: () => this.agent.state.tools, confidence: opts.toolRouter?.confidence, warn: opts.toolRouter?.warn, secrets: opts.evidenceSecrets, messages: () => this.agent.state.messages.slice(this.activeRunStart), takeUsage: () => this.takePendingProviderUsage(), returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); } }), () => this.agent.state.tools, withContextBudget(opts.streamFn))
-        : withEvidenceBoundary(withContextBudget(opts.streamFn), { ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}), tools: () => this.agent.state.tools, confidence: opts.toolRouter?.confidence, warn: opts.toolRouter?.warn, secrets: opts.evidenceSecrets, messages: () => this.agent.state.messages.slice(this.activeRunStart), takeUsage: () => this.takePendingProviderUsage(), returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); } }))),
+      streamFn: this.captureBudgetCause(withContextBudget(this.checkedStream(opts))),
       getApiKey: opts.getApiKey,
-      beforeToolCall: this.execution ? async (context, signal) => {
-        const runtimeOutcome = context.toolCall.name === "request_action_outcome" && this.execution!.isControllerOutcomeCall(context.toolCall.id);
-        const args = context.args;
-        if (context.toolCall.name === "wiki_ingest" && !this.execution!.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" && this.execution!.blocksOwnerDeniedArchive(args.url)) {
-          return { block: true, reason: "The owner's active link instruction does not authorize archival for this URL." };
-        }
-        if (context.toolCall.name === "wiki_ingest" && !this.execution!.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" && this.execution!.blocksDuplicateArchive(args.url)) {
-          return { block: true, reason: "This request already attempted archival for that URL; use the existing tool result and do not retry it through another call." };
-        }
-        if (!runtimeOutcome && this.execution!.blocksDeniedArchiveFallback(context.toolCall.name, context.args)) {
-          return { block: true, reason: "Archival for this URL was denied and is terminal; do not retry the same action through another tool." };
-        }
-        const gate = runtimeOutcome ? undefined : await opts.beforeToolCall?.(context, signal);
-        if (gate) return gate;
-        return undefined;
-      } : opts.beforeToolCall,
+      beforeToolCall: this.execution ? (context, signal) => this.linkActionGate(context, signal) : opts.beforeToolCall,
       transformContext: compactor ? (messages, signal) => compactor.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => ({
@@ -137,6 +120,46 @@ export class Session {
       sessionId: opts.key,
     });
     this.agent.subscribe((event) => this.onAgentEvent(event));
+  }
+
+  /**
+   * Keeps model-issued calls from contradicting the owner's link instructions; the runtime's own
+   * outcome calls skip the owner gate because the runtime already decided them.
+   */
+  private async linkActionGate(context: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined> {
+    const execution = this.execution!;
+    const runtimeOutcome = context.toolCall.name === "request_action_outcome" && execution.isControllerOutcomeCall(context.toolCall.id);
+    const args = context.args;
+    const ingestUrl = context.toolCall.name === "wiki_ingest" && !execution.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" ? args.url : undefined;
+    if (ingestUrl !== undefined && execution.blocksOwnerDeniedArchive(ingestUrl)) {
+      return { block: true, reason: "The owner's active link instruction does not authorize archival for this URL." };
+    }
+    if (ingestUrl !== undefined && execution.blocksDuplicateArchive(ingestUrl)) {
+      return { block: true, reason: "This request already attempted archival for that URL; use the existing tool result and do not retry it through another call." };
+    }
+    if (!runtimeOutcome && execution.blocksDeniedArchiveFallback(context.toolCall.name, context.args)) {
+      return { block: true, reason: "Archival for this URL was denied and is terminal; do not retry the same action through another tool." };
+    }
+    return runtimeOutcome ? undefined : await this.opts.beforeToolCall?.(context, signal);
+  }
+
+  /**
+   * Every provider request is budget-checked, then evidence-checked; a session with link actions
+   * also lets the orchestrator run fixed actions, falling back to the unchecked budgeted stream.
+   */
+  private checkedStream(opts: SessionOptions): StreamFn {
+    const budgeted = withContextBudget(opts.streamFn);
+    const checked = withEvidenceBoundary(budgeted, {
+      ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}),
+      tools: () => this.agent.state.tools,
+      confidence: opts.toolRouter?.confidence,
+      warn: opts.toolRouter?.warn,
+      secrets: opts.evidenceSecrets,
+      messages: () => this.agent.state.messages.slice(this.activeRunStart),
+      takeUsage: () => this.takePendingProviderUsage(),
+      returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
+    });
+    return this.execution ? this.execution.wrap(checked, () => this.agent.state.tools, budgeted) : checked;
   }
 
   get busy(): boolean {
