@@ -1,8 +1,8 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chunk, detectChanges } from "../src/wiki/changes.js";
-import { WikiRepo } from "../src/wiki/git.js";
+import { chunk, detectChanges } from "../src/vault/wiki/changes.js";
+import { WikiRepo } from "../src/vault/wiki/git.js";
 import { commit, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

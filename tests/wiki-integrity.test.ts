@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assertRecognizedLocalHistory, observeWiki } from "../src/wiki/integrity.js";
-import { WikiRepo } from "../src/wiki/git.js";
+import { assertRecognizedLocalHistory, observeWiki } from "../src/vault/wiki/integrity.js";
+import { WikiRepo } from "../src/vault/wiki/git.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

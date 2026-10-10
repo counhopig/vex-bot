@@ -25,20 +25,21 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus` |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, evict idle WebChat sessions, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
-| `context/` | System prompt assembly, context compaction, memory rescue |
-| `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
-| `policy/` | Approval policy and pending approvals |
+| `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
+| `links/` | Original-source reading for shared links and `LinkActionController`, the turn controller that runs the owner's link actions |
+| `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
+| `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
-| `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
-| `wiki/` | LLM wiki over a writable vault clone: scheduled ingest, batch commits and push, history reconciliation, rollback |
+| `vault/` | Notes vault: git mirror or folder, note parsing and link resolution, `vault_search` and `vault_read` |
+| `vault/wiki/` | LLM wiki over the vault's writable clone, which the vault then reads instead of a mirror: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
-| `providers/` | Model resolution and API keys |
+| `providers/` | Model resolution and API keys, usage accounting, the TypeSafe Jev judge |
 | `store/` | Append-only JSONL and atomic file writes |
 | `cli/` | The `vex` command |
 
@@ -146,7 +147,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Notes wiki
 
-When `wiki.enabled` is set, `wiki/` maintains a writable clone of the git-backed vault and compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview, which waits for approval. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
+The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `wiki.notesCopy` (`WikiReadCopy`), which fast-forwards it only while no wiki operation holds or waits for the shared lock, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 

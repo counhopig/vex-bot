@@ -6,14 +6,17 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEvent } from "../src/core/events.js";
 import { Session, type SessionOptions } from "../src/core/session.js";
-import type { LinkIntent } from "../src/core/execution.js";
-import { createRequestActionOutcomeTool } from "../src/core/execution.js";
+import type { LinkIntent } from "../src/policy/judge.js";
+import { LinkActionController, type LinkActionOptions } from "../src/links/actions.js";
+import type { TurnControllerFactory } from "../src/core/turnController.js";
+import { createRequestActionOutcomeTool } from "../src/tools/requestOutcome.js";
 import { estimateProviderInput } from "../src/context/budget.js";
-import type { Wiki } from "../src/wiki/service.js";
-import { createWikiInteractiveTools } from "../src/wiki/tools.js";
+import type { Wiki } from "../src/vault/wiki/service.js";
+import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence, judged } from "./helpers/evidence.js";
 
 let dir: string;
 let faux: FauxProviderHandle;
@@ -36,6 +39,14 @@ const echoTool: AgentTool<typeof EchoParams> = {
   execute: async (_id, { text }) => ({ content: [{ type: "text", text: `echo:${text}` }], details: {} }),
 };
 
+/** The daemon's link-action controller with its routes, for sessions under test. */
+function linkActions(options: Omit<LinkActionOptions, "routes" | "fallbackTools">): TurnControllerFactory {
+  return (host) => new LinkActionController({
+    routes: { archive: "wiki_ingest", read: "web_fetch" }, fallbackTools: ["bash", "delegate"],
+    onOutcome: (message) => host.enqueueAssistant(message), onUsage: (usage) => host.recordUsage(usage), ...options,
+  });
+}
+
 function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
   return Session.open({
     key: "web:1",
@@ -47,6 +58,7 @@ function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
     buildSystemPrompt: async () => "SYSTEM",
     emit: (event) => events.push(event),
     retry: { attempts: 3, baseDelayMs: 1 },
+    evidence,
     ...overrides,
   });
 }
@@ -57,7 +69,7 @@ describe("Session", () => {
   it("reports an oversized final request locally without calling or retrying the provider", async () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 500, maxTokens: 100 };
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:budget", transcriptPath: join(dir, "budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -73,7 +85,7 @@ describe("Session", () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 4000, maxTokens: 100 };
     const oversized = { ...echoTool, description: "schema declaration ".repeat(500) } as AgentTool<any>;
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:tool-budget", transcriptPath: join(dir, "tool-budget.jsonl"), model, tools: [oversized], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -88,7 +100,7 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("I saved it.")]);
     const provider = vi.fn(fauxStreamFn(faux));
-    const request = "Please save https://example.test/a.";
+    const request = "Please do this.";
     const baseInput = estimateProviderInput({
       messages: [
         { role: "system", content: "SYSTEM", timestamp: 0 },
@@ -100,7 +112,7 @@ describe("Session", () => {
     const session = await Session.open({
       key: "web:correction-budget", transcriptPath: join(dir, "correction-budget.jsonl"), model, tools: [echoTool], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event),
-      toolRouter: { judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, confidence: 0.8, warn: () => {} },
+      evidence: judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, confidence: 0.8, warn: () => {} }),
       retry: { attempts: 3, baseDelayMs: 1 },
     });
     session.send(request);
@@ -129,10 +141,10 @@ describe("Session", () => {
       () => { calls++; return fauxAssistantMessage("Article was read."); },
       () => { calls++; return fauxAssistantMessage("I could not verify that operation."); },
     ]);
-    const s = await open({ toolRouter: {
+    const s = await open({ evidence: judged({
       confidence: 0.8, warn: () => {},
       judge: { route: async () => ({ tool: "echo", confidence: 0.95 }), unsupported: async () => 0 },
-    } });
+    }) });
     s.send("check https://example.com/article");
     await s.whenIdle();
     expect(calls).toBe(4);
@@ -198,8 +210,8 @@ describe("Session", () => {
     const session = await Session.open({
       key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => systemPrompt,
-      requestActions: { confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } },
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } },
+      controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } }),
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } }),
       emit: (event) => events.push(event), retry: { attempts: 1, baseDelayMs: 1 },
     });
     session.send(requestText);
@@ -306,7 +318,7 @@ describe("Session", () => {
       expect(context.messages.some((message) => message.role === "toolResult" && message.toolName === "wiki_ingest")).toBe(true);
       return fauxAssistantMessage("A short summary.");
     }]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -331,8 +343,8 @@ describe("Session", () => {
       fauxAssistantMessage("The action was denied."),
     ]);
     const s = await open({ tools: [ingest, bash], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
-      requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) },
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } },
+      controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }),
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } }),
     });
     s.send(`summarize ${url}`);
     await s.whenIdle();
@@ -348,7 +360,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true, rawPath: "raw/source.md", publication: "published", compiledPages: ["wiki/page.md"] } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("Archived once.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -363,7 +375,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage(fauxToolCall("date", {}), { stopReason: "toolUse" }), fauxAssistantMessage("Done.")]);
-    const s = await open({ tools: [dateTool, ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [dateTool, ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -376,7 +388,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { order.push((rawArgs as { url: string }).url); return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Both links were summarized.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a and https://example.com/b");
     await s.whenIdle();
     expect(order).toEqual(["https://example.com/a", "https://example.com/b"]);
@@ -393,7 +405,7 @@ describe("Session", () => {
       fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: "https://example.com/a" }), { stopReason: "toolUse" }),
       fauxAssistantMessage("Read without saving."),
     ]);
-    const s = await open({ tools: [ingest, fetch], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "read", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "read", confidence: 0.99 })) }) });
     s.send("check https://example.com/a and do not save it");
     await s.whenIdle();
     expect(reads).toBe(1);
@@ -410,7 +422,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] })),
       fauxAssistantMessage("Summary."),
     ]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -421,7 +433,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.4 }] })),
       fauxAssistantMessage("The link was not archived."),
     ]);
-    const uncertain = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => [] } });
+    const uncertain = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => [] }) });
     uncertain.send(`summarize ${url}`);
     await uncertain.whenIdle();
     expect(ingests).toBe(1);
@@ -433,7 +445,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] }), { stopReason: "length" }),
       fauxAssistantMessage("The partial classification was ignored."),
     ]);
-    const partial = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } } });
+    const partial = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
     partial.send(`summarize ${url}`);
     await partial.whenIdle();
     expect(ingests).toBe(1);
@@ -445,16 +457,16 @@ describe("Session", () => {
     const url = "https://example.com/restored";
     let ingests = 0;
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
-    const requestActions = { confidence: 0.8, classify: async (_input: string, urls: string[]) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) };
+    const controller = linkActions({ confidence: 0.8, classify: async (_input: string, urls: string[]) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) });
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Saved.")]);
-    const first = await open({ tools: [ingest], requestActions });
+    const first = await open({ tools: [ingest], controller });
     first.send(`summarize ${url}`);
     await first.whenIdle();
     await first.dispose();
 
     const callsBeforeRestore = faux.state.callCount;
-    const restored = await open({ tools: [ingest], requestActions });
+    const restored = await open({ tools: [ingest], controller });
     await restored.whenIdle();
     expect(ingests).toBe(1);
     expect(faux.state.callCount).toBe(callsBeforeRestore);
@@ -470,7 +482,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { ingested.push((rawArgs as { url: string }).url); return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([async () => { ready(); await wait; return fauxAssistantMessage("First reply."); }, fauxAssistantMessage("Second reply.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await started;
     s.send("also summarize https://example.com/b");
@@ -495,7 +507,7 @@ describe("Session", () => {
       if (input.startsWith("please summarize")) { classificationStarted(); await gate; return urls.map((url) => ({ url, intent: "archive" as const, confidence: 0.99 })); }
       return urls.map((url) => ({ url, intent: "read" as const, confidence: 0.99 }));
     };
-    const s = await open({ tools: [ingest, fetch], requestActions: { confidence: 0.8, classify } });
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify }) });
     s.send("please summarize https://example.com/a");
     await started;
     s.send("for https://example.com/a, do not save it; just read");
@@ -519,7 +531,7 @@ describe("Session", () => {
     } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("unused")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await running;
     s.stop();
@@ -533,7 +545,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "temporary provider error" }), fauxAssistantMessage("Summary after retry.")]);
-    const s = await open({ tools: [ingest], retry: { attempts: 1, baseDelayMs: 1 }, requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], retry: { attempts: 1, baseDelayMs: 1 }, controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -545,7 +557,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({ content: [{ type: "text", text: "awaiting review" }], details: { receipt: { status: "bootstrap-pending", sourceAvailable: false } } }) };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Summary only.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("awaiting bootstrap review"), injected: true }));
@@ -560,10 +572,10 @@ describe("Session", () => {
       fauxAssistantMessage("Reading failed with a size limit."),
       fauxAssistantMessage("Read successfully."),
     ]);
-    const s = await open({ toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
       route: async () => ({ tool: null, confidence: 1 }),
-      unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); judgments++; return 0.99; },
-    } } });
+      unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); return ++judgments === 1 ? 0.99 : 0.01; },
+    } }) });
     s.send("read this article");
     await s.whenIdle();
     expect(judgments).toBe(2);
@@ -671,9 +683,9 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("hello")]);
     const warnings: unknown[] = [];
-    const s = await open({ toolRouter: { confidence: 0.8, warn: (error) => warnings.push(error), judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
       route: async () => { throw new Error("TypeSafe unavailable"); }, unsupported: async () => 0,
-    } } });
+    } }) });
     s.send("hello");
     await s.whenIdle();
     expect(s.successfulReply).toBe("hello");
@@ -687,11 +699,10 @@ describe("Session", () => {
     const captured: string[] = [];
     const s = await open({
       tools: [{ ...echoTool, description: "Tool credential TOPSECRET" } as AgentTool<any>],
-      evidenceSecrets: () => ["TOPSECRET", "jev-secret"],
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+      evidence: judged({ secrets: () => ["TOPSECRET", "jev-secret"], confidence: 0.8, warn: () => {}, judge: {
         route: async (state, tools) => { captured.push(JSON.stringify(state), JSON.stringify(tools)); return { tool: null, confidence: 1 }; },
         unsupported: async (state) => { captured.push(JSON.stringify(state)); return 0; },
-      } },
+      } }),
     });
     s.send("Hi TOPSECRET");
     await s.whenIdle();
@@ -704,10 +715,10 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("I read https://example.test/a."), fauxAssistantMessage("I read https://example.test/a.")]);
     const warnings: unknown[] = [];
-    const s = await open({ toolRouter: { confidence: 0.8, warn: (error) => warnings.push(error), judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
       route: async () => ({ tool: null, confidence: 1 }),
       unsupported: async () => { throw new Error("checker unavailable"); },
-    } } });
+    } }) });
     s.send("Read https://example.test/a");
     await s.whenIdle();
     expect(warnings).toHaveLength(2);
@@ -719,9 +730,9 @@ describe("Session", () => {
   it("does not force uncertain tool routes", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("hello")]);
-    const s = await open({ toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
       route: async () => ({ tool: "echo", confidence: 0.1 }), unsupported: async () => 0,
-    } } });
+    } }) });
     s.send("hello");
     await s.whenIdle();
     expect(s.successfulReply).toBe("hello");
@@ -733,10 +744,10 @@ describe("Session", () => {
     let calls = 0;
     faux = createFaux();
     faux.setResponses([() => { calls++; return fauxAssistantMessage("I ran the command."); }, () => { calls++; return fauxAssistantMessage("I ran the command."); }]);
-    const s = await open({ toolRouter: {
+    const s = await open({ evidence: judged({
       confidence: 0.8, warn: () => {},
       judge: { route: async () => ({ tool: "echo", confidence: 1 }), unsupported: async () => 1 },
-    } });
+    }) });
     s.send("run echo");
     await s.whenIdle();
     expect(calls).toBe(2);
@@ -751,10 +762,10 @@ describe("Session", () => {
     faux.setResponses([() => { calls++; return fauxAssistantMessage(fauxToolCall("echo", { text: "article" }), { stopReason: "toolUse" }); }, () => { calls++; return fauxAssistantMessage("The owner denied the operation."); }]);
     const s = await open({
       beforeToolCall: async () => ({ block: true, reason: "owner denied" }),
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
         route: async () => ({ tool: "echo", confidence: 1 }),
         unsupported: async (state) => { expect(JSON.stringify(state)).toContain("owner denied"); return 0; },
-      } },
+      } }),
     });
     s.send("read link");
     await s.whenIdle();

@@ -1,8 +1,9 @@
 import { Agent, type AgentOptions, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { boundedEvidenceReceipt, redactForExternalEvaluation, withEvidenceBoundary } from "../decision/routing.js";
-import type { DecisionJudge } from "../decision/jev.js";
+import { redactSecrets } from "../config/secrets.js";
+import { boundedEvidenceReceipt, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
+import { addUsage, zeroUsage } from "../providers/usage.js";
 import { profileSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
 import { RESIDENT_LINE_LIMITS } from "../workspace/workspace.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
@@ -20,10 +21,8 @@ export interface DelegateOptions {
   tools?: AgentTool<any>[];
   getTools?: () => AgentTool<any>[];
   beforeToolCall?: AgentOptions["beforeToolCall"];
-  judge?: DecisionJudge;
-  confidence?: number;
-  warn?: (error: unknown) => void;
-  secrets?: () => string[];
+  /** The parent's evidence rules; the sub-agent's claims are checked the same way. */
+  evidence: Pick<EvidenceBoundaryOptions, "profiles" | "advisor" | "secrets" | "warn">;
 }
 
 export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof DelegateParams> {
@@ -52,7 +51,7 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
       let agent!: Agent;
       agent = new Agent({
         initialState: { model: opts.model, systemPrompt: prompt, tools: selected, messages: [] },
-        streamFn: withContextBudget(withEvidenceBoundary(opts.streamFn, { ...(opts.judge ? { judge: opts.judge } : {}), tools: () => selected, confidence: opts.confidence, warn: opts.warn, secrets: opts.secrets, messages: () => agent.state.messages })),
+        streamFn: withContextBudget(withEvidenceBoundary(opts.streamFn, { ...opts.evidence, tools: () => selected, messages: () => agent.state.messages })),
         getApiKey: opts.getApiKey,
         beforeToolCall: opts.beforeToolCall,
       });
@@ -74,24 +73,17 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
           throw new Error(last.errorMessage ?? "The sub-agent was interrupted");
         }
         const messages = agent.state.messages;
-        const secrets = opts.secrets?.() ?? [];
+        const secrets = opts.evidence.secrets?.() ?? [];
         const calls = messages.flatMap((message) => message.role === "assistant" ? message.content.filter((part) => part.type === "toolCall") : []);
         const results = messages.flatMap((message) => message.role === "toolResult" ? [message] : []);
         const evidence = calls.flatMap((call) => {
           const result = results.find((candidate) => candidate.toolCallId === call.id && candidate.toolName === call.name);
-          return result ? [{ tool: call.name, callId: call.id, arguments: String(redactForExternalEvaluation(JSON.stringify(call.arguments), secrets)).slice(0, 1000), error: result.isError,
-            result: String(redactForExternalEvaluation(result.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), secrets)).slice(0, 1000),
+          return result ? [{ tool: call.name, callId: call.id, arguments: redactSecrets(JSON.stringify(call.arguments), secrets).slice(0, 1000), error: result.isError,
+            result: redactSecrets(result.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), secrets).slice(0, 1000),
             receipt: result.details && typeof result.details === "object" && "receipt" in result.details ? boundedEvidenceReceipt(result.details.receipt, secrets) : undefined }] : [];
         }).slice(-12);
-        const checkedReply = String(redactForExternalEvaluation(last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join(""), secrets)).slice(0, 4000);
-        const usage = messages.filter((message) => message.role === "assistant").reduce((total, message) => ({
-          input: total.input + message.usage.input, output: total.output + message.usage.output,
-          cacheRead: total.cacheRead + message.usage.cacheRead, cacheWrite: total.cacheWrite + message.usage.cacheWrite,
-          totalTokens: total.totalTokens + message.usage.totalTokens,
-          cost: { input: total.cost.input + message.usage.cost.input, output: total.cost.output + message.usage.cost.output,
-            cacheRead: total.cost.cacheRead + message.usage.cost.cacheRead, cacheWrite: total.cost.cacheWrite + message.usage.cost.cacheWrite,
-            total: total.cost.total + message.usage.cost.total },
-        }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
+        const checkedReply = redactSecrets(last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join(""), secrets).slice(0, 4000);
+        const usage = messages.reduce((total, message) => message.role === "assistant" ? addUsage(total, message.usage) : total, zeroUsage());
         const receipt = { version: 1, evidence, checkedReply, usage };
         return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { receipt }, usage };
       } finally {

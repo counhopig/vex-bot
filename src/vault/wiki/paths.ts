@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { isInside } from "../tools/paths.js";
+import { isInside } from "../../tools/paths.js";
 
 export async function validateSubtreeRoots(vaultRoot: string): Promise<{ wiki: string; raw: string }> {
   try {
@@ -87,4 +88,9 @@ function resolveRealPath(path: string): string {
       ancestor = parent;
     }
   }
+}
+
+/** Where an archived shared-link original lives, keyed by the requested URL. */
+export function wikiRawPath(url: string): string {
+  return `raw/link-${createHash("sha256").update(url).digest("hex")}.md`;
 }

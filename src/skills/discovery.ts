@@ -67,3 +67,15 @@ export function skillsSection(workspace: string, builtinDir?: string, warn?: War
     ].join("\n");
   };
 }
+
+/**
+ * Inlines one skill's SKILL.md by name for runs without the read tool, honouring the same
+ * workspace-over-bundled precedence as the skills index.
+ */
+export function skillBodySection(name: string, title: string, workspace: string, builtinDir?: string, warn?: Warn): PromptSection {
+  return async () => {
+    const skill = (await discoverSkills({ workspace, builtinDir, warn })).find((item) => item.name === name);
+    if (!skill) throw new Error(`The ${name} skill is not available`);
+    return `## ${title}\n${await readFile(skill.path, "utf8")}`;
+  };
+}
