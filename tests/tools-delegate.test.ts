@@ -38,7 +38,20 @@ describe("delegate", () => {
       expect(prompt).not.toContain("private memory marker");
       return fauxAssistantMessage("final reply");
     }]);
-    expect(await tool.execute("id", { task: "task marker" })).toMatchObject({ content: [{ text: "final reply" }] });
+    const result = await tool.execute("id", { task: "task marker" });
+    const serialized = result.content[0];
+    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ version: 1, evidence: [], checkedReply: "final reply" });
+    expect(result.details).toMatchObject({ receipt: { version: 1, checkedReply: "final reply" } });
+  });
+
+  it("rejects an oversized delegated request before calling the child provider", async () => {
+    const faux = createFaux();
+    const provider = vi.fn(fauxStreamFn(faux));
+    const model = { ...faux.getModel(), contextWindow: 1000, maxTokens: 900 };
+    const { echo } = setup({ model, streamFn: provider });
+    const tool = createDelegateTool({ workspace, model, streamFn: provider, getApiKey: () => "test", tools: [echo] });
+    await expect(tool.execute("id", { task: "go" })).rejects.toMatchObject({ code: "VEX_CONTEXT_BUDGET" });
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it("inherits approval and streams child tool progress", async () => {
@@ -49,7 +62,9 @@ describe("delegate", () => {
       fauxAssistantMessage("final only"),
     ]);
     const update = vi.fn();
-    expect(await tool.execute("id", { task: "go" }, undefined, update)).toMatchObject({ content: [{ text: "final only" }] });
+    const result = await tool.execute("id", { task: "go" }, undefined, update);
+    const serialized = result.content[0];
+    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "final only", evidence: [{ tool: "echo", error: false }] });
     expect(gate).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledOnce();
     expect(update.mock.calls.some(([result]) => result.details.type === "tool_execution_update")).toBe(true);
@@ -64,7 +79,9 @@ describe("delegate", () => {
         return fauxAssistantMessage("denied reply");
       },
     ]);
-    expect(await tool.execute("id", { task: "go" })).toMatchObject({ content: [{ text: "denied reply" }] });
+    const result = await tool.execute("id", { task: "go" });
+    const serialized = result.content[0];
+    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "denied reply", evidence: [{ tool: "echo", error: true }] });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -85,7 +102,9 @@ describe("delegate", () => {
         return fauxAssistantMessage("tool failed reply");
       },
     ]);
-    expect(await tool.execute("id", { task: "go" })).toMatchObject({ content: [{ text: "tool failed reply" }] });
+    const result = await tool.execute("id", { task: "go" });
+    const serialized = result.content[0];
+    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "tool failed reply", evidence: [{ tool: "echo", error: true, result: "child tool failed" }] });
   });
 
   it("uses dynamic tool subsets and strips delegate by default", async () => {
@@ -106,7 +125,18 @@ describe("delegate", () => {
   it("surfaces model failures", async () => {
     const { faux, tool } = setup();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed" })]);
-    await expect(tool.execute("id", { task: "go" })).rejects.toThrow("provider failed");
+    await expect(tool.execute("id", { task: "go" })).rejects.toThrow("Provider generation failed");
+  });
+
+  it("returns a checked fallback when the child claims an operation without using a tool", async () => {
+    const { faux, tool } = setup();
+    faux.setResponses([fauxAssistantMessage("I read the page and pushed it."), fauxAssistantMessage("I read the page and pushed it.")]);
+    const result = await tool.execute("id", { task: "Read https://example.test/a and publish it." });
+    const serialized = result.content[0];
+    const receipt = JSON.parse(serialized?.type === "text" ? serialized.text : "{}");
+    expect(receipt.evidence).toEqual([]);
+    expect(receipt.checkedReply).toContain("could not verify");
+    expect(receipt.checkedReply).not.toContain("pushed");
   });
 
   it("propagates abort into a running child tool", async () => {

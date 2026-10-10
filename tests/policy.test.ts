@@ -60,9 +60,9 @@ describe("ToolPolicy", () => {
     expect(unscoped.decide("write", { path: "/vault/wiki/a.md" })).toBe("ask");
   });
 
-  it("allows the wiki tools by default", () => {
+  it("asks before wiki bootstrap while allowing the other wiki tools", () => {
     for (const tool of ["wiki_write", "wiki_edit", "wiki_ingest", "wiki_bootstrap", "wiki_rollback"]) {
-      expect(policy.decide(tool, {})).toBe("allow");
+      expect(policy.decide(tool, {})).toBe(tool === "wiki_bootstrap" ? "ask" : "allow");
     }
   });
 

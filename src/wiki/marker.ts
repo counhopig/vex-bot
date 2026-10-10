@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { lstat, readFile, readlink, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "../store/atomic.js";
 
-export type FileFingerprint = { type: "absent"; hash: null } | { type: "file"; hash: string };
+export type FileFingerprint = { type: "absent"; hash: null } | { type: "file" | "symlink"; hash: string } | { type: "directory" | "other"; hash: null };
 
 export interface TouchedPath {
   path: string;
@@ -28,7 +28,8 @@ function isFingerprint(value: unknown): value is FileFingerprint {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value as { type?: unknown; hash?: unknown };
   if (candidate.type === "absent") return candidate.hash === null;
-  if (candidate.type === "file") return typeof candidate.hash === "string";
+  if (candidate.type === "file" || candidate.type === "symlink") return typeof candidate.hash === "string";
+  if (candidate.type === "directory" || candidate.type === "other") return candidate.hash === null;
   return false;
 }
 
@@ -113,14 +114,17 @@ export class MarkerStore {
 }
 
 export async function fingerprint(absPath: string): Promise<FileFingerprint> {
-  let bytes: Buffer;
+  let info;
   try {
-    bytes = await readFile(absPath);
+    info = await lstat(absPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { type: "absent", hash: null };
     throw error;
   }
-  return { type: "file", hash: createHash("sha256").update(bytes).digest("hex") };
+  if (info.isSymbolicLink()) return { type: "symlink", hash: createHash("sha256").update(await readlink(absPath)).digest("hex") };
+  if (info.isDirectory()) return { type: "directory", hash: null };
+  if (!info.isFile()) return { type: "other", hash: null };
+  return { type: "file", hash: createHash("sha256").update(await readFile(absPath)).digest("hex") };
 }
 
 export async function assertUnchanged(absPath: string, expected: FileFingerprint): Promise<void> {
@@ -132,5 +136,6 @@ export async function assertUnchanged(absPath: string, expected: FileFingerprint
 
 export function expectedBeforeFor(marker: InFlightMarker, path: string, baseline: FileFingerprint): FileFingerprint {
   const entry = marker.touched.find((candidate) => candidate.path === path);
+  if (entry && !entry.after) throw new Error(`incomplete write intent for ${path}`);
   return entry?.after ?? baseline;
 }

@@ -122,3 +122,11 @@ mcpServers:
     url: "https://example.com/mcp"
     headers:
       Authorization: "Bearer YOUR_TOKEN"
+
+# Optional typed tool routing and evidence checks (official TypeSafe API).
+jev:
+  enabled: false
+  model: jev-latest
+  # apiKey: ""                 # Or set TYPESAFE_API_KEY.
+  confidence: 0.8
+  timeoutMs: 5000

@@ -1,4 +1,5 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveInSubtree, validateSubtreeRoots } from "../src/wiki/paths.js";
@@ -28,6 +29,16 @@ describe("validateSubtreeRoots", () => {
     await mkdir(join(dir, "owner-notes"), { recursive: true });
     await symlink("../owner-notes", join(vault, "wiki"));
     await expect(validateSubtreeRoots(vault)).rejects.toThrow("wiki root is not a real directory");
+  });
+
+  it("rejects a root redirected after initialization before resolving a write", async () => {
+    const vault = join(dir, "vault");
+    const roots = await validateSubtreeRoots(vault);
+    await mkdir(join(dir, "owner-notes"), { recursive: true });
+    await rm(roots.wiki, { recursive: true });
+    await symlink(join(dir, "owner-notes"), roots.wiki);
+    await expect(resolveInSubtree(roots.wiki, "new.md")).rejects.toThrow();
+    expect(existsSync(join(dir, "owner-notes", "new.md"))).toBe(false);
   });
 });
 
