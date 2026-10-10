@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { VaultConfig } from "../config/schema.js";
+import type { VaultConfig } from "../../config/schema.js";
 import { abortBatch, assertBatchOwnership, assertSafeTouchedPath, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
 import { chunk, detectChanges, type Change } from "./changes.js";
 import { parseTrailers, WikiIntegrityError, WikiRepo, type GitRunner } from "./git.js";

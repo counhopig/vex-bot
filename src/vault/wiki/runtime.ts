@@ -1,4 +1,4 @@
-import type { VaultConfig, WikiConfig } from "../config/schema.js";
+import type { VaultConfig, WikiConfig } from "../../config/schema.js";
 import type { GitRunner } from "./git.js";
 import { previewNotice, Wiki, type WikiOptions } from "./service.js";
 

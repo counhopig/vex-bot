@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync 
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runGit, type GitRunner } from "../src/vault/git.js";
-import { fingerprint } from "../src/wiki/marker.js";
-import { dueWikiWork, previewNotice, Wiki, type WikiOptions } from "../src/wiki/service.js";
-import { emptyState } from "../src/wiki/state.js";
+import { fingerprint } from "../src/vault/wiki/marker.js";
+import { dueWikiWork, previewNotice, Wiki, type WikiOptions } from "../src/vault/wiki/service.js";
+import { emptyState } from "../src/vault/wiki/state.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

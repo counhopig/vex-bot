@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { abortBatch, ingestMessage, ingestPrompt, inspectAndCleanTree } from "../src/wiki/batch.js";
-import { WikiRepo } from "../src/wiki/git.js";
-import { MarkerStore, type FileFingerprint, type InFlightMarker, type TouchedPath } from "../src/wiki/marker.js";
+import { abortBatch, ingestMessage, ingestPrompt, inspectAndCleanTree } from "../src/vault/wiki/batch.js";
+import { WikiRepo } from "../src/vault/wiki/git.js";
+import { MarkerStore, type FileFingerprint, type InFlightMarker, type TouchedPath } from "../src/vault/wiki/marker.js";
 import { commit, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

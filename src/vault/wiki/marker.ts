@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile, readlink, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { writeFileAtomic } from "../store/atomic.js";
+import { writeFileAtomic } from "../../store/atomic.js";
 
 export type FileFingerprint = { type: "absent"; hash: null } | { type: "file" | "symlink"; hash: string } | { type: "directory" | "other"; hash: null };
 

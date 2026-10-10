@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readlink, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { writeFileAtomic } from "../store/atomic.js";
-import { gitEnv, runGit, type GitRunner } from "../vault/git.js";
+import { writeFileAtomic } from "../../store/atomic.js";
+import { gitEnv, runGit, type GitRunner } from "../git.js";
 import type { FileFingerprint } from "./marker.js";
 
 export type { GitRunner };

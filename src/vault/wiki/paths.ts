@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { isInside } from "../tools/paths.js";
+import { isInside } from "../../tools/paths.js";
 
 export async function validateSubtreeRoots(vaultRoot: string): Promise<{ wiki: string; raw: string }> {
   try {
