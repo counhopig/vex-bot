@@ -132,6 +132,11 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${minimal}webSearch: { provider: bing }\n`, paths)).toThrow(/webSearch/);
   });
 
+  it("keeps the link reader credentials", () => {
+    expect(parseConfig(`${minimal}links: { bilibili: { sessdata: abc } }\n`, paths).links).toEqual({ bilibili: { sessdata: "abc" } });
+    expect(parseConfig(minimal, paths).links).toBeUndefined();
+  });
+
   it("validates the speech-to-text settings", () => {
     const config = parseConfig(`${minimal}stt: { baseUrl: "https://stt.example/v1", model: whisper-1, language: zh, chunkMinutes: 5 }\n`, paths);
     expect(config.stt).toEqual({ baseUrl: "https://stt.example/v1", model: "whisper-1", language: "zh", chunkMinutes: 5 });
