@@ -126,7 +126,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     ...(vault ? [vaultSection()] : []),
-    ...(wiki ? [wikiSection()] : []),
+    ...(config.wiki?.enabled && config.vault?.url ? [wikiSection()] : []),
     timeSection(),
   ]);
 
