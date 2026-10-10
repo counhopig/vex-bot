@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { RequestActionOrchestrator, type RequestActionOptions } from "./execution.js";
+import type { TurnController, TurnControllerFactory } from "./turnController.js";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   Agent,
@@ -32,7 +32,8 @@ export interface SessionOptions {
   buildSystemPrompt: () => Promise<string>;
   toolRouter?: { judge: DecisionJudge; confidence: number; warn: (error: unknown) => void };
   evidenceSecrets?: () => string[];
-  requestActions?: RequestActionOptions;
+  /** Runtime-owned turn behaviour, such as the owner's link actions. */
+  controller?: TurnControllerFactory;
   beforeToolCall?: (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
   emit: (event: SessionEvent) => void;
   onError?: (err: unknown) => void;
@@ -69,7 +70,7 @@ export class Session {
   private observedBudgetFailure?: string;
   private readonly failedTools = new Set<string>();
   private lastResponse?: AssistantMessage;
-  private readonly execution?: RequestActionOrchestrator;
+  private readonly controller?: TurnController;
   private pendingProviderUsage = zeroUsage();
   private activeRunStart = 0;
 
@@ -77,9 +78,9 @@ export class Session {
     return !this.runFailed && !this.stopRequested && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
   }
 
+  /** How the last run ended; callers decide which failed tools make it unusable. */
   get completionOutcome(): { successful: boolean; failureReason?: string; failedTools: string[] } {
-    const compilerFailed = this.failedTools.has("wiki_write") || this.failedTools.has("wiki_edit");
-    return { successful: this.successfulReply !== undefined && !compilerFailed,
+    return { successful: this.successfulReply !== undefined,
       ...(this.runFailureReason ? { failureReason: this.runFailureReason } : {}), failedTools: [...this.failedTools] };
   }
 
@@ -93,7 +94,10 @@ export class Session {
     records: unknown[],
   ) {
     this.key = opts.key;
-    this.execution = opts.requestActions ? new RequestActionOrchestrator({ ...opts.requestActions, onUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); opts.requestActions?.onUsage?.(usage); } }) : undefined;
+    this.controller = opts.controller?.({
+      recordUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
+      enqueueAssistant: (text) => this.enqueueAssistant(text),
+    });
     const messages = records.filter(isTranscriptMessage);
     this.transcript = [...messages];
     const restored = records.filter(isCompactionRecord).filter((r) => r.through <= messages.length).at(-1);
@@ -106,12 +110,14 @@ export class Session {
         systemPrompt: "",
         model: opts.model,
         thinkingLevel: opts.thinking ?? "off",
-        tools: this.withOutcomeTool(opts.tools),
+        tools: this.withControllerTools(opts.tools),
         messages,
       },
       streamFn: this.captureBudgetCause(withContextBudget(this.checkedStream(opts))),
       getApiKey: opts.getApiKey,
-      beforeToolCall: this.execution ? (context, signal) => this.linkActionGate(context, signal) : opts.beforeToolCall,
+      beforeToolCall: this.controller
+        ? (context, signal) => this.controller!.beforeToolCall(context, signal, async (ownerContext, ownerSignal) => opts.beforeToolCall?.(ownerContext, ownerSignal))
+        : opts.beforeToolCall,
       transformContext: compactor ? (messages, signal) => compactor.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => ({
@@ -123,29 +129,8 @@ export class Session {
   }
 
   /**
-   * Keeps model-issued calls from contradicting the owner's link instructions; the runtime's own
-   * outcome calls skip the owner gate because the runtime already decided them.
-   */
-  private async linkActionGate(context: BeforeToolCallContext, signal?: AbortSignal): Promise<BeforeToolCallResult | undefined> {
-    const execution = this.execution!;
-    const runtimeOutcome = context.toolCall.name === "request_action_outcome" && execution.isControllerOutcomeCall(context.toolCall.id);
-    const args = context.args;
-    const ingestUrl = context.toolCall.name === "wiki_ingest" && !execution.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" ? args.url : undefined;
-    if (ingestUrl !== undefined && execution.blocksOwnerDeniedArchive(ingestUrl)) {
-      return { block: true, reason: "The owner's active link instruction does not authorize archival for this URL." };
-    }
-    if (ingestUrl !== undefined && execution.blocksDuplicateArchive(ingestUrl)) {
-      return { block: true, reason: "This request already attempted archival for that URL; use the existing tool result and do not retry it through another call." };
-    }
-    if (!runtimeOutcome && execution.blocksDeniedArchiveFallback(context.toolCall.name, context.args)) {
-      return { block: true, reason: "Archival for this URL was denied and is terminal; do not retry the same action through another tool." };
-    }
-    return runtimeOutcome ? undefined : await this.opts.beforeToolCall?.(context, signal);
-  }
-
-  /**
-   * Every provider request is budget-checked, then evidence-checked; a session with link actions
-   * also lets the orchestrator run fixed actions, falling back to the unchecked budgeted stream.
+   * Every provider request is budget-checked, then evidence-checked; a controller may run its own
+   * requests ahead of the checked stream through the unchecked budgeted one.
    */
   private checkedStream(opts: SessionOptions): StreamFn {
     const budgeted = withContextBudget(opts.streamFn);
@@ -159,7 +144,7 @@ export class Session {
       takeUsage: () => this.takePendingProviderUsage(),
       returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
     });
-    return this.execution ? this.execution.wrap(checked, () => this.agent.state.tools, budgeted) : checked;
+    return this.controller ? this.controller.wrapStream(checked, () => this.agent.state.tools, budgeted) : checked;
   }
 
   get busy(): boolean {
@@ -181,12 +166,12 @@ export class Session {
   send(text: string, source?: string, existingRequestId?: string): void {
     if (this.closing) return;
     const requestId = !source ? existingRequestId ?? randomUUID() : undefined;
-    if (!source && !existingRequestId) this.execution?.addOwnerRequest(requestId!, text);
+    if (!source && !existingRequestId) this.controller?.ownerMessage(requestId!, text);
     if (this.drainingAssistant || (this.current && (this.stopRequested || this.finishing))) {
       this.afterStop.push({ text, source, ...(requestId ? { requestId } : {}) });
       return;
     }
-    if (!this.current) this.execution?.resume();
+    if (!this.current) this.controller?.runStarting();
     if (!source) { this.pendingOwner++; this.opts.onOwnerMessage?.(); }
     const message: UserMessage & { vexSource?: string; vexRequestId?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}), ...(requestId ? { vexRequestId: requestId } : {}) };
     if (this.current) {
@@ -223,7 +208,7 @@ export class Session {
   stop(): void {
     this.assistantQueue = [];
     this.afterStop = [];
-    this.execution?.clearPending();
+    this.controller?.stopped();
     if (!this.current) return;
     this.stopRequested = true;
     this.backoff?.abort();
@@ -249,11 +234,12 @@ export class Session {
     this.opts.onDispose?.();
   }
 
-  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = this.withOutcomeTool(tools); }
+  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = this.withControllerTools(tools); }
 
-  private withOutcomeTool(tools: AgentTool<any>[]): AgentTool<any>[] {
-    const outcome = this.execution?.outcomeTool((message) => this.enqueueAssistant(message));
-    return outcome ? [...tools.filter((tool) => tool.name !== outcome.name), outcome] : tools;
+  private withControllerTools(tools: AgentTool<any>[]): AgentTool<any>[] {
+    const added = this.controller?.tools() ?? [];
+    const names = new Set(added.map((tool) => tool.name));
+    return [...tools.filter((tool) => !names.has(tool.name)), ...added];
   }
 
   private captureBudgetCause(stream: StreamFn): StreamFn {
@@ -398,7 +384,7 @@ export class Session {
     } finally {
       this.finishing = true;
       try { await this.writes; await this.flushPendingProviderUsage(); await this.opts.onRunEnd?.(); }
-      finally { this.execution?.finishRun(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : []))); }
+      finally { this.controller?.runEnded(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : []))); }
     }
   }
 
@@ -445,7 +431,7 @@ export class Session {
       case "message_end": {
         const message = event.message;
         if (message.role === "toolResult" && message.isError) this.failedTools.add(message.toolName);
-        if (message.role === "toolResult") this.execution?.settle(this.agent.state.messages);
+        if (message.role === "toolResult") this.controller?.toolResults(this.agent.state.messages);
         // System messages are rebuilt from the current prompt and tools on every start.
         if (message.role === "system") return;
         if (message.role === "assistant" && message.stopReason === "error") return;
