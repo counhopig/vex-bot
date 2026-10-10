@@ -17,6 +17,8 @@ const state = {
   settingsTab: "model",
   filePage: "soul",
   fileAreas: new Map(),
+  fileBases: new Map(),
+  savingFiles: new Map(),
   notes: null,
   pendingSaves: 0,
   saveWarnings: [],
@@ -109,7 +111,10 @@ function handle(msg) {
       if (state.settingsTab === "yaml") $("settings-text").value = msg.text;
       break;
     case "file":
-      if (state.fileAreas.has(msg.name)) state.fileAreas.get(msg.name).value = msg.text;
+      if (state.fileAreas.has(msg.name)) {
+        state.fileAreas.get(msg.name).value = msg.text;
+        state.fileBases.set(msg.name, msg.text);
+      }
       break;
     case "notes":
       renderNotes(msg.names);
@@ -120,6 +125,7 @@ function handle(msg) {
     case "file_saved":
       if (state.fileAreas.has(msg.name)) {
         if (!msg.ok) { state.pendingSaves = 0; showSaved(false, "", msg.error); break; }
+        if (state.savingFiles.has(msg.name)) state.fileBases.set(msg.name, state.savingFiles.get(msg.name));
         if (msg.warning) state.saveWarnings.push(msg.warning);
         if (--state.pendingSaves > 0) break;
         if (state.saveWarnings.length) {
@@ -1008,6 +1014,7 @@ function renderFileEditors(page) {
   box.replaceChildren();
   box.className = page.files.length > 1 || page.notes ? "multi" : "";
   state.fileAreas = new Map();
+  state.fileBases = new Map();
   state.notes = null;
   for (const file of page.files) {
     const section = element("div", "editor");
@@ -1269,7 +1276,12 @@ function saveSettings() {
   } else if (tab.pages) {
     state.pendingSaves = state.fileAreas.size;
     state.saveWarnings = [];
-    for (const [name, area] of state.fileAreas) send({ type: "save_file", name, text: area.value });
+    state.savingFiles = new Map();
+    for (const [name, area] of state.fileAreas) {
+      state.savingFiles.set(name, area.value);
+      const base = state.fileBases.get(name);
+      send({ type: "save_file", name, text: area.value, ...(base === undefined ? {} : { base }) });
+    }
   } else {
     send({ type: "save_config", text: $("settings-text").value });
   }

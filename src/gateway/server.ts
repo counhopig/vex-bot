@@ -10,6 +10,7 @@ import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
+import { WorkspaceConflictError } from "../workspace/workspace.js";
 import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
@@ -27,7 +28,7 @@ export interface GatewayOptions {
     remove: (id: string) => Promise<unknown>;
   };
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
-  workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
+  workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string, base?: string) => Promise<{ warning?: string } | void> };
   staticDir: string;
   log: Logger;
 }
@@ -280,9 +281,13 @@ export class Gateway {
         return;
       case "save_file":
         try {
-          const saved = await this.opts.workspace.save(message.name, message.text);
+          const saved = await this.opts.workspace.save(message.name, message.text, message.base);
           send(ws, { type: "file_saved", name: message.name, ok: true, warning: saved?.warning });
         } catch (err) {
+          if (err instanceof WorkspaceConflictError) {
+            send(ws, { type: "file_saved", name: message.name, ok: false, error: err.message });
+            return;
+          }
           this.opts.log.warn({ err, file: message.name }, "saving workspace file failed");
           send(ws, { type: "file_saved", name: message.name, ok: false, error: "Save failed; see the vexd log" });
         }
