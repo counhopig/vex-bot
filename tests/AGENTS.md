@@ -20,7 +20,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
 | Notes vault | `vault-parse`, `vault-git`, `vault`, `vault-tools` | Note parsing, git mirror, search, tool output and path safety |
 | LLM wiki | `wiki-*`, `daemon-wiki` | Repo transactions, markers, reconciliation, scheduling gates, shared-clone reads, tools, bootstrap approval and daemon delivery |
-| Agent execution | `agent-workflow`, `execution`, `jev`, `context-budget`, `link-source` | Link actions, evidence checks, decision judge, request budgets and original-source reading |
+| Agent execution | `agent-workflow`, `link-actions`, `claims`, `jev`, `context-budget`, `link-source` | Link actions, claim profiles, evidence checks, decision judge, request budgets and original-source reading |
 
 Suite names in the table omit `.test.ts`.
 
@@ -30,6 +30,7 @@ Suite names in the table omit `.test.ts`.
 - `helpers/faux.ts`: `createFaux`, `fauxModels` and `fauxStreamFn` provide deterministic model responses without external providers; `lastUserText` extracts the latest user input.
 - `helpers/client.ts`: `TestClient` records typed server messages, sends protocol messages or raw input, and waits for a matching message with a five-second polling deadline. Close each connected client.
 - `helpers/ilink.ts`: `FakeIlink` binds a loopback HTTP server on an ephemeral port, records requests, queues update batches and supplies configurable routes. Await `stop()` after use; `textMessage` builds incoming text fixtures.
+- `helpers/evidence.ts`: `TOOL_EVIDENCE`/`evidence` give a directly built `Session` or boundary the daemon's evidence profiles; `judged({ judge })` adds a decision-judge advisor.
 - `helpers/gitRemote.ts`: `makeRemote` creates a bare repository plus a working copy; `commit` writes files, commits at a fixed date and force-pushes. Used with the real `git` binary and local paths, never the network.
 
 ## TEST BOUNDARIES
