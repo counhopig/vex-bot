@@ -34,6 +34,7 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `policy/` | Approval policy and pending approvals |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
 | `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
+| `wiki/` | LLM wiki over a writable vault clone: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
@@ -136,6 +137,10 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 `Vault` scans the folder on every call (skipping hidden names, symlinks, non-Markdown files and notes over 1 MB), keeping parsed metadata (title, tags, aliases, links) per file keyed by size and modification time, so only changed notes are parsed again. Bodies are read from disk when a search needs them. Backlinks are computed from the links of all notes when a note is read. A note's date is the last git commit time of its file (one `git log` pass, cached per HEAD), or the file time when there is no repository.
 
 `vault_read` accepts only a relative `.md` path without hidden segments, found in the scan, whose real path is still inside the vault. The session system prompt gains a short `Notes vault` section only when a vault is configured.
+
+## Notes wiki
+
+When `wiki.enabled` is set, `wiki/` maintains a writable clone of the git-backed vault and compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview, which waits for approval. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 

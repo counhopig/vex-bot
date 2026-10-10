@@ -80,6 +80,10 @@ Saving in WebChat settings applies the change without a manual restart:
 | `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps a read-only copy. The address must not contain credentials |
 | `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
 | `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and a read-only access token (some hosts accept any username); only with `vault.url` |
+| `wiki.enabled` | `false` | Compile a git-backed vault into `wiki/` and `raw/` pages and push the result; requires `vault.url` |
+| `wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
+| `wiki.notify` | `true` | Send a WeChat notification after each wiki batch |
+| `wiki.maxNotesPerRun` | `20` | Notes compiled per model call; a run processes every pending note and makes one commit |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
 Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
@@ -240,6 +244,18 @@ The agent gets two tools. `vault_search` takes `query` (keywords separated by sp
 Files and folders whose names start with `.`, symlinks, non-Markdown files (`.md`, case-insensitive) and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call; in a measured run, a search over 1,000 notes took about 0.1 s, and over 5,000 notes about 0.46 s warm and about 1 s cold. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
 
 Treat note text as untrusted input, not as instructions: a page you clipped into the vault can carry text aimed at the model. If the vault holds third-party content, set `tools.policy.web_fetch: ask` so a note cannot make Vex fetch an address silently, and set `tools.policy.write` and `tools.policy.edit` to `ask` too if you want the same for files.
+
+## Notes wiki
+
+With a git-backed vault (`vault.url`), set `wiki.enabled: true` to have Vex compile your notes into a wiki inside the same repository. A scheduled ingest reads the notes that changed since the last run, writes synthesized pages under `wiki/` (and fetched material under `raw/`), updates `wiki/_index.md`, and commits and pushes the batch. When you ask a question, the agent reads `wiki/` first and cites the pages it used.
+
+- `wiki.every` is the cadence (a duration such as `6h`, or a cron expression).
+- `wiki.maxNotesPerRun` bounds how many notes one model call compiles; a run still processes every pending note and makes a single commit.
+- `wiki.notify` sends a WeChat message after each batch.
+
+The first ingest is a preview: Vex commits it locally but withholds the push until you approve it (ask Vex to approve or reject the preview); the cadence stays paused until then. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed).
+
+Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
 
 ## Scheduled messages
 
