@@ -137,7 +137,7 @@ export class Wiki {
 
       // A compile run ingests every note added since the last scan, splitting them across as
       // many agent calls as `maxNotesPerRun` allows. On-demand runs skip detection entirely.
-      const from = state?.lastScanCommit ?? null;
+      const from = reconciled.lastScanCommit ?? null;
       if (kind.kind !== "on-demand") {
         const changes = await detectChanges(this.repo, from);
         if (changes.length === 0) {
