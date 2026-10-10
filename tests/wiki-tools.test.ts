@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WikiRepo } from "../src/wiki/git.js";
 import { MarkerStore, type FileFingerprint, type InFlightMarker } from "../src/wiki/marker.js";
-import { createWikiWriteTools } from "../src/wiki/tools.js";
+import type { Wiki } from "../src/wiki/service.js";
+import { createWikiInteractiveTools, createWikiWriteTools } from "../src/wiki/tools.js";
 import { commit, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -95,5 +96,101 @@ describe("wiki_edit", () => {
     const { root, tools } = await setup({ "wiki/a.md": "alpha beta gamma" });
     await toolNamed(tools, "wiki_edit").execute("1", { path: "wiki/a.md", oldText: "beta", newText: "BETA" });
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("alpha BETA gamma");
+  });
+});
+
+function textOf(result: { content: { type: string; text?: string }[] }): string {
+  return result.content[0]?.text ?? "";
+}
+
+interface FakeWiki {
+  wiki: Wiki;
+  status: ReturnType<typeof vi.fn>;
+  run: ReturnType<typeof vi.fn>;
+  approveBootstrap: ReturnType<typeof vi.fn>;
+  rejectBootstrap: ReturnType<typeof vi.fn>;
+  rollback: ReturnType<typeof vi.fn>;
+}
+
+function fakeWiki(bootstrap: "pending" | "awaiting-review" | "done", overrides: Partial<FakeWiki> = {}): FakeWiki {
+  const fake = {
+    status: vi.fn(async () => ({ bootstrap, nextAttemptAt: null, lastBatchId: null })),
+    run: vi.fn(async () => null),
+    approveBootstrap: vi.fn(async () => ({ pushed: true, message: "bootstrap preview published" })),
+    rejectBootstrap: vi.fn(async () => ({ discarded: true, message: "bootstrap preview discarded" })),
+    rollback: vi.fn(async () => ({ reverted: true, commit: "abc", message: "reverted the last batch" })),
+    ...overrides,
+  } as FakeWiki;
+  fake.wiki = fake as unknown as Wiki;
+  return fake;
+}
+
+describe("wiki_ingest", () => {
+  it("rejects empty text", async () => {
+    const fake = fakeWiki("done");
+    const ingest = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_ingest");
+    await expect(ingest.execute("1", { text: "" })).rejects.toThrow(/empty/);
+    expect(fake.run).not.toHaveBeenCalled();
+  });
+
+  it.each(["pending", "awaiting-review"] as const)("refuses while bootstrap is %s", async (bootstrap) => {
+    const fake = fakeWiki(bootstrap);
+    const ingest = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_ingest");
+    await expect(ingest.execute("1", { text: "hello" })).rejects.toThrow("the wiki bootstrap is awaiting approval");
+    expect(fake.run).not.toHaveBeenCalled();
+  });
+
+  it("delegates to run on-demand once the bootstrap is done", async () => {
+    const fake = fakeWiki("done");
+    const ingest = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_ingest");
+    const result = await ingest.execute("1", { url: "https://example.com", title: "T", text: "hello" });
+    expect(fake.run).toHaveBeenCalledWith({ kind: "on-demand", source: { url: "https://example.com", title: "T", text: "hello" } }, expect.any(AbortSignal));
+    expect(textOf(result)).toContain("no changes");
+  });
+});
+
+describe("wiki_bootstrap", () => {
+  it("delegates approve to approveBootstrap", async () => {
+    const fake = fakeWiki("awaiting-review");
+    const bootstrap = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_bootstrap");
+    const result = await bootstrap.execute("1", { action: "approve" });
+    expect(fake.approveBootstrap).toHaveBeenCalledTimes(1);
+    expect(textOf(result)).toBe("bootstrap preview published");
+  });
+
+  it("delegates reject to rejectBootstrap", async () => {
+    const fake = fakeWiki("awaiting-review");
+    const bootstrap = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_bootstrap");
+    const result = await bootstrap.execute("1", { action: "reject" });
+    expect(fake.rejectBootstrap).toHaveBeenCalledTimes(1);
+    expect(textOf(result)).toBe("bootstrap preview discarded");
+  });
+
+  it("surfaces the service's nothing-to-approve message on a second approve", async () => {
+    const fake = fakeWiki("awaiting-review");
+    fake.approveBootstrap
+      .mockResolvedValueOnce({ pushed: true, message: "bootstrap preview published" })
+      .mockResolvedValueOnce({ pushed: false, message: "there is nothing to approve" });
+    const bootstrap = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_bootstrap");
+    await bootstrap.execute("1", { action: "approve" });
+    const second = await bootstrap.execute("2", { action: "approve" });
+    expect(textOf(second)).toBe("there is nothing to approve");
+  });
+});
+
+describe("wiki_rollback", () => {
+  it("refuses while the bootstrap is not done", async () => {
+    const fake = fakeWiki("pending");
+    const rollback = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_rollback");
+    await expect(rollback.execute("1", {})).rejects.toThrow("the wiki bootstrap is awaiting approval");
+    expect(fake.rollback).not.toHaveBeenCalled();
+  });
+
+  it("delegates once the bootstrap is done", async () => {
+    const fake = fakeWiki("done");
+    const rollback = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_rollback");
+    const result = await rollback.execute("1", {});
+    expect(fake.rollback).toHaveBeenCalledTimes(1);
+    expect(textOf(result)).toBe("reverted the last batch");
   });
 });

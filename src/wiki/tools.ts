@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import type { WikiRepo } from "./git.js";
 import { assertUnchanged, expectedBeforeFor, fingerprint, type FileFingerprint, type InFlightMarker, type MarkerStore } from "./marker.js";
 import { resolveInSubtree } from "./paths.js";
+import type { Wiki } from "./service.js";
 
 export interface WikiWriteContext {
   repo: WikiRepo;
@@ -50,6 +51,66 @@ async function commitWrite(ctx: WikiWriteContext, path: string, abs: string, con
   await mkdir(dirname(abs), { recursive: true });
   await writeFile(abs, content, "utf8");
   await marker.recordAfter(path, await fingerprint(abs));
+}
+
+const WikiIngestParams = Type.Object({
+  url: Type.Optional(Type.String({ description: "Source URL" })),
+  title: Type.Optional(Type.String({ description: "Source title" })),
+  text: Type.String({ description: "Source text to ingest" }),
+});
+
+const WikiBootstrapParams = Type.Object({
+  action: Type.Union([Type.Literal("approve"), Type.Literal("reject")], { description: "Publish or discard the bootstrap preview" }),
+});
+
+const WikiRollbackParams = Type.Object({});
+
+/** The interactive wiki tools: on-demand ingestion and bootstrap review, driven by a conversation. */
+export function createWikiInteractiveTools(wiki: Wiki): AgentTool<any>[] {
+  const fallbackSignal = (signal: AbortSignal | undefined): AbortSignal => signal ?? new AbortController().signal;
+
+  const ingestTool: AgentTool<typeof WikiIngestParams> = {
+    name: "wiki_ingest",
+    label: "Ingest into wiki",
+    description: "Ingests a source text into the wiki on demand. Refused until the bootstrap preview has been approved.",
+    parameters: WikiIngestParams,
+    async execute(_id, { url, title, text }, signal) {
+      if (text === undefined || text === "") throw new Error("text must not be empty");
+      const status = await wiki.status();
+      if (status.bootstrap !== "done") throw new Error("the wiki bootstrap is awaiting approval");
+      const result = await wiki.run({ kind: "on-demand", source: { url, title, text } }, fallbackSignal(signal));
+      const summary = result === null ? "no changes" : `ingested ${result.pages.length} path(s)${result.pushed ? " and pushed" : " locally"}`;
+      return { content: [{ type: "text", text: summary }], details: { summary } };
+    },
+  };
+
+  const bootstrapTool: AgentTool<typeof WikiBootstrapParams> = {
+    name: "wiki_bootstrap",
+    label: "Review wiki bootstrap",
+    description: "Approves (publishes) or rejects (discards) the pending wiki bootstrap preview.",
+    parameters: WikiBootstrapParams,
+    async execute(_id, { action }, signal) {
+      const result = action === "approve"
+        ? await wiki.approveBootstrap(fallbackSignal(signal))
+        : await wiki.rejectBootstrap(fallbackSignal(signal));
+      return { content: [{ type: "text", text: result.message }], details: { message: result.message } };
+    },
+  };
+
+  const rollbackTool: AgentTool<typeof WikiRollbackParams> = {
+    name: "wiki_rollback",
+    label: "Roll back wiki batch",
+    description: "Reverts the most recent committed wiki batch. Refused until the bootstrap preview has been approved.",
+    parameters: WikiRollbackParams,
+    async execute(_id, _params, signal) {
+      const status = await wiki.status();
+      if (status.bootstrap !== "done") throw new Error("the wiki bootstrap is awaiting approval");
+      const result = await wiki.rollback(fallbackSignal(signal));
+      return { content: [{ type: "text", text: result.message }], details: { message: result.message } };
+    },
+  };
+
+  return [ingestTool, bootstrapTool, rollbackTool];
 }
 
 const WikiWriteParams = Type.Object({
