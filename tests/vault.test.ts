@@ -139,6 +139,26 @@ describe("Vault.read", () => {
   });
 });
 
+describe("Vault with an injected root", () => {
+  it("reads from the injected root and skips the mirror", async () => {
+    const wiki = join(dir, "wiki-root");
+    await mkdir(join(wiki, "wiki"), { recursive: true });
+    await writeFile(join(wiki, "wiki/a.md"), "# A\n");
+    const v = new Vault({ home: join(dir, "home"), config: { url: "https://unused.invalid/x.git" }, root: () => wiki });
+    const out = await v.search({ folder: "wiki" });
+    expect(paths(out)).toContain("wiki/a.md");
+    expect(out.source).toBe("wiki working copy");
+    expect((await v.read("wiki/a.md")).source).toBe("wiki working copy");
+  });
+
+  it("falls back to the configured folder when root() is null", async () => {
+    await sample();
+    const v = new Vault({ home: join(dir, "home"), config: { path: notes }, root: () => null });
+    expect(paths(await v.search({ tag: "weekly" }))).toEqual(["Ideas.md"]);
+    expect((await v.search({})).source).toBe(`folder ${notes}`);
+  });
+});
+
 describe("Vault with a git repository", () => {
   it("searches the mirrored copy and dates notes by commit time", async () => {
     const src = join(dir, "src");
