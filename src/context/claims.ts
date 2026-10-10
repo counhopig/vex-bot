@@ -1,8 +1,12 @@
 /** A tool result's `details.receipt`, as bounded for evidence checks. */
 export type Receipt = Record<string, unknown>;
 
-/** Completed operations a reply may claim only with a matching successful tool result. */
-export type ClaimKind = "archived" | "published" | "compiled" | "read" | "searched" | "executed" | "updated" | "deleted" | "sent";
+/**
+ * Completed operations on the owner's links that a reply may claim only with a matching successful
+ * tool result. Only operations whose tools return structured receipts are listed: wording alone is
+ * no evidence, and a tool succeeding proves nothing about an operation it does not report.
+ */
+export type ClaimKind = "archived" | "published" | "compiled" | "read";
 
 /**
  * What one tool's results prove. Each module declares this for the tools it owns, so the evidence
@@ -33,21 +37,17 @@ const CLAIMS: { kind: ClaimKind; pattern: RegExp }[] = [
   { kind: "published", pattern: /\b(published|pushed)\b|已(?:发布|推送)/i },
   { kind: "compiled", pattern: /\b(compiled)\b|已编译/i },
   { kind: "read", pattern: /\b(read|retrieved|downloaded)\b|已(?:读取|读完|获取)/i },
-  { kind: "searched", pattern: /\bsearched\b|已搜索/i },
-  { kind: "executed", pattern: /\b(executed|ran)\b|已(?:执行|运行)/i },
-  { kind: "updated", pattern: /\bupdated\b|已更新/i },
-  { kind: "deleted", pattern: /\bdeleted\b|已删除/i },
-  { kind: "sent", pattern: /\bsent\b|已发送/i },
 ];
 
 export function extractUrls(text: string): string[] {
   return [...new Set((text.match(/https?:\/\/[^\s<>"']+/g) ?? []).map((url) => url.replace(/[),.!?。；，]+$/, "")))];
 }
 
-/** Prospective ("I'll read") and negated ("not saved") clauses claim nothing. */
+/** Prospective ("I'll read"), imperative ("Read the README") and negated ("not saved") clauses claim nothing. */
 function claimedText(reply: string): string {
   return reply.split(/(?<=[.!?;])\s+|\bbut\b|\bhowever\b|,\s*/i).map((clause) => {
     if (/^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b/i.test(clause)) return "";
+    if (/^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i.test(clause)) return "";
     return clause.replace(/\b(?:not|never|haven't|didn't|won't)\s+(?:been\s+)?(?:saved|archived|published|pushed|searched|read|retrieved|downloaded|executed|run|updated|deleted|sent)\b/gi, "");
   }).join(" ");
 }
@@ -55,12 +55,15 @@ function claimedText(reply: string): string {
 /**
  * Whether the reply claims a completed operation that no recorded result supports. A claim about the
  * turn's links needs, for every named link, the newest supporting call that acted on that link.
+ * Without links, a claim is checked only when the turn called a tool that can support it: wording
+ * with no operation behind it is left to the evidence advisor rather than judged by keyword.
  */
 export function unsupportedClaim(reply: string, turn: { urls: string[]; evidence: unknown[] }, profiles: EvidenceProfiles): boolean {
   const text = claimedText(reply);
   const entries = turn.evidence.filter((item): item is EvidenceEntry => Boolean(item && typeof item === "object" && typeof (item as EvidenceEntry).tool === "string"));
   return CLAIMS.some(({ kind, pattern }) => {
     if (!pattern.test(text)) return false;
+    if (!turn.urls.length && !entries.some((entry) => profiles[entry.tool]?.supports?.[kind])) return false;
     const described = extractUrls(text).filter((url) => turn.urls.includes(url));
     const targets = described.length ? described : turn.urls;
     const candidate = (entry: EvidenceEntry, url?: string): boolean => {
