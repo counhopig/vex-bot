@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { writeFileAtomic } from "../store/atomic.js";
+import { writeFileAtomic } from "../../store/atomic.js";
 
 export interface WikiRollback {
   targetBatchId: string;

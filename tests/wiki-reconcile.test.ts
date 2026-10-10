@@ -1,10 +1,10 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { WikiRepo } from "../src/wiki/git.js";
-import type { InFlightMarker } from "../src/wiki/marker.js";
-import { reconcile } from "../src/wiki/reconcile.js";
-import { emptyState, type WikiState } from "../src/wiki/state.js";
+import { WikiRepo } from "../src/vault/wiki/git.js";
+import type { InFlightMarker } from "../src/vault/wiki/marker.js";
+import { reconcile } from "../src/vault/wiki/reconcile.js";
+import { emptyState, type WikiState } from "../src/vault/wiki/state.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

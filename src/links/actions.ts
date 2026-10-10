@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
+import type { AgentTool, BeforeToolCallContext, BeforeToolCallResult, StreamFn } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type Api, type AssistantMessage, type Model, type SimpleStreamOptions, type ToolResultMessage, type TranscriptContext } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import { ContextBudgetError } from "../context/budget.js";
+import type { LinkIntent } from "../policy/judge.js";
+import { createRequestActionOutcomeTool } from "../tools/requestOutcome.js";
+import type { TurnController } from "../core/turnController.js";
 
 export interface RequestAction {
   id: string;
@@ -13,15 +15,25 @@ export interface RequestAction {
   state: "pending" | "running" | "completed" | "blocked" | "cancelled";
 }
 
-export interface LinkIntent {
-  url: string;
-  intent: RequestAction["intent"];
-  confidence: number;
-}
-
 export interface OwnerLinkRequest { id: string; input: string; actions: RequestAction[]; classified: boolean }
 
-export interface RequestActionOptions {
+/**
+ * The fields of an archive tool's `details.receipt` that settle an archive action. The archive
+ * tool (the wiki's `wiki_ingest`) returns them; this module defines the contract.
+ */
+export interface ArchiveReceipt {
+  status?: "completed" | "failed-read" | "failed-run" | "bootstrap-pending";
+  metadataOnly?: boolean;
+  sourceAvailable?: boolean;
+}
+
+export interface LinkActionOptions {
+  /** The tool each intent runs: `archive` and `read` take `{ url }`. */
+  routes: { archive: string; read: string };
+  /** General tools that could repeat a denied archive by other means (shell, delegation). */
+  fallbackTools: string[];
+  /** Delivers a runtime outcome notice to the owner. */
+  onOutcome?: (message: string) => Promise<void>;
   classify: (input: string, urls: string[], signal?: AbortSignal) => Promise<LinkIntent[]>;
   fallback?: (input: string, urls: string[], signal?: AbortSignal) => Promise<LinkIntent[] | undefined>;
   confidence: number;
@@ -32,42 +44,47 @@ export interface RequestActionOptions {
 const URLS_PER_CLASSIFICATION = 10;
 const INPUT_LIMIT = 4_000;
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
-const OutcomeParams = Type.Object({
-  actionId: Type.String(),
-  url: Type.String(),
-  status: Type.Union([Type.Literal("deferred"), Type.Literal("awaiting-review"), Type.Literal("blocked")]),
-  message: Type.String(),
-});
-
-/** A harmless pi tool used to put authorized controller outcomes in the ordinary tool stream. */
-export function createRequestActionOutcomeTool(
-  authorize: (args: { actionId: string; url: string; status: "deferred" | "awaiting-review" | "blocked"; message: string }) => boolean,
-  onOutcome?: (message: string) => Promise<void>,
-): AgentTool<typeof OutcomeParams> {
-  return {
-    name: "request_action_outcome",
-    label: "Report link action outcome",
-    description: "Records the runtime outcome for a link action. This tool has no external side effects.",
-    parameters: OutcomeParams,
-    execute: async (_id, args) => {
-      if (!authorize(args)) throw new Error("This request action outcome was not issued by the runtime.");
-      await onOutcome?.(args.message);
-      return { content: [{ type: "text", text: args.message }], details: { actionId: args.actionId, url: args.url, status: args.status } };
-    },
-  };
-}
-
-/** Owns one live Session's actions. Restored transcript requests are intentionally never registered. */
-export class RequestActionOrchestrator {
+/**
+ * Runs the owner's shared links as fixed actions for one live session: classify each URL's intent,
+ * call the routed tool through the normal gate, and keep the model from contradicting the owner.
+ * Restored transcript requests are intentionally never registered.
+ */
+export class LinkActionController implements TurnController {
   readonly requests: OwnerLinkRequest[] = [];
   private readonly actions = new Map<string, RequestAction>();
   private readonly confirmedActionIds = new Set<string>();
   private readonly calls = new Map<string, { action: RequestAction; tool: string }>();
   private readonly authorizedOutcomes = new Map<string, { url: string; status: "deferred" | "awaiting-review" | "blocked"; message: string }>();
   private readonly pendingOutcomes: { action: RequestAction; status: "deferred" | "awaiting-review" | "blocked"; message: string }[] = [];
-  private stopped = false;
+  private halted = false;
 
-  constructor(private readonly opts: RequestActionOptions) {}
+  constructor(private readonly opts: LinkActionOptions) {}
+
+  ownerMessage(requestId: string, text: string): void { this.addOwnerRequest(requestId, text); }
+
+  runStarting(): void { this.halted = false; }
+
+  toolResults(messages: TranscriptContext["messages"]): void { this.settleMessages(messages); }
+
+  tools(): AgentTool<any>[] { return [this.outcomeTool()]; }
+
+  /** Keeps model-issued calls from contradicting the owner's link instructions; runtime outcome calls skip the owner gate. */
+  async beforeToolCall(context: BeforeToolCallContext, signal: AbortSignal | undefined, ownerGate: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>): Promise<BeforeToolCallResult | undefined> {
+    const name = context.toolCall.name;
+    const runtimeOutcome = name === "request_action_outcome" && this.calls.get(context.toolCall.id)?.tool === "request_action_outcome";
+    const args = context.args;
+    const archiveUrl = name === this.opts.routes.archive && !this.calls.has(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" ? args.url : undefined;
+    if (archiveUrl !== undefined && this.blocksOwnerDeniedArchive(archiveUrl)) {
+      return { block: true, reason: "The owner's active link instruction does not authorize archival for this URL." };
+    }
+    if (archiveUrl !== undefined && this.blocksDuplicateArchive(archiveUrl)) {
+      return { block: true, reason: "This request already attempted archival for that URL; use the existing tool result and do not retry it through another call." };
+    }
+    if (!runtimeOutcome && this.blocksDeniedArchiveFallback(name, args)) {
+      return { block: true, reason: "Archival for this URL was denied and is terminal; do not retry the same action through another tool." };
+    }
+    return runtimeOutcome ? undefined : ownerGate(context, signal);
+  }
 
   addOwnerRequest(id: string, input: string): OwnerLinkRequest {
     const urls = extractUrls(input);
@@ -85,23 +102,19 @@ export class RequestActionOrchestrator {
     return request;
   }
 
-  clearPending(): void {
-    this.stopped = true;
+  stopped(): void {
+    this.halted = true;
     for (const action of this.actions.values()) if (action.state === "pending" || action.state === "running") action.state = "cancelled";
   }
 
-  resume(): void { this.stopped = false; }
-
-  outcomeTool(onOutcome?: (message: string) => Promise<void>): AgentTool<any> {
+  private outcomeTool(): AgentTool<any> {
     return createRequestActionOutcomeTool((args) => {
       const expected = this.authorizedOutcomes.get(args.actionId);
       if (!expected || expected.url !== args.url || expected.status !== args.status || expected.message !== args.message) return false;
       this.authorizedOutcomes.delete(args.actionId);
       return true;
-    }, onOutcome);
+    }, this.opts.onOutcome);
   }
-
-  settle(messages: TranscriptContext["messages"]): void { this.settleMessages(messages); }
 
   blocksDuplicateArchive(url: string): boolean {
     return [...this.actions.values()].some((action) => action.url === url && action.intent === "archive" && action.state !== "pending" && action.state !== "cancelled");
@@ -116,16 +129,12 @@ export class RequestActionOrchestrator {
   }
 
   blocksDeniedArchiveFallback(tool: string, args: unknown): boolean {
-    if (tool !== "bash" && tool !== "delegate") return false;
+    if (!this.opts.fallbackTools.includes(tool)) return false;
     const serialized = JSON.stringify(args);
     return [...this.actions.values()].some((action) => action.intent === "archive" && action.state === "blocked" && serialized.includes(action.url));
   }
 
-  isControllerCall(callId: string): boolean { return this.calls.has(callId); }
-
-  isControllerOutcomeCall(callId: string): boolean { return this.calls.get(callId)?.tool === "request_action_outcome"; }
-
-  finishRun(keepRequestIds: Set<string> = new Set()): void {
+  runEnded(keepRequestIds: Set<string> = new Set()): void {
     for (let index = this.requests.length - 1; index >= 0; index--) {
       const request = this.requests[index]!;
       if (keepRequestIds.has(request.id)) continue;
@@ -141,25 +150,25 @@ export class RequestActionOrchestrator {
     for (const [callId, { action }] of this.calls) if (!this.actions.has(action.id)) this.calls.delete(callId);
   }
 
-  wrap(stream: StreamFn, tools: () => AgentTool<any>[], fallbackStream: StreamFn = stream): StreamFn {
+  wrapStream(stream: StreamFn, tools: () => AgentTool<any>[], fallbackStream: StreamFn = stream): StreamFn {
     return async (model, context, options) => {
       options?.signal?.throwIfAborted();
-      if (this.stopped) return stream(model, context, options);
+      if (this.halted) return stream(model, context, options);
       this.settleMessages(context.messages);
       const notice = this.pendingOutcomes.shift();
       if (notice) return this.outcome(model, notice.action, notice.status, notice.message);
       for (const request of this.requests) {
         if (!request.classified) await this.classify(request, model, context, fallbackStream, options);
-        if (this.stopped) return stream(model, context, options);
+        if (this.halted) return stream(model, context, options);
       }
       this.cancelSupersededActions();
       for (const request of this.requests) {
         const action = request.actions.find((candidate) => candidate.state === "pending");
         if (!action) continue;
-        const route = action.intent === "archive" ? "wiki_ingest" : action.intent === "read" ? "web_fetch" : undefined;
+        const route = action.intent === "archive" ? this.opts.routes.archive : action.intent === "read" ? this.opts.routes.read : undefined;
         if (!route || !tools().some((tool) => tool.name === route)) {
-          return this.outcome(model, action, "deferred", route === "wiki_ingest"
-            ? "Archival was deferred because wiki_ingest is unavailable or disabled for this session."
+          return this.outcome(model, action, "deferred", action.intent === "archive"
+            ? `Archival was deferred because ${route} is unavailable or disabled for this session.`
             : action.intent === "read" ? "The link action was deferred because no permitted read action is available."
               : "Archival was deferred because link intent could not be classified with sufficient confidence.");
         }
@@ -243,15 +252,15 @@ export class RequestActionOrchestrator {
         continue;
       }
       action.state = result.isError ? "blocked" : "completed";
-      if (!result.isError && expectedTool === "wiki_ingest") {
-        const receipt = result.details && typeof result.details === "object" && "receipt" in result.details ? result.details.receipt : undefined;
+      if (!result.isError && expectedTool === this.opts.routes.archive) {
+        const receipt = (result.details && typeof result.details === "object" && "receipt" in result.details ? result.details.receipt : undefined) as ArchiveReceipt | undefined;
         if (receipt && typeof receipt === "object" && "status" in receipt) {
           if (receipt.status === "bootstrap-pending") {
             action.state = "blocked";
             this.pendingOutcomes.push({ action, status: "awaiting-review", message: `Archival is awaiting bootstrap review for ${action.url}.` });
           } else if (receipt.status === "failed-read" || receipt.status === "failed-run") {
             action.state = "blocked";
-            this.pendingOutcomes.push({ action, status: "blocked", message: `Archival did not complete for ${action.url}; the Wiki receipt reports ${receipt.status}.` });
+            this.pendingOutcomes.push({ action, status: "blocked", message: `Archival did not complete for ${action.url}; the archive receipt reports ${receipt.status}.` });
           } else if (receipt.metadataOnly === true || receipt.sourceAvailable === false) {
             action.state = "blocked";
             this.pendingOutcomes.push({ action, status: "blocked", message: `No original source body was available to archive for ${action.url}.` });

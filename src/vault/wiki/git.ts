@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readlink, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { writeFileAtomic } from "../store/atomic.js";
-import { gitEnv, runGit, type GitRunner } from "../vault/git.js";
+import { writeFileAtomic } from "../../store/atomic.js";
+import { gitEnv, runGit, type GitRunner } from "../git.js";
 import type { FileFingerprint } from "./marker.js";
 
 export type { GitRunner };
@@ -447,6 +447,15 @@ export class WikiRepo {
       await this.git(["rebase", "--abort"]).catch(() => undefined);
       throw error;
     }
+  }
+
+  /** Moves HEAD to the fetched remote tip when that is a pure fast-forward; returns whether it moved. */
+  async fastForward(): Promise<boolean> {
+    const head = await this.head();
+    const tip = await this.originHead();
+    if (head === tip || !(await this.isAncestor(head, tip))) return false;
+    await this.git(["merge", "--ff-only", tip]);
+    return true;
   }
 
   /** `git diff --name-status` reduced to added/modified/deleted paths; other statuses are dropped. */

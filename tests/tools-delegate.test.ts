@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDelegateTool, type DelegateOptions } from "../src/tools/delegate.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 let workspace: string;
 beforeEach(async () => { workspace = await makeTmpDir(); });
@@ -20,7 +21,7 @@ describe("delegate", () => {
       return { content: [{ type: "text" as const, text: "tool result" }], details: {} };
     });
     const echo: AgentTool = { name: "echo", label: "echo", description: "echo", parameters: Type.Object({}), execute };
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo], ...overrides });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo], ...overrides });
     return { faux, tool, echo, execute };
   }
 
@@ -49,7 +50,7 @@ describe("delegate", () => {
     const provider = vi.fn(fauxStreamFn(faux));
     const model = { ...faux.getModel(), contextWindow: 1000, maxTokens: 900 };
     const { echo } = setup({ model, streamFn: provider });
-    const tool = createDelegateTool({ workspace, model, streamFn: provider, getApiKey: () => "test", tools: [echo] });
+    const tool = createDelegateTool({ evidence, workspace, model, streamFn: provider, getApiKey: () => "test", tools: [echo] });
     await expect(tool.execute("id", { task: "go" })).rejects.toMatchObject({ code: "VEX_CONTEXT_BUDGET" });
     expect(provider).not.toHaveBeenCalled();
   });
@@ -94,7 +95,7 @@ describe("delegate", () => {
   it("surfaces child tool errors to the child model", async () => {
     const { faux, echo } = setup();
     echo.execute = async () => { throw new Error("child tool failed"); };
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("echo", {}), { stopReason: "toolUse" }),
       (ctx) => {
@@ -111,7 +112,7 @@ describe("delegate", () => {
     const { faux, echo } = setup();
     const recursive = { ...echo, name: "delegate" };
     const getTools = vi.fn(() => [echo, recursive]);
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", getTools });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", getTools });
     faux.setResponses([(ctx) => {
       const system = ctx.messages.find((message) => message.role === "system");
       expect(JSON.stringify(system)).not.toContain('"name":"delegate"');
@@ -149,7 +150,7 @@ describe("delegate", () => {
       signal?.addEventListener("abort", () => { childAborted = true; reject(new Error("aborted")); }, { once: true });
       started();
     });
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
     faux.setResponses([fauxAssistantMessage(fauxToolCall("echo", {}), { stopReason: "toolUse" })]);
     const run = tool.execute("id", { task: "go" }, controller.signal);
     await ready;

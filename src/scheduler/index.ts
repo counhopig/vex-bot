@@ -5,16 +5,7 @@ import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
-export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
-export interface SchedulerWikiOptions {
-  enabled: boolean;
-  /** Firing cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
-  every: string;
-  status(): Promise<WikiBootstrapStatus>;
-  nextAttemptAt(): number | null;
-  bootstrap(signal: AbortSignal): Promise<void>;
-  run(signal: AbortSignal): Promise<void>;
-}
+export type WikiWork = "bootstrap" | "scheduled";
 export interface ScheduledTask { id: string; name: string; schedule: ScheduleRule; prompt: string; target: string; enabled: boolean; nextAt: number | null }
 export interface SchedulerHooks {
   /** Resolves after the delivered turn has completed, including any steering. */
@@ -24,6 +15,9 @@ export interface SchedulerHooks {
   /** Sends to WeChat and appends an assistant message to its permanent history. */
   deliverHeartbeat(text: string, signal: AbortSignal): Promise<void>;
   checkOutreach(signal: AbortSignal): Promise<void>;
+  /** The wiki work allowed now: a pending bootstrap whatever the cadence, or a scheduled run once `cadenceDue`. */
+  wikiWork(now: number, cadenceDue: boolean): Promise<WikiWork | null>;
+  runWiki(work: WikiWork, signal: AbortSignal): Promise<void>;
   log(error: unknown): void;
 }
 export interface SchedulerOptions {
@@ -31,16 +25,17 @@ export interface SchedulerOptions {
   heartbeat?: { every: string; activeHours: [string, string] };
   memory?: { consolidateAt: string };
   outreach?: { enabled: boolean; checkEvery: string };
-  wiki?: SchedulerWikiOptions;
+  /** Wiki cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
+  wiki?: { every: string };
 }
+const DURATION = /^(\d+(?:\.\d+)?)(s|m|h|d)$/;
 export function duration(value: string): number {
-  const match = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(value);
+  const match = DURATION.exec(value);
   if (!match) throw new Error("The interval must be a positive number followed by s, m, h or d");
   const result = Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!] ?? 0);
   if (!Number.isFinite(result) || result < 1000) throw new Error("The interval must be at least one second");
   return result;
 }
-function isDuration(value: string): boolean { return /^(\d+(?:\.\d+)?)(s|m|h|d)$/.test(value); }
 function minute(value: string): number {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error("The time must be HH:mm");
   const [h, m] = value.split(":").map(Number); return h! * 60 + m!;
@@ -62,6 +57,7 @@ function next(rule: ScheduleRule, now: number): number | null {
   const cron = new Cron(rule.cron, { paused: true });
   try { return cron.nextRun(new Date(now))?.getTime() ?? null; } finally { cron.stop(); }
 }
+function cadenceRule(every: string): ScheduleRule { return DURATION.test(every) ? { every } : { cron: every }; }
 
 export class Scheduler {
   private tasks: ScheduledTask[] = [];
@@ -83,7 +79,7 @@ export class Scheduler {
     const time = options.memory?.consolidateAt ?? "03:00"; minute(time);
     const [h, m] = time.split(":");
     this.consolidationAt = next({ cron: `${m} ${h} * * *` }, this.now());
-    if (options.wiki) this.wikiAt = isDuration(options.wiki.every) ? this.now() + duration(options.wiki.every) : next({ cron: options.wiki.every }, this.now()) ?? this.now();
+    if (options.wiki) this.wikiAt = next(cadenceRule(options.wiki.every), this.now()) ?? this.now();
     activeAt(this.now(), options.heartbeat?.activeHours ?? ["08:00", "22:00"]);
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
@@ -193,17 +189,11 @@ export class Scheduler {
         this.launch("consolidation", () => this.consolidate(now));
       }
       if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? "30m"); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
-      const wiki = this.options.wiki;
-      if (wiki?.enabled) {
+      if (this.options.wiki) {
         try {
-          const gate = wiki.nextAttemptAt() ?? 0;
-          const status = await wiki.status();
-          if (status === "pending") {
-            if (now >= gate) this.launch("wiki-bootstrap", () => wiki.bootstrap(this.abort.signal));
-          } else if (status === "done" && now >= gate && now >= this.wikiAt) {
-            this.wikiAt = isDuration(wiki.every) ? now + duration(wiki.every) : next({ cron: wiki.every }, now) ?? now;
-            this.launch("wiki-run", () => wiki.run(this.abort.signal));
-          }
+          const work = await this.options.hooks.wikiWork(now, now >= this.wikiAt);
+          if (work === "scheduled") this.wikiAt = next(cadenceRule(this.options.wiki.every), now) ?? now;
+          if (work) this.launch(work === "bootstrap" ? "wiki-bootstrap" : "wiki-run", () => this.options.hooks.runWiki(work, this.abort.signal));
         } catch (error) { this.options.hooks.log(error); }
       }
     } finally { this.ticking = false; }

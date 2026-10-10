@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync 
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runGit, type GitRunner } from "../src/vault/git.js";
-import { fingerprint } from "../src/wiki/marker.js";
-import { Wiki, type WikiOptions } from "../src/wiki/service.js";
-import { emptyState } from "../src/wiki/state.js";
+import { fingerprint } from "../src/vault/wiki/marker.js";
+import { dueWikiWork, previewNotice, Wiki, type WikiOptions } from "../src/vault/wiki/service.js";
+import { emptyState } from "../src/vault/wiki/state.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -31,7 +31,6 @@ function makeWiki(home: string, url: string, overrides: Partial<WikiOptions> = {
     notifyEnabled: false,
     notify: async () => {},
     runAgent: async () => "ok",
-    readSkill: async () => "",
     run: fileRun,
     ...overrides,
   });
@@ -592,9 +591,10 @@ describe("Wiki service", () => {
 
   it("approveBootstrap publishes the preview and marks bootstrap done", async () => {
     const home = join(dir, "home");
-    const offered: unknown[] = [];
+    const notices: string[] = [];
     const { wiki, root } = await seed(home, {
-      requestPreviewReview: (preview) => { offered.push(preview); },
+      notifyEnabled: true,
+      notify: async (text) => { notices.push(text); },
       runAgent: async (_prompt, context) => {
         const abs = join(context.repo.root, "wiki/a.md");
         await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
@@ -610,7 +610,9 @@ describe("Wiki service", () => {
 
     const preview = await wiki.preview();
     expect(preview).toMatchObject({ pages: ["wiki/a.md"] });
-    expect(offered).toEqual([preview]);
+    expect(notices).toEqual([previewNotice(preview!)]);
+    expect(notices[0]).toContain("wiki/a.md");
+    expect(notices[0]).toContain("approve the Wiki preview");
     const remoteUrl = git(root, ["remote", "get-url", "origin"]).trim();
     const reopened = makeWiki(home, remoteUrl);
     await reopened.init();
@@ -1179,5 +1181,99 @@ describe("Wiki service", () => {
     expect(result.publication).toBe("published");
     expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBe("keep-me");
     await wiki.close();
+  });
+});
+
+describe("dueWikiWork", () => {
+  it("bootstraps a pending wiki only after the backoff gate opens, whatever the cadence", () => {
+    expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 1000, cadenceDue: true })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 2000, cadenceDue: false })).toBe("bootstrap");
+    expect(dueWikiWork({ bootstrap: "pending", gate: null, now: 0, cadenceDue: false })).toBe("bootstrap");
+  });
+  it("does nothing while the bootstrap preview awaits review", () => {
+    expect(dueWikiWork({ bootstrap: "awaiting-review", gate: null, now: 1000, cadenceDue: true })).toBeNull();
+  });
+  it("runs a bootstrapped wiki only when both the cadence and the backoff gate allow it", () => {
+    expect(dueWikiWork({ bootstrap: "done", gate: null, now: 1000, cadenceDue: false })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "done", gate: 5000, now: 1000, cadenceDue: true })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "done", gate: 1000, now: 1000, cadenceDue: true })).toBe("scheduled");
+  });
+});
+
+describe("Wiki notes copy", () => {
+  it("fast-forwards the shared clone for note reads at most once a minute", async () => {
+    const home = join(dir, "home");
+    let now = Date.parse("2026-10-02T10:00:00Z");
+    const { wiki, root } = await seed(home, { now: () => now });
+    await wiki.init();
+    const work = join(dir, "seed", "work");
+
+    commit(work, { "notes/first.md": "first" }, "2026-10-02T10:00:00+0000");
+    const copy = await wiki.notesCopy.readableCopy();
+    expect(copy.root).toBe(root);
+    expect(copy.source).toMatch(/^git copy synced /);
+    expect(readFileSync(join(root, "notes/first.md"), "utf8")).toBe("first");
+
+    commit(work, { "notes/second.md": "second" }, "2026-10-02T10:01:00+0000");
+    now += 30_000;
+    await wiki.notesCopy.readableCopy();
+    expect(existsSync(join(root, "notes/second.md"))).toBe(false);
+    now += 30_000;
+    await wiki.notesCopy.readableCopy();
+    expect(readFileSync(join(root, "notes/second.md"), "utf8")).toBe("second");
+    await wiki.close();
+  });
+
+  it("leaves a dirty tree and an unpublished bootstrap preview where they are", async () => {
+    const home = join(dir, "home");
+    let now = Date.parse("2026-10-02T10:00:00Z");
+    const { wiki, root } = await seed(home, {
+      now: () => now,
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "preview");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    const work = join(dir, "seed", "work");
+    commit(work, { "notes/note.md": "n1" }, "2026-10-02T10:00:00+0000");
+    await wiki.init();
+
+    writeFileSync(join(root, "stray.md"), "owner edit");
+    commit(work, { "notes/later.md": "later" }, "2026-10-02T10:01:00+0000");
+    await wiki.notesCopy.readableCopy();
+    expect(existsSync(join(root, "notes/later.md"))).toBe(false);
+    rmSync(join(root, "stray.md"));
+
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    const previewHead = git(root, ["rev-parse", "HEAD"]).trim();
+    commit(work, { "notes/after-preview.md": "after" }, "2026-10-02T10:02:00+0000");
+    now += 60_000;
+    expect((await wiki.notesCopy.readableCopy()).source).toMatch(/^git copy synced /);
+    expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(previewHead);
+    expect(existsSync(join(root, "notes/after-preview.md"))).toBe(false);
+    await wiki.close();
+  });
+
+  it("serves note reads during a wiki run without waiting for its lock", async () => {
+    const home = join(dir, "home");
+    let duringRun: { root: string; source: string } | undefined;
+    const holder: { wiki?: Wiki } = {};
+    const { wiki, root } = await seed(home, {
+      runAgent: async () => { duringRun = await holder.wiki!.notesCopy.readableCopy(); return "ok"; },
+    });
+    holder.wiki = wiki;
+    commit(join(dir, "seed", "work"), { "notes/note.md": "n1" }, "2026-10-02T10:00:00+0000");
+    await wiki.init();
+    await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+    expect(duringRun?.root).toBe(root);
+    await wiki.close();
+  });
+
+  it("refuses reads before the clone is opened", async () => {
+    const { wiki } = await seed(join(dir, "home"));
+    await expect(wiki.notesCopy.readableCopy()).rejects.toThrow(/still opening/);
   });
 });

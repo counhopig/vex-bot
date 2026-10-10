@@ -1,15 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import type { VaultConfig } from "../config/schema.js";
+import type { VaultConfig } from "../../config/schema.js";
 import { abortBatch, assertBatchOwnership, assertSafeTouchedPath, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
 import { chunk, detectChanges, type Change } from "./changes.js";
 import { parseTrailers, WikiIntegrityError, WikiRepo, type GitRunner } from "./git.js";
 import { assertRecognizedLocalHistory, observeWiki } from "./integrity.js";
 import { fingerprint, MarkerStore } from "./marker.js";
-import { validateSubtreeRoot, validateSubtreeRoots } from "./paths.js";
+import { validateSubtreeRoot, validateSubtreeRoots, wikiRawPath } from "./paths.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
 import { emptyState, StateStore, type WikiState } from "./state.js";
-import { createWikiWriteTools } from "./tools.js";
+import { writeWikiFile } from "./write.js";
+import { WikiLock } from "./lock.js";
+import { WikiReadCopy } from "./readCopy.js";
+import type { NotesCopy } from "../notes.js";
 
 export interface WikiRunResult {
   batchId: string | null;
@@ -27,6 +30,16 @@ function wikiOutcomeText(rawPaths: string[], pages: string[], publication: "publ
   return `Wiki run: ${parts.join(" ")}`;
 }
 
+/** Tells the owner a bootstrap preview exists; publishing it goes through `wiki_bootstrap` and its approval prompt. */
+export function previewNotice(preview: WikiPreview): string {
+  const pages = preview.pages.slice(0, 8).map((page) => `- ${page}`);
+  return [
+    `Wiki bootstrap preview is awaiting review: ${preview.pages.length} files, commit ${preview.commit.slice(0, 12)}. It has not been pushed.`,
+    ...pages, ...(preview.pages.length > 8 ? [`${preview.pages.length - 8} more files.`] : []),
+    "Say \"approve the Wiki preview\" to publish it or \"reject the Wiki preview\" to discard it; you will confirm before anything is pushed.",
+  ].join("\n");
+}
+
 function splitSource(text: string, limit: number): string[] {
   const segments: string[] = [];
   for (let offset = 0; offset < text.length;) {
@@ -37,10 +50,6 @@ function splitSource(text: string, limit: number): string[] {
     offset = end;
   }
   return segments.length ? segments : [""];
-}
-
-export function wikiRawPath(url: string): string {
-  return `raw/link-${createHash("sha256").update(url).digest("hex")}.md`;
 }
 
 export interface WikiRollbackResult {
@@ -61,6 +70,19 @@ export interface WikiPreview {
   pages: string[];
 }
 
+export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
+
+/**
+ * Which wiki work the scheduler may start: a pending bootstrap once the backoff gate opens, or a
+ * scheduled run once both the gate and the cadence allow it. Nothing runs while a preview awaits review.
+ */
+export function dueWikiWork(input: { bootstrap: WikiBootstrapStatus; gate: number | null; now: number; cadenceDue: boolean }): "bootstrap" | "scheduled" | null {
+  if (input.now < (input.gate ?? 0)) return null;
+  if (input.bootstrap === "pending") return "bootstrap";
+  if (input.bootstrap === "done" && input.cadenceDue) return "scheduled";
+  return null;
+}
+
 export interface WikiOptions {
   home: string;
   vault: VaultConfig & { url: string };
@@ -68,9 +90,7 @@ export interface WikiOptions {
   maxNotesPerRun: number;
   notifyEnabled: boolean;
   notify: (text: string) => Promise<void>;
-  requestPreviewReview?: (preview: WikiPreview) => void;
   runAgent: (prompt: string, context: WikiRunContext, signal: AbortSignal) => Promise<string>;
-  readSkill: () => Promise<string>;
   sourceSegmentBudget?: (prefix: string, context: WikiRunContext) => Promise<number>;
   now?: () => number;
   run?: GitRunner;
@@ -89,14 +109,31 @@ export class Wiki {
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
   private cachedNextAttemptAt: number | null = null;
-  private statusCache: { at: number; value: { bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
-  private lock: Promise<unknown> = Promise.resolve();
+  private statusCache: { at: number; value: { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
+  private readonly lock = new WikiLock();
+  /** The clone as the vault reads it; it shares this lock and never waits for wiki work. */
+  readonly notesCopy: NotesCopy;
 
-  constructor(private readonly opts: WikiOptions) {}
+  constructor(private readonly opts: WikiOptions) {
+    this.notesCopy = new WikiReadCopy({
+      lock: this.lock,
+      open: () => this.repo ? { repo: this.repo, marker: this.marker } : undefined,
+      onAdvanced: () => { this.statusCache = null; },
+      ...(opts.now ? { now: opts.now } : {}),
+      ...(opts.onWarning ? { onWarning: opts.onWarning } : {}),
+    });
+  }
 
-  /** The writable working copy root, for the daemon to point `Vault` reads at. */
+  /** The writable working copy root, which general file tools must not touch. */
   get root(): string {
     return this.repo.root;
+  }
+
+  /** Reminds the owner of a bootstrap preview left unpublished by an earlier process. */
+  async remindPendingPreview(): Promise<void> {
+    if (!this.opts.notifyEnabled) return;
+    const preview = await this.preview();
+    if (preview) await this.opts.notify(previewNotice(preview));
   }
 
   /** Synchronous backoff gate for the scheduler. */
@@ -117,7 +154,14 @@ export class Wiki {
     this.statusCache = null;
   }
 
-  async status(): Promise<{ bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null }> {
+  /** The work the scheduler may start now; see `dueWikiWork`. */
+  async dueWork(now: number, cadenceDue: boolean): Promise<"bootstrap" | "scheduled" | null> {
+    const gate = this.nextAttemptAt();
+    const { bootstrap } = await this.status();
+    return dueWikiWork({ bootstrap, gate, now, cadenceDue });
+  }
+
+  async status(): Promise<{ bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null }> {
     // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
     if (this.statusCache && Date.now() - this.statusCache.at < 10_000) return this.statusCache.value;
     const state = await this.stateStore.read();
@@ -127,7 +171,7 @@ export class Wiki {
     const lastBatchId = reconciled.lastBatchId;
     // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
     // scheduled/on-demand batch is left alone so the cadence can retry its push.
-    const bootstrap: "pending" | "awaiting-review" | "done" = reconciled.preview
+    const bootstrap: WikiBootstrapStatus = reconciled.preview
       ? "awaiting-review"
       : reconciled.bootstrap === "done"
         ? "done"
@@ -149,13 +193,12 @@ export class Wiki {
     if (kind.kind === "on-demand" && kind.source?.url && !kind.source.text?.trim()) {
       return { batchId: null, commit: null, pages: [], publication: "not-needed" };
     }
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       try {
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
       this.reconciled = reconciled;
-      const skill = await this.opts.readSkill().catch(() => "");
       const pendingCompile = reconciled.markerResolution === "committed" ? await this.marker.read() : null;
 
       // Refuse before recovery cleanup can restore or remove any paths.
@@ -249,7 +292,7 @@ export class Wiki {
             touched: [],
           });
           for (const part of chunk(changes, this.opts.maxNotesPerRun)) {
-            await this.opts.runAgent([skill, this.chunkPrompt(part)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+            await this.opts.runAgent(this.chunkPrompt(part), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
           }
         } catch (error) {
           await abortBatch(this.repo, this.marker);
@@ -261,7 +304,7 @@ export class Wiki {
           const body = kind.source?.text ?? "";
           let sourceSegmentLimit = 12_000;
           if (kind.source?.url && body && this.opts.sourceSegmentBudget) {
-            const prefix = [skill, this.sourcePrompt(kind, "", 999, 999)].filter(Boolean).join("\n\n");
+            const prefix = this.sourcePrompt(kind, "", 999, 999);
             sourceSegmentLimit = Math.max(1, Math.min(sourceSegmentLimit, await this.opts.sourceSegmentBudget(prefix, { repo: this.repo, marker: this.marker, roots: this.roots })));
           }
           const segments = kind.source?.url && body ? splitSource(body, sourceSegmentLimit) : [body];
@@ -283,13 +326,12 @@ export class Wiki {
             const current = await fingerprint(join(this.repo.root, path));
             const hash = createHash("sha256").update(content).digest("hex");
             if (current.type !== "file" || current.hash !== hash) {
-              const [write] = createWikiWriteTools({ repo: this.repo, marker: this.marker, roots: this.roots });
-              await write!.execute("archive-source", { path, content }, signal);
+              await writeWikiFile({ repo: this.repo, marker: this.marker, roots: this.roots }, path, content);
             }
           }
           for (let index = 0; index < segments.length; index++) {
             signal.throwIfAborted();
-            await this.opts.runAgent([skill, this.sourcePrompt(kind, segments[index] ?? "", index + 1, segments.length)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+            await this.opts.runAgent(this.sourcePrompt(kind, segments[index] ?? "", index + 1, segments.length), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
           }
         } catch (error) {
           await abortBatch(this.repo, this.marker);
@@ -446,12 +488,9 @@ export class Wiki {
         return { batchId, commit: sha, pages: committedPages, publication: "pending" };
       }
 
-      if (kind.kind === "bootstrap" && this.opts.requestPreviewReview) {
-        try { this.opts.requestPreviewReview({ batchId, commit: sha, pages: committedPages }); }
-        catch (error) { this.opts.onWarning?.(`wiki preview review could not be queued: ${(error as Error).message}`); }
-      } else if (this.opts.notifyEnabled) {
+      if (this.opts.notifyEnabled) {
         await this.opts.notify(kind.kind === "bootstrap"
-          ? `Wiki bootstrap preview is awaiting review: ${touched.length} files, commit ${sha.slice(0, 12)}. It has not been pushed. Use the existing approval prompt to approve and publish or reject the preview.`
+          ? previewNotice({ batchId, commit: sha, pages: committedPages })
           : wikiOutcomeText(committedRawPaths, committedPages, pushed ? "published" : "pending")).catch(() => undefined);
       }
       this.cachedNextAttemptAt = null;
@@ -479,7 +518,7 @@ export class Wiki {
   /** Reverts the most recent committed compile batch exactly once, or completes a pending rollback. */
   async rollback(signal: AbortSignal): Promise<WikiRollbackResult> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -554,7 +593,7 @@ export class Wiki {
 
   async approveBootstrap(signal: AbortSignal): Promise<{ pushed: boolean; message: string }> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -580,7 +619,7 @@ export class Wiki {
   /** Discards an unpublished bootstrap preview locally, or marks it done when it was already published. */
   async rejectBootstrap(signal: AbortSignal): Promise<{ discarded: boolean; message: string }> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -792,43 +831,6 @@ export class Wiki {
       const expected = entry.expectedBefore.type === after.type && entry.expectedBefore.hash === after.hash ? entry.expectedBefore : after;
       const actual = await this.repo.fingerprintAt(commit.sha, entry.path);
       if (actual.type !== expected.type || actual.hash !== expected.hash) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} commit content does not match ${entry.path}; preserving marker`);
-    }
-  }
-
-  /** Serializes wiki runs: callers queue behind the previous one instead of interleaving repository work. */
-  private async withLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const previous = this.lock;
-    let release!: () => void;
-    this.lock = new Promise<unknown>((resolve) => {
-      release = () => resolve(undefined);
-    });
-    let onAbort: (() => void) | undefined;
-    try {
-      if (signal) {
-        signal.throwIfAborted();
-        await Promise.race([
-          previous.catch(() => undefined),
-          new Promise<never>((_, reject) => {
-            onAbort = () => reject(signal.reason ?? new Error("Cancelled"));
-            signal.addEventListener("abort", onAbort, { once: true });
-          }),
-        ]);
-        signal.throwIfAborted();
-      } else {
-        await previous.catch(() => undefined);
-      }
-    } catch (error) {
-      // Keep later callers behind the previous operation even though this waiter
-      // can return promptly on cancellation.
-      void previous.then(release, release);
-      throw error;
-    } finally {
-      if (onAbort) signal?.removeEventListener("abort", onAbort);
-    }
-    try {
-      return await fn();
-    } finally {
-      release();
     }
   }
 }

@@ -7,6 +7,7 @@ import { Session } from "../src/core/session.js";
 import { appendJsonl, readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 beforeEach(async () => { dir = await makeTmpDir(); });
@@ -41,7 +42,7 @@ describe("context compaction", () => {
     const complete = vi.fn(async () => fauxAssistantMessage("主人喜欢香港摘要"));
     const events: unknown[] = [];
     const opts = {
-      key: "wechat", transcriptPath: path, model, tools: [], streamFn: ((m, ctx, opts) => getCurrentSystemPrompt(ctx.messages).includes("silently rescuing") ? fauxStreamFn(rescueFaux)(m, ctx, opts) : fauxStreamFn(faux)(m, ctx, opts)) satisfies import("@earendil-works/pi-agent-core").StreamFn, getApiKey: () => undefined,
+      evidence, key: "wechat", transcriptPath: path, model, tools: [], streamFn: ((m, ctx, opts) => getCurrentSystemPrompt(ctx.messages).includes("silently rescuing") ? fauxStreamFn(rescueFaux)(m, ctx, opts) : fauxStreamFn(faux)(m, ctx, opts)) satisfies import("@earendil-works/pi-agent-core").StreamFn, getApiKey: () => undefined,
       buildSystemPrompt: async () => "SYSTEM", emit: (e: unknown) => { events.push(e); },
       compaction: { backgroundModel: model, complete, workspace: dir, keepTurns: 2, now: () => new Date(2026, 9, 3) },
     };
@@ -91,7 +92,7 @@ describe("context compaction", () => {
     faux.setResponses([fauxAssistantMessage("silent ".repeat(100)), fauxAssistantMessage("never")]);
     const complete = vi.fn();
     const events: unknown[] = [];
-    const session = await Session.open({ key: "wechat", transcriptPath: path, model: { ...faux.getModel(), contextWindow: 2000, maxTokens: 32 }, tools: [], streamFn: fauxStreamFn(faux), getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (e) => { events.push(e); }, compaction: { backgroundModel: faux.getModel(), complete, workspace: dir, keepTurns: 1, threshold: 0.1 } });
+    const session = await Session.open({ evidence, key: "wechat", transcriptPath: path, model: { ...faux.getModel(), contextWindow: 2000, maxTokens: 32 }, tools: [], streamFn: fauxStreamFn(faux), getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (e) => { events.push(e); }, compaction: { backgroundModel: faux.getModel(), complete, workspace: dir, keepTurns: 1, threshold: 0.1 } });
     session.send("新请求");
     await new Promise((r) => setTimeout(r, 100));
     session.stop();
@@ -232,7 +233,7 @@ describe("context compaction", () => {
     const complete = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "summary failed" }));
     const model = { ...faux.getModel(), contextWindow: 1000, maxTokens: 100 };
     const events: unknown[] = [];
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:summary-budget", transcriptPath: path, model, tools: [], streamFn, getApiKey: () => undefined,
       buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event),
       compaction: { backgroundModel: model, complete, workspace: dir, keepTurns: 1, threshold: 0.1 },
