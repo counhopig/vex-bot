@@ -16,8 +16,17 @@ export function configuredSecrets(config: VexConfig, env: NodeJS.ProcessEnv = pr
     config.vault?.token, config.vault?.username, ...urlCredentialValues(config.vault?.url),
     ...Object.values(config.mcpServers ?? {}).flatMap((server) => "env" in server ? Object.values(server.env ?? {}) : "headers" in server ? Object.values(server.headers ?? {}) : []),
     ...Object.values(config.mcpServers ?? {}).flatMap((server) => urlCredentialValues("url" in server ? server.url : undefined)),
-    ...Object.entries(env).filter(([name, value]) => SECRET_ENV_NAME.test(name) && typeof value === "string").map(([, value]) => value),
+    ...Object.entries(env).filter(([name, value]) => SECRET_ENV_NAME.test(name) && typeof value === "string" && credentialLike(value)).map(([, value]) => value),
   ].filter((secret): secret is string => typeof secret === "string" && secret.length > 0);
+}
+
+/**
+ * Environment variables are picked by name alone, which also matches settings such as
+ * `MAX_THINKING_TOKENS=32000` or `FOO_KEYS_ENABLED=1`; redacting those values would rewrite every
+ * matching digit or word in the request, including the URLs a link action must match.
+ */
+function credentialLike(value: string): boolean {
+  return value.length >= 8 && !/^\d+$/.test(value) && !/^(?:true|false|yes|no|on|off)$/i.test(value);
 }
 
 function urlCredentialValues(value: string | undefined): string[] {
