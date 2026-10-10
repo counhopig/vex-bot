@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 export const BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 export const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1";
 
@@ -32,4 +34,11 @@ export async function mapLimited(items, limit, task) {
     }
   }));
   return results;
+}
+
+/** Imports a compiled runtime module, from the build output when running from source. */
+export async function importCompiled(path) {
+  const built = new URL(`../../../${path}`, import.meta.url);
+  const source = new URL(`../../../dist/${path}`, import.meta.url);
+  return import((existsSync(built) ? built : source).href);
 }
