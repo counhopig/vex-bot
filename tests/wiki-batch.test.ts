@@ -118,6 +118,17 @@ describe("abortBatch", () => {
     expect(await marker.read()).toBeNull();
   });
 
+  it("keeps an externally modified touched path instead of overwriting it", async () => {
+    const { repo, root, marker } = await setup({ "wiki/a.md": "v1" });
+    const base = await repo.head();
+    write(join(root, "wiki", "a.md"), "v2");
+    await marker.begin(writingMarker(base, [{ path: "wiki/a.md", expectedBefore: fileHash("v1"), after: fileHash("v2") }]));
+    write(join(root, "wiki", "a.md"), "external");
+    await abortBatch(repo, marker);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("external");
+    expect(await marker.read()).toBeNull();
+  });
+
   it("does nothing when no marker exists", async () => {
     const { repo, root, marker } = await setup({ "wiki/a.md": "v1" });
     write(join(root, "wiki", "a.md"), "v2");

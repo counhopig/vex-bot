@@ -12,6 +12,8 @@ export interface ReconcileResult {
   lastScanCommit: string | null;
   markerResolution: "none" | "committed" | "writing";
   alerts: string[];
+  /** True only when the newest compile batch is an unpublished bootstrap preview awaiting review. */
+  preview: boolean;
 }
 
 const PREVIEW_SUBJECT = "wiki: bootstrap preview";
@@ -190,5 +192,5 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     }
   }
 
-  return { lastBatchId, bootstrap, rollback, lastScanCommit, markerResolution, alerts };
+  return { lastBatchId, bootstrap, rollback, lastScanCommit, markerResolution, alerts, preview: previewPending };
 }

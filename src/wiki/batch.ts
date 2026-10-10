@@ -43,7 +43,14 @@ export async function inspectAndCleanTree(repo: WikiRepo, marker: MarkerStore): 
 export async function abortBatch(repo: WikiRepo, marker: MarkerStore): Promise<void> {
   const inFlight = await marker.read();
   if (!inFlight) return;
-  await restoreTouched(repo, inFlight.touched, inFlight.baseHead);
+  // Only paths whose current content still matches the recorded `after` are attributable; an
+  // externally edited or incomplete entry is kept so it is never silently overwritten or deleted.
+  const attributable: TouchedPath[] = [];
+  for (const touched of inFlight.touched) {
+    const current = await fingerprint(join(repo.root, touched.path));
+    if (touched.after && sameFingerprint(touched.after, current)) attributable.push(touched);
+  }
+  await restoreTouched(repo, attributable, inFlight.baseHead);
   await marker.remove();
 }
 
