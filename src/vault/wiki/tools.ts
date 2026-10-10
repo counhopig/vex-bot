@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { wikiRawPath } from "./paths.js";
 import type { Wiki, WikiRunResult } from "./service.js";
 import { resolveVaultPath, writeWikiFile, type WikiWriteContext } from "./write.js";
-import type { OriginalSource } from "../links/source.js";
+import type { OriginalSource } from "../../links/source.js";
 
 const WikiIngestParams = Type.Object({
   url: Type.Optional(Type.String({ description: "Source URL" })),

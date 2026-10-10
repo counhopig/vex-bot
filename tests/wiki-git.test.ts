@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GitRunner } from "../src/vault/git.js";
-import { parseTrailers, WikiRepo, type WikiRepoOptions } from "../src/wiki/git.js";
+import { parseTrailers, WikiRepo, type WikiRepoOptions } from "../src/vault/wiki/git.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 

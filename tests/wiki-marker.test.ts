@@ -9,7 +9,7 @@ import {
   MarkerStore,
   type FileFingerprint,
   type InFlightMarker,
-} from "../src/wiki/marker.js";
+} from "../src/vault/wiki/marker.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
