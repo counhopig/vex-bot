@@ -79,7 +79,6 @@ export interface WikiOptions {
   notify: (text: string) => Promise<void>;
   requestPreviewReview?: (preview: WikiPreview) => void;
   runAgent: (prompt: string, context: WikiRunContext, signal: AbortSignal) => Promise<string>;
-  readSkill: () => Promise<string>;
   sourceSegmentBudget?: (prefix: string, context: WikiRunContext) => Promise<number>;
   now?: () => number;
   run?: GitRunner;
@@ -171,7 +170,6 @@ export class Wiki {
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
       this.reconciled = reconciled;
-      const skill = await this.opts.readSkill().catch(() => "");
       const pendingCompile = reconciled.markerResolution === "committed" ? await this.marker.read() : null;
 
       // Refuse before recovery cleanup can restore or remove any paths.
@@ -265,7 +263,7 @@ export class Wiki {
             touched: [],
           });
           for (const part of chunk(changes, this.opts.maxNotesPerRun)) {
-            await this.opts.runAgent([skill, this.chunkPrompt(part)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+            await this.opts.runAgent(this.chunkPrompt(part), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
           }
         } catch (error) {
           await abortBatch(this.repo, this.marker);
@@ -277,7 +275,7 @@ export class Wiki {
           const body = kind.source?.text ?? "";
           let sourceSegmentLimit = 12_000;
           if (kind.source?.url && body && this.opts.sourceSegmentBudget) {
-            const prefix = [skill, this.sourcePrompt(kind, "", 999, 999)].filter(Boolean).join("\n\n");
+            const prefix = this.sourcePrompt(kind, "", 999, 999);
             sourceSegmentLimit = Math.max(1, Math.min(sourceSegmentLimit, await this.opts.sourceSegmentBudget(prefix, { repo: this.repo, marker: this.marker, roots: this.roots })));
           }
           const segments = kind.source?.url && body ? splitSource(body, sourceSegmentLimit) : [body];
@@ -304,7 +302,7 @@ export class Wiki {
           }
           for (let index = 0; index < segments.length; index++) {
             signal.throwIfAborted();
-            await this.opts.runAgent([skill, this.sourcePrompt(kind, segments[index] ?? "", index + 1, segments.length)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+            await this.opts.runAgent(this.sourcePrompt(kind, segments[index] ?? "", index + 1, segments.length), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
           }
         } catch (error) {
           await abortBatch(this.repo, this.marker);

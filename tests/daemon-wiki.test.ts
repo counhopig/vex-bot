@@ -86,7 +86,7 @@ describe("daemon Wiki notifications", () => {
     const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
     const previewWriter = new Wiki({
       home: paths.home, vault: { url: remote }, maxNotesPerRun: 20, notifyEnabled: false,
-      notify: async () => {}, readSkill: async () => "", run: localGit,
+      notify: async () => {}, run: localGit,
       runAgent: async (_prompt, context) => {
         const abs = join(context.repo.root, "wiki/Recovered.md");
         await context.marker.recordIntent("wiki/Recovered.md", await fingerprint(abs));
