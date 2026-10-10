@@ -95,21 +95,25 @@ function instruction(context: TranscriptContext, message: string): TranscriptCon
   return { ...context, messages };
 }
 
+/**
+ * Flags link-operation claims (archived, published, compiled, read) about the owner's
+ * links that no matching receipt supports. Only operations with structured receipts are
+ * checked: wording alone never proves an operation, and a tool succeeding never proves
+ * an operation it does not report. Other replies are left to the evidence judge.
+ */
 function localUnsupported(reply: string, state: ReturnType<typeof currentTurn>): boolean {
+  if (!state.urls.length) return false;
   const normalized = reply.split(/(?<=[.!?;])\s+|\bbut\b|\bhowever\b|,\s*/i).map((clause) => {
     if (/^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b/i.test(clause)) return "";
+    // A clause opening with the verb is an instruction ("Read the README first"), not a report.
+    if (/^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i.test(clause)) return "";
     return clause.replace(/\b(?:not|never|haven't|didn't|won't)\s+(?:been\s+)?(?:saved|archived|published|pushed|searched|read|retrieved|downloaded|executed|run|updated|deleted|sent)\b/gi, "");
   }).join(" ");
   const claims: { pattern: RegExp; tools: string[]; check: (receipt: Record<string, unknown> | undefined, success: boolean) => boolean }[] = [
     { pattern: /\b(saved|archived)\b|已(?:保存|归档)/i, tools: ["wiki_ingest"], check: (r) => Boolean(r && r.sourceAvailable === true && typeof r.rawPath === "string" && r.rawPath && !["failed-read", "failed-run", "bootstrap-pending"].includes(String(r.status))) },
     { pattern: /\b(published|pushed)\b|已(?:发布|推送)/i, tools: ["wiki_ingest"], check: (r) => Boolean(r && r.publication === "published") },
     { pattern: /\b(compiled)\b|已编译/i, tools: ["wiki_ingest", "wiki_write", "wiki_edit"], check: (r, success) => success && (r === undefined || Array.isArray(r.compiledPages) && r.compiledPages.length > 0) },
-    { pattern: /\b(read|retrieved|downloaded)\b|已(?:读取|读完|获取)/i, tools: ["web_fetch", "wiki_ingest", "read", "vault_read"], check: (r, success) => success && (r?.sourceAvailable === true || r === undefined) },
-    { pattern: /\bsearched\b|已搜索/i, tools: ["web_search", "memory_search", "vault_search"], check: (_r, success) => success },
-    { pattern: /\b(executed|ran)\b|已(?:执行|运行)/i, tools: ["bash"], check: (_r, success) => success },
-    { pattern: /\bupdated\b|已更新/i, tools: ["write", "edit", "schedule", "wiki_write", "wiki_edit"], check: (_r, success) => success },
-    { pattern: /\bdeleted\b|已删除/i, tools: ["write", "edit", "bash", "wiki_edit"], check: (_r, success) => success },
-    { pattern: /\bsent\b|已发送/i, tools: ["schedule", "wechat_send"], check: (_r, success) => success },
+    { pattern: /\b(read|retrieved|downloaded)\b|已(?:读取|读完|获取)/i, tools: ["web_fetch", "wiki_ingest"], check: (r, success) => success && (r === undefined || r.sourceAvailable === true) },
   ];
   return claims.some(({ pattern, tools, check }) => {
     if (!pattern.test(normalized)) return false;
@@ -183,6 +187,37 @@ function fallback(message: AssistantMessage, state: ReturnType<typeof currentTur
   return assistantOutput(message, [{ type: "text", text: body }]);
 }
 
+function safeTerminal(message: AssistantMessage, usage: AssistantMessage["usage"]): AssistantMessage {
+  if (message.stopReason === "error") return assistantOutput({ ...message, errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." }, [], usage);
+  if (message.stopReason === "aborted") return assistantOutput({ ...message, errorMessage: "Generation was cancelled before a checked reply was available." }, [], usage);
+  return assistantOutput(message, message.content, usage);
+}
+
+/** Forwards a reply that needs no evidence check as it is generated, adding usage spent before it. */
+function passThrough(upstream: AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> }, priorUsage: AssistantMessage["usage"]) {
+  const output = createAssistantMessageEventStream();
+  let partial: AssistantMessage | undefined;
+  void (async () => {
+    try {
+      for await (const event of upstream) {
+        if (event.type === "done") output.push({ ...event, message: safeTerminal(event.message, addUsage(priorUsage, event.message.usage)) });
+        else if (event.type === "error") output.push({ ...event, error: safeTerminal(event.error, addUsage(priorUsage, event.error.usage)) });
+        else {
+          if ("partial" in event) partial = event.partial;
+          output.push(event);
+        }
+      }
+      const message = await upstream.result();
+      output.end(safeTerminal(message, addUsage(priorUsage, message.usage)));
+    } catch (error) {
+      const failed = safeTerminal({ ...(partial ?? { role: "assistant", content: [], api: "unknown", provider: "unknown", model: "unknown", usage: zeroUsage(), timestamp: Date.now() } as unknown as AssistantMessage), stopReason: "error", errorMessage: error instanceof Error ? error.message : String(error) }, priorUsage);
+      output.push({ type: "error", reason: "error", error: failed });
+      output.end(failed);
+    }
+  })();
+  return output;
+}
+
 export interface EvidenceBoundaryOptions {
   judge?: DecisionJudge;
   tools?: () => AgentTool<any>[];
@@ -194,7 +229,11 @@ export interface EvidenceBoundaryOptions {
   returnUsage?: (usage: AssistantMessage["usage"]) => void;
 }
 
-/** Buffers every assistant generation until operation claims have passed the shared evidence check. */
+/**
+ * Holds back a generation until its operation claims pass the evidence check, but only
+ * when the run involves the owner's links, tool results or a confident tool route.
+ * Every other reply streams to the owner as it is generated.
+ */
 export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundaryOptions = {}): StreamFn {
   return async (model, originalContext, callOptions) => {
     let context = originalContext;
@@ -218,6 +257,14 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     }
     callOptions?.signal?.throwIfAborted();
     let accumulatedUsage = addUsage(zeroUsage(), options.takeUsage?.() ?? zeroUsage());
+    if (!state.urls.length && !state.hasResults && !routeRequired) {
+      try {
+        return passThrough(await stream(model, context, callOptions), accumulatedUsage);
+      } catch (error) {
+        options.returnUsage?.(accumulatedUsage);
+        throw error;
+      }
+    }
     let lastProviderMessage: AssistantMessage | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (callOptions?.signal?.aborted) {
