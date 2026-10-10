@@ -14,6 +14,7 @@ import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -99,7 +100,7 @@ describe("Wiki integration", () => {
     ]);
     const policy = new ToolPolicy({ workspace: dir, overrides: {} });
     const gate = createToolGate({ policy, approvals, sessionKey: "web:review", windowLabel: () => "WebChat" });
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:review", transcriptPath: join(dir, "review.jsonl"), model: faux.getModel(),
       tools: createWikiInteractiveTools(recovered), streamFn: fauxStreamFn(faux), getApiKey: () => "test-key",
       buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 1, baseDelayMs: 1 },
@@ -143,7 +144,7 @@ describe("Wiki integration", () => {
     ]);
     const policy = new ToolPolicy({ workspace: dir, overrides: {} });
     const gate = createToolGate({ policy, approvals, sessionKey: "web:review", windowLabel: () => "WebChat" });
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:review", transcriptPath: join(dir, "deny-review.jsonl"), model: faux.getModel(),
       tools: createWikiInteractiveTools(wiki), streamFn: fauxStreamFn(faux), getApiKey: () => "test-key",
       buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 1, baseDelayMs: 1 },

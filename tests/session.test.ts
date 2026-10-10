@@ -16,6 +16,7 @@ import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence, judged } from "./helpers/evidence.js";
 
 let dir: string;
 let faux: FauxProviderHandle;
@@ -57,6 +58,7 @@ function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
     buildSystemPrompt: async () => "SYSTEM",
     emit: (event) => events.push(event),
     retry: { attempts: 3, baseDelayMs: 1 },
+    evidence,
     ...overrides,
   });
 }
@@ -67,7 +69,7 @@ describe("Session", () => {
   it("reports an oversized final request locally without calling or retrying the provider", async () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 500, maxTokens: 100 };
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:budget", transcriptPath: join(dir, "budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -83,7 +85,7 @@ describe("Session", () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 4000, maxTokens: 100 };
     const oversized = { ...echoTool, description: "schema declaration ".repeat(500) } as AgentTool<any>;
-    const session = await Session.open({
+    const session = await Session.open({ evidence,
       key: "web:tool-budget", transcriptPath: join(dir, "tool-budget.jsonl"), model, tools: [oversized], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -110,7 +112,7 @@ describe("Session", () => {
     const session = await Session.open({
       key: "web:correction-budget", transcriptPath: join(dir, "correction-budget.jsonl"), model, tools: [echoTool], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event),
-      toolRouter: { judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, confidence: 0.8, warn: () => {} },
+      evidence: judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, confidence: 0.8, warn: () => {} }),
       retry: { attempts: 3, baseDelayMs: 1 },
     });
     session.send(request);
@@ -139,10 +141,10 @@ describe("Session", () => {
       () => { calls++; return fauxAssistantMessage("Article was read."); },
       () => { calls++; return fauxAssistantMessage("I could not verify that operation."); },
     ]);
-    const s = await open({ toolRouter: {
+    const s = await open({ evidence: judged({
       confidence: 0.8, warn: () => {},
       judge: { route: async () => ({ tool: "echo", confidence: 0.95 }), unsupported: async () => 0 },
-    } });
+    }) });
     s.send("check https://example.com/article");
     await s.whenIdle();
     expect(calls).toBe(4);
@@ -209,7 +211,7 @@ describe("Session", () => {
       key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => systemPrompt,
       controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } }),
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } },
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } }),
       emit: (event) => events.push(event), retry: { attempts: 1, baseDelayMs: 1 },
     });
     session.send(requestText);
@@ -342,7 +344,7 @@ describe("Session", () => {
     ]);
     const s = await open({ tools: [ingest, bash], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
       controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }),
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } },
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } }),
     });
     s.send(`summarize ${url}`);
     await s.whenIdle();
@@ -570,10 +572,10 @@ describe("Session", () => {
       fauxAssistantMessage("Reading failed with a size limit."),
       fauxAssistantMessage("Read successfully."),
     ]);
-    const s = await open({ toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
       route: async () => ({ tool: null, confidence: 1 }),
       unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); return ++judgments === 1 ? 0.99 : 0.01; },
-    } } });
+    } }) });
     s.send("read this article");
     await s.whenIdle();
     expect(judgments).toBe(2);
@@ -681,9 +683,9 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("hello")]);
     const warnings: unknown[] = [];
-    const s = await open({ toolRouter: { confidence: 0.8, warn: (error) => warnings.push(error), judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
       route: async () => { throw new Error("TypeSafe unavailable"); }, unsupported: async () => 0,
-    } } });
+    } }) });
     s.send("hello");
     await s.whenIdle();
     expect(s.successfulReply).toBe("hello");
@@ -697,11 +699,10 @@ describe("Session", () => {
     const captured: string[] = [];
     const s = await open({
       tools: [{ ...echoTool, description: "Tool credential TOPSECRET" } as AgentTool<any>],
-      evidenceSecrets: () => ["TOPSECRET", "jev-secret"],
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+      evidence: judged({ secrets: () => ["TOPSECRET", "jev-secret"], confidence: 0.8, warn: () => {}, judge: {
         route: async (state, tools) => { captured.push(JSON.stringify(state), JSON.stringify(tools)); return { tool: null, confidence: 1 }; },
         unsupported: async (state) => { captured.push(JSON.stringify(state)); return 0; },
-      } },
+      } }),
     });
     s.send("Hi TOPSECRET");
     await s.whenIdle();
@@ -714,10 +715,10 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("I read https://example.test/a."), fauxAssistantMessage("I read https://example.test/a.")]);
     const warnings: unknown[] = [];
-    const s = await open({ toolRouter: { confidence: 0.8, warn: (error) => warnings.push(error), judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
       route: async () => ({ tool: null, confidence: 1 }),
       unsupported: async () => { throw new Error("checker unavailable"); },
-    } } });
+    } }) });
     s.send("Read https://example.test/a");
     await s.whenIdle();
     expect(warnings).toHaveLength(2);
@@ -729,9 +730,9 @@ describe("Session", () => {
   it("does not force uncertain tool routes", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("hello")]);
-    const s = await open({ toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
       route: async () => ({ tool: "echo", confidence: 0.1 }), unsupported: async () => 0,
-    } } });
+    } }) });
     s.send("hello");
     await s.whenIdle();
     expect(s.successfulReply).toBe("hello");
@@ -743,10 +744,10 @@ describe("Session", () => {
     let calls = 0;
     faux = createFaux();
     faux.setResponses([() => { calls++; return fauxAssistantMessage("I ran the command."); }, () => { calls++; return fauxAssistantMessage("I ran the command."); }]);
-    const s = await open({ toolRouter: {
+    const s = await open({ evidence: judged({
       confidence: 0.8, warn: () => {},
       judge: { route: async () => ({ tool: "echo", confidence: 1 }), unsupported: async () => 1 },
-    } });
+    }) });
     s.send("run echo");
     await s.whenIdle();
     expect(calls).toBe(2);
@@ -761,10 +762,10 @@ describe("Session", () => {
     faux.setResponses([() => { calls++; return fauxAssistantMessage(fauxToolCall("echo", { text: "article" }), { stopReason: "toolUse" }); }, () => { calls++; return fauxAssistantMessage("The owner denied the operation."); }]);
     const s = await open({
       beforeToolCall: async () => ({ block: true, reason: "owner denied" }),
-      toolRouter: { confidence: 0.8, warn: () => {}, judge: {
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
         route: async () => ({ tool: "echo", confidence: 1 }),
         unsupported: async (state) => { expect(JSON.stringify(state)).toContain("owner denied"); return 0; },
-      } },
+      } }),
     });
     s.send("read link");
     await s.whenIdle();

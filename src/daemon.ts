@@ -39,7 +39,12 @@ import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { Jev } from "./providers/jev.js";
 import type { DecisionJudge } from "./policy/judge.js";
-import { redactForExternalEvaluation } from "./context/evidence.js";
+import { redactSecrets } from "./config/secrets.js";
+import type { EvidenceProfiles } from "./context/claims.js";
+import { judgeAdvisor } from "./policy/advice.js";
+import { CORE_TOOL_EVIDENCE } from "./tools/evidence.js";
+import { VAULT_TOOL_EVIDENCE } from "./vault/evidence.js";
+import { WIKI_TOOL_EVIDENCE } from "./vault/wiki/evidence.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
@@ -227,6 +232,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         const modelKey = getApiKey(model.provider);
         return modelKey ? [...configuredSecrets(config), modelKey] : configuredSecrets(config);
       };
+      const advisor = decisionJudge ? judgeAdvisor(decisionJudge, { confidence: judgeConfidence, fallbackTools: LINK_FALLBACK_TOOLS }) : undefined;
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
       const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
       const beforeToolCall: NonNullable<Parameters<typeof Session.open>[0]["beforeToolCall"]> = async (ctx, signal) => {
@@ -242,7 +248,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
         if (temporary === "wiki") return policy.filter([...commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name)), ...createWikiWriteTools(wikiContext!)]);
         const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
-        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, ...(decisionJudge ? { judge: decisionJudge } : {}), confidence: judgeConfidence, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable"), secrets: evidenceSecrets })]);
+        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets: evidenceSecrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable") } })]);
       };
       const session = await Session.open({
         key,
@@ -251,18 +257,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         thinking: temporary ? config.backgroundModel.thinking : config.model.thinking,
         tools: getTools(),
         streamFn: models.streamFn,
-        ...(decisionJudge && !temporary ? { toolRouter: { judge: decisionJudge, confidence: judgeConfidence, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") } } : {}),
-        evidenceSecrets,
+        evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") },
         ...(!temporary ? { controller: (host) => new LinkActionController({
           routes: LINK_ROUTES,
-          fallbackTools: ["bash", "delegate"],
+          fallbackTools: LINK_FALLBACK_TOOLS,
           onOutcome: (message) => host.enqueueAssistant(message),
           onUsage: (usage) => host.recordUsage(usage),
           confidence: judgeConfidence,
           classify: async (input: string, urls: string[], signal?: AbortSignal) => {
             if (!decisionJudge) throw new Error("Jev link classification is disabled.");
             if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
-            const clean = redactForExternalEvaluation({ input, urls }, evidenceSecrets());
+            const clean = redactSecrets({ input, urls }, evidenceSecrets());
             return decisionJudge.classifyLinks(clean.input, clean.urls, signal);
           },
           warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
@@ -499,8 +504,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   }
 }
 
-/** Shared links are archived into the wiki or read from the web. */
+/** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
 const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
+const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
+
+/** What each tool's results prove, declared by the module that owns the tool. */
+const TOOL_EVIDENCE: EvidenceProfiles = { ...CORE_TOOL_EVIDENCE, ...VAULT_TOOL_EVIDENCE, ...WIKI_TOOL_EVIDENCE };
 
 type TemporaryKind = "heartbeat" | "consolidation" | "wiki";
 const TEMPORARY_WINDOW_LABELS: Record<TemporaryKind, string> = { heartbeat: "heartbeat", consolidation: "memory consolidation", wiki: "wiki" };

@@ -38,3 +38,23 @@ function urlCredentialValues(value: string | undefined): string[] {
     return secrets.filter(Boolean);
   } catch { return []; }
 }
+
+/**
+ * Replaces known secrets, bearer tokens and key/token/cookie assignments in every string of `value`
+ * before it leaves the process, for example to an external evaluator.
+ */
+export function redactSecrets<T>(value: T, secrets: string[]): T {
+  return redact(value, secrets) as T;
+}
+
+function redact(value: unknown, secrets: string[]): unknown {
+  if (typeof value === "string") {
+    let output = value;
+    for (const secret of secrets.filter(Boolean)) output = output.split(secret).join("[redacted]");
+    return output.replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"']+/gi, "$1[redacted]")
+      .replace(/((?:api[_-]?key|token|cookie|sessdata)\s*[:=]\s*)[^\s,;"']+/gi, "$1[redacted]");
+  }
+  if (Array.isArray(value)) return value.map((item) => redact(item, secrets));
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redact(item, secrets)]));
+  return value;
+}
