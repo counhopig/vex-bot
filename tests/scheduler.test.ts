@@ -2,18 +2,18 @@ import { mkdtemp, mkdir, readdir, readFile, writeFile, rm } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Scheduler, type SchedulerHooks } from "../src/scheduler/index.js";
+import { Scheduler, type SchedulerHooks, type SchedulerOptions, type WikiBootstrapStatus } from "../src/scheduler/index.js";
 import { createScheduleTool } from "../src/tools/schedule.js";
 
 const dirs: string[] = [];
 const schedulers: Scheduler[] = [];
 afterEach(async () => { await Promise.all(schedulers.splice(0).map(s => s.close())); await Promise.all(dirs.splice(0).map(d => rm(d, { recursive: true, force: true }))); });
-async function fixture() {
+async function fixture(extra: Partial<SchedulerOptions> = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), "vex-scheduler-")); dirs.push(dataDir);
   const workspace = join(dataDir, "workspace"); await mkdir(workspace);
   let now = new Date(2026, 9, 3, 12).getTime();
   const hooks: SchedulerHooks = { deliver: vi.fn(async () => {}), targetExists: vi.fn(() => true), runTemporary: vi.fn(async () => "HEARTBEAT_OK"), deliverHeartbeat: vi.fn(async () => {}), checkOutreach: vi.fn(async () => {}), log: vi.fn() };
-  const scheduler = new Scheduler({ dataDir, workspace, hooks, now: () => now, heartbeat: { every: "30m", activeHours: ["08:00", "22:00"] } }); schedulers.push(scheduler);
+  const scheduler = new Scheduler({ dataDir, workspace, hooks, now: () => now, heartbeat: { every: "30m", activeHours: ["08:00", "22:00"] }, ...extra }); schedulers.push(scheduler);
   return { scheduler, dataDir, workspace, hooks, time: () => now, advance: (ms: number) => { now += ms; }, flush: async () => { await new Promise(resolve => setImmediate(resolve)); } };
 }
 describe("scheduler", () => {
@@ -118,6 +118,49 @@ describe("scheduler", () => {
     await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledWith(expect.stringContaining("memory/2026-10-04.md"), "consolidation", expect.any(AbortSignal)));
     expect(vi.mocked(f.hooks.runTemporary).mock.calls[0]?.[0].match(/memory\/\d{4}-\d{2}-\d{2}\.md/g)).toHaveLength(7);
     expect(f.hooks.checkOutreach).toHaveBeenCalled();
+  });
+  it("bootstraps a pending wiki only after the backoff gate opens", async () => {
+    const bootstrap = vi.fn<() => Promise<void>>(); let resolveBootstrap!: () => void;
+    bootstrap.mockImplementation(() => new Promise<void>(resolve => { resolveBootstrap = resolve; }));
+    let status: WikiBootstrapStatus = "pending"; let gate = 0;
+    const f = await fixture({ wiki: { enabled: true, every: "6h", status: async () => status, nextAttemptAt: () => gate, bootstrap, run: vi.fn(async () => {}) } });
+    gate = f.time() + 60_000;
+    await f.scheduler.start(); await f.scheduler.tick(); await f.flush(); expect(bootstrap).not.toHaveBeenCalled();
+    f.advance(59_000); await f.scheduler.tick(); await f.flush(); expect(bootstrap).not.toHaveBeenCalled();
+    f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(bootstrap).toHaveBeenCalledTimes(1);
+    f.advance(60_000); await f.scheduler.tick(); await f.flush(); expect(bootstrap).toHaveBeenCalledTimes(1);
+    resolveBootstrap(); await f.flush(); await f.flush();
+  });
+  it("does nothing while the wiki awaits review", async () => {
+    const bootstrap = vi.fn(async () => {}); const run = vi.fn(async () => {});
+    const f = await fixture({ wiki: { enabled: true, every: "6h", status: async () => "awaiting-review", nextAttemptAt: () => 0, bootstrap, run } });
+    await f.scheduler.start(); f.advance(24 * 3_600_000); await f.scheduler.tick(); await f.flush();
+    expect(bootstrap).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+  });
+  it("runs a done wiki on its duration cadence only", async () => {
+    const run = vi.fn(async () => {});
+    const f = await fixture({ wiki: { enabled: true, every: "6h", status: async () => "done", nextAttemptAt: () => 0, bootstrap: vi.fn(async () => {}), run } });
+    await f.scheduler.start(); await f.scheduler.tick(); await f.flush(); expect(run).not.toHaveBeenCalled();
+    f.advance(6 * 3_600_000 - 1000); await f.scheduler.tick(); await f.flush(); expect(run).not.toHaveBeenCalled();
+    f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(1);
+    f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it("runs a done wiki on its cron cadence only", async () => {
+    const run = vi.fn(async () => {});
+    const f = await fixture({ wiki: { enabled: true, every: "0 4 * * *", status: async () => "done", nextAttemptAt: () => 0, bootstrap: vi.fn(async () => {}), run } });
+    await f.scheduler.start(); await f.scheduler.tick(); await f.flush(); expect(run).not.toHaveBeenCalled();
+    f.advance(16 * 3_600_000 - 1000); await f.scheduler.tick(); await f.flush(); expect(run).not.toHaveBeenCalled();
+    f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(1);
+  });
+  it("does not retry a failing wiki run before the backoff gate advances", async () => {
+    const run = vi.fn(async () => { throw new Error("wiki failed"); });
+    let gate = 0;
+    const f = await fixture({ wiki: { enabled: true, every: "6h", status: async () => "done", nextAttemptAt: () => gate, bootstrap: vi.fn(async () => {}), run } });
+    await f.scheduler.start(); await f.scheduler.tick(); await f.flush();
+    f.advance(6 * 3_600_000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(1); expect(f.hooks.log).toHaveBeenCalled();
+    gate = f.time() + 10 * 3_600_000;
+    f.advance(6 * 3_600_000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(1);
+    f.advance(6 * 3_600_000); await f.scheduler.tick(); await f.flush(); expect(run).toHaveBeenCalledTimes(2);
   });
   it("logs asynchronous failures and aborts pending work on close", async () => {
     const f = await fixture(); await f.scheduler.start();

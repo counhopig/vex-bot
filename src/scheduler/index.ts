@@ -5,6 +5,16 @@ import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
+export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
+export interface SchedulerWikiOptions {
+  enabled: boolean;
+  /** Firing cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
+  every: string;
+  status(): Promise<WikiBootstrapStatus>;
+  nextAttemptAt(): number | null;
+  bootstrap(signal: AbortSignal): Promise<void>;
+  run(signal: AbortSignal): Promise<void>;
+}
 export interface ScheduledTask { id: string; name: string; schedule: ScheduleRule; prompt: string; target: string; enabled: boolean; nextAt: number | null }
 export interface SchedulerHooks {
   /** Resolves after the delivered turn has completed, including any steering. */
@@ -21,6 +31,7 @@ export interface SchedulerOptions {
   heartbeat?: { every: string; activeHours: [string, string] };
   memory?: { consolidateAt: string };
   outreach?: { enabled: boolean; checkEvery: string };
+  wiki?: SchedulerWikiOptions;
 }
 export function duration(value: string): number {
   const match = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(value);
@@ -29,6 +40,7 @@ export function duration(value: string): number {
   if (!Number.isFinite(result) || result < 1000) throw new Error("The interval must be at least one second");
   return result;
 }
+function isDuration(value: string): boolean { return /^(\d+(?:\.\d+)?)(s|m|h|d)$/.test(value); }
 function minute(value: string): number {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error("The time must be HH:mm");
   const [h, m] = value.split(":").map(Number); return h! * 60 + m!;
@@ -63,6 +75,7 @@ export class Scheduler {
   private heartbeatAt: number;
   private outreachAt: number;
   private consolidationAt: number | null;
+  private wikiAt = 0;
   constructor(private readonly options: SchedulerOptions) {
     this.now = options.now ?? Date.now;
     this.heartbeatAt = this.now() + duration(options.heartbeat?.every ?? "30m");
@@ -70,6 +83,7 @@ export class Scheduler {
     const time = options.memory?.consolidateAt ?? "03:00"; minute(time);
     const [h, m] = time.split(":");
     this.consolidationAt = next({ cron: `${m} ${h} * * *` }, this.now());
+    if (options.wiki) this.wikiAt = isDuration(options.wiki.every) ? this.now() + duration(options.wiki.every) : next({ cron: options.wiki.every }, this.now()) ?? this.now();
     activeAt(this.now(), options.heartbeat?.activeHours ?? ["08:00", "22:00"]);
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
@@ -179,6 +193,19 @@ export class Scheduler {
         this.launch("consolidation", () => this.consolidate(now));
       }
       if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? "30m"); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
+      const wiki = this.options.wiki;
+      if (wiki?.enabled) {
+        try {
+          const gate = wiki.nextAttemptAt() ?? 0;
+          const status = await wiki.status();
+          if (status === "pending") {
+            if (now >= gate) this.launch("wiki-bootstrap", () => wiki.bootstrap(this.abort.signal));
+          } else if (status === "done" && now >= gate && now >= this.wikiAt) {
+            this.wikiAt = isDuration(wiki.every) ? now + duration(wiki.every) : next({ cron: wiki.every }, now) ?? now;
+            this.launch("wiki-run", () => wiki.run(this.abort.signal));
+          }
+        } catch (error) { this.options.hooks.log(error); }
+      }
     } finally { this.ticking = false; }
   }
   private async heartbeat(): Promise<void> {
