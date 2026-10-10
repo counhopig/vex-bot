@@ -1,9 +1,9 @@
-import { mkdir, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { CompleteFn } from "../providers/models.js";
+import { appendWorkspaceFile } from "../workspace/workspace.js";
 import { assertRequestFits, ContextBudgetError, estimateProviderInput, withContextBudget } from "./budget.js";
 
 export interface CompactionRecord {
@@ -194,15 +194,13 @@ export class ContextCompactor {
   private async rescue(messages: AgentMessage[], signal?: AbortSignal): Promise<void> {
     const now = this.opts.now?.() ?? new Date();
     const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const dir = join(this.opts.workspace, "memory");
-    const path = join(dir, `${date}.md`);
+    const path = join(this.opts.workspace, "memory", `${date}.md`);
     const params = Type.Object({ content: Type.String({ minLength: 1 }) });
     const append: AgentTool<typeof params> = {
       name: "append_memory", label: "Append daily memory", description: `Appends facts worth keeping to memory/${date}.md; do not repeat existing memory.`, parameters: params,
       async execute(_id, { content }, abort) {
         abort?.throwIfAborted();
-        await mkdir(dir, { recursive: true });
-        await appendFile(path, `\n${content.trim()}\n`, "utf8");
+        await appendWorkspaceFile(path, `\n${content.trim()}\n`);
         return { content: [{ type: "text", text: "Memory appended" }], details: {} };
       },
     };
