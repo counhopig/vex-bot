@@ -16,8 +16,14 @@ describe("skill discovery", () => {
 
   it("discovers the bundled skills", async () => {
     const skills = await discoverSkills({ workspace: await root() });
-    expect(skills.map((item) => item.name)).toEqual(["image", "link-reader", "weather"]);
+    expect(skills.map((item) => item.name)).toEqual(["image", "link-reader", "llm-wiki", "weather"]);
     expect(builtinSkillsDirectory()).toContain("skills");
+  });
+  it("discovers the bundled llm-wiki skill", async () => {
+    const skills = await discoverSkills({ workspace: await root() });
+    const wiki = skills.find((item) => item.name === "llm-wiki");
+    expect(wiki?.path).toContain(join("llm-wiki", "SKILL.md"));
+    expect(wiki?.description).toMatch(/^Use when/);
   });
   it("workspace names override builtins and changes appear next round", async () => {
     const builtinDir = await root();
