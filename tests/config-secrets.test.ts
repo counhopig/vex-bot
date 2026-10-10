@@ -17,4 +17,10 @@ describe("configuredSecrets", () => {
     expect(secrets).not.toContain("x");
     expect(secrets.every((secret) => secret.length > 0)).toBe(true);
   });
+
+  it("ignores secret-named environment settings that are not credentials", () => {
+    const config = { providers: {}, web: {} } as unknown as VexConfig;
+    const secrets = configuredSecrets(config, { FEATURE_KEYS_FACT: "1", MAX_THINKING_TOKENS: "31999", AUTH_ENABLED: "true", SHORT_TOKEN: "abc", REAL_TOKEN: "ghp_abcdef123456" });
+    expect(secrets).toEqual(["ghp_abcdef123456"]);
+  });
 });
