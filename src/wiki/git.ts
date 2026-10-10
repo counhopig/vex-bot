@@ -107,6 +107,61 @@ export class WikiRepo {
     await this.git(["push", "origin", this.opts.branch ? `HEAD:${this.opts.branch}` : "HEAD"]);
   }
 
+  /** Path-limited restore from a revision, leaving every other working-tree change in place. */
+  async checkoutPaths(rev: string, paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await this.git(["checkout", rev, "--", ...paths]);
+  }
+
+  /** Deletes the given untracked paths (and untracked content under them); tracked files are never touched. */
+  async removeUntracked(paths: string[]): Promise<void> {
+    if (paths.length === 0) return;
+    await this.git(["clean", "-fd", "--", ...paths]);
+  }
+
+  async resetHard(rev: string): Promise<void> {
+    await this.git(["reset", "--hard", rev]);
+  }
+
+  /** Reverts `sha` without committing, then commits the result under the bot identity; returns the new HEAD. */
+  async revert(sha: string, message: string): Promise<string> {
+    await this.git(["revert", "--no-commit", sha]);
+    await this.git([...IDENTITY, "commit", "-m", message]);
+    return this.head();
+  }
+
+  async show(rev: string, path: string): Promise<string> {
+    return this.git(["show", `${rev}:${path}`]);
+  }
+
+  /** Rebases onto the remote branch; on conflict the rebase is aborted so the caller only sees the error, not a half-rebased tree. */
+  async rebase(): Promise<void> {
+    try {
+      await this.git(["rebase", `origin/${this.opts.branch ?? "HEAD"}`]);
+    } catch (error) {
+      await this.git(["rebase", "--abort"]).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  /** `git diff --name-status` reduced to added/modified/deleted paths; other statuses are dropped. */
+  async diffNames(from: string, to: string, glob: string): Promise<Array<{ path: string; status: "A" | "M" | "D" }>> {
+    const output = await this.git(["diff", "--name-status", "--no-renames", `${from}..${to}`, "--", glob]);
+    const entries: Array<{ path: string; status: "A" | "M" | "D" }> = [];
+    for (const line of output.split("\n")) {
+      if (line === "") continue;
+      const [status, path] = line.split("\t");
+      if (path === undefined) continue;
+      if (status === "A" || status === "M" || status === "D") entries.push({ path, status });
+    }
+    return entries;
+  }
+
+  /** Raw `git log --format=%H%x00%B%x00` output for a revision range; the records are NUL-separated for the caller to parse. */
+  async log(spec: string): Promise<string> {
+    return this.git(["log", "--format=%H%x00%B%x00", spec]);
+  }
+
   private async clone(): Promise<void> {
     const tmp = `${this.rootPath}.tmp`;
     await mkdir(this.dir, { recursive: true });
@@ -127,4 +182,25 @@ export class WikiRepo {
       throw Object.assign(new Error(AUTH_FAILURE.test(message) ? `${message}; ${authHint(Boolean(this.opts.token))}` : message), { code });
     }
   }
+}
+
+const TRAILER_LINE = /^\s*([A-Za-z0-9][A-Za-z0-9-]*):\s?(.*?)\s*$/;
+
+/**
+ * Trailer lines (`Key: value`) from a commit message, keyed case-insensitively.
+ * A key keeps the spelling of its first occurrence and collects the value of every line it appears on.
+ */
+export function parseTrailers(message: string): Record<string, string[]> {
+  const trailers: Record<string, string[]> = {};
+  const spellings = new Map<string, string>();
+  for (const line of message.split("\n")) {
+    const match = TRAILER_LINE.exec(line);
+    const rawKey = match?.[1];
+    if (!rawKey) continue;
+    const lower = rawKey.toLowerCase();
+    const key = spellings.get(lower) ?? rawKey;
+    spellings.set(lower, key);
+    (trailers[key] ??= []).push(match?.[2] ?? "");
+  }
+  return trailers;
 }
