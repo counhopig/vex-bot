@@ -15,7 +15,10 @@ export type ClaimKind = "archived" | "published" | "compiled" | "read";
 export interface ToolEvidence {
   /** Claims a successful call supports; a function also requires its receipt to back the claim. */
   supports?: Partial<Record<ClaimKind, true | ((receipt: Receipt | undefined) => boolean)>>;
-  /** The call's `url` argument names the link it acts on, so a claim about a link needs this link's call. */
+  /**
+   * The call acts on the link in its `url` argument (and its receipt's requestedUrl/canonicalUrl).
+   * Only such tools can support a claim about one of the owner's links, and only for that exact link.
+   */
   linkArgument?: boolean;
   /** A failed call that mentions a shared link ends that link's action. */
   endsLinkOnFailure?: boolean;
@@ -38,6 +41,42 @@ const CLAIMS: { kind: ClaimKind; pattern: RegExp }[] = [
   { kind: "compiled", pattern: /\b(compiled)\b|已编译/i },
   { kind: "read", pattern: /\b(read|retrieved|downloaded)\b|已(?:读取|读完|获取)/i },
 ];
+
+function normalizedUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.href;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The links a call acted on: its parsed `url` argument and the URLs its receipt reports. */
+export function linkTargets(entry: { arguments?: string | Record<string, unknown>; receipt?: Receipt }): string[] {
+  let args: unknown = entry.arguments;
+  if (typeof args === "string") {
+    try { args = JSON.parse(args); } catch { args = undefined; }
+  }
+  const argumentUrl = args && typeof args === "object" ? (args as { url?: unknown }).url : undefined;
+  return [argumentUrl, entry.receipt?.requestedUrl, entry.receipt?.canonicalUrl].flatMap((value) => normalizedUrl(value) ?? []);
+}
+
+/** Whether a call acted on exactly this link; a longer URL sharing its prefix is a different link. */
+export function actsOnLink(entry: { arguments?: string | Record<string, unknown>; receipt?: Receipt }, url: string): boolean {
+  const wanted = normalizedUrl(url);
+  return wanted !== undefined && linkTargets(entry).includes(wanted);
+}
+
+/** Whether a call's arguments name exactly this link as a whole URL, not as the prefix of a longer one. */
+export function mentionsLink(args: unknown, url: string): boolean {
+  const wanted = normalizedUrl(url);
+  return wanted !== undefined && extractUrls(JSON.stringify(args ?? {}).replace(/\\"/g, " ")).some((found) => normalizedUrl(found) === wanted);
+}
+
+/** Claims about obtaining a link's source, which only a call on that link can support. */
+const SOURCE_CLAIMS = new Set<ClaimKind>(["read", "archived"]);
 
 export function extractUrls(text: string): string[] {
   return [...new Set((text.match(/https?:\/\/[^\s<>"']+/g) ?? []).map((url) => url.replace(/[),.!?。；，]+$/, "")))];
@@ -69,8 +108,12 @@ export function unsupportedClaim(reply: string, turn: { urls: string[]; evidence
     const candidate = (entry: EvidenceEntry, url?: string): boolean => {
       const profile = profiles[entry.tool];
       if (!profile?.supports?.[kind]) return false;
-      if (!url || !profile.linkArgument) return true;
-      return `${entry.arguments ?? ""} ${String(entry.receipt?.requestedUrl ?? "")} ${String(entry.receipt?.canonicalUrl ?? "")}`.includes(url);
+      if (!url) return true;
+      // A tool that acts on links supports a claim only for the exact link it acted on.
+      if (profile.linkArgument) return actsOnLink(entry, url);
+      // Reading or archiving a link needs a call on that link: a local file read proves nothing about a web page.
+      // Compiling and publishing concern the Wiki, which tools without a link target also change.
+      return !SOURCE_CLAIMS.has(kind);
     };
     const supported = (url?: string): boolean => {
       const latest = [...entries].reverse().find((entry) => candidate(entry, url));
@@ -95,7 +138,7 @@ export function describeOutcomes(turn: { urls: string[]; evidence: unknown[] }, 
       if (typeof args.url === "string") argumentUrl = args.url;
     } catch { /* bounded evidence may not contain parseable arguments */ }
     const url = typeof entry.receipt.requestedUrl === "string" ? entry.receipt.requestedUrl : argumentUrl;
-    if (turn.urls.length && url && !turn.urls.includes(url)) continue;
+    if (turn.urls.length && url && !turn.urls.some((requested) => actsOnLink(entry, requested))) continue;
     newest.set(`${entry.tool}:${url}`, { tool: entry.tool, receipt: entry.receipt });
   }
   return [...newest.values()].flatMap(({ tool, receipt }) => profiles[tool]!.describe!(receipt) ?? []);
