@@ -1,10 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Value } from "typebox/value";
+import type { Static } from "typebox";
 import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { writeFileAtomic } from "../store/atomic.js";
-import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
+import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, WikiSchema, type VaultConfig, type VexConfig, type WikiConfig } from "./schema.js";
 
 export class ConfigError extends Error {}
 
@@ -22,6 +23,17 @@ function checkVault(vault: VaultConfig, paths: VexPaths): VaultConfig {
   return { ...vault };
 }
 
+function checkWiki(raw: Static<typeof WikiSchema> | undefined, vault: VaultConfig | undefined): WikiConfig | undefined {
+  if (!raw?.enabled) return undefined;
+  if (!vault?.url) throw new ConfigError("config.yaml failed validation: wiki: enabled requires vault.url (a git-backed vault)");
+  return {
+    enabled: true,
+    every: raw.every ?? "6h",
+    notify: raw.notify ?? true,
+    maxNotesPerRun: raw.maxNotesPerRun ?? 20,
+  };
+}
+
 export function parseConfig(text: string, paths: VexPaths): VexConfig {
   let raw: unknown;
   try {
@@ -36,6 +48,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
       .join("；");
     throw new ConfigError(`config.yaml failed validation: ${details}`);
   }
+  const wiki = checkWiki(raw.wiki, raw.vault);
   return {
     model: raw.model,
     backgroundModel: raw.backgroundModel ?? raw.model,
@@ -55,6 +68,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),
     ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
+    ...(wiki ? { wiki } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,
