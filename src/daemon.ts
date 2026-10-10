@@ -1,6 +1,6 @@
 import { Jev, type DecisionJudge } from "./decision/jev.js";
 import { redactForExternalEvaluation } from "./decision/routing.js";
-import { blockPendingWikiBootstrapReview, WikiPreviewReview } from "./wiki/review.js";
+import { blockPendingWikiBootstrapReview } from "./wiki/review.js";
 import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -43,7 +43,8 @@ import { writeFileAtomic } from "./store/atomic.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
 import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
-import { Wiki, type WikiRunContext } from "./wiki/service.js";
+import type { WikiRunContext } from "./wiki/service.js";
+import { WikiRuntime } from "./wiki/runtime.js";
 import type { GitRunner } from "./wiki/git.js";
 import { createWikiInteractiveTools, createWikiWriteTools } from "./wiki/tools.js";
 import { Persona } from "./persona/index.js";
@@ -127,10 +128,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
   startupCleanup.push(() => mcp.close());
   await mcp.start();
-  let wiki: Wiki | undefined;
-  let wikiReview: WikiPreviewReview | undefined;
-  let wikiRepoRoot: string | null = null;
-  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, root: config.wiki?.enabled ? () => wikiRepoRoot : undefined, onWarning: (message) => log.warn(message) }) : undefined;
+  let wikiRuntime: WikiRuntime | undefined;
+  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, root: config.wiki?.enabled ? () => wikiRuntime?.root ?? null : undefined, onWarning: (message) => log.warn(message) }) : undefined;
   const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
     signal,
     ...(request ? { request } : {}),
@@ -238,7 +237,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       const getTools = (): AgentTool<any>[] => {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
         if (temporary === "wiki") return policy.filter([...commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name)), ...createWikiWriteTools(wikiContext!)]);
-        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
+        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wikiRuntime ? createWikiInteractiveTools(wikiRuntime.wiki, { sourceResolver: wikiSourceResolver }) : [])]);
         return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, ...(decisionJudge ? { judge: decisionJudge } : {}), confidence: config.jev?.confidence ?? 0.8, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable"), secrets: evidenceSecrets })]);
       };
       const session = await Session.open({
@@ -306,34 +305,21 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   startupCleanup.push(() => sessions.shutdown());
 
   if (config.wiki?.enabled && config.vault?.url) {
-    wiki = new Wiki({
+    wikiRuntime = await WikiRuntime.start({
       home: paths.home,
       vault: config.vault as VaultConfig & { url: string },
-      branch: config.vault.branch,
-      maxNotesPerRun: config.wiki.maxNotesPerRun,
-      notifyEnabled: config.wiki.notify,
-      ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
-      ...(config.wiki.notify ? { requestPreviewReview: (preview) => wikiReview?.offer(preview) } : {}),
+      config: config.wiki,
+      approvals,
       notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, wikiReply, context),
       sourceSegmentBudget: (prefix, context) => withTemporarySession("wiki", async (session) => session.maxUserPromptBytes(prefix), context),
-      readSkill: async () => "",
+      ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
+      warn: (err) => log.warn({ err }, "wiki preview approval failed"),
       onWarning: (message) => log.warn(message),
     });
-    if (config.wiki.notify) {
-      wikiReview = new WikiPreviewReview({
-        approvals, wiki,
-        notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
-        warn: (err) => log.warn({ err }, "wiki preview approval failed"),
-      });
-      startupCleanup.push(() => wikiReview?.close());
-    }
-    await wiki.init();
-    wikiRepoRoot = wiki.root;
-    protectedRoots.push(wikiRepoRoot);
-    startupCleanup.push(() => wiki?.close());
+    protectedRoots.push(wikiRuntime.root);
+    startupCleanup.push(() => wikiRuntime?.closeReview(), () => wikiRuntime?.close());
   }
-
   const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
     signal.throwIfAborted();
     const key = target === "wechat" ? target : target.startsWith("web:") ? target : `web:${target}`;
@@ -347,7 +333,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     heartbeat: { every: config.heartbeat?.every ?? "30m", activeHours: config.heartbeat?.activeHours ?? ["08:00", "22:00"] },
     memory: { consolidateAt: config.memory?.consolidateAt ?? "03:00" },
     outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? "30m" },
-    ...(wiki && config.wiki ? { wiki: { every: config.wiki.every } } : {}),
+    ...(wikiRuntime && config.wiki ? { wiki: { every: config.wiki.every } } : {}),
     hooks: {
       log: (err) => log.warn({ err }, "scheduled task failed"),
       targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
@@ -378,8 +364,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },
-      wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
-      runWiki: async (work, signal) => { await wiki?.run({ kind: work }, signal); },
+      wikiWork: async (now, cadenceDue) => wikiRuntime ? wikiRuntime.wiki.dueWork(now, cadenceDue) : null,
+      runWiki: async (work, signal) => { await wikiRuntime?.wiki.run({ kind: work }, signal); },
     },
   });
 
@@ -470,10 +456,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log });
   startupCleanup.push(() => wechatRuntime?.stop());
   startupCleanup.push(() => scheduler.close());
-  if (wikiReview && wiki) {
-    const preview = await wiki.preview();
-    if (preview) wikiReview.offer(preview);
-  }
+  await wikiRuntime?.offerPendingPreview();
   await scheduler.start();
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;
@@ -501,7 +484,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     port,
     async stop() {
       await step("scheduler", () => scheduler.close());
-      await step("wiki approvals", () => wikiReview?.close());
+      await step("wiki approvals", () => wikiRuntime?.closeReview());
       await step("wechat", () => wechatRuntime?.stop());
       await step("sessions", () => sessions.shutdown());
       await step("approvals", () => approvals.dispose());
@@ -509,7 +492,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       await step("persona", () => persona.save());
       await step("gateway", () => gateway.stop());
       await step("memory index", () => memoryIndex.close());
-      await step("wiki", () => wiki?.close());
+      await step("wiki", () => wikiRuntime?.close());
       log.info("vexd stopped");
     },
   };

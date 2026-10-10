@@ -38,7 +38,6 @@ function makeWiki(home: string, url: string, overrides: Partial<WikiOptions> = {
     notifyEnabled: false,
     notify: async () => {},
     runAgent: async () => "ok",
-    readSkill: async () => "",
     run: fileRun,
     ...overrides,
   });
