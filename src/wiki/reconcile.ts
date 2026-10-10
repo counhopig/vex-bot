@@ -61,6 +61,20 @@ async function newestCandidate(repo: WikiRepo, candidates: string[]): Promise<st
 }
 
 /**
+ * A state cursor is only usable when git can resolve it as a commit. `isAncestor`
+ * rethrows unknown-object failures (exit 128), so probing the value against itself
+ * separates a real commit from a stale or corrupt SHA without leaking the error.
+ */
+async function resolvesCommit(repo: WikiRepo, sha: string): Promise<boolean> {
+  try {
+    await repo.isAncestor(sha, sha);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Rebuilds durable wiki state from committed history. Read-only by contract: it
  * parses `git log` and ancestry only, never writes, pushes, or mutates the tree.
  * The service's settle step performs any push the result calls for.
@@ -151,8 +165,11 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   }
 
   // Rule 6: newest scan base by ancestor ordering, among the valid state value and published advancing batches.
+  // An unresolvable state value is dropped so it can neither be returned nor make ancestry checks fail.
+  const stateCursor = state?.lastScanCommit ?? null;
+  const validStateCursor = stateCursor !== null && (await resolvesCommit(repo, stateCursor)) ? stateCursor : null;
   const candidates = new Set<string>();
-  if (state?.lastScanCommit !== null && state?.lastScanCommit !== undefined) candidates.add(state.lastScanCommit);
+  if (validStateCursor !== null) candidates.add(validStateCursor);
   for (const batch of batches) {
     if (!batch.published || batch.scanBase === null) continue;
     if (batch.kind === "scheduled" || batch.kind === "bootstrap") candidates.add(batch.scanBase);
@@ -168,7 +185,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     if (winner !== null) {
       lastScanCommit = winner;
     } else {
-      lastScanCommit = state?.lastScanCommit ?? null;
+      lastScanCommit = validStateCursor;
       alerts.push(`wiki scan cursor candidates are incomparable: ${ordered.join(", ")}`);
     }
   }
