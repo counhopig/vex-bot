@@ -2,7 +2,9 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WORKSPACE_TEMPLATES } from "../src/workspace/templates.js";
-import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile, WorkspaceConflictError } from "../src/workspace/workspace.js";
+import { appendWorkspaceFile, ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile, WorkspaceConflictError } from "../src/workspace/workspace.js";
+import { writeFileAtomic } from "../src/store/atomic.js";
+import { withFileLock } from "../src/store/fileLock.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -44,6 +46,31 @@ describe("saveWorkspaceFile", () => {
     // An editor that was not changed never rewrites the file.
     await saveWorkspaceFile(dir, "USER.md", "changed elsewhere", "first");
     expect(await readFile(join(dir, "USER.md"), "utf8")).toBe("changed elsewhere");
+  });
+});
+
+describe("appendWorkspaceFile", () => {
+  it("waits for a read-modify-write in progress instead of being overwritten by it", async () => {
+    const note = join(dir, "memory", "2026-10-11.md");
+    await mkdir(join(dir, "memory"), { recursive: true });
+    await writeFile(note, "existing\n");
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const reading = new Promise<void>((resolve) => { started = resolve; });
+    // An edit that has read the file and has not yet replaced it.
+    const edit = withFileLock(note, async (target) => {
+      const before = await readFile(target, "utf8");
+      started();
+      await held;
+      await writeFileAtomic(target, before.replace("existing", "edited"));
+    });
+    await reading;
+    const append = appendWorkspaceFile(note, "remembered\n");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await Promise.all([edit, append]);
+    expect(await readFile(note, "utf8")).toBe("edited\nremembered\n");
   });
 });
 
