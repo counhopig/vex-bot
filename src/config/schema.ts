@@ -139,7 +139,7 @@ export interface VexConfig {
   links?: { bilibili?: { sessdata?: string } };
   vault?: VaultConfig;
   wiki?: WikiConfig;
-  jev?: import("../decision/jev.js").JevConfig;
+  jev?: import("../providers/jev.js").JevConfig;
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;
 }
 

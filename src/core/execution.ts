@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type Api, type AssistantMessage, type Model, type SimpleStreamOptions, type ToolResultMessage, type TranscriptContext } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
 import { ContextBudgetError } from "../context/budget.js";
+import type { LinkIntent } from "../policy/judge.js";
+import { createRequestActionOutcomeTool } from "../tools/requestOutcome.js";
 
 export interface RequestAction {
   id: string;
@@ -11,12 +12,6 @@ export interface RequestAction {
   shareText: string;
   intent: "read" | "archive" | "defer";
   state: "pending" | "running" | "completed" | "blocked" | "cancelled";
-}
-
-export interface LinkIntent {
-  url: string;
-  intent: RequestAction["intent"];
-  confidence: number;
 }
 
 export interface OwnerLinkRequest { id: string; input: string; actions: RequestAction[]; classified: boolean }
@@ -32,31 +27,6 @@ export interface RequestActionOptions {
 const URLS_PER_CLASSIFICATION = 10;
 const INPUT_LIMIT = 4_000;
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
-const OutcomeParams = Type.Object({
-  actionId: Type.String(),
-  url: Type.String(),
-  status: Type.Union([Type.Literal("deferred"), Type.Literal("awaiting-review"), Type.Literal("blocked")]),
-  message: Type.String(),
-});
-
-/** A harmless pi tool used to put authorized controller outcomes in the ordinary tool stream. */
-export function createRequestActionOutcomeTool(
-  authorize: (args: { actionId: string; url: string; status: "deferred" | "awaiting-review" | "blocked"; message: string }) => boolean,
-  onOutcome?: (message: string) => Promise<void>,
-): AgentTool<typeof OutcomeParams> {
-  return {
-    name: "request_action_outcome",
-    label: "Report link action outcome",
-    description: "Records the runtime outcome for a link action. This tool has no external side effects.",
-    parameters: OutcomeParams,
-    execute: async (_id, args) => {
-      if (!authorize(args)) throw new Error("This request action outcome was not issued by the runtime.");
-      await onOutcome?.(args.message);
-      return { content: [{ type: "text", text: args.message }], details: { actionId: args.actionId, url: args.url, status: args.status } };
-    },
-  };
-}
-
 /** Owns one live Session's actions. Restored transcript requests are intentionally never registered. */
 export class RequestActionOrchestrator {
   readonly requests: OwnerLinkRequest[] = [];

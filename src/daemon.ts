@@ -1,5 +1,3 @@
-import { Jev, type DecisionJudge } from "./decision/jev.js";
-import { redactForExternalEvaluation } from "./decision/routing.js";
 import { blockPendingWikiBootstrapReview } from "./wiki/review.js";
 import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -38,6 +36,9 @@ import { ApprovalManager } from "./policy/approvals.js";
 import { createToolGate } from "./policy/gate.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
+import { Jev } from "./providers/jev.js";
+import type { DecisionJudge } from "./policy/judge.js";
+import { redactForExternalEvaluation } from "./context/evidence.js";
 import { createCoreTools } from "./tools/registry.js";
 import { writeFileAtomic } from "./store/atomic.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";

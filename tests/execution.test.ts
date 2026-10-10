@@ -2,7 +2,8 @@ import { expect, it } from "vitest";
 import { Type } from "typebox";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { Api, Model, TranscriptContext } from "@earendil-works/pi-ai";
-import { RequestActionOrchestrator, type LinkIntent } from "../src/core/execution.js";
+import { RequestActionOrchestrator } from "../src/core/execution.js";
+import type { LinkIntent } from "../src/policy/judge.js";
 
 const model = {
   id: "test", name: "test", api: "openai-completions", provider: "openai", reasoning: false, input: ["text"],

@@ -1,5 +1,3 @@
-import type { DecisionJudge } from "../decision/jev.js";
-import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary } from "../decision/routing.js";
 import { randomUUID } from "node:crypto";
 import { RequestActionOrchestrator, type RequestActionOptions } from "./execution.js";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,6 +14,9 @@ import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessa
 import type { ThinkingSetting } from "../config/schema.js";
 import { ContextCompactor, isCompactionRecord, type CompactionOptions } from "../context/compaction.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, estimateProviderInput, withContextBudget } from "../context/budget.js";
+import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary } from "../context/evidence.js";
+import type { DecisionJudge } from "../policy/judge.js";
+import { addUsage, zeroUsage } from "../providers/usage.js";
 import { appendJsonl, readJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
@@ -483,13 +484,4 @@ function contentText(content: string | (TextContent | ImageContent)[]): string {
 
 function assistantText(message: AssistantMessage): string {
   return message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
-}
-
-function zeroUsage(): AssistantMessage["usage"] {
-  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-}
-
-function addUsage(a: AssistantMessage["usage"], b: AssistantMessage["usage"]): AssistantMessage["usage"] {
-  return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite, totalTokens: a.totalTokens + b.totalTokens,
-    cost: { input: a.cost.input + b.cost.input, output: a.cost.output + b.cost.output, cacheRead: a.cost.cacheRead + b.cost.cacheRead, cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite, total: a.cost.total + b.cost.total } };
 }
