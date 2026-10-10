@@ -8,7 +8,7 @@ import { clearReloadError, readReloadError, writePendingReload } from "./config/
 import { setTimeout as delay } from "node:timers/promises";
 import { applySettings, readSettings } from "./config/settings.js";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
-import type { VexConfig } from "./config/schema.js";
+import type { VaultConfig, VexConfig } from "./config/schema.js";
 import {
   baseInstructionsSection,
   formatNow,
@@ -16,6 +16,7 @@ import {
   SystemPromptBuilder,
   timeSection,
   vaultSection,
+  wikiSection,
 } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
 import { Session } from "./core/session.js";
@@ -36,6 +37,8 @@ import { writeFileAtomic } from "./store/atomic.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
 import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
+import { Wiki, type WikiRunContext } from "./wiki/service.js";
+import { createWikiInteractiveTools, createWikiWriteTools } from "./wiki/tools.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -43,7 +46,7 @@ import { createScheduleTool } from "./tools/schedule.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
 import { createDelegateTool } from "./tools/delegate.js";
-import { skillsSection } from "./skills/index.js";
+import { builtinSkillsDirectory, skillsSection } from "./skills/index.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { SessionEvent } from "./core/events.js";
 
@@ -90,7 +93,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     workspace: config.workspace,
     onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
   });
-  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy });
+  const protectedRoots: string[] = [];
+  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots });
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const startupCleanup: (() => Promise<void> | void)[] = [() => approvals.dispose(), () => memoryIndex.close()];
   try {
@@ -107,7 +111,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
   startupCleanup.push(() => mcp.close());
   await mcp.start();
-  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, onWarning: (message) => log.warn(message) }) : undefined;
+  let wiki: Wiki | undefined;
+  let wikiRepoRoot: string | null = null;
+  let runWikiAgent!: (prompt: string, context: WikiRunContext, signal: AbortSignal) => Promise<string>;
+  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, root: config.wiki?.enabled ? () => wikiRepoRoot : undefined, onWarning: (message) => log.warn(message) }) : undefined;
   const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config }),
     createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool(), createWebSearchTool(config.webSearch),
     ...(vault ? createVaultTools(vault) : [])];
@@ -119,6 +126,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     ...(vault ? [vaultSection()] : []),
+    ...(wiki ? [wikiSection()] : []),
     timeSection(),
   ]);
 
@@ -152,7 +160,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     }
   };
 
-  const openSession = async (key: string, transcriptPath: string, windowLabel: () => string, temporary: false | "heartbeat" | "consolidation" = false): Promise<Session> => {
+  const openSession = async (key: string, transcriptPath: string, windowLabel: () => string, temporary: false | "heartbeat" | "consolidation" | "wiki" = false, wikiContext?: WikiRunContext): Promise<Session> => {
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
       const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
       const beforeToolCall: NonNullable<Parameters<typeof Session.open>[0]["beforeToolCall"]> = async (ctx, signal) => {
@@ -166,7 +174,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       };
       const getTools = (): AgentTool<any>[] => {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
-        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]);
+        if (temporary === "wiki") {
+          const readTools = commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name));
+          return policy.filter([...readTools, ...createWikiWriteTools(wikiContext!)]);
+        }
+        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki) : [])]);
         return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall })]);
       };
       const session = await Session.open({
@@ -190,6 +202,27 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       live.set(session, getTools);
       return session;
   };
+  runWikiAgent = async (prompt, context, signal) => {
+    signal.throwIfAborted();
+    const id = randomUUID();
+    const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
+    const session = await openSession(`run:${id}`, transcript, () => "wiki", "wiki", context);
+    const abort = () => session.stop();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      signal.throwIfAborted();
+      session.send(prompt, "wiki");
+      await session.whenIdle();
+      signal.throwIfAborted();
+      if (!session.successfulReply) throw new Error("The wiki run did not finish");
+      return session.successfulReply;
+    } finally {
+      signal.removeEventListener("abort", abort);
+      await session.dispose();
+      live.delete(session);
+      await rm(transcript, { force: true });
+    }
+  };
   const sessions = new SessionManager({
     paths,
     bus,
@@ -199,6 +232,24 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   });
   await sessions.init();
   startupCleanup.push(() => sessions.shutdown());
+
+  if (config.wiki?.enabled && config.vault?.url) {
+    wiki = new Wiki({
+      home: paths.home,
+      vault: config.vault as VaultConfig & { url: string },
+      branch: config.vault.branch,
+      maxNotesPerRun: config.wiki.maxNotesPerRun,
+      notifyEnabled: config.wiki.notify,
+      notify: async (text) => { await (await sessions.get("wechat")).injectAssistant(text, new AbortController().signal); },
+      runAgent: (prompt, context, signal) => runWikiAgent(prompt, context, signal),
+      readSkill: () => readFile(join(builtinSkillsDirectory(), "llm-wiki", "SKILL.md"), "utf8").catch(() => ""),
+      onWarning: (message) => log.warn(message),
+    });
+    await wiki.init();
+    wikiRepoRoot = wiki.root;
+    protectedRoots.push(wikiRepoRoot);
+    startupCleanup.push(() => wiki?.close());
+  }
 
   const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
     signal.throwIfAborted();
@@ -213,6 +264,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     heartbeat: { every: config.heartbeat?.every ?? "30m", activeHours: config.heartbeat?.activeHours ?? ["08:00", "22:00"] },
     memory: { consolidateAt: config.memory?.consolidateAt ?? "03:00" },
     outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? "30m" },
+    ...(wiki && config.wiki ? { wiki: { enabled: config.wiki.enabled, every: config.wiki.every, status: async () => (await wiki!.status()).bootstrap, nextAttemptAt: () => wiki!.nextAttemptAt(), bootstrap: async (signal: AbortSignal) => { await wiki!.run({ kind: "bootstrap" }, signal); }, run: async (signal: AbortSignal) => { await wiki!.run({ kind: "scheduled" }, signal); } } } : {}),
     hooks: {
       log: (err) => log.warn({ err }, "scheduled task failed"),
       targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
@@ -372,6 +424,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       await step("persona", () => persona.save());
       await step("gateway", () => gateway.stop());
       await step("memory index", () => memoryIndex.close());
+      await step("wiki", () => wiki?.close());
       log.info("vexd stopped");
     },
   };

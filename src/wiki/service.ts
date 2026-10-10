@@ -46,9 +46,20 @@ export class Wiki {
   private marker!: MarkerStore;
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
+  private cachedNextAttemptAt: number | null = null;
   private lock: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly opts: WikiOptions) {}
+
+  /** The writable working copy root, for the daemon to point `Vault` reads at. */
+  get root(): string {
+    return this.repo.root;
+  }
+
+  /** Synchronous backoff gate for the scheduler. */
+  nextAttemptAt(): number | null {
+    return this.cachedNextAttemptAt;
+  }
 
   async init(): Promise<void> {
     const { home, vault, branch, run, onWarning } = this.opts;
@@ -57,13 +68,16 @@ export class Wiki {
     this.roots = await validateSubtreeRoots(root);
     this.marker = new MarkerStore(join(root, ".git"));
     this.stateStore = new StateStore(join(home, "state", "wiki.json"));
-    this.reconciled = await this.runReconcile(await this.stateStore.read());
+    const state = await this.stateStore.read();
+    this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
+    this.reconciled = await this.runReconcile(state);
   }
 
   async status(): Promise<{ bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null }> {
     const state = await this.stateStore.read();
     const reconciled = await this.runReconcile(state);
     this.reconciled = reconciled;
+    this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     // `lastBatchId` is a batch UUID, not a commit; resolve it before any ancestry probe.
     const lastBatchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
 
@@ -89,10 +103,12 @@ export class Wiki {
     signal: AbortSignal,
   ): Promise<{ commit: string | null; pages: string[]; pushed: boolean } | null> {
     return this.withLock(async () => {
+      try {
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
       this.reconciled = reconciled;
+      const skill = await this.opts.readSkill().catch(() => "");
 
       const advancesScan = kind.kind !== "on-demand";
       let baseHead = "";
@@ -144,7 +160,7 @@ export class Wiki {
             touched: [],
           });
           for (const part of chunk(changes, this.opts.maxNotesPerRun)) {
-            await this.opts.runAgent(this.chunkPrompt(part), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+            await this.opts.runAgent([skill, this.chunkPrompt(part)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
           }
         } catch (error) {
           await abortBatch(this.repo, this.marker);
@@ -163,7 +179,7 @@ export class Wiki {
             commit: null,
             touched: [],
           });
-          await this.opts.runAgent(this.sourcePrompt(kind), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+          await this.opts.runAgent([skill, this.sourcePrompt(kind)].filter(Boolean).join("\n\n"), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
         } catch (error) {
           await abortBatch(this.repo, this.marker);
           throw error;
@@ -237,8 +253,23 @@ export class Wiki {
       if (this.opts.notifyEnabled) {
         await this.opts.notify(kind.kind === "bootstrap" ? "wiki: preview ready for review" : `wiki: ingested ${touched.length} paths`);
       }
+      this.cachedNextAttemptAt = null;
       return { commit: sha, pages: touched.map((entry) => entry.path), pushed };
+      } catch (error) {
+        await this.recordFailure();
+        throw error;
+      }
     });
+  }
+
+  /** Records a failed run and the exponential backoff that gates the next attempt. */
+  private async recordFailure(): Promise<void> {
+    const current = (await this.stateStore.read()) ?? emptyState();
+    const failureStreak = current.failureStreak + 1;
+    const backoff = Math.min(60 * 60_000, 5 * 60_000 * 2 ** (failureStreak - 1));
+    const nextAttemptAt = Date.now() + backoff;
+    await this.stateStore.write({ ...current, failureStreak, nextAttemptAt });
+    this.cachedNextAttemptAt = nextAttemptAt;
   }
 
   /** Reverts the most recent committed compile batch exactly once, or completes a pending rollback. */
