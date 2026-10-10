@@ -1200,7 +1200,7 @@ describe("dueWikiWork", () => {
   });
 });
 
-describe("Wiki.readableCopy", () => {
+describe("Wiki notes copy", () => {
   it("fast-forwards the shared clone for note reads at most once a minute", async () => {
     const home = join(dir, "home");
     let now = Date.parse("2026-10-02T10:00:00Z");
@@ -1209,17 +1209,17 @@ describe("Wiki.readableCopy", () => {
     const work = join(dir, "seed", "work");
 
     commit(work, { "notes/first.md": "first" }, "2026-10-02T10:00:00+0000");
-    const copy = await wiki.readableCopy();
+    const copy = await wiki.notesCopy.readableCopy();
     expect(copy.root).toBe(root);
     expect(copy.source).toMatch(/^git copy synced /);
     expect(readFileSync(join(root, "notes/first.md"), "utf8")).toBe("first");
 
     commit(work, { "notes/second.md": "second" }, "2026-10-02T10:01:00+0000");
     now += 30_000;
-    await wiki.readableCopy();
+    await wiki.notesCopy.readableCopy();
     expect(existsSync(join(root, "notes/second.md"))).toBe(false);
     now += 30_000;
-    await wiki.readableCopy();
+    await wiki.notesCopy.readableCopy();
     expect(readFileSync(join(root, "notes/second.md"), "utf8")).toBe("second");
     await wiki.close();
   });
@@ -1243,7 +1243,7 @@ describe("Wiki.readableCopy", () => {
 
     writeFileSync(join(root, "stray.md"), "owner edit");
     commit(work, { "notes/later.md": "later" }, "2026-10-02T10:01:00+0000");
-    await wiki.readableCopy();
+    await wiki.notesCopy.readableCopy();
     expect(existsSync(join(root, "notes/later.md"))).toBe(false);
     rmSync(join(root, "stray.md"));
 
@@ -1251,7 +1251,7 @@ describe("Wiki.readableCopy", () => {
     const previewHead = git(root, ["rev-parse", "HEAD"]).trim();
     commit(work, { "notes/after-preview.md": "after" }, "2026-10-02T10:02:00+0000");
     now += 60_000;
-    expect((await wiki.readableCopy()).source).toMatch(/^git copy synced /);
+    expect((await wiki.notesCopy.readableCopy()).source).toMatch(/^git copy synced /);
     expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(previewHead);
     expect(existsSync(join(root, "notes/after-preview.md"))).toBe(false);
     await wiki.close();
@@ -1262,7 +1262,7 @@ describe("Wiki.readableCopy", () => {
     let duringRun: { root: string; source: string } | undefined;
     const holder: { wiki?: Wiki } = {};
     const { wiki, root } = await seed(home, {
-      runAgent: async () => { duringRun = await holder.wiki!.readableCopy(); return "ok"; },
+      runAgent: async () => { duringRun = await holder.wiki!.notesCopy.readableCopy(); return "ok"; },
     });
     holder.wiki = wiki;
     commit(join(dir, "seed", "work"), { "notes/note.md": "n1" }, "2026-10-02T10:00:00+0000");
@@ -1274,6 +1274,6 @@ describe("Wiki.readableCopy", () => {
 
   it("refuses reads before the clone is opened", async () => {
     const { wiki } = await seed(join(dir, "home"));
-    await expect(wiki.readableCopy()).rejects.toThrow(/still opening/);
+    await expect(wiki.notesCopy.readableCopy()).rejects.toThrow(/still opening/);
   });
 });
