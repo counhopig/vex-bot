@@ -10,7 +10,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Concern | Suites | Focus |
 |---------|--------|-------|
 | Sessions and context | `session`, `session-manager`, `compaction`, `store`, `events`, `title` | Turns, restore, transcript ordering, budgets and persistence |
-| Configuration | `config`, `settings`, `models`, `paths`, `reload`, `samples` | Defaults, validation, credentials, model selection and runtime reload |
+| Configuration | `config`, `config-secrets`, `settings`, `models`, `paths`, `reload`, `samples` | Defaults, validation, credentials, model selection and runtime reload |
 | Onboarding and CLI | `onboard`, `cli-process`, `daemon`, `logging` | Initial files, process identity, service lifecycle and secret-free logs |
 | Link-reader and skills | `link-skill`, `skill-scripts`, `skills` | Platform responses, redirects, subtitles, script inputs and discovery |
 | WebChat | `gateway`, `protocol`, `auth`, `web-app` | HTTP/WS contracts, authentication and browser event handlers |

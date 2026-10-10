@@ -40,6 +40,7 @@ src/
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
+| Change link actions or evidence checks | `core/execution.ts`, `core/session.ts`, `context/evidence.ts`, `context/budget.ts`, `policy/judge.ts`, `providers/jev.ts`, `tools/requestOutcome.ts`, `tools/delegate.ts`, `daemon.ts` |
 | Change the LLM wiki | `wiki/service.ts`, `wiki/runtime.ts`, `wiki/tools.ts`, `wiki/write.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts` |
 | Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 
@@ -73,3 +74,4 @@ src/
 - The vault is read-only and its tools have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
 - The wiki plugs in through the existing seams: the scheduler owns only its cadence and asks `hooks.wikiWork`/`hooks.runWiki`; `Wiki.dueWork` decides bootstrap, backoff and review gating (`scheduler/index.ts`, `wiki/service.ts`). Compiler runs are ordinary temporary `run:` sessions built by the daemon's temporary-session helper, with a `SystemPromptBuilder` prompt and the `llm-wiki` skill resolved through skill discovery (`daemon.ts`, `skills/discovery.ts`).
 - Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`wiki/write.ts`, `policy/policy.ts`).
+- Every model request passes the budget check, then the evidence boundary, which withholds operation claims without a matching tool result; text sent to an external judge is redacted with `configuredSecrets` (`core/session.ts`, `context/evidence.ts`, `config/secrets.ts`). The judge is advisory: link actions and their outcomes still go through the normal tool gate (`core/execution.ts`, `tools/requestOutcome.ts`).

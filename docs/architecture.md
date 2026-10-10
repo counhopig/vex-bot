@@ -25,20 +25,20 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus` |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus`, `RequestActionOrchestrator` (runtime-owned link actions) |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
-| `context/` | System prompt assembly, context compaction, memory rescue |
+| `context/` | System prompt assembly, context compaction, memory rescue, request budget and evidence checks on the model stream |
 | `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
-| `policy/` | Approval policy and pending approvals |
+| `policy/` | Approval policy, pending approvals and the `DecisionJudge` contract |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
 | `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
-| `wiki/` | LLM wiki over a writable vault clone: scheduled ingest, batch commits and push, history reconciliation, rollback |
+| `wiki/` | LLM wiki over a writable vault clone: scheduled ingest, batch commits and push, history reconciliation, rollback; `WikiRuntime` wires it into the daemon |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
-| `providers/` | Model resolution and API keys |
+| `providers/` | Model resolution and API keys, usage accounting, the TypeSafe Jev judge |
 | `store/` | Append-only JSONL and atomic file writes |
 | `cli/` | The `vex` command |
 
