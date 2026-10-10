@@ -3,6 +3,8 @@ import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { gitEnv, runGit, type GitRunner } from "../vault/git.js";
 
+export type { GitRunner };
+
 export interface WikiRepoOptions {
   home: string;
   url: string;
