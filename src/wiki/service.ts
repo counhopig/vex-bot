@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { VaultConfig } from "../config/schema.js";
 import { abortBatch, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
+import { chunk, detectChanges, type Change } from "./changes.js";
 import { parseTrailers, WikiRepo, type GitRunner } from "./git.js";
 import { fingerprint, MarkerStore } from "./marker.js";
 import { validateSubtreeRoots } from "./paths.js";
@@ -113,21 +114,60 @@ export class Wiki {
         await this.repo.rebase();
         if (!(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
         baseHead = await this.repo.head();
-        batchId = randomUUID();
-        await this.marker.begin({
-          batchId,
-          kind: kind.kind,
-          advancesScan,
-          scanBase: advancesScan ? baseHead : null,
-          baseHead,
-          phase: "writing",
-          commit: null,
-          touched: [],
-        });
-        await this.opts.runAgent(ingestPrompt(kind.kind), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
       } catch (error) {
         await abortBatch(this.repo, this.marker);
         throw error;
+      }
+
+      // A compile run ingests every note added since the last scan, splitting them across as
+      // many agent calls as `maxNotesPerRun` allows. On-demand runs skip detection entirely.
+      const from = state?.lastScanCommit ?? null;
+      if (kind.kind !== "on-demand") {
+        const changes = await detectChanges(this.repo, from);
+        if (changes.length === 0) {
+          if (advancesScan) {
+            const current = (await this.stateStore.read()) ?? emptyState();
+            await this.stateStore.write({ ...current, lastScanCommit: baseHead });
+          }
+          return null;
+        }
+        batchId = randomUUID();
+        try {
+          await this.marker.begin({
+            batchId,
+            kind: kind.kind,
+            advancesScan,
+            scanBase: advancesScan ? baseHead : null,
+            baseHead,
+            phase: "writing",
+            commit: null,
+            touched: [],
+          });
+          for (const part of chunk(changes, this.opts.maxNotesPerRun)) {
+            await this.opts.runAgent(this.chunkPrompt(part), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+          }
+        } catch (error) {
+          await abortBatch(this.repo, this.marker);
+          throw error;
+        }
+      } else {
+        batchId = randomUUID();
+        try {
+          await this.marker.begin({
+            batchId,
+            kind: kind.kind,
+            advancesScan,
+            scanBase: null,
+            baseHead,
+            phase: "writing",
+            commit: null,
+            touched: [],
+          });
+          await this.opts.runAgent(this.sourcePrompt(kind), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+        } catch (error) {
+          await abortBatch(this.repo, this.marker);
+          throw error;
+        }
       }
 
       const inFlight = await this.marker.read();
@@ -299,6 +339,30 @@ export class Wiki {
       await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending" });
       return { discarded: true, message: "bootstrap preview discarded" };
     });
+  }
+
+  /** The one-shot prompt for an on-demand run, carrying the requesting source when present. */
+  private sourcePrompt(kind: {
+    kind: "scheduled" | "bootstrap" | "on-demand";
+    source?: { title?: string; url?: string; text?: string };
+  }): string {
+    const lines = [ingestPrompt(kind.kind)];
+    if (kind.source?.title) lines.push(`Source title: ${kind.source.title}`);
+    if (kind.source?.url) lines.push(`Source URL: ${kind.source.url}`);
+    if (kind.source?.text) lines.push(`Source text:\n${kind.source.text}`);
+    return lines.join("\n");
+  }
+
+  /** The prompt for one chunk of detected changes: each path with its status and the write scope. */
+  private chunkPrompt(changes: Change[]): string {
+    const lines = changes.map((change) =>
+      change.status === "D" && change.previous ? `D ${change.path}\n${change.previous}` : `${change.status} ${change.path}`,
+    );
+    return [
+      "Apply these vault changes to the wiki.",
+      ...lines,
+      "Update the affected pages under wiki/ and _index.md. Write only inside wiki/ and raw/.",
+    ].join("\n");
   }
 
   /** Finds the newest commit whose message carries `trailer: value`. */
