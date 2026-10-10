@@ -91,13 +91,50 @@ it("keeps prospective or negated tool narration and suppresses mixed unsupported
   expect(checked.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("could not verify") });
 });
 
-it("guards completed Chinese claims even when the request has no English operation keyword", async () => {
-  const faux = createFaux();
-  faux.setResponses([fauxAssistantMessage("已更新并已运行。"), fauxAssistantMessage("没有可验证的执行回执，无法确认已更新或运行。")]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+it("streams a reply live when the run has no links, tool results or routed tool", async () => {
+  const message = fauxAssistantMessage("已更新并已运行。");
+  const upstream = createAssistantMessageEventStream();
+  const judge = { route: vi.fn(async () => ({ tool: null, confidence: 1 })), unsupported: vi.fn(async () => 1) };
+  const boundary = withEvidenceBoundary(async () => upstream, { judge, tools: () => [] });
   const context = { messages: [{ role: "user" as const, content: "你好", timestamp: Date.now() }] } as TranscriptContext;
-  const first = await boundary(faux.getModel(), context, undefined);
-  expect((await first.result()).content[0]).toMatchObject({ type: "text", text: expect.stringContaining("could not verify") });
+  upstream.push({ type: "start", partial: message });
+  upstream.push({ type: "text_start", contentIndex: 0, partial: message });
+  // The upstream generation has not finished, yet the stream and its first events are already available.
+  const stream = await boundary(createFaux().getModel(), context, undefined);
+  const iterator = stream[Symbol.asyncIterator]();
+  expect((await iterator.next()).value).toMatchObject({ type: "start" });
+  expect((await iterator.next()).value).toMatchObject({ type: "text_start" });
+  upstream.push({ type: "done", reason: "stop", message });
+  upstream.end(message);
+  expect((await stream.result()).content).toEqual(message.content);
+  // Wording alone is no evidence either way: the judge is not consulted on an unchecked reply.
+  expect(judge.unsupported).not.toHaveBeenCalled();
+});
+
+it("does not treat instructions or third-party narration as the assistant's own operations", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("Read the README first."), fauxAssistantMessage("The program read the file yesterday.")]);
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const context = { messages: [{ role: "user" as const, content: "How do I start?", timestamp: Date.now() }] } as TranscriptContext;
+  expect((await (await boundary(faux.getModel(), context, undefined)).result()).content[0]).toMatchObject({ text: "Read the README first." });
+  expect((await (await boundary(faux.getModel(), context, undefined)).result()).content[0]).toMatchObject({ text: "The program read the file yesterday." });
+});
+
+it("does not count a successful schedule call as proof that a message was delivered", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("I sent the message."), fauxAssistantMessage("I sent the message.")]);
+  const judge = { route: async () => ({ tool: null, confidence: 0 }), unsupported: vi.fn(async (_state: unknown) => 0.99) };
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { judge, tools: () => [] });
+  const call = fauxToolCall("schedule", { action: "list" }, { id: "list-call" });
+  const context = { messages: [
+    { role: "user" as const, content: "Send the reminder", timestamp: 1 },
+    fauxAssistantMessage(call, { stopReason: "toolUse" }),
+    { role: "toolResult" as const, toolCallId: "list-call", toolName: "schedule", content: [{ type: "text" as const, text: "No scheduled tasks" }], isError: false, timestamp: 2 },
+  ] } as TranscriptContext;
+  const reply = await (await boundary(faux.getModel(), context, undefined)).result();
+  // The tool result makes the reply subject to the evidence judge, which sees the actual action.
+  expect(JSON.stringify(judge.unsupported.mock.calls[0]![0])).toContain('\\"action\\":\\"list\\"');
+  expect(reply.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("could not verify") });
 });
 
 it("retains supported pre-tool narration alongside an unexecuted call", async () => {
@@ -146,7 +183,7 @@ it("checks the corrective request again and does not restart an oversized correc
   const faux = createFaux();
   faux.setResponses([fauxAssistantMessage("I saved it.")]);
   const provider = vi.fn(fauxStreamFn(faux));
-  const context = { messages: [{ role: "user" as const, content: "Please handle this request.", timestamp: 1 }] } as TranscriptContext;
+  const context = { messages: [{ role: "user" as const, content: "Please handle https://example.test/a.", timestamp: 1 }] } as TranscriptContext;
   const base = estimateProviderInput(context);
   const model = { ...faux.getModel(), contextWindow: base + 120, maxTokens: 100 };
   const boundary = withEvidenceBoundary(withContextBudget(provider), {

@@ -413,7 +413,7 @@ describe("speech to text", () => {
     await expect(transcribeVideo(audio("https://upos-sz.bilivideo.com/a.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: unannounced, maxDownloadBytes: 25 })).rejects.toThrow("too large");
     expect(await transcribeVideo(audio("https://upos-sz.bilivideo.com/a.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: unannounced, maxDownloadBytes: 40 })).toBe("t");
 
-    const hops: { url: string; redirect: RequestRedirect | undefined }[] = [];
+    const hops: { url: string; redirect: RequestInit["redirect"] }[] = [];
     const redirecting = (location: string) => vi.fn(async (url: string, init: RequestInit) => {
       if (url.includes("/audio/transcriptions")) return new Response(JSON.stringify({ text: "t" }));
       hops.push({ url, redirect: init.redirect });
