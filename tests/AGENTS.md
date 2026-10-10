@@ -19,6 +19,8 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Background work | `scheduler`, `persona`, `memory-index` | Scheduled delivery, persona state and FTS memory |
 | Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
 | Notes vault | `vault-parse`, `vault-git`, `vault`, `vault-tools` | Note parsing, git mirror, search, tool output and path safety |
+| LLM wiki | `wiki-*`, `daemon-wiki` | Repo transactions, markers, reconciliation, scheduling gates, tools, review and daemon delivery |
+| Agent execution | `agent-workflow`, `execution`, `jev`, `context-budget`, `link-source` | Link actions, evidence checks, decision judge, request budgets and original-source reading |
 
 Suite names in the table omit `.test.ts`.
 
