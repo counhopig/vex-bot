@@ -6,10 +6,10 @@ import { chunk, detectChanges, type Change } from "./changes.js";
 import { parseTrailers, WikiIntegrityError, WikiRepo, type GitRunner } from "./git.js";
 import { assertRecognizedLocalHistory, observeWiki } from "./integrity.js";
 import { fingerprint, MarkerStore } from "./marker.js";
-import { validateSubtreeRoot, validateSubtreeRoots } from "./paths.js";
+import { validateSubtreeRoot, validateSubtreeRoots, wikiRawPath } from "./paths.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
 import { emptyState, StateStore, type WikiState } from "./state.js";
-import { createWikiWriteTools } from "./tools.js";
+import { writeWikiFile } from "./write.js";
 
 export interface WikiRunResult {
   batchId: string | null;
@@ -37,10 +37,6 @@ function splitSource(text: string, limit: number): string[] {
     offset = end;
   }
   return segments.length ? segments : [""];
-}
-
-export function wikiRawPath(url: string): string {
-  return `raw/link-${createHash("sha256").update(url).digest("hex")}.md`;
 }
 
 export interface WikiRollbackResult {
@@ -303,8 +299,7 @@ export class Wiki {
             const current = await fingerprint(join(this.repo.root, path));
             const hash = createHash("sha256").update(content).digest("hex");
             if (current.type !== "file" || current.hash !== hash) {
-              const [write] = createWikiWriteTools({ repo: this.repo, marker: this.marker, roots: this.roots });
-              await write!.execute("archive-source", { path, content }, signal);
+              await writeWikiFile({ repo: this.repo, marker: this.marker, roots: this.roots }, path, content);
             }
           }
           for (let index = 0; index < segments.length; index++) {

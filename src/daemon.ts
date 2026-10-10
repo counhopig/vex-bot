@@ -131,15 +131,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   let wikiReview: WikiPreviewReview | undefined;
   let wikiRepoRoot: string | null = null;
   const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, root: config.wiki?.enabled ? () => wikiRepoRoot : undefined, onWarning: (message) => log.warn(message) }) : undefined;
+  const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
+    signal,
+    ...(request ? { request } : {}),
+    sessdata: config.links?.bilibili?.sessdata || process.env.BILIBILI_SESSDATA,
+    ...(config.stt ? { stt: config.stt } : {}),
+  });
+  const wikiSourceResolver = opts.wikiSourceResolver ?? ((url: string, signal: AbortSignal) => readOriginalSource(url, linkReading(signal)));
   const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config }),
     createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool({
       ...(opts.webPageRequest ? { request: opts.webPageRequest } : {}),
-      sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, {
-        signal,
-        ...(request ? { request } : {}),
-        sessdata: config.links?.bilibili?.sessdata || process.env.BILIBILI_SESSDATA,
-        ...(config.stt ? { stt: config.stt } : {}),
-      }),
+      sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),
     }), createWebSearchTool(config.webSearch),
     ...(vault ? createVaultTools(vault) : [])];
   const interactiveSections = [
@@ -235,11 +237,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       };
       const getTools = (): AgentTool<any>[] => {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
-        if (temporary === "wiki") {
-          const readTools = commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name));
-          return policy.filter([...readTools, ...createWikiWriteTools(wikiContext!)]);
-        }
-        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: opts.wikiSourceResolver ?? ((url, signal) => readOriginalSource(url, { signal, sessdata: config.links?.bilibili?.sessdata || process.env.BILIBILI_SESSDATA, ...(config.stt ? { stt: config.stt } : {}) })) }) : [])]);
+        if (temporary === "wiki") return policy.filter([...commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name)), ...createWikiWriteTools(wikiContext!)]);
+        const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
         return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, ...(decisionJudge ? { judge: decisionJudge } : {}), confidence: config.jev?.confidence ?? 0.8, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable"), secrets: evidenceSecrets })]);
       };
       const session = await Session.open({
