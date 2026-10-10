@@ -8,6 +8,7 @@ export const DEFAULT_DECISIONS: Record<string, Decision> = {
   grep: "allow",
   find: "allow",
   web_fetch: "allow", web_search: "allow", memory_search: "allow", vault_search: "allow", vault_read: "allow", feel: "allow", schedule: "allow", delegate: "allow",
+  wiki_write: "allow", wiki_edit: "allow", wiki_ingest: "allow", wiki_bootstrap: "allow", wiki_rollback: "allow",
   bash: "ask",
 };
 
@@ -16,13 +17,16 @@ const PATH_SCOPED_TOOLS = new Set(["write", "edit"]);
 export class ToolPolicy {
   private readonly workspace: string;
   private readonly overrides: Record<string, Decision>;
+  private readonly protectedRoots: string[];
 
-  constructor(opts: { workspace: string; overrides: Record<string, Decision> }) {
+  constructor(opts: { workspace: string; overrides: Record<string, Decision>; protectedRoots?: string[] }) {
     this.workspace = opts.workspace;
     this.overrides = opts.overrides;
+    this.protectedRoots = opts.protectedRoots ?? [];
   }
 
   decide(toolName: string, args: unknown): Decision {
+    if (PATH_SCOPED_TOOLS.has(toolName) && this.insideProtectedRoot(args)) return "deny";
     const override = this.override(toolName);
     if (override) return override;
     if (PATH_SCOPED_TOOLS.has(toolName)) return this.decideByPath(args);
@@ -45,6 +49,21 @@ export class ToolPolicy {
     } catch {
       return "ask";
     }
+  }
+
+  private insideProtectedRoot(args: unknown): boolean {
+    if (this.protectedRoots.length === 0) return false;
+    const path = args && typeof args === "object" ? (args as Record<string, unknown>).path : undefined;
+    if (typeof path !== "string") return false;
+    const target = resolveToolPath(this.workspace, path);
+    return this.protectedRoots.some((root) => {
+      const lexicalRoot = resolveToolPath(this.workspace, root);
+      try {
+        return isInside(resolveRealPath(lexicalRoot), resolveRealPath(target));
+      } catch {
+        return isInside(lexicalRoot, target);
+      }
+    });
   }
 }
 

@@ -9,6 +9,7 @@ import { bodyOf, buildBacklinks, buildResolver, parseNote, type NoteMeta } from 
 export interface VaultOptions {
   home: string;
   config: VaultConfig;
+  root?: () => string | null;
   now?: () => number;
   run?: GitRunner;
   protocols?: string;
@@ -194,6 +195,8 @@ export class Vault {
   }
 
   private async prepare(): Promise<{ root: string; source: string }> {
+    const injected = this.opts.root?.();
+    if (typeof injected === "string" && injected !== "") return { root: injected, source: "wiki working copy" };
     if (this.mirror) {
       const state = await this.mirror.refresh();
       if (!state.root) throw new Error(`The notes vault could not be fetched: ${state.error ?? "unknown error"}`);
