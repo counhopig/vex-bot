@@ -96,9 +96,12 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
 
   const batches: CompileBatch[] = [];
   const rollbacks: RollbackCommit[] = [];
+  const alerts: string[] = [];
   let markerResolution: ReconcileResult["markerResolution"] = marker === null ? "none" : "writing";
 
-  for (const record of parseLog(await repo.log("HEAD"))) {
+  const localHead = await repo.head();
+  const historyRef = await repo.isAncestor(localHead, origin) ? origin : "HEAD";
+  for (const record of parseLog(await repo.log(historyRef))) {
     const trailers = parseTrailers(record.body);
     const batchId = trailer(trailers, "Vex-Batch");
     const rollbackId = trailer(trailers, "Vex-Rollback");
@@ -117,14 +120,53 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
         published: batchPublished,
         preview: subject.startsWith(PREVIEW_SUBJECT) || (kind === "bootstrap" && !batchPublished),
       });
-    } else if (rollbackId !== undefined && revertOf !== undefined) {
-      rollbacks.push({ sha: record.sha, id: rollbackId, revertOf, published: await isPublished(record.sha) });
+    } else if (rollbackId !== undefined || revertOf !== undefined) {
+      const rollbackIds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-rollback")?.[1] ?? [];
+      const revertTargets = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-revert-of")?.[1] ?? [];
+      if (rollbackIds.length !== 1 || !rollbackIds[0] || revertTargets.length !== 1 || !revertTargets[0]) {
+        alerts.push(`wiki history has an invalid rollback relationship on ${record.sha}`);
+      } else {
+        rollbacks.push({ sha: record.sha, id: rollbackIds[0], revertOf: revertTargets[0], published: await isPublished(record.sha) });
+      }
+    }
+  }
+
+  const batchCounts = new Map<string, number>();
+  for (const batch of batches) batchCounts.set(batch.id, (batchCounts.get(batch.id) ?? 0) + 1);
+  for (const [id, count] of batchCounts) {
+    if (count > 1) {
+      alerts.push(`wiki history has duplicate Vex-Batch identity ${id}`);
+      for (let index = batches.length - 1; index >= 0; index -= 1) if (batches[index]?.id === id) batches.splice(index, 1);
+    }
+  }
+  const rollbackCounts = new Map<string, number>();
+  for (const rollback of rollbacks) rollbackCounts.set(rollback.id, (rollbackCounts.get(rollback.id) ?? 0) + 1);
+  for (const [id, count] of rollbackCounts) {
+    if (count > 1) {
+      alerts.push(`wiki history has duplicate Vex-Rollback identity ${id}`);
+      for (let index = rollbacks.length - 1; index >= 0; index -= 1) if (rollbacks[index]?.id === id) rollbacks.splice(index, 1);
+    }
+  }
+
+  for (const candidate of rollbacks) {
+    const targets = batches.filter((batch) => batch.id === candidate.revertOf);
+    if (targets.length !== 1 || !(await repo.isAncestor(targets[0]!.sha, candidate.sha))) {
+      alerts.push(`wiki history has an invalid rollback relationship for batch ${candidate.revertOf}`);
     }
   }
 
   // Git log order is newest first, so the first compile batch is B_new.
   const newest = batches[0];
-  const rollbackFor = (targetId: string): RollbackCommit | undefined => rollbacks.find((candidate) => candidate.revertOf === targetId);
+  const rollbackFor = async (targetId: string): Promise<RollbackCommit | undefined> => {
+    const targets = batches.filter((candidate) => candidate.id === targetId);
+    const matches = rollbacks.filter((candidate) => candidate.revertOf === targetId);
+    if (matches.length === 0) return undefined;
+    if (targets.length !== 1 || matches.length !== 1 || !(await repo.isAncestor(targets[0]!.sha, matches[0]!.sha))) {
+      alerts.push(`wiki history has an invalid rollback relationship for batch ${targetId}`);
+      return undefined;
+    }
+    return matches[0];
+  };
 
   let lastBatchId: string | null = null;
   let bootstrap: ReconcileResult["bootstrap"] = "pending";
@@ -133,7 +175,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   let rule3Rollback = false;
 
   if (newest) {
-    const reference = rollbackFor(newest.id);
+    const reference = await rollbackFor(newest.id);
     if (reference) {
       // A revert that is already published means the rollback completed; only an unpublished one needs settling.
       rule3Rollback = true;
@@ -158,7 +200,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   if (!rule3Rollback) {
     for (const target of [lastBatchId, state?.rollback?.targetBatchId ?? null]) {
       if (target === null) continue;
-      const reference = rollbackFor(target);
+      const reference = await rollbackFor(target);
       if (reference) {
         rollback = reference.published ? null : { targetBatchId: target, revertId: reference.id };
         break;
@@ -178,7 +220,6 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   }
 
   const ordered = [...candidates];
-  const alerts: string[] = [];
   let lastScanCommit: string | null = null;
   if (ordered.length === 1) {
     lastScanCommit = ordered[0] ?? null;

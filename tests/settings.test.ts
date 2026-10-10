@@ -19,6 +19,16 @@ mcpServers:
 const withVault = "model: { provider: p, id: m }\nvault: { url: https://example.com/v.git }\n";
 
 describe("settings", () => {
+  it("stores Jev configuration while hiding its API key", () => {
+    const updated = applySettings(base, { set: { "jev.enabled": true, "jev.apiKey": "typesafe-secret", "jev.confidence": 0.8 } }, paths);
+    expect(updated.restartRequired).toBe(true);
+    const view = readSettings(updated.text);
+    expect(view.values).toMatchObject({ "jev.enabled": true, "jev.confidence": 0.8 });
+    expect(view.secrets).toContain("jev.apiKey");
+    expect(JSON.stringify(view)).not.toContain("typesafe-secret");
+    expect(() => applySettings(base, { set: { "jev.confidence": 2 } }, paths)).toThrow(ConfigError);
+  });
+
   it("lists editable values and reports secrets without revealing them", () => {
     const view = readSettings(`${base}stt:\n  baseUrl: https://stt.example/v1\n  model: whisper-1\n  apiKey: k\nheartbeat:\n  activeHours: ["08:00", "22:00"]\nlinks:\n  bilibili:\n    sessdata: abc\n`);
     expect(view.values).toMatchObject({ "model.provider": "deepseek", "stt.model": "whisper-1", "heartbeat.activeHours": ["08:00", "22:00"] });

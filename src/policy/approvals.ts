@@ -22,6 +22,7 @@ export interface ApprovalOutcome {
 interface Pending {
   request: ApprovalRequest;
   settle: (outcome: ApprovalOutcome) => void;
+  onAnswer?: (answer: ApprovalAnswer) => void;
 }
 
 export interface ApprovalEvent { type: "requested" | "allowed" | "denied"; toolName: string; windowLabel: string; reason?: string }
@@ -51,6 +52,7 @@ export class ApprovalManager {
     toolName: string;
     args: unknown;
     signal?: AbortSignal;
+    onAnswer?: (answer: ApprovalAnswer) => void;
   }): Promise<ApprovalOutcome> {
     if (input.signal?.aborted) return Promise.resolve(ABORTED);
     const createdAt = this.now();
@@ -80,7 +82,7 @@ export class ApprovalManager {
         this.onChange();
       };
       input.signal?.addEventListener("abort", onAbort, { once: true });
-      this.pendingById.set(request.id, { request, settle: finish });
+      this.pendingById.set(request.id, { request, settle: finish, onAnswer: input.onAnswer });
       this.onEvent({ type: "requested", toolName: input.toolName, windowLabel: input.windowLabel });
       this.onChange();
     });
@@ -90,6 +92,7 @@ export class ApprovalManager {
     const pending = this.pendingById.get(id);
     if (!pending) return false;
     const { request } = pending;
+    pending.onAnswer?.(answer);
     if (answer === "allow_session") {
       const tools = this.sessionAllowed.get(request.sessionKey) ?? new Set<string>();
       tools.add(request.toolName);

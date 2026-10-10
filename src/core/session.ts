@@ -1,3 +1,7 @@
+import type { DecisionJudge } from "../decision/jev.js";
+import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary } from "../decision/routing.js";
+import { randomUUID } from "node:crypto";
+import { RequestActionOrchestrator, type RequestActionOptions } from "./execution.js";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   Agent,
@@ -11,6 +15,7 @@ import {
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingSetting } from "../config/schema.js";
 import { ContextCompactor, isCompactionRecord, type CompactionOptions } from "../context/compaction.js";
+import { CONTEXT_BUDGET_ERROR, ContextBudgetError, estimateProviderInput, withContextBudget } from "../context/budget.js";
 import { appendJsonl, readJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
@@ -24,6 +29,9 @@ export interface SessionOptions {
   streamFn: StreamFn;
   getApiKey: (provider: string) => string | undefined;
   buildSystemPrompt: () => Promise<string>;
+  toolRouter?: { judge: DecisionJudge; confidence: number; warn: (error: unknown) => void };
+  evidenceSecrets?: () => string[];
+  requestActions?: RequestActionOptions;
   beforeToolCall?: (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
   emit: (event: SessionEvent) => void;
   onError?: (err: unknown) => void;
@@ -46,17 +54,32 @@ export class Session {
   private finishing = false;
   private backoff: AbortController | undefined;
   // Messages sent while a stopped or finishing run winds down; they start a fresh run afterwards.
-  private afterStop: { text: string; source?: string }[] = [];
+  private afterStop: { text: string; source?: string; requestId?: string }[] = [];
+  private assistantQueue: string[] = [];
+  private drainingAssistant = false;
+  private assistantDrain: Promise<void> | undefined;
   private readonly transcript: AgentMessage[];
   private pendingOwner = 0;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
   private runSource?: string;
   private runFailed = false;
+  private runFailureReason?: string;
+  private observedBudgetFailure?: string;
+  private readonly failedTools = new Set<string>();
   private lastResponse?: AssistantMessage;
+  private readonly execution?: RequestActionOrchestrator;
+  private pendingProviderUsage = zeroUsage();
+  private activeRunStart = 0;
 
   get successfulReply(): string | undefined {
     return !this.runFailed && !this.stopRequested && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
+  }
+
+  get completionOutcome(): { successful: boolean; failureReason?: string; failedTools: string[] } {
+    const compilerFailed = this.failedTools.has("wiki_write") || this.failedTools.has("wiki_edit");
+    return { successful: this.successfulReply !== undefined && !compilerFailed,
+      ...(this.runFailureReason ? { failureReason: this.runFailureReason } : {}), failedTools: [...this.failedTools] };
   }
 
   static async open(opts: SessionOptions): Promise<Session> {
@@ -69,6 +92,7 @@ export class Session {
     records: unknown[],
   ) {
     this.key = opts.key;
+    this.execution = opts.requestActions ? new RequestActionOrchestrator({ ...opts.requestActions, onUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); opts.requestActions?.onUsage?.(usage); } }) : undefined;
     const messages = records.filter(isTranscriptMessage);
     this.transcript = [...messages];
     const restored = records.filter(isCompactionRecord).filter((r) => r.through <= messages.length).at(-1);
@@ -81,12 +105,29 @@ export class Session {
         systemPrompt: "",
         model: opts.model,
         thinkingLevel: opts.thinking ?? "off",
-        tools: opts.tools,
+        tools: this.withOutcomeTool(opts.tools),
         messages,
       },
-      streamFn: opts.streamFn,
+      streamFn: this.captureBudgetCause(withContextBudget(this.execution
+        ? this.execution.wrap(withEvidenceBoundary(withContextBudget(opts.streamFn), { ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}), tools: () => this.agent.state.tools, confidence: opts.toolRouter?.confidence, warn: opts.toolRouter?.warn, secrets: opts.evidenceSecrets, messages: () => this.agent.state.messages.slice(this.activeRunStart), takeUsage: () => this.takePendingProviderUsage(), returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); } }), () => this.agent.state.tools, withContextBudget(opts.streamFn))
+        : withEvidenceBoundary(withContextBudget(opts.streamFn), { ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}), tools: () => this.agent.state.tools, confidence: opts.toolRouter?.confidence, warn: opts.toolRouter?.warn, secrets: opts.evidenceSecrets, messages: () => this.agent.state.messages.slice(this.activeRunStart), takeUsage: () => this.takePendingProviderUsage(), returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); } }))),
       getApiKey: opts.getApiKey,
-      beforeToolCall: opts.beforeToolCall,
+      beforeToolCall: this.execution ? async (context, signal) => {
+        const runtimeOutcome = context.toolCall.name === "request_action_outcome" && this.execution!.isControllerOutcomeCall(context.toolCall.id);
+        const args = context.args;
+        if (context.toolCall.name === "wiki_ingest" && !this.execution!.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" && this.execution!.blocksOwnerDeniedArchive(args.url)) {
+          return { block: true, reason: "The owner's active link instruction does not authorize archival for this URL." };
+        }
+        if (context.toolCall.name === "wiki_ingest" && !this.execution!.isControllerCall(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" && this.execution!.blocksDuplicateArchive(args.url)) {
+          return { block: true, reason: "This request already attempted archival for that URL; use the existing tool result and do not retry it through another call." };
+        }
+        if (!runtimeOutcome && this.execution!.blocksDeniedArchiveFallback(context.toolCall.name, context.args)) {
+          return { block: true, reason: "Archival for this URL was denied and is terminal; do not retry the same action through another tool." };
+        }
+        const gate = runtimeOutcome ? undefined : await opts.beforeToolCall?.(context, signal);
+        if (gate) return gate;
+        return undefined;
+      } : opts.beforeToolCall,
       transformContext: compactor ? (messages, signal) => compactor.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => ({
@@ -101,13 +142,29 @@ export class Session {
     return this.current !== undefined;
   }
 
-  send(text: string, source?: string): void {
-    if (this.current && (this.stopRequested || this.finishing)) {
-      this.afterStop.push({ text, source });
+  async maxUserPromptBytes(prefix: string): Promise<number> {
+    const systemPrompt = await this.opts.buildSystemPrompt();
+    const baseline = estimateProviderInput({
+      systemPrompt,
+      messages: [{ role: "user", content: prefix, timestamp: 0 }],
+      tools: this.agent.state.tools,
+    });
+    const available = this.opts.model.contextWindow - this.opts.model.maxTokens - baseline - 512;
+    if (available < 1) throw new ContextBudgetError("The Wiki instructions and tool schemas leave no room for a source segment.");
+    return Math.floor(available);
+  }
+
+  send(text: string, source?: string, existingRequestId?: string): void {
+    if (this.closing) return;
+    const requestId = !source ? existingRequestId ?? randomUUID() : undefined;
+    if (!source && !existingRequestId) this.execution?.addOwnerRequest(requestId!, text);
+    if (this.drainingAssistant || (this.current && (this.stopRequested || this.finishing))) {
+      this.afterStop.push({ text, source, ...(requestId ? { requestId } : {}) });
       return;
     }
+    if (!this.current) this.execution?.resume();
     if (!source) { this.pendingOwner++; this.opts.onOwnerMessage?.(); }
-    const message: UserMessage & { vexSource?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}) };
+    const message: UserMessage & { vexSource?: string; vexRequestId?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}), ...(requestId ? { vexRequestId: requestId } : {}) };
     if (this.current) {
       this.agent.steer(message);
       return;
@@ -116,44 +173,74 @@ export class Session {
     this.finishing = false;
     this.runSource = source;
     this.runFailed = false;
+    this.runFailureReason = undefined;
+    this.observedBudgetFailure = undefined;
+    this.failedTools.clear();
     this.lastResponse = undefined;
     this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}) });
+    this.activeRunStart = this.agent.state.messages.length;
     this.current = this.run(message)
       .catch((err: unknown) => {
         this.runFailed = true;
+        this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
         this.opts.onError?.(err);
         if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
       })
-      .finally(() => {
+      .finally(async () => {
         this.current = undefined;
+        // Run-end hooks may enqueue notifications, so drain only after run() (and
+        // its final settlement hooks) has completed.
         this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "proactive chat" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
         this.pendingOwner = 0;
-        for (const queued of this.afterStop.splice(0)) this.send(queued.text, queued.source);
+        await this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
       });
   }
 
   stop(): void {
+    this.assistantQueue = [];
+    this.afterStop = [];
+    this.execution?.clearPending();
     if (!this.current) return;
     this.stopRequested = true;
-    this.afterStop = [];
     this.backoff?.abort();
     this.agent.clearAllQueues();
     this.agent.abort();
   }
 
-  whenIdle(): Promise<void> {
-    return this.current ?? Promise.resolve();
+  async whenIdle(): Promise<void> {
+    for (;;) {
+      const pending = this.current ?? this.assistantDrain;
+      if (pending) await pending;
+      await Promise.resolve();
+      if (!this.current && !this.assistantDrain && !this.drainingAssistant && this.afterStop.length === 0) return;
+    }
   }
 
   async dispose(): Promise<void> {
     this.closing = true;
+    this.assistantQueue = [];
     this.stop();
     await this.whenIdle();
     await this.writes;
     this.opts.onDispose?.();
   }
 
-  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = tools; }
+  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = this.withOutcomeTool(tools); }
+
+  private withOutcomeTool(tools: AgentTool<any>[]): AgentTool<any>[] {
+    const outcome = this.execution?.outcomeTool((message) => this.enqueueAssistant(message));
+    return outcome ? [...tools.filter((tool) => tool.name !== outcome.name), outcome] : tools;
+  }
+
+  private captureBudgetCause(stream: StreamFn): StreamFn {
+    return async (model, context, options) => {
+      try { return await stream(model, context, options); }
+      catch (error) {
+        if (error instanceof ContextBudgetError) this.observedBudgetFailure = error.reason;
+        throw error;
+      }
+    };
+  }
 
   async injectAssistant(text: string, signal?: AbortSignal): Promise<void> {
     while (this.busy) {
@@ -167,15 +254,76 @@ export class Session {
     }
     signal?.throwIfAborted();
     if (this.closing) throw new Error("The conversation is closing");
+    await this.deliverAssistant(text);
+  }
+
+  /** Accept a notification for delivery after the current Agent turn settles. */
+  async enqueueAssistant(text: string): Promise<void> {
+    if (this.closing) throw new Error("The conversation is closing");
+    this.assistantQueue.push(text);
+    if (!this.current) void this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
+  }
+
+  private async finishQueuedOwnerMessages(): Promise<void> {
+    await this.drainAssistantQueue();
+    if (!this.closing && !this.current && !this.drainingAssistant) {
+      for (const queued of this.afterStop.splice(0)) this.send(queued.text, queued.source, queued.requestId);
+    }
+  }
+
+  private async drainAssistantQueue(): Promise<void> {
+    if (this.drainingAssistant) { await this.assistantDrain; return; }
+    if (this.current || this.closing) return;
+    this.drainingAssistant = true;
+    this.assistantDrain = Promise.resolve().then(async () => { try {
+      while (this.assistantQueue.length && !this.closing) {
+        const text = this.assistantQueue.shift();
+        if (text === undefined) continue;
+        try {
+          await this.deliverAssistant(text);
+        } catch (err) {
+          this.reportError(err);
+        }
+      }
+    } finally {
+      this.drainingAssistant = false;
+      this.assistantDrain = undefined;
+    } });
+    await this.assistantDrain;
+  }
+
+  private async deliverAssistant(text: string): Promise<void> {
+    if (this.closing) return;
     const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text }],
       api: this.opts.model.api, provider: this.opts.model.provider, model: this.opts.model.id,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "stop", timestamp: Date.now() };
     this.agent.state.messages.push(message);
     this.transcript.push(message);
-    this.writes = this.writes.then(() => appendJsonl(this.opts.transcriptPath, message));
+    this.queueTranscriptWrite(message);
     await this.writes;
-    this.opts.emit({ kind: "assistant_message", text, stopReason: "stop", timestamp: message.timestamp, injected: true });
+    if (!this.closing) this.opts.emit({ kind: "assistant_message", text, stopReason: "stop", timestamp: message.timestamp, injected: true });
+  }
+
+  private queueTranscriptWrite(message: AgentMessage): void {
+    this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, message));
+  }
+
+  private reportError(err: unknown): void {
+    try { this.opts.onError?.(err); } catch { /* logging must not break session settlement */ }
+  }
+
+  private takePendingProviderUsage(): AssistantMessage["usage"] {
+    const usage = this.pendingProviderUsage;
+    this.pendingProviderUsage = zeroUsage();
+    return usage;
+  }
+
+  private async flushPendingProviderUsage(): Promise<void> {
+    const usage = this.pendingProviderUsage;
+    if (usage.totalTokens === 0 && usage.cost.total === 0) return;
+    this.pendingProviderUsage = zeroUsage();
+    await appendJsonl(this.opts.transcriptPath, { type: "provider_usage", usage, timestamp: Date.now() });
   }
 
   history(): { items: HistoryItem[]; streaming?: string } {
@@ -223,7 +371,11 @@ export class Session {
     if (this.pendingOwner && this.successfulReply) {
       await this.opts.onOwnerInteraction?.(this.pendingOwner);
     }
-    } finally { this.finishing = true; await this.writes; await this.opts.onRunEnd?.(); }
+    } finally {
+      this.finishing = true;
+      try { await this.writes; await this.flushPendingProviderUsage(); await this.opts.onRunEnd?.(); }
+      finally { this.execution?.finishRun(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : []))); }
+    }
   }
 
   private async settle(): Promise<void> {
@@ -231,11 +383,15 @@ export class Session {
     for (let attempt = 1; ; attempt++) {
       const last = this.agent.state.messages.at(-1);
       if (last?.role !== "assistant" || last.stopReason !== "error") return;
+      this.pendingProviderUsage = addUsage(this.pendingProviderUsage, last.usage);
       this.agent.state.messages = this.agent.state.messages.slice(0, -1);
-      if (this.stopRequested) return;
-      if (attempt > attempts) {
+      if (this.stopRequested) { await this.flushPendingProviderUsage(); return; }
+      if (attempt > attempts || last.errorMessage === TOOL_EVIDENCE_ERROR || last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) {
+        await this.flushPendingProviderUsage();
         this.runFailed = true;
-        const error = new Error(`Model call failed: ${last.errorMessage ?? "unknown error"}`);
+        this.runFailureReason = last.errorMessage === CONTEXT_BUDGET_ERROR
+          ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.observedBudgetFailure ?? "request could not be estimated"}` : last.errorMessage;
+        const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
         if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
         return;
@@ -245,6 +401,7 @@ export class Session {
       try {
         await delay(baseDelayMs * 2 ** (attempt - 1), undefined, { signal: backoff.signal });
       } catch {
+        await this.flushPendingProviderUsage();
         return;
       } finally {
         this.backoff = undefined;
@@ -263,11 +420,13 @@ export class Session {
         return;
       case "message_end": {
         const message = event.message;
+        if (message.role === "toolResult" && message.isError) this.failedTools.add(message.toolName);
+        if (message.role === "toolResult") this.execution?.settle(this.agent.state.messages);
         // System messages are rebuilt from the current prompt and tools on every start.
         if (message.role === "system") return;
         if (message.role === "assistant" && message.stopReason === "error") return;
         this.transcript.push(message);
-        this.writes = this.writes.then(() => appendJsonl(this.opts.transcriptPath, message));
+        this.queueTranscriptWrite(message);
         await this.writes;
         if (message.role === "user") {
           this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource });
@@ -324,4 +483,13 @@ function contentText(content: string | (TextContent | ImageContent)[]): string {
 
 function assistantText(message: AssistantMessage): string {
   return message.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("");
+}
+
+function zeroUsage(): AssistantMessage["usage"] {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+}
+
+function addUsage(a: AssistantMessage["usage"], b: AssistantMessage["usage"]): AssistantMessage["usage"] {
+  return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite, totalTokens: a.totalTokens + b.totalTokens,
+    cost: { input: a.cost.input + b.cost.input, output: a.cost.output + b.cost.output, cacheRead: a.cost.cacheRead + b.cost.cacheRead, cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite, total: a.cost.total + b.cost.total } };
 }

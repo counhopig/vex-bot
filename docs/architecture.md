@@ -67,6 +67,8 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
+Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Jev advises on intent and tool routing; fixed link actions are executed by the runtime through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
+
 ### Compaction
 
 When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation):
@@ -78,19 +80,22 @@ Compaction changes only what is sent to the model; transcripts keep every messag
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
 
+Before each provider call, Vex reserves the configured output allowance and applies a conservative local input estimate to the assembled prompt, tools, messages, and image payloads. Tokenization and image accounting vary by provider, so the estimate is a local guard rather than a provider billing count.
+
 ## Tools
 
 | Tool | Notes |
 |---|---|
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
 | `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
-| `web_fetch` | Public pages only (see Security); output is Markdown |
+| `web_fetch` | Reads public pages and returns a JSON receipt with an excerpt (see Security) |
 | `web_search` | Tavily, SearXNG or Brave Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
 | `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
-| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns only its final reply |
+| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
+| `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
@@ -101,7 +106,8 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate` | allow |
+| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest`, `wiki_rollback` | allow |
+| `wiki_bootstrap` | ask |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 
@@ -109,7 +115,7 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 ### Link reading
 
-The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run through `bash`) picks a platform from a link, or from a whole pasted share text, and reads it through that platform's public endpoints. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch` (the script reuses `fetchPublicPage`).
+The bundled link reader (`skills/link-reader/scripts/read.mjs`) picks a platform from a link or pasted share text and reads it through that platform's public endpoints. Owner-facing reads use the programmatic reader; manual skill-script runs use `bash` and its approval policy. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch`.
 
 | Platform | Metadata | Text |
 |---|---|---|

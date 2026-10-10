@@ -11,6 +11,7 @@ import {
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { assertRequestFits, withContextBudget } from "../context/budget.js";
 import type { CustomModelConfig, ModelRef, ProviderConfig } from "../config/schema.js";
 
 export class ModelResolutionError extends Error {}
@@ -83,8 +84,12 @@ export function createModelRegistry(
     getApiKey(provider) {
       return providers[provider]?.apiKey || undefined;
     },
-    streamFn: (model, context, options) => base.streamSimple(model, context, options),
-    completeSimple: (model, context, options) => base.completeSimple(model, context, options),
+    streamFn: withContextBudget((model, context, options) => base.streamSimple(model, context, options)),
+    completeSimple: (model, context, options) => {
+      options?.signal?.throwIfAborted();
+      assertRequestFits(model, context, options?.maxTokens);
+      return base.completeSimple(model, context, options);
+    },
   };
 }
 

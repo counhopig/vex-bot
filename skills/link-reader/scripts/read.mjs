@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bilibili } from "./bilibili.mjs";
 import { douyin } from "./douyin.mjs";
-import { hostMatches } from "./shared.mjs";
+import { firstUrl as sharedFirstUrl, hostMatches } from "./shared.mjs";
 import { summarizeText } from "./summarize.mjs";
 import { transcribeVideo } from "./stt.mjs";
 import { xiaohongshu } from "./xiaohongshu.mjs";
@@ -19,6 +19,7 @@ const RAW_LIMIT = 30_000;
 const FALLBACK_LIMIT = 20_000;
 
 export const findPlatform = (text) => PLATFORMS.find((platform) => platform.match(text));
+export const firstUrl = (text) => sharedFirstUrl(text) ?? text.trim();
 
 function createHttp(platform, { fetchPublicPage, request, signal }) {
   const call = (url, init) => fetchPublicPage(url, { signal, request, timeoutMs: 30_000, hosts: (host) => hostMatches(`https://${host}`, platform.hosts), maxBytes: platform.maxBytes, init })
@@ -49,32 +50,58 @@ function header(content) {
   ];
 }
 
-export async function readLink(text, { fetchPublicPage, request, ask, sessdata, raw = false, signal, stt, runCommand, sttFetch } = {}) {
+export async function readOriginalSource(text, { fetchPublicPage, request, sessdata, signal, stt, runCommand, sttFetch } = {}) {
   const platform = findPlatform(text);
   if (!platform) throw new Error(`This link is not supported; supported: ${PLATFORMS.map((item) => item.name).join(", ")}`);
   const content = await platform.read(text, createHttp(platform, { fetchPublicPage, request, signal }), { sessdata });
-  let note;
+  let sttNote;
   if (!content.text && TRANSCRIBABLE.has(content.platform)) {
     if (!stt) {
-      note = "(Speech to text is not configured; once a service is set under stt, videos without subtitles are transcribed)";
+      sttNote = "(Speech to text is not configured; once a service is set under stt, videos without subtitles are transcribed)";
     } else {
       try {
         const spoken = await transcribeVideo(content, stt, { runCommand, fetchFn: sttFetch, signal });
         if (spoken) { content.text = spoken; content.textKind = "transcript"; }
-        else note = "(Speech to text recognised nothing)";
+        else sttNote = "(Speech to text recognised nothing)";
       } catch (error) {
         signal?.throwIfAborted();
-        note = `(Speech to text failed: ${error.message})`;
+        sttNote = `(Speech to text failed: ${error.message})`;
       }
     }
   }
+  const original = content.text ?? "";
+  const truncated = original.length > MAX_TRANSCRIPT;
+  return {
+    requestedUrl: firstUrl(text),
+    canonicalUrl: content.url,
+    url: content.url,
+    title: content.title ?? "",
+    text: original.slice(0, MAX_TRANSCRIPT),
+    textKind: content.textKind ?? "text",
+    truncated,
+    platform: content.platform,
+    author: content.author,
+    description: content.description,
+    durationSeconds: content.durationSeconds,
+    extra: content.extra,
+    cover: content.cover,
+    sttNote,
+  };
+}
+
+export async function readLink(text, { fetchPublicPage, request, ask, sessdata, raw = false, signal, stt, runCommand, sttFetch } = {}) {
+  const content = await readOriginalSource(text, { fetchPublicPage, request, sessdata, signal, stt, runCommand, sttFetch });
+  const note = content.sttNote;
   const lines = header(content);
-  const body = content.text?.slice(0, MAX_TRANSCRIPT);
-  const kind = content.textKind ?? "text";
+  const body = content.text;
+  const kind = content.textKind;
   if (!body) {
     lines.push("", "This link has no readable subtitles or text, so only the basic information above is available.", ...(note ? [note] : []));
   } else if (raw || !ask) {
-    lines.push("", `Original ${kind}:`, body.length > RAW_LIMIT ? `${body.slice(0, RAW_LIMIT)}\n… (truncated; ${body.length} characters in total)` : body);
+    const display = body.length > RAW_LIMIT
+      ? `${body.slice(0, RAW_LIMIT)}\n… (truncated; ${RAW_LIMIT} shown of ${body.length}${content.truncated ? " retained before the source processing limit" : " characters"})`
+      : body;
+    lines.push("", `Original ${kind}:`, display);
   } else {
     try {
       lines.push("", `Summary of the ${kind}:`, await summarizeText(body, kind, ask));
@@ -83,6 +110,7 @@ export async function readLink(text, { fetchPublicPage, request, ask, sessdata, 
       lines.push("", `(Summary failed: ${error.message}. Below is the original ${kind}, truncated)`, body.slice(0, FALLBACK_LIMIT));
     }
   }
+  if (content.truncated) lines.push("(Source processing limit reached; this is not the complete original)");
   return lines.join("\n");
 }
 

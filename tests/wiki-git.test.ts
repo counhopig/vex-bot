@@ -70,6 +70,25 @@ describe("WikiRepo", () => {
     expect(await r.isAncestor(origin, sha)).toBe(true);
   });
 
+  it("keeps unrelated staged paths local when committing selected literal paths", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/备份 [x].md": "v1", "notes/owner.md": "n1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "备份 [x].md"), "v2");
+    writeFileSync(join(root, "notes", "owner.md"), "n2");
+    git(root, ["add", "--", "notes/owner.md"]);
+    const sha = await r.commit(["wiki/备份 [x].md"], "selected");
+    expect(await r.changedPaths(sha)).toEqual(["wiki/备份 [x].md"]);
+    expect(git(root, ["show", `${sha}:wiki/备份 [x].md`])).toBe("v2");
+    expect(git(root, ["show", `${sha}:notes/owner.md`])).toBe("n1");
+    expect(git(root, ["diff", "--cached", "--name-only"])).toBe("notes/owner.md\n");
+    await r.push();
+    const remoteHead = git(remote, ["rev-parse", "HEAD"]).trim();
+    expect(git(remote, ["show", `${remoteHead}:notes/owner.md`])).toBe("n1");
+    expect(readFileSync(join(root, "notes", "owner.md"), "utf8")).toBe("n2");
+  });
+
   it("reports porcelain status for a dirty tree", async () => {
     const { remote, work } = makeRemote(join(dir, "seed"));
     commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
@@ -196,13 +215,39 @@ describe("WikiRepo recovery and history", () => {
     const base = await r.head();
     writeFileSync(join(root, "wiki", "a.md"), "v2");
     const change = await r.commit(["wiki/a.md"], "change");
-    const sha = await r.revert(change, "wiki: rollback\n\nVex-Rollback: rb1");
+    const sha = await r.revert(change, "wiki: rollback\n\nVex-Rollback: 00000000-0000-4000-8000-000000000001\nVex-Revert-Of: test-batch");
     expect(sha).not.toBe(change);
     expect(sha).toBe(await r.head());
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
     expect(await r.isAncestor(base, sha)).toBe(true);
     expect(await r.isAncestor(change, sha)).toBe(true);
     expect(git(root, ["log", "-1", "--format=%an <%ae>"])).toBe("vex <vex@localhost>\n");
+  });
+
+  it("checks every durable rollback path even when the commit omits one", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1", "wiki/b.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki/a.md"), "v2");
+    writeFileSync(join(root, "wiki/b.md"), "v2");
+    await r.commit(["wiki/a.md", "wiki/b.md"], "wiki: compile\n\nVex-Batch: batch-id\nVex-Kind: on-demand\nVex-Scan-Base: none");
+    writeFileSync(join(root, "wiki/a.md"), "v1");
+    const id = "00000000-0000-4000-8000-000000000002";
+    await r.commit(["wiki/a.md"], `wiki: rollback\n\nVex-Rollback: ${id}\nVex-Revert-Of: batch-id`);
+    const expectedHash = createHash("sha256").update("v1").digest("hex");
+    const directory = join(root, ".git", "vex-wiki-rollback-expected");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, `${id}.json`), JSON.stringify({
+      id,
+      targetBatchId: "batch-id",
+      paths: [
+        { path: "wiki/a.md", fingerprint: { type: "file", hash: expectedHash } },
+        { path: "wiki/b.md", fingerprint: { type: "file", hash: expectedHash } },
+      ],
+    }));
+
+    await expect(r.assertRollbackExpectations()).rejects.toThrow(/does not match its durable expectation at wiki\/b.md/i);
   });
 
   it("shows a file at a revision", async () => {

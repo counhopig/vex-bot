@@ -6,7 +6,7 @@ import type { PageInit, PageRequest, PageResponse } from "../src/tools/web.js";
 import { fetchPublicPage } from "../src/tools/web.js";
 
 const skill = (name: string) => import(pathToFileURL(join(process.cwd(), "skills/link-reader/scripts", name)).href);
-const { readLink, findPlatform } = await skill("read.mjs");
+const { readLink, readOriginalSource, findPlatform } = await skill("read.mjs");
 const { signWbi } = await skill("bilibili.mjs");
 const { decodeEntities, parseTimedText } = await skill("youtube.mjs");
 const { summarizeText } = await skill("summarize.mjs");
@@ -59,6 +59,14 @@ describe("WeChat articles", () => {
     expect(calls[0]!.url).toBe(link);
   });
 
+  it("returns the extracted article body without calling a summarizer", async () => {
+    const ask = answer();
+    const source = await readOriginalSource(link, { fetchPublicPage, request: fake(() => ok(article)).request, ask });
+    expect(source).toMatchObject({ canonicalUrl: link, title: "标题 & 示例", textKind: "article", truncated: false });
+    expect(source.text).toContain("第一段**重点**");
+    expect(ask).not.toHaveBeenCalled();
+  });
+
   it("summarizes only the body and follows article short links", async () => {
     const ask = answer();
     const { request } = fake((url) => url.pathname === "/s/abc" ? redirect(link) : ok(article));
@@ -87,6 +95,15 @@ describe("WeChat articles", () => {
     await readLink(link, { fetchPublicPage: fetchPage, raw: true });
     expect(fetchPage.mock.calls[0]).toEqual([link, expect.objectContaining({ maxBytes: 10_000_000 })]);
     expect(findPlatform("https://youtu.be/dQw4w9WgXcQ")?.maxBytes).toBeUndefined();
+  });
+
+  it("reads a WeChat article larger than the generic two-megabyte page limit and marks the source cap", async () => {
+    const large = `<html><h1>大文</h1><div id="js_content"><p>${"文".repeat(2_100_000)}</p></div></html>`;
+    const fetchPage = vi.fn(async (_url: string, options: { maxBytes?: number }) => ({ url: link, body: large }));
+    const source = await readOriginalSource(link, { fetchPublicPage: fetchPage });
+    expect(fetchPage.mock.calls[0]![1]).toMatchObject({ maxBytes: 10_000_000 });
+    expect(source.text).toHaveLength(500_000);
+    expect(source.truncated).toBe(true);
   });
 });
 
@@ -217,6 +234,26 @@ describe("Xiaohongshu", () => {
     expect(ask).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the original beyond the CLI display limit", async () => {
+    const longState = { note: { noteDetailMap: { [id]: { note: { title: "长文", desc: "文".repeat(35_000), type: "normal", user: { nickName: "作者" } } } } } };
+    const source = await readOriginalSource(`https://www.xiaohongshu.com/explore/${id}`, {
+      fetchPublicPage,
+      request: fake(() => ok(`<script>window.__INITIAL_STATE__=${JSON.stringify(longState)}</script>`)).request,
+    });
+    expect(source.text).toHaveLength(35_000);
+    expect(source.truncated).toBe(false);
+  });
+
+  it("marks source processing beyond 500,000 characters as incomplete", async () => {
+    const longState = { note: { noteDetailMap: { [id]: { note: { title: "超长", desc: "文".repeat(500_001), type: "normal" } } } } };
+    const source = await readOriginalSource(`https://www.xiaohongshu.com/explore/${id}`, {
+      fetchPublicPage,
+      request: fake(() => ok(`<script>window.__INITIAL_STATE__=${JSON.stringify(longState)}</script>`)).request,
+    });
+    expect(source.text).toHaveLength(500_000);
+    expect(source.truncated).toBe(true);
+  });
+
   it("explains a page without note data", async () => {
     await expect(run(fake(() => ok("<html>请登录</html>")).request, `https://www.xiaohongshu.com/explore/${id}`)).rejects.toThrow("returned no note content");
   });
@@ -261,7 +298,21 @@ describe("summaries", () => {
     expect(output.match(/文{100,}/)?.[0].length).toBe(20_000);
     const raw = await run(fake(route).request, "http://xhslink.com/a/x", { raw: true });
     expect(raw).toContain("Original text:");
-    expect(raw).toContain("truncated; 35000 characters in total");
+    expect(raw).toContain("30000 shown of 35000 characters");
+  });
+
+  it("marks the CLI source processing limit in raw and summary output", async () => {
+    const id = "64a1b2c3d4e5f60718293a4b";
+    const large = { note: { noteDetailMap: { [id]: { note: { title: "超长", desc: "文".repeat(500_001), type: "normal" } } } } };
+    const route: Route = () => ok(`<script>window.__INITIAL_STATE__=${JSON.stringify(large)}</script>`);
+    const raw = await run(fake(route).request, `https://www.xiaohongshu.com/explore/${id}`, { raw: true });
+    expect(raw).toContain("30000 shown of 500000 retained before the source processing limit");
+    expect(raw).toContain("Source processing limit reached; this is not the complete original");
+    const summarize = vi.fn(async () => "摘要");
+    const summary = await run(fake(route).request, `https://www.xiaohongshu.com/explore/${id}`, { ask: summarize });
+    expect(summary).toContain("Summary of the text:\n摘要");
+    expect(summary).toContain("Source processing limit reached; this is not the complete original");
+    expect(summarize).toHaveBeenCalled();
   });
 });
 
@@ -373,5 +424,17 @@ describe("speech to text", () => {
     expect(unset).toContain("Speech to text is not configured");
     const failing = await readLink("BV1xx411c7mD", { fetchPublicPage, request: fake(playurl).request, ask: answer(), stt, runCommand: async () => { throw new Error("ffmpeg failed: bad"); }, sttFetch: router });
     expect(failing).toContain("Speech to text failed: ffmpeg failed: bad");
+  });
+
+  it("propagates STT cancellation from the original-source API", async () => {
+    const controller = new AbortController();
+    await expect(readOriginalSource("BV1xx411c7mD", {
+      fetchPublicPage,
+      request: fake(playurl).request,
+      signal: controller.signal,
+      stt,
+      sttFetch: router,
+      runCommand: async (_command: string, _args: string[], options: { signal?: AbortSignal }) => { controller.abort(); options.signal?.throwIfAborted(); },
+    })).rejects.toMatchObject({ name: "AbortError" });
   });
 });

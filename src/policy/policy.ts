@@ -8,7 +8,7 @@ export const DEFAULT_DECISIONS: Record<string, Decision> = {
   grep: "allow",
   find: "allow",
   web_fetch: "allow", web_search: "allow", memory_search: "allow", vault_search: "allow", vault_read: "allow", feel: "allow", schedule: "allow", delegate: "allow",
-  wiki_write: "allow", wiki_edit: "allow", wiki_ingest: "allow", wiki_bootstrap: "allow", wiki_rollback: "allow",
+  wiki_write: "allow", wiki_edit: "allow", wiki_ingest: "allow", wiki_bootstrap: "ask", wiki_rollback: "allow",
   bash: "ask",
 };
 

@@ -673,7 +673,13 @@ const BACKGROUND_FIELDS = [
 ];
 
 const SETTINGS_TABS = [
-  { id: "model", label: "Model", sections: [{ title: "Main model", fields: MODEL_FIELDS }, { title: "Background model", fields: BACKGROUND_FIELDS }] },
+  { id: "model", label: "Model", sections: [{ title: "Main model", fields: MODEL_FIELDS }, { title: "Background model", fields: BACKGROUND_FIELDS }, { title: "Tool routing (Jev)", fields: [
+    { path: "jev.enabled", label: "Enable Jev", type: "bool", help: "Use TypeSafe to suggest tools and check tool-operation claims before sending replies. Permission approvals still apply." },
+    { path: "jev.apiKey", label: "TypeSafe API Key", type: "secret" },
+    { path: "jev.model", label: "Model", type: "text", help: "Defaults to jev-latest." },
+    { path: "jev.confidence", label: "Decision threshold", type: "number", min: 0.5, max: 1, step: 0.01, help: "Between 0.5 and 1; defaults to 0.8." },
+    { path: "jev.timeoutMs", label: "Request timeout (ms)", type: "number", min: 100, max: 30000, step: 100, help: "Defaults to 5000." },
+  ] }] },
   { id: "channel", label: "WeChat", sections: [{ title: "WeChat", status: true, fields: [
     { path: "wechat.enabled", label: "Enable WeChat", type: "bool", help: "When off, vexd does not connect to WeChat." },
     { path: "wechat.ownerId", label: "Owner's WeChat id", type: "text", help: "Leave empty to use the account that scanned the QR code. Only the owner's messages are answered." },

@@ -87,6 +87,14 @@ describe("wiki history reconciliation", () => {
     expect(result.rollback).toEqual({ targetBatchId: "b1", revertId: "rb1" });
   });
 
+  it("alerts on an orphan rollback relationship", async () => {
+    const { repo, root } = await seed();
+    await writeAndCommit(repo, root, revert("rb-orphan", "missing-batch"), "wiki/a.md", "v0");
+    const result = await reconcile({ repo, state: null, marker: null, bootstrapRef: null });
+    expect(result.rollback).toBeNull();
+    expect(result.alerts.join(" ")).toMatch(/invalid rollback relationship/i);
+  });
+
   it("keeps bootstrap done for an empty/no-output run with the ref", async () => {
     const { repo, base } = await seed();
     const result = await reconcile({ repo, state: null, marker: null, bootstrapRef: base });

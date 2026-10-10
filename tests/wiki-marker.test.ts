@@ -137,17 +137,17 @@ describe("expectedBeforeFor", () => {
     expect(expectedBeforeFor(marker(), abs, baseline)).toEqual(baseline);
     await store.begin(marker());
     await store.recordIntent(abs, baseline);
-    expect(expectedBeforeFor((await store.read())!, abs, baseline)).toEqual(baseline);
     const after = fileHash("A");
     await store.recordAfter(abs, after);
     expect(expectedBeforeFor((await store.read())!, abs, baseline)).toEqual(after);
   });
 
-  it("falls back to the baseline when a crashed intent has no after", async () => {
+  it("refuses to infer the next expected version from baseline after an incomplete intent", async () => {
     const abs = join(dir, "wiki", "a.md");
     const baseline: FileFingerprint = { type: "file", hash: "baseline" };
     await store.begin(marker());
     await store.recordIntent(abs, baseline);
-    expect(expectedBeforeFor((await store.read())!, abs, baseline)).toEqual(baseline);
+    const current = (await store.read())!;
+    expect(() => expectedBeforeFor(current, abs, baseline)).toThrow("incomplete write intent");
   });
 });
