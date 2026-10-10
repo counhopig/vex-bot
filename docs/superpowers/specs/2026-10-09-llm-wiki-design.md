@@ -104,8 +104,9 @@ At begin, write `<git-dir>/vex-wiki-inflight.json`:
 }
 ```
 
-- `wiki_write`/`wiki_edit` record the target's `before` (type and content hash) and `after` (type and hash) before returning.
-- **Attribution is by fingerprint, not by path.** At cleanup or finalize, a `touched` path is attributable only if its **current** type and hash equal its recorded `after`. If it changed again (for example, an owner-approved `bash` edited the same file), the path is unattributable: keep it, alert, and abort. It is never silently committed or discarded.
+- **Write-ahead intent, then compare-and-swap.** Before every write to a path, `wiki_write`/`wiki_edit` persist an intent entry `{ path, expectedBefore }`, where `expectedBefore` is the current type/hash — or the recorded `after` from an earlier write to the same path, or the pre-batch state for the first touch. The tool then verifies the file still matches `expectedBefore` and only then writes. A mismatch (an external edit since the last write) aborts that write and alerts; the external content is never overwritten. This catches the A→B→C case, where an owner-approved edit between two Wiki writes would otherwise be silently replaced.
+- **Ordering:** (1) persist the intent entry; (2) write the file; (3) update the entry with `after` (new type/hash) and persist. A crash after (1) but before (3) leaves an entry with no `after`: if the current content equals `expectedBefore`, nothing was written; otherwise the outcome is ambiguous, so the path is kept and alerted, never auto-cleaned.
+- **Attribution is by fingerprint, not by path.** At cleanup or finalize, a `touched` path is attributable only if it has a complete `after` and its **current** type and hash equal that `after`. Any mismatch, or an entry without `after`, is unattributable: keep it, alert, and abort. It is never silently committed or discarded.
 - Cleanup reverts exactly the attributable recorded paths to `baseHead` (tracked) or removes them (untracked). Nothing else is touched.
 - The marker is updated to `phase: "committed"` with the new `commit` SHA in the same step as the git commit, before any push.
 - A missing marker with a dirty subtree means the change is unattributable: keep and alert.
@@ -166,7 +167,7 @@ The first full compile is reviewed before Vex may push anything.
 
 - **Trigger.** When `wiki.enabled` is true, `bootstrap` is not `done`, no preview is awaiting review, and the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5), the scheduler launches a one-time bootstrap run. The launch is evaluated on the one-second tick but gated by the backoff.
 - **Run.** The bootstrap run compiles the whole vault in chunks, commits locally with the batch trailers and a `wiki: bootstrap preview` subject, and withholds the push. It records `lastBatchId` and notifies the owner. `bootstrap` stays `pending`.
-- **Empty vault / no changes.** No-output success; immediately set `bootstrap: done`.
+- **Empty vault / no changes.** No-output success; immediately set `bootstrap: done` and write the durable local ref `refs/vex/wiki-bootstrap` at the scanned commit, so reconciliation preserves completion.
 - **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, run the integrity guard, and follow §8's rebase/retry to push the preview. On rebase conflict, abort the rebase, keep the preview and `bootstrap: pending`, notify; never force push. On success, set `bootstrap: done` and arm the cadence. With no pending preview, report that there is nothing to approve.
 - **Reject** (`wiki_bootstrap({ action: "reject" })`): acquire the lock, **fetch first and re-verify against the fresh remote ref that the preview is still unpublished**. If it is now published, do not reset; report that it was approved and mark `bootstrap: done`. If still unpublished **and the preview is the local tip**, discard it locally (`git reset --hard <parent>`) — no push — keeping `bootstrap: pending`. If the preview is not the tip, keep it and alert. With no pending preview, report that there is nothing to reject.
 - While `pending`, `wiki_ingest` and `wiki_rollback` refuse; only `wiki_bootstrap` acts.
@@ -181,18 +182,19 @@ The first full compile is reviewed before Vex may push anything.
 - **No match** → the commit was eliminated (rebase/reset/never created): clear the reference; if a rollback was expected, alert; do not revert.
 - **More than one match** → corruption: abort and alert, take no automatic action.
 
-**Reconciliation procedure** (startup and before every run, with fresh refs):
+**Reconciliation procedure** (startup and before every run, with fresh refs). It only parses history and records state; it never pushes. The settle step (§4.2 step 5) performs any rebase/push needed, after the fetch and integrity checks. Startup reconciliation follows the same order.
 
 1. Resolve the in-flight marker against history: if a commit with the marker's `Vex-Batch` id exists, the batch is committed — set the marker `committed`, record the commit, and never restore its files.
 2. Enumerate **compile batches** (commits with `Vex-Batch`) and **rollbacks** (commits with `Vex-Rollback`/`Vex-Revert-Of`). Rollbacks are never candidates for `lastBatchId`.
-3. Determine the newest compile batch `B_new`.
-   - If a rollback commit references `B_new`: published → the rollback is complete, clear `lastBatchId`; unpushed → complete the push, then clear. `B_new` is not offered for reverting again.
+3. Determine the newest compile batch `B_new` and the bootstrap state.
+   - If a rollback commit references `B_new`: **record the rollback as pending** (it is not offered again); `B_new` is reverted.
    - Else if `B_new` is an unpublished preview → `bootstrap: pending`, `lastBatchId = B_new`.
-   - Else → `lastBatchId = B_new`.
-   - With no compile batch, `lastBatchId = null` and `bootstrap: pending`.
-4. Recover a revert committed just before a crash: if a `Vex-Rollback` commit references `lastBatchId` or a persisted `rollback.targetBatchId`, treat the rollback as executed (complete its push if unpushed) and clear, even if the `rollback` state was never written.
-5. Recover the **scan cursor** from `Vex-Scan-Base` of compile batches that have `Vex-Kind` of `scheduled` or `bootstrap`, taking the boundary of the newest such batch. **Never** use the rebased parent commit, which may contain uncompiled sources. An `on-demand` batch has no scan base and never moves the cursor. Reverted batches keep their scan base, so a rollback does not make the same sources recompile.
-6. If no scan base is recoverable and the state is missing, fall back to a full scan.
+   - Else if `B_new` exists → `lastBatchId = B_new`; if its `Vex-Kind` is `bootstrap` and it is published, `bootstrap: done`.
+   - With no compile batch, `lastBatchId = null`.
+4. **Bootstrap completion evidence.** `bootstrap: done` whenever any durable evidence exists: a published `bootstrap` compile batch; the local ref `refs/vex/wiki-bootstrap` (written when a bootstrap run completes with no output); or a valid state `bootstrap: done` whose scan base is still valid. Only when none of these holds is it `pending`. This preserves a completed empty/no-output bootstrap instead of re-running it.
+5. Recover a revert committed just before a crash: if a `Vex-Rollback` commit references `lastBatchId` or a persisted `rollback.targetBatchId`, **record the rollback as pending** for the settle step, even if the `rollback` state was never written.
+6. **Scan cursor.** Recover it only when the state value is missing or invalid (not an ancestor of `HEAD`). Use `Vex-Scan-Base` of the newest **published** compile batch with `Vex-Kind` of `scheduled` or `bootstrap`. Never use an unpublished batch, and never use the rebased parent commit (it may contain uncompiled sources). A valid state cursor is preserved even when an older trailer exists, so a no-output run's progress is not rolled back. An `on-demand` batch has no scan base and never moves the cursor. Reverted batches keep their scan base, so a rollback does not make the same sources recompile. Discarding an unpublished batch does not touch the cursor, because progress is recorded only on publish or a published no-output run.
+7. If no scan base is recoverable and the state is missing or invalid, fall back to a full scan.
 
 **Precedence.** Preview protection and pending-rollback completion take precedence over the generic unpushed-commit push (§4.2 step 8) and over the no-output advance (§8).
 
@@ -266,13 +268,15 @@ Stored outside the vault at `<data>/state/wiki.json`, never committed:
 
 - `lastScanCommit` advances on a successful publish of a run with `advancesScan`, or a no-output batch with nothing unpushed; never on abort, and never for an on-demand run.
 - `lastBatchId` is the most recent committed **compile** batch (published or an unpublished preview awaiting review); `null` if none or after a rollback.
-- `bootstrap` gates the cadence (§4.7) and is reconciled from history on state loss (§4.8).
+- `bootstrap` gates the cadence (§4.7) and is reconciled from history on state loss (§4.8), using a published bootstrap batch or the `refs/vex/wiki-bootstrap` ref.
 - `rollback` is present only while a revert is pending publication (§4.6).
 - `nextAttemptAt` / `failureStreak` implement the retry backoff: a failed run increments the streak and sets `nextAttemptAt = now + min(1h, 5m x 2^(streak-1))`; a success resets both. Runs launch only when `now >= nextAttemptAt`.
 
 ### 5.6 State lifecycle
 
-- **Missing or partial state while `wiki.enabled`**: reconcile from history (§4.8); default `bootstrap: pending` and a full scan.
+- **Missing or partial state while `wiki.enabled`**: reconcile from history (§4.8); default `bootstrap: pending` and a full scan only when no completion evidence exists.
+- **Bootstrap completion evidence**: a published bootstrap batch, the ref `refs/vex/wiki-bootstrap`, or a valid state `done` keeps `bootstrap: done`; reconciliation never demotes a completed no-output bootstrap back to `pending`.
+- **Cursor**: a valid state `lastScanCommit` is preserved; reconstruction uses only published advancing batches.
 - **Disabled** (`wiki.enabled` false): the cadence stops; a pending preview and a pending rollback are retained. Re-enabling settles the rollback and resumes the review first.
 - **`lastScanCommit` missing or no longer an ancestor of `HEAD`**: full scan.
 
@@ -379,6 +383,11 @@ Other rules:
 | Failure | Behaviour |
 |---|---|
 | Pending rollback cannot be completed | Abort the run, notify; no new batch. |
+| Reconciliation must not push | Only records pending operations; the settle step pushes after fetch + integrity checks. |
+| External edit between two Wiki writes | Compare-and-swap aborts the later write; external content preserved; keep and alert. |
+| Crash after write-intent, before `after` | Ambiguous entry: keep and alert; never auto-clean. |
+| Completed no-output bootstrap | `done` preserved via `refs/vex/wiki-bootstrap`; no re-bootstrap. |
+| Cursor recovery | Use only published advancing batches; preserve a valid newer state cursor; a discarded unpublished batch skips nothing. |
 | Changes outside `wiki/`/`raw/` at run start | Abort and alert; no writes. |
 | Unattributable or fingerprint-mismatched subtree change | Keep, alert, abort; never auto-commit or auto-clean. |
 | Attributable stale changes (marker + matching fingerprint) | Restore only recorded paths to `baseHead`; continue. |
@@ -410,6 +419,7 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 - Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects; path-limited checkout/clean; trailers parse.
 - Lock: concurrent runs serialize; a busy lock makes interactive tools report and scheduled ticks skip.
 - Attribution: a `touched` path modified again after the wiki write is kept and alerts; a matching fingerprint is restored/committed; missing marker with a dirty tree keeps changes.
+- Write-ahead/compare-and-swap: an external edit between two Wiki writes to the same path aborts the second write and preserves the external content; a crash after intent but before `after` keeps and alerts.
 - Phases: a failure before commit restores files; a push/state/notification failure after commit keeps the commit and never dirties the tree against it.
 - Integrity guard: an unexpected commit, staged change, or fingerprint mismatch aborts; remote advances do not.
 - Change detection: added/modified/deleted, subtree exclusions, non-ancestor fallback, first-run full scan.
@@ -423,7 +433,10 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 - Bootstrap: the one-time trigger fires once; no-change completes `done`; approve pushes; reject fetches, re-verifies unpublished, and only resets when the preview is the local tip.
 - Batch identity: id resolution with zero/one/multiple matches; rebase changes the SHA but the id still resolves; state-write failure recovers from trailers; a rollback commit is never treated as a compile batch.
 - Rollback: unpublished tip → local discard without push; unpublished non-tip → keep and alert; published → revert + push; push failure then a second call completes instead of re-reverting; a revert committed before the state write is recovered from `Vex-Rollback`; conflict aborts cleanly.
-- State-loss recovery: batch + revert committed, then the full state file is lost → the reverted batch is not offered again and `lastScanCommit` is reconstructed from the newest advancing batch, so the reverted content is not regenerated.
+- State-loss recovery: batch + revert committed, then the full state file is lost → the reverted batch is not offered again and `lastScanCommit` is reconstructed from the newest **published** advancing batch, so the reverted content is not regenerated.
+- Bootstrap completion: an empty/no-output bootstrap stays `done` across reconciliation; a published bootstrap restores `done`.
+- Cursor recovery: only published advancing batches are used; a valid newer state cursor is preserved over an older trailer; an unpublished batch that is later discarded skips no sources.
+- Reconciliation performs no push; the settle step pushes only after the fetch and integrity checks.
 - Backoff: consecutive failures space retries by `min(1h, 5m x 2^(streak-1))` and reset on success.
 - State lifecycle: missing state behaves as `pending`; disable/enable settles rollback and resumes correctly.
 
@@ -456,6 +469,10 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 - Scan progress is durable (`Vex-Kind`, `Vex-Scan-Base`): cursor recovery never uses a rebased parent, and on-demand batches never advance it; rollback does not regenerate reverted sources.
 - In-flight marker carries kind, scan base, phase, and per-path fingerprints.
 - On-demand ingest does not advance the scan cursor.
+- Bootstrap completion is durable (published batch or `refs/vex/wiki-bootstrap`), so an empty/no-output bootstrap is not re-run.
+- The scan cursor is recovered only from published advancing batches and never overwrites a valid newer state value; discarding an unpublished batch skips nothing.
+- Each write is intent-first and compare-and-swap, so an external edit between two writes is never overwritten.
+- Reconciliation only records pending operations; pushes happen in the settle step after fetch and integrity checks.
 - Wiki runs have no generic file `read`; the skill body is injected by the core.
 - Subtree roots are validated as real directories before target checks.
 - Retry backoff prevents per-tick failure storms.
