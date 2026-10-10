@@ -32,7 +32,7 @@ export const WIKI_TOOL_EVIDENCE: EvidenceProfiles = {
     },
     linkArgument: true, endsLinkOnFailure: true, describe: describeIngest,
   },
-  wiki_write: { supports: { compiled: true, updated: true } },
-  wiki_edit: { supports: { compiled: true, updated: true, deleted: true } },
+  wiki_write: { supports: { compiled: true } },
+  wiki_edit: { supports: { compiled: true } },
   wiki_bootstrap: { supports: { published } },
 };

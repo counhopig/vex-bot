@@ -100,7 +100,7 @@ describe("Session", () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("I saved it.")]);
     const provider = vi.fn(fauxStreamFn(faux));
-    const request = "Please do this.";
+    const request = "Please save https://example.test/a.";
     const baseInput = estimateProviderInput({
       messages: [
         { role: "system", content: "SYSTEM", timestamp: 0 },
@@ -574,7 +574,7 @@ describe("Session", () => {
     ]);
     const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
       route: async () => ({ tool: null, confidence: 1 }),
-      unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); return ++judgments === 1 ? 0.99 : 0.01; },
+      unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); judgments++; return 0.99; },
     } }) });
     s.send("read this article");
     await s.whenIdle();

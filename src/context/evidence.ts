@@ -96,6 +96,38 @@ function fallback(message: AssistantMessage, state: ReturnType<typeof currentTur
   return assistantOutput(message, [{ type: "text", text: body }]);
 }
 
+function safeTerminal(message: AssistantMessage, usage: AssistantMessage["usage"]): AssistantMessage {
+  if (message.stopReason === "error") return assistantOutput({ ...message, errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." }, [], usage);
+  if (message.stopReason === "aborted") return assistantOutput({ ...message, errorMessage: "Generation was cancelled before a checked reply was available." }, [], usage);
+  return assistantOutput(message, message.content, usage);
+}
+
+/** Forwards a reply that needs no evidence check as it is generated, adding the usage spent before it. */
+function passThrough(upstream: AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> }, priorUsage: AssistantMessage["usage"]) {
+  const output = createAssistantMessageEventStream();
+  let partial: AssistantMessage | undefined;
+  void (async () => {
+    try {
+      for await (const event of upstream) {
+        if (event.type === "done") output.push({ ...event, message: safeTerminal(event.message, addUsage(priorUsage, event.message.usage)) });
+        else if (event.type === "error") output.push({ ...event, error: safeTerminal(event.error, addUsage(priorUsage, event.error.usage)) });
+        else {
+          if ("partial" in event) partial = event.partial;
+          output.push(event);
+        }
+      }
+      const message = await upstream.result();
+      output.end(safeTerminal(message, addUsage(priorUsage, message.usage)));
+    } catch (error) {
+      const base = partial ?? ({ role: "assistant", content: [], api: "unknown", provider: "unknown", model: "unknown", usage: zeroUsage(), timestamp: Date.now() } as unknown as AssistantMessage);
+      const failed = safeTerminal({ ...base, stopReason: "error", errorMessage: error instanceof Error ? error.message : String(error) }, priorUsage);
+      output.push({ type: "error", reason: "error", error: failed });
+      output.end(failed);
+    }
+  })();
+  return output;
+}
+
 export interface EvidenceBoundaryOptions {
   /** What each tool's results prove; tools without a profile prove nothing. */
   profiles: EvidenceProfiles;
@@ -109,8 +141,10 @@ export interface EvidenceBoundaryOptions {
 }
 
 /**
- * Buffers every assistant generation until its operation claims pass the evidence check, retries
- * once with a correction, and otherwise replaces the reply with what the receipts establish.
+ * When the run involves the owner's links, tool results or a required tool, holds back each
+ * generation until its operation claims pass the evidence check, retries once with a correction,
+ * and otherwise replaces the reply with what the receipts establish. Every other reply streams to
+ * the owner as it is generated.
  */
 export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundaryOptions): StreamFn {
   return async (model, originalContext, callOptions) => {
@@ -132,6 +166,14 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     }
     callOptions?.signal?.throwIfAborted();
     let accumulatedUsage = addUsage(zeroUsage(), options.takeUsage?.() ?? zeroUsage());
+    if (!state.urls.length && !state.hasResults && !routeRequired) {
+      try {
+        return passThrough(await stream(model, context, callOptions), accumulatedUsage);
+      } catch (error) {
+        options.returnUsage?.(accumulatedUsage);
+        throw error;
+      }
+    }
     let lastProviderMessage: AssistantMessage | undefined;
     for (let attempt = 0; attempt < 2; attempt++) {
       if (callOptions?.signal?.aborted) {
