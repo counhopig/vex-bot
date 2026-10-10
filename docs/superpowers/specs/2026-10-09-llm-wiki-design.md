@@ -1,7 +1,7 @@
 # LLM Wiki for the Notes Vault — Design
 
 **Date:** 2026-10-09
-**Status:** Rev 5 — locked transaction, scoped guarantee, recovery boundaries; awaiting re-review
+**Status:** Rev 6 — phased transaction, operation identity, scan-boundary recovery; awaiting re-review
 **Scope:** Architectural. Adds a new subsystem, `src/wiki/`, and makes the configured vault writable inside two owned subtrees.
 
 ## 1. Problem
@@ -24,8 +24,8 @@ Constraints chosen during brainstorming:
 6. **Automatic writes with a safety net**: writes and pushes are automatic; every batch sends a WeChat notification and can be rolled back.
 7. **Consumption is both**: browsable in Obsidian and queryable through Vex with citations.
 8. **Approach 1 (hybrid)**: safety mechanics in core code, editorial flow in a bundled skill.
-9. **Single automatic writer, locked transaction** (finalized after review; supersedes the earlier "reuse `write`/`edit` with a policy allow-list"): the only **automatic** vault writer is the wiki subsystem, through dedicated tools available only inside a locked wiki run. General `write`/`edit` never write the vault. The guarantee is scoped: owner-approved `bash`, MCP, and `delegate` are not constrained by the lock (§9).
-10. **Stable batch identity**: every batch commit carries a `Vex-Batch` trailer; state stores batch ids, not raw SHAs, so rebase and state-loss windows are recoverable (§4.8).
+9. **Single automatic writer, locked transaction** (supersedes the earlier "reuse `write`/`edit` with a policy allow-list"): the only **automatic** vault writer is the wiki subsystem, through dedicated tools inside a locked wiki run. General `write`/`edit` never write the vault. Owner-approved `bash`, MCP, and `delegate` are not constrained by the lock (§9).
+10. **Durable transaction state**: batch/rollback identity, the transaction phase, write fingerprints, and the scan boundary live in durable git trailers and an in-flight marker, so every crash window is recoverable (§4.8).
 
 ## 3. Goals and Non-Goals
 
@@ -43,7 +43,7 @@ Constraints chosen during brainstorming:
 - No changes to the existing memory index (`memory_search`) or compaction.
 - No editing of the owner's pre-existing notes.
 - No embeddings/vector store; retrieval stays keyword + link based like the existing vault tools.
-- No OS-level sandbox for `bash`/MCP in this design (§9); that is Deferred.
+- No OS-level sandbox for `bash`/MCP in this design (§9); Deferred.
 
 ## 4. Architecture
 
@@ -53,7 +53,7 @@ Constraints chosen during brainstorming:
 |---|---|---|
 | `src/vault/git.ts` | Extend | Writable working copy: clone, fetch, rebase, commit, push, path-limited checkout/clean, trailers. Keep the read-only mirror for vault-only setups. |
 | `src/vault/notes.ts` | Small change | Read from the shared writable working copy when the wiki is enabled. |
-| `src/wiki/` (new) | New | Working copy, lock, batch transaction, in-flight marker, change detection, state file, integrity guard, run orchestration, notifications, bootstrap, rollback, history reconciliation. |
+| `src/wiki/` (new) | New | Working copy, lock, phased batch transaction, in-flight marker, change detection, state file, integrity guard, run orchestration, notifications, bootstrap, rollback, history reconciliation. |
 | `src/tools/` (new) | New | Interactive `wiki_ingest`, `wiki_bootstrap`, `wiki_rollback`; run-internal `wiki_write`, `wiki_edit`. |
 | `src/policy/policy.ts` | Small change | Vault paths in `write`/`edit` are clamped to deny; no allow-list opens them. |
 | `skills/llm-wiki/SKILL.md` (new) | New | Editorial procedure: synthesize topic pages, deduplicate, link, maintain the index, handle deletions, never copy secrets. |
@@ -66,48 +66,77 @@ Layering stays as it is: `src/wiki/` depends on `src/vault/git.ts`; the daemon w
 
 ### 4.2 Write path and locked transaction
 
-**Automatic single writer.** The vault's `wiki/` and `raw/` subtrees are written automatically only through `wiki_write`/`wiki_edit`, registered **only** inside a wiki run and bound to those two subtrees. General `write`/`edit` never write the vault. Owner-approved `bash`/MCP/delegate are outside this guarantee and are covered by the integrity guard and attribution rules below, not by the lock (§9).
+**Automatic single writer.** The vault's `wiki/` and `raw/` subtrees are written automatically only through `wiki_write`/`wiki_edit`, available **only** inside a wiki run and bound to those subtrees. General `write`/`edit` never write the vault. Owner-approved `bash`/MCP/delegate are outside this guarantee and are covered by the integrity guard and attribution rules below, not by the lock (§9).
 
 **One lock per working copy.** The `Wiki` service owns an in-process async mutex. Every wiki run goes through `Wiki.run(kind, task, signal)`:
 
 1. **Acquire the lock.** If busy: an interactive tool reports "wiki run in progress"; a scheduled tick is skipped and retried.
-2. **Reconcile state from history** (§4.8) and **settle a pending rollback** (§4.6) first. If the pending rollback cannot be completed, abort and notify; no new batch starts.
-3. **Inspect the working tree, before any git sync.** Changes outside `wiki/`/`raw/` are not Vex's: abort and alert. Changes inside `wiki/`/`raw/` are cleaned only when they are **attributable** to an incomplete wiki transaction via the in-flight marker (§4.2.1); unattributable changes are kept and alerted, and the run aborts.
-4. **Preview check.** If an unpushed bootstrap preview exists (§4.8), abort and notify; a preview is never auto-pushed.
-5. **Fetch.** Then `git rebase origin/<branch>` (the tree is clean by step 3). On conflict: abort the rebase, restore a clean tree, notify, release.
-6. **Unpushed normal commits.** If `HEAD` is ahead of `origin/<branch>` after the rebase, try to push. If that fails, keep the commit, abort the run without processing anything, and notify. Batch ids keep the reference stable across the rebase.
-7. **Begin.** Record `baseHead = HEAD` and write the in-flight marker.
-8. **Run.** Launch a temporary agent run (`temporary: "wiki"`) with the restricted toolset (§7). No `bash`, MCP, network tools, or generic file `read`.
-9. **Finalize.** Stage only the paths recorded in the in-flight marker, run the integrity guard and boundary check (§8), commit once with a `Vex-Batch` trailer (unless the bootstrap withholds the push, §4.7), push, advance state, remove the marker, notify.
-10. **On failure:** revert only the recorded paths to `baseHead`, remove recorded untracked files, leave everything else, remove the marker, leave state unchanged, notify, release.
+2. **Fetch** (`git fetch`, read-only, does not touch the working tree) so remote-tracking refs are fresh before any decision about published state.
+3. **Reconcile from history** with the fresh refs (§4.8): recover batch identity, phase, scan boundary, and any pending rollback. If the in-flight marker's `batchId` already has a commit, the batch committed: mark the marker `committed` and record that commit. A committed batch is never restored from files.
+4. **Inspect the working tree and clean attributable leftovers (writing phase only).** Changes outside `wiki/`/`raw/` are not Vex's: abort and alert. Changes inside the subtrees are cleaned only when the marker is in the `writing` phase and each path still matches its recorded fingerprint (§4.2.1); anything else is kept and alerted, and the run aborts.
+5. **Settle a pending rollback** (§4.6). If it cannot be completed, abort and notify; no new batch starts. This is after the fetch and integrity checks.
+6. **Preview check.** If an unpushed bootstrap preview exists, abort and notify; a preview is never auto-pushed.
+7. **Rebase** onto `origin/<branch>` (the tree is clean by step 3). On conflict: abort the rebase, restore a clean tree, notify, release.
+8. **Unpushed normal commits.** If `HEAD` is ahead of `origin/<branch>` after the rebase, try to push. If that fails, keep the commit, abort the run without processing anything, and notify.
+9. **Begin.** Record `baseHead = HEAD` and write the in-flight marker with `phase: "writing"`.
+10. **Run.** Launch a temporary agent run (`temporary: "wiki"`) with the restricted toolset (§7). No `bash`, MCP, network tools, or generic file `read`.
+11. **Finalize.** Stage only the recorded paths, run the integrity guard and boundary check (§8), commit once with the batch trailers, mark the marker `committed`, push, advance state, remove the marker, notify.
+12. **Failure before commit**: restore only recorded paths that still match their recorded fingerprint, remove recorded untracked files, remove the marker, leave state unchanged, notify.
+13. **Failure after commit**: keep the commit and the marker (`phase: "committed"`), notify, and let the next reconciliation complete publication. Files are never rolled back after a commit.
 
-**Attribution.** The lock is held for the whole run and only the run's tools write the vault, so every recorded `wiki/`/`raw/` change between steps 7 and 9 belongs to this batch. Because the lock cannot constrain owner-approved `bash`/MCP, attribution is by the in-flight marker, not by path alone.
+### 4.2.1 In-flight marker: fingerprints, attribution, and phase
 
-#### 4.2.1 In-flight marker and attribution
+At begin, write `<git-dir>/vex-wiki-inflight.json`:
 
-- At begin, write `<git-dir>/vex-wiki-inflight.json` = `{ batchId, baseHead, touched: [] }`.
-- Every `wiki_write`/`wiki_edit` appends its target path to `touched` before writing.
-- Cleanup may revert to `baseHead` or remove **only** the paths in `touched`. Tracked paths are restored with a path-limited checkout; untracked ones are removed.
-- Any `wiki/`/`raw/` change not in `touched`, and any change outside the subtrees, is unattributable: keep it, alert, and abort. This applies at begin, at finalize, and on crash recovery.
-- If the marker is missing but the subtrees are dirty, the change is unattributable: keep and alert.
+```json
+{
+  "batchId": "<uuid>",
+  "kind": "scheduled | bootstrap | on-demand",
+  "advancesScan": true,
+  "scanBase": "<sha | null>",
+  "baseHead": "<sha>",
+  "phase": "writing | committed",
+  "commit": "<sha | null>",
+  "touched": [
+    { "path": "wiki/a.md", "before": { "type": "absent | file", "hash": "<sha256>" },
+      "after": { "type": "file", "hash": "<sha256>" } }
+  ]
+}
+```
+
+- `wiki_write`/`wiki_edit` record the target's `before` (type and content hash) and `after` (type and hash) before returning.
+- **Attribution is by fingerprint, not by path.** At cleanup or finalize, a `touched` path is attributable only if its **current** type and hash equal its recorded `after`. If it changed again (for example, an owner-approved `bash` edited the same file), the path is unattributable: keep it, alert, and abort. It is never silently committed or discarded.
+- Cleanup reverts exactly the attributable recorded paths to `baseHead` (tracked) or removes them (untracked). Nothing else is touched.
+- The marker is updated to `phase: "committed"` with the new `commit` SHA in the same step as the git commit, before any push.
+- A missing marker with a dirty subtree means the change is unattributable: keep and alert.
+
+### 4.2.2 Transaction phases
+
+| Phase | Meaning | Allowed actions on failure |
+|---|---|---|
+| `writing` | Files are being written; no commit yet. | Restore attributable recorded paths; remove marker. |
+| `committed` | The batch commit exists; not necessarily pushed. | Keep the commit and marker; retry publication. **Never** roll back files. |
+| published | The commit is on `origin/<branch>`. | Advance state, remove marker, notify. |
+
+Only the `writing` phase permits file restoration. A push failure, a state-write failure, or a notification failure after the commit leaves the commit in place and the marker `committed`; reconciliation completes it. This prevents a post-commit failure from producing a dirty tree against a committed HEAD.
 
 ### 4.3 Data flow — scheduled ingest
 
 1. The scheduler runs at the `wiki.every` cadence only when `wiki.enabled` and `bootstrap: done`.
 2. It enters `Wiki.run("scheduled", ...)` (§4.2). This kind processes the full diff and **advances the scan cursor**.
-3. Change detection computes added/modified/deleted notes since `lastScanCommit` (§6), including previous content for deletions.
-4. If nothing changed, the run ends as a **no-output success**: advance `lastScanCommit` to `baseHead` (only if `HEAD == origin/<branch>`, §8), leave `lastBatchId` unchanged, release; no commit, no push, no model call, no notification.
+3. Change detection computes added/modified/deleted notes since `lastScanCommit` (§6), including previous content for deletions. `scanBase` is the pre-run `HEAD`; `advancesScan` is true.
+4. If nothing changed, the run ends as a **no-output success**: advance `lastScanCommit` to `scanBase` (only if `HEAD == origin/<branch>`, §8), leave `lastBatchId` unchanged, release; no commit, no push, no model call, no notification.
 5. Otherwise the changed notes are split into chunks; each chunk is one model call.
-6. After the last chunk the run finalizes as in §4.2 step 9.
+6. After the last chunk the run finalizes as in §4.2 step 11.
 
 ### 4.4 Data flow — on-demand ingest
 
 1. The owner sends a link, text, or file in WeChat/WebChat.
 2. The **main session** fetches or extracts the content (`web_fetch`, or the link-reader skill). The owner is present, so the normal toolset and approvals apply.
-3. The main session calls `wiki_ingest({ url?, title?, text })`. `text` carries the extracted content; `url` and `title` are provenance metadata.
-4. `wiki_ingest` starts `Wiki.run("on-demand", ...)` with the provided source. This kind **does not advance the scan cursor**; a vault diff that arrived since `lastScanCommit` stays pending for the next scheduled run. The run writes `raw/`, compiles `wiki/`, commits, pushes, notifies, and returns a summary.
+3. The main session calls `wiki_ingest({ url?, title?, text })`.
+4. `wiki_ingest` starts `Wiki.run("on-demand", ...)` with the provided source. This kind has `advancesScan: false` and `scanBase: null`: it **does not move the scan cursor**, so a vault diff that arrived since `lastScanCommit` stays pending for the next scheduled run. The run writes `raw/`, compiles `wiki/`, commits, pushes, notifies, and returns a summary.
 5. While `bootstrap: pending`, `wiki_ingest` refuses and tells the owner to approve or reject the first compile.
-6. If the session ends before the run finishes, the transaction either commits or aborts per §4.2; no partially-written tree is left unattended (the in-flight marker governs recovery).
+6. If the session ends before the run finishes, the transaction either commits or aborts per §4.2; the in-flight marker governs recovery.
 
 ### 4.5 Data flow — query
 
@@ -117,47 +146,55 @@ Layering stays as it is: `src/wiki/` depends on `src/vault/git.ts`; the daemon w
 
 ### 4.6 Data flow — rollback
 
-`wiki_rollback` reverts the most recent committed batch exactly once, distinguishing published from unpublished commits. It is refused while `bootstrap: pending`.
+`wiki_rollback` reverts the most recent committed compile batch exactly once. It is refused while `bootstrap: pending`.
 
-1. Acquire the lock; if busy, report "wiki run in progress". Require a clean tree.
-2. Resolve `lastBatchId` to a commit (§4.8). If it cannot be resolved uniquely, report and stop.
-3. If the batch commit is **not on the remote**: discard it locally (`git reset --hard <parent>`) — **no push** — clear `lastBatchId`, done.
-4. If it **is on the remote**: `git revert --no-edit` with a `Vex-Batch` trailer and a `Vex-Revert-Of: <batchId>` trailer. Record `rollback = { targetBatchId, revertId }` in state **before** pushing. Push.
-   - On a revert conflict: `git revert --abort`, keep `lastBatchId` and no `rollback`, notify for manual resolution.
-   - On push failure: keep the `rollback` state and the local revert commit, notify, and retry later. Never force push.
+1. Acquire the lock; if busy, report "wiki run in progress".
+2. **Fetch and run the integrity guard before any destructive step.** Require a clean tree.
+3. Resolve `lastBatchId` to a commit (§4.8). If it cannot be resolved uniquely, report and stop.
+4. Re-evaluate the published status **against the freshly fetched remote ref**.
+   - **Unpublished**: discard locally **only if the target is the local tip** (`HEAD == target`, i.e. no commit we must keep follows it). Then `git reset --hard <parent>`, clear `lastBatchId`, done. If the target is not the tip, keep it and alert instead of resetting.
+   - **Published**: `git revert --no-edit` with a rollback identity and `Vex-Revert-Of: <batchId>` trailers. Record `rollback = { targetBatchId, revertId }` in state **before** pushing. Push.
+     - Revert conflict: `git revert --abort`, keep `lastBatchId`, no pending `rollback`, notify.
+     - Push failure: keep the `rollback` state and the local revert commit, notify, retry later. Never force push.
 5. On push success (or already-on-remote), clear `lastBatchId` and `rollback`, and report the resulting commit.
 6. A second `wiki_rollback` while `rollback` is pending **completes** the pending rollback instead of creating another revert.
-7. Rollback does not move `lastScanCommit`: the rejected compilation is not regenerated until its source notes change again.
+7. Rollback does not move `lastScanCommit`; the rejected compilation is not regenerated until its sources change again.
 
 ### 4.7 Bootstrap
 
 The first full compile is reviewed before Vex may push anything.
 
-- **Trigger.** When `wiki.enabled` is true, `bootstrap` is not `done`, no preview is awaiting review (§4.8), and the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5), the scheduler launches a one-time bootstrap run. The launch is evaluated on the one-second tick but gated by the backoff, so a failure does not produce a retry storm.
-- **Run.** The bootstrap run compiles the whole vault in chunks, commits locally with a `Vex-Batch` trailer and a `wiki: bootstrap preview` subject, and withholds the push. It records `lastBatchId` and notifies the owner. `bootstrap` stays `pending`.
-- **Empty vault / no changes.** The run ends as a no-output success and immediately sets `bootstrap: done`; there is nothing to review.
-- **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, and follow §8's rebase/retry rules to push the preview. On a rebase conflict, abort the rebase, keep the preview and `bootstrap: pending`, and notify; never force push. On success, set `bootstrap: done` and arm the cadence. With no pending preview, report that there is nothing to approve.
-- **Reject** (`wiki_bootstrap({ action: "reject" })`): acquire the lock and discard the unpublished preview locally (`git reset --hard <parent>`) — **no push** — keeping `bootstrap: pending` so it can be rebuilt. With no pending preview, report that there is nothing to reject.
+- **Trigger.** When `wiki.enabled` is true, `bootstrap` is not `done`, no preview is awaiting review, and the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5), the scheduler launches a one-time bootstrap run. The launch is evaluated on the one-second tick but gated by the backoff.
+- **Run.** The bootstrap run compiles the whole vault in chunks, commits locally with the batch trailers and a `wiki: bootstrap preview` subject, and withholds the push. It records `lastBatchId` and notifies the owner. `bootstrap` stays `pending`.
+- **Empty vault / no changes.** No-output success; immediately set `bootstrap: done`.
+- **Approve** (`wiki_bootstrap({ action: "approve" })`): acquire the lock, fetch, run the integrity guard, and follow §8's rebase/retry to push the preview. On rebase conflict, abort the rebase, keep the preview and `bootstrap: pending`, notify; never force push. On success, set `bootstrap: done` and arm the cadence. With no pending preview, report that there is nothing to approve.
+- **Reject** (`wiki_bootstrap({ action: "reject" })`): acquire the lock, **fetch first and re-verify against the fresh remote ref that the preview is still unpublished**. If it is now published, do not reset; report that it was approved and mark `bootstrap: done`. If still unpublished **and the preview is the local tip**, discard it locally (`git reset --hard <parent>`) — no push — keeping `bootstrap: pending`. If the preview is not the tip, keep it and alert. With no pending preview, report that there is nothing to reject.
 - While `pending`, `wiki_ingest` and `wiki_rollback` refuse; only `wiki_bootstrap` acts.
 
-### 4.8 Batch identity, preview recognition, and state recovery
+### 4.8 Durable identity, reconciliation, and scan recovery
 
-**Identity.** Every batch commit's message contains the trailer `Vex-Batch: <uuid>`; the bootstrap preview additionally starts its subject with `wiki: bootstrap preview`; a revert commit adds `Vex-Revert-Of: <uuid>`. State stores batch ids (`lastBatchId`, `rollback.targetBatchId`, `rollback.revertId`), not raw SHAs. SHAs are resolved from history on demand.
+**Identity and trailers.** Compile batches carry `Vex-Batch: <uuid>`, `Vex-Kind: scheduled|bootstrap|on-demand`, and `Vex-Scan-Base: <sha|none>`; a bootstrap preview also starts its subject with `wiki: bootstrap preview`. Rollback commits carry `Vex-Rollback: <uuid>` and `Vex-Revert-Of: <batchId>` and **no `Vex-Batch`**, so a rollback is never mistaken for a compile batch. State stores ids, not SHAs.
 
-**Resolution.** To resolve an id, search both `origin/<branch>..HEAD` (unpublished) and `origin/<branch>` (published):
+**Resolution** (after a fetch, searching both `origin/<branch>..HEAD` and `origin/<branch>`):
 
 - **Exactly one match** → that commit, with a published flag.
-- **No match** → the commit no longer exists (eliminated by rebase, reset, or it was never created). Clear the corresponding state reference. If a rollback was expected, alert; do not attempt a revert.
-- **More than one match** → treat as corruption: abort and alert, take no automatic action.
+- **No match** → the commit was eliminated (rebase/reset/never created): clear the reference; if a rollback was expected, alert; do not revert.
+- **More than one match** → corruption: abort and alert, take no automatic action.
 
-**Crash and state-loss recovery (reconciliation).** On startup and before every run, reconcile from history:
+**Reconciliation procedure** (startup and before every run, with fresh refs):
 
-- Find the newest `Vex-Batch` commit. If state is missing or stale, set `lastBatchId` from it and `bootstrap` to `done` when it is published, or to `pending` when it is an unpublished preview.
-- Scan for a revert commit whose `Vex-Revert-Of` trailer references `lastBatchId` or a persisted `rollback.targetBatchId`. If found: published → the rollback is complete, clear `lastBatchId` and `rollback`; unpushed → complete the push. This recovers a revert committed just before a crash, before the rollback state was written. If a persisted `rollback` exists but no revert commit does, the revert was never committed and the rollback may be re-attempted.
-- An unpushed commit with the `wiki: bootstrap preview` subject means the preview is awaiting review: `bootstrap: pending`, never auto-pushed.
-- No marker and missing state: `bootstrap: pending` with a full scan (conservative).
+1. Resolve the in-flight marker against history: if a commit with the marker's `Vex-Batch` id exists, the batch is committed — set the marker `committed`, record the commit, and never restore its files.
+2. Enumerate **compile batches** (commits with `Vex-Batch`) and **rollbacks** (commits with `Vex-Rollback`/`Vex-Revert-Of`). Rollbacks are never candidates for `lastBatchId`.
+3. Determine the newest compile batch `B_new`.
+   - If a rollback commit references `B_new`: published → the rollback is complete, clear `lastBatchId`; unpushed → complete the push, then clear. `B_new` is not offered for reverting again.
+   - Else if `B_new` is an unpublished preview → `bootstrap: pending`, `lastBatchId = B_new`.
+   - Else → `lastBatchId = B_new`.
+   - With no compile batch, `lastBatchId = null` and `bootstrap: pending`.
+4. Recover a revert committed just before a crash: if a `Vex-Rollback` commit references `lastBatchId` or a persisted `rollback.targetBatchId`, treat the rollback as executed (complete its push if unpushed) and clear, even if the `rollback` state was never written.
+5. Recover the **scan cursor** from `Vex-Scan-Base` of compile batches that have `Vex-Kind` of `scheduled` or `bootstrap`, taking the boundary of the newest such batch. **Never** use the rebased parent commit, which may contain uncompiled sources. An `on-demand` batch has no scan base and never moves the cursor. Reverted batches keep their scan base, so a rollback does not make the same sources recompile.
+6. If no scan base is recoverable and the state is missing, fall back to a full scan.
 
-**Precedence.** Preview protection and pending-rollback completion take precedence over the generic unpushed-commit push (§4.2 step 6) and over the no-output advance (§8).
+**Precedence.** Preview protection and pending-rollback completion take precedence over the generic unpushed-commit push (§4.2 step 8) and over the no-output advance (§8).
 
 ## 5. Data Model
 
@@ -227,8 +264,8 @@ Stored outside the vault at `<data>/state/wiki.json`, never committed:
 }
 ```
 
-- `lastScanCommit` advances on a successful push, an already-on-remote HEAD, or a no-output batch with nothing unpushed; never on abort, and never for an on-demand run.
-- `lastBatchId` is the most recent committed batch (published or a bootstrap preview awaiting review); `null` if none.
+- `lastScanCommit` advances on a successful publish of a run with `advancesScan`, or a no-output batch with nothing unpushed; never on abort, and never for an on-demand run.
+- `lastBatchId` is the most recent committed **compile** batch (published or an unpublished preview awaiting review); `null` if none or after a rollback.
 - `bootstrap` gates the cadence (§4.7) and is reconciled from history on state loss (§4.8).
 - `rollback` is present only while a revert is pending publication (§4.6).
 - `nextAttemptAt` / `failureStreak` implement the retry backoff: a failed run increments the streak and sets `nextAttemptAt = now + min(1h, 5m x 2^(streak-1))`; a success resets both. Runs launch only when `now >= nextAttemptAt`.
@@ -236,7 +273,7 @@ Stored outside the vault at `<data>/state/wiki.json`, never committed:
 ### 5.6 State lifecycle
 
 - **Missing or partial state while `wiki.enabled`**: reconcile from history (§4.8); default `bootstrap: pending` and a full scan.
-- **Disabled** (`wiki.enabled` false): the cadence stops; a pending preview and a pending rollback are retained. Re-enabling resumes the review or completes the rollback first.
+- **Disabled** (`wiki.enabled` false): the cadence stops; a pending preview and a pending rollback are retained. Re-enabling settles the rollback and resumes the review first.
 - **`lastScanCommit` missing or no longer an ancestor of `HEAD`**: full scan.
 
 ### 5.7 Page naming
@@ -250,48 +287,48 @@ Topic slugs are stable once created; renaming breaks `[[wikilinks]]`. Aliases go
 - If `lastScanCommit` is missing or is no longer an ancestor of `HEAD`, fall back to a full scan.
 - The diff is split into chunks of at most `wiki.maxNotesPerRun` notes; this bounds **one model call**, and a run processes every chunk and still makes exactly one commit.
 - Each deleted path is accompanied by its previous content from `git show <lastScanCommit>:<path>`.
-- **Cursor rule.** Only a run that processes the vault diff may advance `lastScanCommit` (`advancesScan`): scheduled and bootstrap runs advance it; on-demand runs do not. This prevents an on-demand ingest from skipping a pending vault change.
+- **Cursor rule.** Only a run with `advancesScan` may advance `lastScanCommit`, and it records its `scanBase` in the commit trailers so recovery can reconstruct the cursor without using a rebased parent.
 
 ## 7. Ingest Execution
 
 - A run's prompt lists the changed notes (or the on-demand source) and embeds the **body of `skills/llm-wiki/SKILL.md`, read and injected by the core**.
 - The run toolset is `vault_search`, `vault_read`, `wiki_write`, `wiki_edit`. There is no generic file `read`, no `bash`, no MCP, and no network tool, so a run cannot read configuration or secrets outside the vault.
 - The editorial procedure: read changed notes (and deleted-note previous content), identify topics, update or create topic pages, update `_index.md`, add `[[wikilinks]]`, record `sources`, apply the deletion rule, and never copy secret values.
-- `wiki_write` overwrites a page; `wiki_edit` makes a targeted replacement. Both reject lexical paths outside `wiki/`/`raw/` and enforce the path-safety rule of §9.
+- `wiki_write` overwrites a page; `wiki_edit` makes a targeted replacement. Both reject lexical paths outside `wiki/`/`raw/`, enforce the path-safety rule of §9, and record fingerprints.
 - A failed run leaves state unchanged; the whole diff is retried next attempt. Re-processing compiled notes is idempotent.
 
 ## 8. Git Workflow
 
 - The wiki uses a normal clone (not the read-only mirror) checked out on the configured branch, stored under the data directory.
 - Ordering, preconditions, in-flight marker, and cleanup are in §4.2.
-- **Integrity guard**: before staging, verify `HEAD == baseHead` (no unexpected local commits appeared) and that the only changes are the recorded paths. Any other staged or working-tree change, inside or outside the subtrees, aborts the batch and alerts; nothing unattributable is committed or discarded.
-- Stage exactly the recorded `touched` paths, then commit once with message `wiki: ingest <date> (<N> notes, <M> pages)` and the `Vex-Batch: <uuid>` trailer.
-- Commit only if there are staged changes; one commit per batch.
-- Push. On rejection (non-fast-forward), fetch + rebase + retry up to 2 times. If it still fails, keep the local commit and notify.
-- **Already-pushed recovery**: after a push error, `git fetch` and check `git merge-base --is-ancestor HEAD origin/<branch>`; if HEAD is already on the remote, treat the push as successful and advance state.
+- **Integrity guard**: before staging, verify `HEAD == baseHead` (no unexpected local commits appeared) and that each `touched` path still matches its recorded `after` fingerprint. Any other staged or working-tree change, inside or outside the subtrees, or any fingerprint mismatch, aborts the batch and alerts; nothing unattributable is committed or discarded.
+- Stage exactly the recorded `touched` paths, then commit once with message `wiki: ingest <date> (<N> notes, <M> pages)` and the trailers `Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`.
+- Commit only if there are staged changes; one commit per batch. Immediately update the in-flight marker to `committed` with the commit SHA.
+- Push. On rejection (non-fast-forward), fetch + rebase + retry up to 2 times. If it still fails, keep the local commit and marker, notify; the next reconciliation completes it.
+- **Already-pushed recovery**: after a push error, `git fetch` and check `git merge-base --is-ancestor HEAD origin/<branch>`; if HEAD is already on the remote, treat the push as successful, advance state, and remove the marker.
 - **No-output batches** may advance `lastScanCommit` only when `HEAD == origin/<branch>`. If unpushed normal commits remain, push them first; if that fails, do not advance state and notify. An unpushed preview or a pending rollback stops the run instead.
 - Never force push.
 - Credentials come from `vault.username`/`vault.token` through the environment, as today, but the token needs write scope.
 
 ## 9. Boundaries and Security
 
-**Scope of the guarantee.** The lock and single-writer rules cover Vex's **automatic** write path: `wiki_write`/`wiki_edit` inside a locked wiki run, plus `write`/`edit` clamped away from vault paths. Owner-approved `bash`, MCP tools, and `delegate` are `ask` and are **not** constrained by the lock; an approved command can write, commit, or push the working copy. The design **detects** and refuses unattributable state rather than preventing those channels.
+**Scope of the guarantee.** The lock and single-writer rules cover Vex's **automatic** write path: `wiki_write`/`wiki_edit` inside a locked wiki run, plus `write`/`edit` clamped away from vault paths. Owner-approved `bash`, MCP, and `delegate` are `ask` and are **not** constrained by the lock; an approved command can write, commit, or push the working copy. The design **detects** and refuses unattributable state rather than preventing those channels. A check-then-act race between the guard and the actual operation cannot be eliminated under this scope.
 
-**Integrity guard (detection, not prevention).** At lock acquisition and again before commit, `Wiki` compares the working copy with the expected state: remote advances are normal (fetch/rebase handles them); a local commit it did not create, staged changes it did not stage, or working-tree changes outside the recorded `touched` set are anomalies → abort and alert. Because the lock cannot constrain owner-approved channels, this guard cannot guarantee that no concurrent external write happens during a run; it ensures such a write is not silently committed or discarded.
+**Integrity guard (detection, not prevention).** At fetch time, at lock acquisition, and again before commit, `Wiki` compares the working copy with the expected state: remote advances are normal (fetch/rebase handles them); a local commit it did not create, staged changes it did not stage, a working-tree change outside the recorded `touched` set, or a fingerprint mismatch is an anomaly → abort and alert. This ensures an owner-approved external write is not silently committed or discarded. It cannot guarantee that no concurrent external write happens between a check and the operation.
 
 **Path and write safety**
 
 1. **Tool binding**: `wiki_write`/`wiki_edit` are bound to `<vault>/wiki` and `<vault>/raw`.
 2. **Root validation**: before any target check, verify that `<vault>/wiki` and `<vault>/raw` are genuine directories at their lexical location — `realpath(root) == lexical root`, with no symlinked component. A root that is a symlink (e.g. `wiki -> ../owner-notes`) aborts the run; containment is never checked against a redirected root.
 3. **Target validation at write time**: resolve the target's real path and the real subtree roots (following existing symlinks; for a new path, the nearest existing ancestor, reusing the `resolveRealPath` pattern in `policy.ts`) and reject any target that escapes the subtrees, passes through a directory symlink that escapes, or is a dangling symlink. Abort cleanup cannot restore a file changed outside the subtrees, so this check is primary and the finalize guard is only a backstop.
-4. **Policy clamp**: for `write`/`edit`, any vault path is clamped to `deny` and cannot be opened by `tools.policy` overrides. The protected-path check runs before tool overrides.
-5. **Staging and guard**: stage only recorded paths; the integrity guard rejects anything else.
-6. **Unpublished preview**: a bootstrap commit cannot be pushed except through `wiki_bootstrap({action:"approve"})`.
+4. **Fingerprint attribution**: only paths whose current content matches the recorded `after` fingerprint may be staged or cleaned.
+5. **Policy clamp**: for `write`/`edit`, any vault path is clamped to `deny` and cannot be opened by `tools.policy` overrides.
+6. **Unpublished preview**: a bootstrap commit cannot be pushed except through `wiki_bootstrap({action:"approve"})`, and reject re-verifies unpublished status after a fetch.
 7. **No generic read**: wiki runs have no generic file `read`; the skill body is injected by the core.
 
 Other rules:
 
-- Note text is untrusted input. The automatic-writer boundary, the restricted run toolset, and path validation are the primary mitigations.
+- Note text is untrusted input. The automatic-writer boundary, the restricted run toolset, fingerprint attribution, and path validation are the primary mitigations.
 - Wiki pages must not reproduce credentials, tokens, passwords, or secret values; an optional exclusion list for sensitive notes is Deferred.
 - `wiki_write`/`wiki_edit` exist only inside wiki runs; a normal session cannot obtain them.
 - The existing `vault_read`/`vault_search` tools remain, now reading the shared working copy.
@@ -302,16 +339,16 @@ Other rules:
 
 | Tool | Parameters | Behaviour |
 |---|---|---|
-| `wiki_ingest` | `{ url?, title?, text }` | Start a locked on-demand wiki run with the extracted source; does not advance the scan cursor; return a summary. Refused while the bootstrap is pending. |
-| `wiki_bootstrap` | `{ action: "approve" \| "reject" }` | Approve: push the preview, set `bootstrap: done`, arm the cadence. Reject: discard the unpublished preview locally, keep `pending`. |
-| `wiki_rollback` | none | Revert the most recent committed batch exactly once; unpublished → local discard, published → revert + push; completes a pending rollback (§4.6). Refused while the bootstrap is pending. |
+| `wiki_ingest` | `{ url?, title?, text }` | Start a locked on-demand wiki run with the extracted source; `advancesScan: false`; return a summary. Refused while the bootstrap is pending. |
+| `wiki_bootstrap` | `{ action: "approve" \| "reject" }` | Approve: push the preview, set `bootstrap: done`, arm the cadence. Reject: fetch and re-verify unpublished, then discard only if it is the local tip; otherwise keep and alert. |
+| `wiki_rollback` | none | Revert the most recent committed compile batch exactly once; fetch + integrity guard first; unpublished discard only when it is the local tip; published → revert + push; completes a pending rollback. Refused while the bootstrap is pending. |
 
 **Run-internal tools** (registered only inside `temporary: "wiki"` runs)
 
 | Tool | Parameters | Behaviour |
 |---|---|---|
-| `wiki_write` | `{ path, content }` | Write a page under `wiki/`/`raw/`; reject other paths and any real path that escapes them (§9); record the path in the in-flight marker. |
-| `wiki_edit` | `{ path, oldText, newText, replaceAll? }` | Targeted replacement under `wiki/`/`raw/`; same path-safety check and recording. |
+| `wiki_write` | `{ path, content }` | Write a page under `wiki/`/`raw/`; reject other paths and any real path that escapes them (§9); record before/after fingerprints. |
+| `wiki_edit` | `{ path, oldText, newText, replaceAll? }` | Targeted replacement under `wiki/`/`raw/`; same path safety and fingerprint recording. |
 
 `vault_search` and `vault_read` are also available inside wiki runs. All three interactive tools are serialized by the working-copy lock and report "wiki run in progress" when it is busy.
 
@@ -324,7 +361,7 @@ Other rules:
 | `wiki.notify` | `true` | WeChat notification per batch. |
 | `wiki.maxNotesPerRun` | `20` | Notes per model call; a run processes every chunk. |
 
-`wiki.enabled` requires a git-backed vault: `vault.url` with a write-scoped token. A local `vault.path` folder is **not** supported by this design, because automatic commit and push need a remote. Validation rejects `wiki.enabled` without `vault.url`.
+`wiki.enabled` requires a git-backed vault: `vault.url` with a write-scoped token. A local `vault.path` folder is **not** supported by this design. Validation rejects `wiki.enabled` without `vault.url`.
 
 **Editable settings**: `wiki.enabled`, `wiki.every`, `wiki.notify`, `wiki.maxNotesPerRun` are added to `settings.ts` `ALLOWED` and the WebChat settings fields. The vault token stays a vault secret.
 
@@ -333,7 +370,7 @@ Other rules:
 **Scheduler / daemon**:
 
 - The scheduler gains a `wiki` option. Its one-second tick evaluates the wiki schedule but launches only when the retry backoff has elapsed (`now >= nextAttemptAt`, §5.5):
-  - If `wiki.enabled`, `bootstrap` is not `done`, and no preview is awaiting review (§4.8) → launch the one-time bootstrap run.
+  - If `wiki.enabled`, `bootstrap` is not `done`, and no preview is awaiting review → launch the one-time bootstrap run.
   - If `wiki.enabled` and `bootstrap: done` → run at `wiki.every`.
 - The daemon opens wiki runs as `temporary: "wiki"` with the restricted toolset, injects the skill body, and wires the interactive tools to the same `Wiki` service.
 
@@ -343,19 +380,23 @@ Other rules:
 |---|---|
 | Pending rollback cannot be completed | Abort the run, notify; no new batch. |
 | Changes outside `wiki/`/`raw/` at run start | Abort and alert; no writes. |
-| Unattributable `wiki/`/`raw/` changes at run start | Keep, alert, abort; never auto-clean. |
-| Attributable stale changes (in-flight marker) | Restore only recorded paths to `baseHead`; continue. |
+| Unattributable or fingerprint-mismatched subtree change | Keep, alert, abort; never auto-commit or auto-clean. |
+| Attributable stale changes (marker + matching fingerprint) | Restore only recorded paths to `baseHead`; continue. |
 | fetch / rebase conflict | Abort the rebase, restore a clean tree, notify, no commit, state unchanged. |
 | Unpushed normal commits, push fails | Keep the commit, abort the run, notify, retry after backoff. |
 | Unpushed bootstrap preview at run start | Abort; the preview is never auto-pushed. |
-| Model error or timeout | Revert recorded paths, remove marker; state unchanged; notify. |
-| Integrity guard trip at finalize | Abort, restore recorded paths, alert; nothing unattributable committed or discarded. |
-| Push rejected | Rebase and retry twice; then keep the local commit and notify. Never force push. |
-| Push error but HEAD already on remote | Treat as success and advance state. |
+| Model error or timeout before commit (`writing`) | Restore attributable recorded paths, remove marker; state unchanged; notify. |
+| Push / state / notification failure after commit (`committed`) | Keep the commit and marker; never roll files back; next reconciliation completes publication. |
+| Integrity guard trip at finalize | Abort, restore attributable recorded paths, alert; nothing unattributable committed or discarded. |
+| Push rejected | Rebase and retry twice; then keep the commit and notify. Never force push. |
+| Push error but HEAD already on remote | Treat as success, advance state, remove marker. |
 | No file changes, nothing unpushed | No-output success: advance scan state; no commit/push/notification. |
 | No file changes but unpushed normal commits exist | Push first; if that fails, do not advance state and notify. A preview or pending rollback stops the run instead. |
 | Rollback push failure | Keep `rollback` state and the local revert, notify; complete before any new batch; a second call completes, never re-reverts. |
-| Batch id not found / multiple matches | No match: clear the reference, alert if a rollback was expected. Multiple: abort, alert, no automatic action. |
+| Rollback/reject target no longer the local tip | Keep and alert; do not `reset`. |
+| Rollback/reject target published after all | Complete/acknowledge as published; never reset. |
+| Batch/rollback id not found / multiple matches | No match: clear the reference, alert if a rollback was expected. Multiple: abort, alert, no automatic action. |
+| Scan base unrecoverable | Full scan; never derive the cursor from a rebased parent. |
 | Bootstrap/model failure | Back off (`nextAttemptAt`); notify at most once per backoff step. |
 | Lock busy | Interactive tool reports "wiki run in progress"; scheduled tick retries later. |
 | Path-safety rejection (symlink/`..`/root) | Reject before writing; report to the run. |
@@ -366,23 +407,25 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 
 **Unit**
 
-- Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects; path-limited checkout/clean; trailers.
+- Writable repo: clone/fetch/rebase/commit/push against a local bare repository; conflict aborts without side effects; path-limited checkout/clean; trailers parse.
 - Lock: concurrent runs serialize; a busy lock makes interactive tools report and scheduled ticks skip.
-- Attribution: attributable stale changes are restored; unattributable `wiki/`/`raw/` and out-of-subtree changes are kept and abort the run; missing marker with a dirty tree keeps changes.
-- Integrity guard: a commit or staged change the service did not create aborts; remote advances do not.
+- Attribution: a `touched` path modified again after the wiki write is kept and alerts; a matching fingerprint is restored/committed; missing marker with a dirty tree keeps changes.
+- Phases: a failure before commit restores files; a push/state/notification failure after commit keeps the commit and never dirties the tree against it.
+- Integrity guard: an unexpected commit, staged change, or fingerprint mismatch aborts; remote advances do not.
 - Change detection: added/modified/deleted, subtree exclusions, non-ancestor fallback, first-run full scan.
 - Chunking: N+1 notes with `maxNotesPerRun = N` produce two model calls and exactly one commit.
-- Cursor: an on-demand ingest does not advance `lastScanCommit`; a pending vault change is processed by the next scheduled run.
-- State: advances on successful push, already-on-remote HEAD, and a no-output batch with nothing unpushed; never with unpushed commits, on abort, or after on-demand.
+- Cursor: an on-demand batch has no scan base and does not advance `lastScanCommit`; a pending vault change is processed by the next scheduled run; recovery uses `Vex-Scan-Base`, not the rebased parent.
+- State: advances on successful publish and no-output-with-nothing-unpushed; never with unpushed commits, on abort, or after on-demand.
 - Deletion: previous content is supplied; `sources` is cleaned; a page losing all sources becomes `orphaned` and is listed in `_index.md`; no page is deleted.
 - Policy: vault paths in `write`/`edit` are denied and overrides cannot open them.
 - Path safety: root symlink (`wiki -> ../owner-notes`), file symlink, directory symlink, dangling symlink, and `..` bypass are rejected before any write.
 - Run toolset: contains `wiki_write`/`wiki_edit` and excludes `bash`, MCP, and generic `read`; a normal session's toolset does not contain the wiki write tools.
-- Bootstrap: the one-time trigger fires once; no-change completes `done`; approve pushes; reject discards locally and never pushes.
-- Batch identity: id resolution with zero/one/multiple matches; rebase changes the SHA but the id still resolves; state-write failure recovers from the trailer.
-- Rollback: unpublished commit → local discard without push; published commit → revert + push; a push failure then a second call completes instead of re-reverting; a revert committed before the state write is recovered from the `Vex-Revert-Of` trailer; conflict aborts cleanly.
+- Bootstrap: the one-time trigger fires once; no-change completes `done`; approve pushes; reject fetches, re-verifies unpublished, and only resets when the preview is the local tip.
+- Batch identity: id resolution with zero/one/multiple matches; rebase changes the SHA but the id still resolves; state-write failure recovers from trailers; a rollback commit is never treated as a compile batch.
+- Rollback: unpublished tip → local discard without push; unpublished non-tip → keep and alert; published → revert + push; push failure then a second call completes instead of re-reverting; a revert committed before the state write is recovered from `Vex-Rollback`; conflict aborts cleanly.
+- State-loss recovery: batch + revert committed, then the full state file is lost → the reverted batch is not offered again and `lastScanCommit` is reconstructed from the newest advancing batch, so the reverted content is not regenerated.
 - Backoff: consecutive failures space retries by `min(1h, 5m x 2^(streak-1))` and reset on success.
-- State lifecycle: missing state behaves as `pending`; disable/enable resumes correctly.
+- State lifecycle: missing state behaves as `pending`; disable/enable settles rollback and resumes correctly.
 
 **Integration**
 
@@ -399,22 +442,22 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 **Risks**
 
 - Synthesis quality: LLM-generated pages may be wrong or noisy. Mitigation: provenance frontmatter, bootstrap review, and rollback.
-- Prompt injection: mitigated by the automatic-writer boundary, the restricted run toolset (no generic `read`), and path validation.
-- Owner-approved `bash`/MCP: outside the lock; the integrity guard detects unattributable state but cannot prevent concurrent external writes during a run.
-- Owner editing `wiki/` on another device: a rebase conflict aborts the run and notifies; the owner's edit wins because Vex abandons the run.
+- Prompt injection: mitigated by the automatic-writer boundary, the restricted run toolset (no generic `read`), fingerprint attribution, and path validation.
+- Owner-approved `bash`/MCP: outside the lock; the integrity guard detects unattributable state but cannot prevent a concurrent external write during a run, nor eliminate the check-then-act race.
+- Owner editing `wiki/` on another device: a rebase conflict aborts the run and notifies.
 - Cost: the first full compile is expensive. Mitigation: chunked runs and the bootstrap review.
 
 **Resolved after review**
 
 - Guarantee scoped to the automatic write path; owner-approved channels are explicitly outside the lock and covered by detection.
-- Integrity guard plus attribution: only in-flight-recorded paths are auto-cleaned; unattributable changes are kept and alerted, at begin and finalize.
+- Attribution by content fingerprint and phase: only `writing`-phase, fingerprint-matching paths are auto-cleaned; post-commit failures never roll files back.
+- Compile batches and rollback operations have distinct identities; reconciliation resolves rollback relations before choosing the newest un-reverted compile batch.
+- Destructive rollback/reject paths fetch, re-verify published status, and refuse to reset unless the target is the local tip.
+- Scan progress is durable (`Vex-Kind`, `Vex-Scan-Base`): cursor recovery never uses a rebased parent, and on-demand batches never advance it; rollback does not regenerate reverted sources.
+- In-flight marker carries kind, scan base, phase, and per-path fingerprints.
 - On-demand ingest does not advance the scan cursor.
-- Rollback is a single-execution state machine with pending-publication recovery.
-- Batch ids in commit trailers survive rebase and state-loss windows; zero/one/multiple resolutions are defined.
-- Dirty-tree inspection happens before fetch/rebase, so crash leftovers cannot block recovery.
 - Wiki runs have no generic file `read`; the skill body is injected by the core.
 - Subtree roots are validated as real directories before target checks.
-- Deleted sources keep previous content, clean `sources`, and mark pages `orphaned`.
 - Retry backoff prevents per-tick failure storms.
 
 **Deferred** (not in this design)
@@ -427,10 +470,10 @@ Every terminal outcome sends a WeChat notification when `wiki.notify` is on, exc
 
 ## 14. Milestones
 
-1. Writable git working copy + single-automatic-writer boundary (`wiki_write`/`wiki_edit`, policy clamp, root/path safety).
-2. `Wiki.run` transaction: lock, in-flight marker, attribution/cleanup, integrity guard, change detection, state file, commit/push.
-3. Batch identity + history reconciliation (trailers, zero/one/multiple, crash recovery).
+1. Writable git working copy + single-automatic-writer boundary (`wiki_write`/`wiki_edit`, policy clamp, root/path safety, fingerprint recording).
+2. Phased `Wiki.run` transaction: lock, fetch, in-flight marker, attribution/cleanup, integrity guard, change detection, state file, commit/push.
+3. Durable identity and reconciliation: compile vs rollback trailers, scan base, zero/one/multiple, crash/state-loss recovery.
 4. Scheduler cadence + bootstrap trigger/approve/reject + retry backoff.
-5. `wiki_ingest` (cursor-safe) and `wiki_rollback` (single-execution state machine).
+5. `wiki_ingest` (cursor-safe) and `wiki_rollback` (single-execution, fetch-before-destructive).
 6. Wiki run toolset + injected `skills/llm-wiki/SKILL.md` + prompt section.
 7. Config, editable settings, docs, and full test coverage update.
