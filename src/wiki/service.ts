@@ -141,10 +141,9 @@ export class Wiki {
       if (kind.kind !== "on-demand") {
         const changes = await detectChanges(this.repo, from);
         if (changes.length === 0) {
-          if (advancesScan) {
-            const current = (await this.stateStore.read()) ?? emptyState();
-            await this.stateStore.write({ ...current, lastScanCommit: baseHead });
-          }
+          const current = (await this.stateStore.read()) ?? emptyState();
+          await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null });
+          this.cachedNextAttemptAt = null;
           return null;
         }
         batchId = randomUUID();
@@ -195,10 +194,9 @@ export class Wiki {
           await abortBatch(this.repo, this.marker);
           throw new Error("wiki run advanced HEAD without recording any paths");
         }
-        if (advancesScan) {
-          const current = (await this.stateStore.read()) ?? emptyState();
-          await this.stateStore.write({ ...current, lastScanCommit: baseHead });
-        }
+        const current = (await this.stateStore.read()) ?? emptyState();
+        await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null });
+        this.cachedNextAttemptAt = null;
         await this.marker.remove();
         return null;
       }
@@ -251,7 +249,7 @@ export class Wiki {
       }
 
       if (this.opts.notifyEnabled) {
-        await this.opts.notify(kind.kind === "bootstrap" ? "wiki: preview ready for review" : `wiki: ingested ${touched.length} paths`);
+        await this.opts.notify(kind.kind === "bootstrap" ? "wiki: preview ready for review" : `wiki: ingested ${touched.length} paths`).catch(() => undefined);
       }
       this.cachedNextAttemptAt = null;
       return { commit: sha, pages: touched.map((entry) => entry.path), pushed };
