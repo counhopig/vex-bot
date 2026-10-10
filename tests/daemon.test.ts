@@ -212,7 +212,7 @@ describe("startDaemon", () => {
 
   it("builds the consolidation profile prompt and workspace-only toolset in the assembled daemon", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-11T02:59:59+08:00"));
+    vi.setSystemTime(new Date(2026, 9, 11, 2, 59, 59)); // local time, matching consolidateAt
     let prompt = "";
     let tools: string[] = [];
     let task = "";
@@ -262,9 +262,11 @@ describe("startDaemon", () => {
   });
 
   describe("applying saved settings", () => {
+    let running: VexConfig;
     async function startWithRestart(restart: () => Promise<void>) {
       await writeFile(paths.config, `# mine\nmodel: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
-      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models(), restart });
+      running = config();
+      daemon = await startDaemon({ paths, config: running, log: createLogger(), models: models(), restart });
       client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
     }
     const saved = () => client!.waitFor((m) => m.type === "settings_saved");
@@ -286,6 +288,13 @@ describe("startDaemon", () => {
       await startWithRestart(restart);
       client!.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
       expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      // The running daemon reads these per call, so the saved values must reach it.
+      expect(running.stt).toEqual({ baseUrl: "https://s/v1", model: "m" });
+      client!.messages.length = 0;
+      client!.send({ type: "save_settings", set: { "links.bilibili.sessdata": "fresh" }, unset: ["stt.baseUrl", "stt.model"] });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      expect(running.links).toEqual({ bilibili: { sessdata: "fresh" } });
+      expect(running.stt).toBeUndefined();
       await new Promise((resolve) => setTimeout(resolve, 900));
       expect(restart).not.toHaveBeenCalled();
     });
