@@ -368,7 +368,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     heartbeat: { every: config.heartbeat?.every ?? "30m", activeHours: config.heartbeat?.activeHours ?? ["08:00", "22:00"] },
     memory: { consolidateAt: config.memory?.consolidateAt ?? "03:00" },
     outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? "30m" },
-    ...(wiki && config.wiki ? { wiki: { enabled: config.wiki.enabled, every: config.wiki.every, status: async () => (await wiki!.status()).bootstrap, nextAttemptAt: () => wiki!.nextAttemptAt(), bootstrap: async (signal: AbortSignal) => { await wiki!.run({ kind: "bootstrap" }, signal); }, run: async (signal: AbortSignal) => { await wiki!.run({ kind: "scheduled" }, signal); } } } : {}),
+    ...(wiki && config.wiki ? { wiki: { every: config.wiki.every } } : {}),
     hooks: {
       log: (err) => log.warn({ err }, "scheduled task failed"),
       targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
@@ -404,6 +404,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         finally { signal.removeEventListener("abort", abort); }
         if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
       },
+      wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
+      runWiki: async (work, signal) => { await wiki?.run({ kind: work }, signal); },
     },
   });
 

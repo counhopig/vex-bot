@@ -61,6 +61,19 @@ export interface WikiPreview {
   pages: string[];
 }
 
+export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
+
+/**
+ * Which wiki work the scheduler may start: a pending bootstrap once the backoff gate opens, or a
+ * scheduled run once both the gate and the cadence allow it. Nothing runs while a preview awaits review.
+ */
+export function dueWikiWork(input: { bootstrap: WikiBootstrapStatus; gate: number | null; now: number; cadenceDue: boolean }): "bootstrap" | "scheduled" | null {
+  if (input.now < (input.gate ?? 0)) return null;
+  if (input.bootstrap === "pending") return "bootstrap";
+  if (input.bootstrap === "done" && input.cadenceDue) return "scheduled";
+  return null;
+}
+
 export interface WikiOptions {
   home: string;
   vault: VaultConfig & { url: string };
@@ -89,7 +102,7 @@ export class Wiki {
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
   private cachedNextAttemptAt: number | null = null;
-  private statusCache: { at: number; value: { bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
+  private statusCache: { at: number; value: { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
   private lock: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly opts: WikiOptions) {}
@@ -117,7 +130,14 @@ export class Wiki {
     this.statusCache = null;
   }
 
-  async status(): Promise<{ bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null }> {
+  /** The work the scheduler may start now; see `dueWikiWork`. */
+  async dueWork(now: number, cadenceDue: boolean): Promise<"bootstrap" | "scheduled" | null> {
+    const gate = this.nextAttemptAt();
+    const { bootstrap } = await this.status();
+    return dueWikiWork({ bootstrap, gate, now, cadenceDue });
+  }
+
+  async status(): Promise<{ bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null }> {
     // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
     if (this.statusCache && Date.now() - this.statusCache.at < 10_000) return this.statusCache.value;
     const state = await this.stateStore.read();
@@ -127,7 +147,7 @@ export class Wiki {
     const lastBatchId = reconciled.lastBatchId;
     // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
     // scheduled/on-demand batch is left alone so the cadence can retry its push.
-    const bootstrap: "pending" | "awaiting-review" | "done" = reconciled.preview
+    const bootstrap: WikiBootstrapStatus = reconciled.preview
       ? "awaiting-review"
       : reconciled.bootstrap === "done"
         ? "done"

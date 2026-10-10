@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runGit, type GitRunner } from "../src/vault/git.js";
 import { fingerprint } from "../src/wiki/marker.js";
-import { Wiki, type WikiOptions } from "../src/wiki/service.js";
+import { dueWikiWork, Wiki, type WikiOptions } from "../src/wiki/service.js";
 import { emptyState } from "../src/wiki/state.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -1179,5 +1179,21 @@ describe("Wiki service", () => {
     expect(result.publication).toBe("published");
     expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBe("keep-me");
     await wiki.close();
+  });
+});
+
+describe("dueWikiWork", () => {
+  it("bootstraps a pending wiki only after the backoff gate opens, whatever the cadence", () => {
+    expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 1000, cadenceDue: true })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 2000, cadenceDue: false })).toBe("bootstrap");
+    expect(dueWikiWork({ bootstrap: "pending", gate: null, now: 0, cadenceDue: false })).toBe("bootstrap");
+  });
+  it("does nothing while the bootstrap preview awaits review", () => {
+    expect(dueWikiWork({ bootstrap: "awaiting-review", gate: null, now: 1000, cadenceDue: true })).toBeNull();
+  });
+  it("runs a bootstrapped wiki only when both the cadence and the backoff gate allow it", () => {
+    expect(dueWikiWork({ bootstrap: "done", gate: null, now: 1000, cadenceDue: false })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "done", gate: 5000, now: 1000, cadenceDue: true })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "done", gate: 1000, now: 1000, cadenceDue: true })).toBe("scheduled");
   });
 });
