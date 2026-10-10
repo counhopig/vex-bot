@@ -82,6 +82,20 @@ export class WikiRepo {
     return (await this.git(["rev-parse", `origin/${this.opts.branch ?? "HEAD"}`])).trim();
   }
 
+  /** Resolves a ref (branch, tag, or `refs/...` path) to its SHA, or `null` when the ref does not exist. */
+  async ref(name: string): Promise<string | null> {
+    try {
+      return (await this.git(["rev-parse", "--verify", "--quiet", name])).trim();
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 1) return null;
+      throw error;
+    }
+  }
+
+  async updateRef(name: string, sha: string): Promise<void> {
+    await this.git(["update-ref", name, sha]);
+  }
+
   async isAncestor(a: string, b: string): Promise<boolean> {
     try {
       await this.git(["merge-base", "--is-ancestor", a, b]);
