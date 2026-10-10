@@ -25,7 +25,7 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, evict idle WebChat sessions, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |

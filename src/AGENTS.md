@@ -61,6 +61,7 @@ src/
 ## INVARIANTS AND ANTI-PATTERNS
 
 - Keep the complete transcript separate from compacted model context; compaction records append to JSONL and history reads the full transcript (`core/session.ts:73`, `core/session.ts:184`).
+- Idle WebChat sessions are evicted after 30 minutes without use: only a fully idle session (`Session.idle`) that no pending approval retains. It leaves the cache before `dispose()` starts; the next `get()` waits for that disposal and reopens from the flushed JSONL, and a lookup that raced the eviction is re-resolved rather than handed the disposing instance. WeChat is never evicted (`core/sessionManager.ts`, `daemon.ts`).
 - Stop must abort retry backoff and the agent, clear steering queues and retain messages received while stopping for a subsequent turn; disposal waits for queued transcript writes (`core/session.ts:105`, `core/session.ts:135`).
 - Explicit policy denial precedes session approval reuse; denied tools are also filtered from model visibility (`policy/gate.ts:14`, `policy/policy.ts:33`).
 - Non-loopback binding requires a web token (`daemon.ts:75`).
