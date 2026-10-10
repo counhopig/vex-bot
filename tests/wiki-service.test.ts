@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runGit, type GitRunner } from "../src/vault/git.js";
 import { fingerprint } from "../src/wiki/marker.js";
-import { dueWikiWork, Wiki, type WikiOptions } from "../src/wiki/service.js";
+import { dueWikiWork, previewNotice, Wiki, type WikiOptions } from "../src/wiki/service.js";
 import { emptyState } from "../src/wiki/state.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -591,9 +591,10 @@ describe("Wiki service", () => {
 
   it("approveBootstrap publishes the preview and marks bootstrap done", async () => {
     const home = join(dir, "home");
-    const offered: unknown[] = [];
+    const notices: string[] = [];
     const { wiki, root } = await seed(home, {
-      requestPreviewReview: (preview) => { offered.push(preview); },
+      notifyEnabled: true,
+      notify: async (text) => { notices.push(text); },
       runAgent: async (_prompt, context) => {
         const abs = join(context.repo.root, "wiki/a.md");
         await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
@@ -609,7 +610,9 @@ describe("Wiki service", () => {
 
     const preview = await wiki.preview();
     expect(preview).toMatchObject({ pages: ["wiki/a.md"] });
-    expect(offered).toEqual([preview]);
+    expect(notices).toEqual([previewNotice(preview!)]);
+    expect(notices[0]).toContain("wiki/a.md");
+    expect(notices[0]).toContain("approve the Wiki preview");
     const remoteUrl = git(root, ["remote", "get-url", "origin"]).trim();
     const reopened = makeWiki(home, remoteUrl);
     await reopened.init();

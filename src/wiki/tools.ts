@@ -90,13 +90,16 @@ export function createWikiInteractiveTools(wiki: Wiki, options: { sourceResolver
   const bootstrapTool: AgentTool<typeof WikiBootstrapParams> = {
     name: "wiki_bootstrap",
     label: "Review wiki bootstrap",
-    description: "Approves (publishes) or rejects (discards) the pending wiki bootstrap preview.",
+    description: "Approves (publishes) or rejects (discards) the pending wiki bootstrap preview. Call it only when the owner asks; the owner confirms the call in an approval prompt.",
     parameters: WikiBootstrapParams,
     async execute(_id, { action }, signal) {
-      const result = action === "approve"
-        ? await wiki.approveBootstrap(fallbackSignal(signal))
-        : await wiki.rejectBootstrap(fallbackSignal(signal));
-      return { content: [{ type: "text", text: result.message }], details: { message: result.message } };
+      // The receipt is the evidence a later "published" reply is checked against.
+      if (action === "approve") {
+        const result = await wiki.approveBootstrap(fallbackSignal(signal));
+        return { content: [{ type: "text", text: result.message }], details: { message: result.message, receipt: { publication: result.pushed ? "published" : "preview" } } };
+      }
+      const result = await wiki.rejectBootstrap(fallbackSignal(signal));
+      return { content: [{ type: "text", text: result.message }], details: { message: result.message, receipt: { publication: result.discarded ? "not-needed" : "preview" } } };
     },
   };
 

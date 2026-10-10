@@ -1,4 +1,3 @@
-import { blockPendingWikiBootstrapReview } from "./wiki/review.js";
 import { readFile, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -218,10 +217,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
       const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
       const beforeToolCall: NonNullable<Parameters<typeof Session.open>[0]["beforeToolCall"]> = async (ctx, signal) => {
-        if (!temporary) {
-          const reviewBlock = blockPendingWikiBootstrapReview(approvals, ctx.toolCall.name);
-          if (reviewBlock) return reviewBlock;
-        }
         if (temporary === "consolidation") {
           if (ctx.toolCall.name === "memory_search") return;
           const args = ctx.args as { path?: string };
@@ -304,16 +299,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       home: paths.home,
       vault: config.vault as VaultConfig & { url: string },
       config: config.wiki,
-      approvals,
       notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, wikiReply, context),
       sourceSegmentBudget: (prefix, context) => withTemporarySession("wiki", async (session) => session.maxUserPromptBytes(prefix), context),
       ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
-      warn: (err) => log.warn({ err }, "wiki preview approval failed"),
       onWarning: (message) => log.warn(message),
     });
     protectedRoots.push(wikiRuntime.root);
-    startupCleanup.push(() => wikiRuntime?.closeReview(), () => wikiRuntime?.close());
+    startupCleanup.push(() => wikiRuntime?.close());
   }
   const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
     signal.throwIfAborted();
@@ -451,7 +444,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log });
   startupCleanup.push(() => wechatRuntime?.stop());
   startupCleanup.push(() => scheduler.close());
-  await wikiRuntime?.offerPendingPreview();
+  await wikiRuntime?.remindPendingPreview().catch((err: unknown) => log.warn({ err }, "wiki preview reminder failed"));
   await scheduler.start();
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;
@@ -479,7 +472,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     port,
     async stop() {
       await step("scheduler", () => scheduler.close());
-      await step("wiki approvals", () => wikiRuntime?.closeReview());
       await step("wechat", () => wechatRuntime?.stop());
       await step("sessions", () => sessions.shutdown());
       await step("approvals", () => approvals.dispose());

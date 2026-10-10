@@ -146,7 +146,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Notes wiki
 
-When `wiki.enabled` is set, `wiki/` maintains a writable clone of the git-backed vault and compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview, which waits for approval. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
+When `wiki.enabled` is set, `wiki/` maintains a writable clone of the git-backed vault and compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 

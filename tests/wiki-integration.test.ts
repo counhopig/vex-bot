@@ -9,7 +9,6 @@ import { ToolPolicy } from "../src/policy/policy.js";
 import { Session } from "../src/core/session.js";
 import { runGit, type GitRunner } from "../src/vault/git.js";
 import { fingerprint } from "../src/wiki/marker.js";
-import { blockPendingWikiBootstrapReview, WikiPreviewReview } from "../src/wiki/review.js";
 import { Wiki, type WikiOptions, type WikiRunContext } from "../src/wiki/service.js";
 import { createWikiInteractiveTools } from "../src/wiki/tools.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
@@ -66,7 +65,7 @@ async function compileNewPage(context: WikiRunContext): Promise<string> {
 }
 
 describe("Wiki integration", () => {
-  it("recovers a real bootstrap preview and blocks model auto-approval behind the owner prompt", async () => {
+  it("recovers a real bootstrap preview and publishes it only after the owner approves wiki_bootstrap", async () => {
     const home = join(dir, "home");
     const { wiki, remote } = await seed(home, {
       runAgent: async (_prompt, context) => {
@@ -90,17 +89,13 @@ describe("Wiki integration", () => {
     const recovered = makeWiki(home, remote);
     await recovered.init();
     expect(await recovered.status()).toMatchObject({ bootstrap: "awaiting-review", lastBatchId: generated.batchId });
-    const recoveredPreview = await recovered.preview();
-    expect(recoveredPreview).toEqual(preview);
+    expect(await recovered.preview()).toEqual(preview);
 
     const approvals = new ApprovalManager({ timeoutMs: 10_000 });
-    const review = new WikiPreviewReview({ approvals, wiki: recovered, notify: async () => {}, warn: (error) => { throw error; } });
-    review.offer(recoveredPreview!);
-    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
     const faux = createFaux();
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("wiki_bootstrap", { action: "approve" }, { id: "model-approve" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("I am waiting for the owner's approval."),
+      fauxAssistantMessage("The preview was published."),
     ]);
     const policy = new ToolPolicy({ workspace: dir, overrides: {} });
     const gate = createToolGate({ policy, approvals, sessionKey: "web:review", windowLabel: () => "WebChat" });
@@ -108,24 +103,22 @@ describe("Wiki integration", () => {
       key: "web:review", transcriptPath: join(dir, "review.jsonl"), model: faux.getModel(),
       tools: createWikiInteractiveTools(recovered), streamFn: fauxStreamFn(faux), getApiKey: () => "test-key",
       buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 1, baseDelayMs: 1 },
-      beforeToolCall: async (ctx, signal) => blockPendingWikiBootstrapReview(approvals, ctx.toolCall.name) ?? gate(ctx, signal),
+      beforeToolCall: gate,
     });
     session.send("Approve the preview.");
-    await session.whenIdle();
-    expect(session.successfulReply).toContain("waiting for the owner's approval");
-    expect(approvals.pending()).toHaveLength(1);
+    await vi.waitFor(() => expect(approvals.pending()).toEqual([expect.objectContaining({ toolName: "wiki_bootstrap", windowLabel: "WebChat" })]));
     expect(git(remote, ["rev-parse", "main"]).trim()).toBe(remoteBefore);
 
     approvals.answer(approvals.pending()[0]!.id, "allow");
-    await vi.waitFor(() => expect(git(remote, ["rev-parse", "main"]).trim()).not.toBe(remoteBefore));
+    await session.whenIdle();
+    expect(git(remote, ["rev-parse", "main"]).trim()).not.toBe(remoteBefore);
     expect(await recovered.status()).toMatchObject({ bootstrap: "done" });
     await session.dispose();
-    await review.close();
     approvals.dispose();
     await recovered.close();
   });
 
-  it("asks after the bootstrap preview approval has timed out", async () => {
+  it("keeps the bootstrap preview when the owner denies wiki_bootstrap", async () => {
     const home = join(dir, "home");
     const { wiki, remote } = await seed(home, {
       runAgent: async (_prompt, context) => {
@@ -141,38 +134,30 @@ describe("Wiki integration", () => {
     const remoteBefore = git(remote, ["rev-parse", "main"]).trim();
     const generated = await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
     expect(generated.publication).toBe("preview");
-    const preview = await wiki.preview();
-    expect(preview).not.toBeNull();
 
-    const approvals = new ApprovalManager({ timeoutMs: 300 });
-    const review = new WikiPreviewReview({ approvals, wiki, notify: async () => {}, warn: (error) => { throw error; } });
-    review.offer(preview!);
-    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
-    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(0), { timeout: 1_000 });
-
+    const approvals = new ApprovalManager({ timeoutMs: 10_000 });
     const faux = createFaux();
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("wiki_bootstrap", { action: "approve" }, { id: "model-approve" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("The owner declined the new approval request."),
+      fauxAssistantMessage("The owner declined the approval request."),
     ]);
     const policy = new ToolPolicy({ workspace: dir, overrides: {} });
     const gate = createToolGate({ policy, approvals, sessionKey: "web:review", windowLabel: () => "WebChat" });
     const session = await Session.open({
-      key: "web:review", transcriptPath: join(dir, "timeout-review.jsonl"), model: faux.getModel(),
+      key: "web:review", transcriptPath: join(dir, "deny-review.jsonl"), model: faux.getModel(),
       tools: createWikiInteractiveTools(wiki), streamFn: fauxStreamFn(faux), getApiKey: () => "test-key",
       buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 1, baseDelayMs: 1 },
-      beforeToolCall: async (ctx, signal) => blockPendingWikiBootstrapReview(approvals, ctx.toolCall.name) ?? gate(ctx, signal),
+      beforeToolCall: gate,
     });
     session.send("Approve the preview.");
-    await vi.waitFor(() => expect(approvals.pending()).toEqual([expect.objectContaining({ toolName: "wiki_bootstrap", windowLabel: "WebChat" })]));
-    expect(git(remote, ["rev-parse", "main"]).trim()).toBe(remoteBefore);
+    await vi.waitFor(() => expect(approvals.pending()).toHaveLength(1));
     approvals.answer(approvals.pending()[0]!.id, "deny");
     await session.whenIdle();
     expect(session.successfulReply).toContain("owner declined");
     expect(git(remote, ["rev-parse", "main"]).trim()).toBe(remoteBefore);
+    expect(await wiki.status()).toMatchObject({ bootstrap: "awaiting-review" });
 
     await session.dispose();
-    await review.close();
     approvals.dispose();
     await wiki.close();
   });
