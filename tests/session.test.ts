@@ -176,7 +176,9 @@ describe("Session", () => {
     expect(session.successfulReply).toContain("I read");
     session.send("Confirm you read https://example.test/article");
     await session.whenIdle();
-    expect(session.successfulReply).toBe("I could not verify that the requested operation was performed, so I cannot report it as complete.");
+    // The unsupported claim is withheld; the honest correction that follows is kept.
+    expect(session.successfulReply).toBe("I cannot verify a new read in this turn.");
+    expect(JSON.stringify(session.history().items)).not.toContain("I already read");
     expect(session.history().items.filter((item) => item.kind === "tool" && item.toolName === "web_fetch")).toHaveLength(1);
     await session.dispose();
   });
@@ -675,7 +677,8 @@ describe("Session", () => {
     const s = await open({ tools: [delegate] });
     s.send(`Read ${url}`);
     await s.whenIdle();
-    expect(s.successfulReply).toContain("could not verify");
+    expect(s.successfulReply).toBe("I cannot confirm a read.");
+    expect(JSON.stringify(s.history().items)).not.toContain("I read the page.");
     await s.dispose();
   });
 

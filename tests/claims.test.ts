@@ -61,3 +61,19 @@ it("matches a mentioned link as a whole URL", () => {
   expect(mentionsLink({ command: "curl -s https://example.test/article-other" }, "https://example.test/article")).toBe(false);
   expect(mentionsLink({ command: "curl -s 'https://example.test/article'" }, "https://example.test/article")).toBe(true);
 });
+
+it("binds each clause's operation to the links that clause names", () => {
+  const a = "https://example.test/a";
+  const b = "https://example.test/b";
+  const read = (url: string, ok: boolean) => call("web_fetch", { url }, false, { version: 1, requestedUrl: url, sourceAvailable: ok });
+  const turn = { urls: [a, b], evidence: [read(a, true), read(b, false)] };
+  // Honest replies about one success and one failure are supported, in English and Chinese.
+  expect(unsupportedClaim(`I read ${a}. I did not read ${b}.`, turn, TOOL_EVIDENCE)).toBe(false);
+  expect(unsupportedClaim(`I read ${a}, but reading ${b} failed.`, turn, TOOL_EVIDENCE)).toBe(false);
+  expect(unsupportedClaim(`我已读取 ${a}；${b} 读取失败。`, turn, TOOL_EVIDENCE)).toBe(false);
+  expect(unsupportedClaim(`已读取 ${a}，${b} 未能读取。`, turn, TOOL_EVIDENCE)).toBe(false);
+  // Claiming the failed link, or both links without naming them, is still unsupported.
+  expect(unsupportedClaim(`I read ${a}. I read ${b}.`, turn, TOOL_EVIDENCE)).toBe(true);
+  expect(unsupportedClaim(`我已读取 ${a}；也已读取 ${b}。`, turn, TOOL_EVIDENCE)).toBe(true);
+  expect(unsupportedClaim("Both links were read.", turn, TOOL_EVIDENCE)).toBe(true);
+});

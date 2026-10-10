@@ -82,13 +82,25 @@ export function extractUrls(text: string): string[] {
   return [...new Set((text.match(/https?:\/\/[^\s<>"']+/g) ?? []).map((url) => url.replace(/[),.!?。；，]+$/, "")))];
 }
 
-/** Prospective ("I'll read"), imperative ("Read the README") and negated ("not saved") clauses claim nothing. */
-function claimedText(reply: string): string {
-  return reply.split(/(?<=[.!?;])\s+|\bbut\b|\bhowever\b|,\s*/i).map((clause) => {
-    if (/^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b/i.test(clause)) return "";
-    if (/^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i.test(clause)) return "";
-    return clause.replace(/\b(?:not|never|haven't|didn't|won't)\s+(?:been\s+)?(?:saved|archived|published|pushed|searched|read|retrieved|downloaded|executed|run|updated|deleted|sent)\b/gi, "");
-  }).join(" ");
+/** One clause of a reply that claims operations, bound to the links that clause names. */
+interface Statement { text: string; urls: string[] }
+
+const CLAUSE_BREAK = /(?<=[.!?;])\s+|[。！？；，、]|,\s*|\bbut\b|\bhowever\b|\bwhile\b|但是?|不过|然而|而/i;
+const PROSPECTIVE = /^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b|^\s*(?:我(?:会|将|来|准备|正在)|正在|准备|稍后)/i;
+// A clause opening with the verb is an instruction ("Read the README first"), not a report.
+const IMPERATIVE = /^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i;
+// A negated or failed operation is not a completion claim, whatever its verb.
+const NEGATED = /\b(?:not|never|no|failed|fails|unable|cannot|can't|couldn't|didn't|haven't|hasn't|wasn't|weren't|won't)\b|未|没有|没能|无法|不能|失败|尚未/i;
+
+/**
+ * The reply's affirmative clauses, each with the links it names. Binding an operation to the links
+ * in its own clause keeps "I read A. I did not read B." from being checked as a claim about B.
+ */
+function statements(reply: string): Statement[] {
+  return reply.split(CLAUSE_BREAK).flatMap((clause) => {
+    if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause) || NEGATED.test(clause)) return [];
+    return [{ text: clause, urls: extractUrls(clause) }];
+  });
 }
 
 /**
@@ -98,12 +110,13 @@ function claimedText(reply: string): string {
  * with no operation behind it is left to the evidence advisor rather than judged by keyword.
  */
 export function unsupportedClaim(reply: string, turn: { urls: string[]; evidence: unknown[] }, profiles: EvidenceProfiles): boolean {
-  const text = claimedText(reply);
   const entries = turn.evidence.filter((item): item is EvidenceEntry => Boolean(item && typeof item === "object" && typeof (item as EvidenceEntry).tool === "string"));
-  return CLAIMS.some(({ kind, pattern }) => {
-    if (!pattern.test(text)) return false;
+  const sameLink = (a: string, b: string) => normalizedUrl(a) !== undefined && normalizedUrl(a) === normalizedUrl(b);
+  return statements(reply).some((statement) => CLAIMS.some(({ kind, pattern }) => {
+    if (!pattern.test(statement.text)) return false;
     if (!turn.urls.length && !entries.some((entry) => profiles[entry.tool]?.supports?.[kind])) return false;
-    const described = extractUrls(text).filter((url) => turn.urls.includes(url));
+    // A clause naming some of the owner's links claims only those; one naming none claims them all.
+    const described = turn.urls.filter((url) => statement.urls.some((named) => sameLink(named, url)));
     const targets = described.length ? described : turn.urls;
     const candidate = (entry: EvidenceEntry, url?: string): boolean => {
       const profile = profiles[entry.tool];
@@ -122,7 +135,7 @@ export function unsupportedClaim(reply: string, turn: { urls: string[]; evidence
       return rule === true || rule(latest.receipt);
     };
     return targets.length === 0 ? !supported() : !targets.every((url) => supported(url));
-  });
+  }));
 }
 
 /** Sentences describing the newest receipt per tool and link of this turn, for a replacement reply. */
