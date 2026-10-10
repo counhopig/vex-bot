@@ -6,7 +6,7 @@ import { runGit, type GitRunner } from "../src/vault/git.js";
 import { fingerprint } from "../src/wiki/marker.js";
 import { Wiki, type WikiOptions } from "../src/wiki/service.js";
 import { emptyState } from "../src/wiki/state.js";
-import { commit, makeRemote } from "./helpers/gitRemote.js";
+import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -165,6 +165,7 @@ describe("Wiki service", () => {
         return "ok";
       },
     });
+    commit(join(dir, "seed", "work"), { "notes/note.md": "n1" }, "2026-10-02T10:00:00+0000");
     await wiki.init();
     await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
@@ -187,6 +188,7 @@ describe("Wiki service", () => {
         return "ok";
       },
     });
+    commit(join(dir, "seed", "work"), { "notes/note.md": "n1" }, "2026-10-02T10:00:00+0000");
     await wiki.init();
     await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
 
@@ -215,6 +217,86 @@ describe("Wiki service", () => {
 
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
     expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(false);
+    await wiki.close();
+  });
+
+  it("scheduled run chunks changed notes and commits them as one batch", async () => {
+    const home = join(dir, "home");
+    const prompts: string[] = [];
+    const chunks = [["notes/a.md", "notes/b.md"], ["notes/c.md"]];
+    const { wiki, root } = await seed(home, {
+      maxNotesPerRun: 2,
+      runAgent: async (prompt, context) => {
+        const paths = chunks[prompts.length] ?? [];
+        prompts.push(prompt);
+        for (const path of paths) {
+          const abs = join(context.repo.root, path);
+          await context.marker.recordIntent(path, await fingerprint(abs));
+          writeFileSync(abs, `${readFileSync(abs, "utf8")} edited`);
+          await context.marker.recordAfter(path, await fingerprint(abs));
+        }
+        return "ok";
+      },
+    });
+    commit(join(dir, "seed", "work"), { "notes/a.md": "a", "notes/b.md": "b", "notes/c.md": "c" }, "2026-10-02T10:00:00+0000");
+    await wiki.init();
+    const before = Number(git(root, ["rev-list", "--count", "HEAD"]).trim());
+
+    const result = await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+
+    expect(prompts).toHaveLength(2);
+    expect(result).not.toBeNull();
+    expect(Number(git(root, ["rev-list", "--count", "HEAD"]).trim())).toBe(before + 1);
+    expect(git(root, ["log", "-1", "--format=%B"])).toContain("Vex-Batch:");
+    await wiki.close();
+  });
+
+  it("scheduled run with no vault changes advances the scan cursor without calling the agent", async () => {
+    const home = join(dir, "home");
+    let calls = 0;
+    const { wiki } = await seed(home, {
+      runAgent: async () => {
+        calls += 1;
+        return "ok";
+      },
+    });
+    await wiki.init();
+
+    const result = await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+
+    expect(result).toBeNull();
+    expect(calls).toBe(0);
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBeTruthy();
+    await wiki.close();
+  });
+
+  it("on-demand run calls the agent once with the source and leaves the scan cursor unchanged", async () => {
+    const home = join(dir, "home");
+    const prompts: string[] = [];
+    const { wiki } = await seed(home, {
+      runAgent: async (prompt, context) => {
+        prompts.push(prompt);
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(join(home, "state", "wiki.json"), JSON.stringify({ ...emptyState(), lastScanCommit: "keep-me" }));
+
+    const result = await wiki.run(
+      { kind: "on-demand", source: { title: "Title", url: "https://example.com/x", text: "Body" } },
+      new AbortController().signal,
+    );
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("https://example.com/x");
+    expect(prompts[0]).toContain("Body");
+    expect(result).not.toBeNull();
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBe("keep-me");
     await wiki.close();
   });
 });
