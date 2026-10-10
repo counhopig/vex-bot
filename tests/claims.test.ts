@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { describeOutcomes, unsupportedClaim, type EvidenceProfiles } from "../src/context/claims.js";
+import { describeOutcomes, mentionsLink, unsupportedClaim, type EvidenceProfiles } from "../src/context/claims.js";
+import { TOOL_EVIDENCE } from "./helpers/evidence.js";
 
 const profiles: EvidenceProfiles = {
   fetch_page: { supports: { read: (receipt) => receipt?.ok === true }, linkArgument: true, describe: (receipt) => `fetched ${String(receipt.requestedUrl)}` },
@@ -37,4 +38,26 @@ it("needs the receipt of the call for each named link", () => {
   expect(unsupportedClaim(`I read ${b}.`, turn, profiles)).toBe(true);
   expect(unsupportedClaim("Both were read.", turn, profiles)).toBe(true);
   expect(describeOutcomes(turn, profiles)).toEqual([`fetched ${a}`, `fetched ${b}`]);
+});
+
+it("binds a link claim to a call on exactly that link", () => {
+  const page = "https://example.test/article";
+  const other = "https://example.test/article-other";
+  const receipt = (url: string) => ({ version: 1, requestedUrl: url, canonicalUrl: url, sourceAvailable: true });
+  // Reading a local file does not prove reading the owner's web page.
+  const local = { urls: [page], evidence: [call("read", { path: "README.md" }, false)] };
+  expect(unsupportedClaim("我已读取你提供的网页。", local, TOOL_EVIDENCE)).toBe(true);
+  expect(unsupportedClaim(`I read ${page}.`, local, TOOL_EVIDENCE)).toBe(true);
+  // A link that merely starts with the requested one is a different link.
+  const prefixed = { urls: [page], evidence: [call("web_fetch", { url: other }, false, receipt(other))] };
+  expect(unsupportedClaim(`I read ${page}.`, prefixed, TOOL_EVIDENCE)).toBe(true);
+  const exact = { urls: [page], evidence: [call("web_fetch", { url: page }, false, receipt(page))] };
+  expect(unsupportedClaim(`I read ${page}.`, exact, TOOL_EVIDENCE)).toBe(false);
+  // Without links, a local read still supports a read claim about that file.
+  expect(unsupportedClaim("I read the README.", { urls: [], evidence: [call("read", { path: "README.md" }, false)] }, TOOL_EVIDENCE)).toBe(false);
+});
+
+it("matches a mentioned link as a whole URL", () => {
+  expect(mentionsLink({ command: "curl -s https://example.test/article-other" }, "https://example.test/article")).toBe(false);
+  expect(mentionsLink({ command: "curl -s 'https://example.test/article'" }, "https://example.test/article")).toBe(true);
 });

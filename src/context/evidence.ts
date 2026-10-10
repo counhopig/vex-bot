@@ -4,7 +4,7 @@ import { redactSecrets } from "../config/secrets.js";
 import type { TurnAdvisor } from "../policy/advice.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError } from "./budget.js";
-import { describeOutcomes, extractUrls, unsupportedClaim, type EvidenceProfiles, type Receipt } from "./claims.js";
+import { describeOutcomes, mentionsLink, extractUrls, unsupportedClaim, type EvidenceProfiles, type Receipt } from "./claims.js";
 
 export const TOOL_EVIDENCE_ERROR = "The reply could not be verified against tool results. Please retry the request.";
 const MAX_EXCERPT = 1000;
@@ -28,7 +28,7 @@ function currentTurn(context: TranscriptContext, profiles: EvidenceProfiles, sec
     const result = results.find((candidate) => candidate.role === "toolResult" && candidate.toolCallId === call.id && candidate.toolName === call.name);
     return result && result.role === "toolResult" ? [{ call, result }] : [];
   });
-  const blockedUrls = urls.filter((url) => paired.some(({ call, result }) => profiles[call.name]?.endsLinkOnFailure && JSON.stringify(call.arguments).includes(url) && result.isError));
+  const blockedUrls = urls.filter((url) => paired.some(({ call, result }) => profiles[call.name]?.endsLinkOnFailure && mentionsLink(call.arguments, url) && result.isError));
   const evidence = paired.slice(-MAX_EVIDENCE).flatMap(({ call, result }) => {
     const hasReceipt = Boolean(result.details && typeof result.details === "object" && "receipt" in result.details);
     const receipt = hasReceipt ? receiptSummary((result.details as { receipt: unknown }).receipt, secrets) : undefined;
