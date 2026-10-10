@@ -47,6 +47,7 @@ export class Wiki {
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
   private cachedNextAttemptAt: number | null = null;
+  private statusCache: { at: number; value: { bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
   private lock: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly opts: WikiOptions) {}
@@ -71,31 +72,32 @@ export class Wiki {
     const state = await this.stateStore.read();
     this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     this.reconciled = await this.runReconcile(state);
+    this.statusCache = null;
   }
 
   async status(): Promise<{ bootstrap: "pending" | "awaiting-review" | "done"; nextAttemptAt: number | null; lastBatchId: string | null }> {
+    // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
+    if (this.statusCache && Date.now() - this.statusCache.at < 10_000) return this.statusCache.value;
     const state = await this.stateStore.read();
     const reconciled = await this.runReconcile(state);
     this.reconciled = reconciled;
     this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
-    // `lastBatchId` is a batch UUID, not a commit; resolve it before any ancestry probe.
     const lastBatchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
-
-    let bootstrap: "pending" | "awaiting-review" | "done" = "pending";
-    if (lastBatchId !== null) {
-      const commit = await this.findCommit("Vex-Batch", lastBatchId);
-      const originHead = await this.repo.originHead();
-      if (commit !== null && !(await this.repo.isAncestor(commit, originHead))) bootstrap = "awaiting-review";
-      else if (reconciled.bootstrap === "done") bootstrap = "done";
-    } else if (reconciled.bootstrap === "done") {
-      bootstrap = "done";
-    }
-
-    return { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId };
+    // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
+    // scheduled/on-demand batch is left alone so the cadence can retry its push.
+    const bootstrap: "pending" | "awaiting-review" | "done" = reconciled.preview
+      ? "awaiting-review"
+      : reconciled.bootstrap === "done"
+        ? "done"
+        : "pending";
+    const value = { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId };
+    this.statusCache = { at: Date.now(), value };
+    return value;
   }
 
   async close(): Promise<void> {
     this.reconciled = null;
+    this.statusCache = null;
   }
 
   async run(
@@ -114,19 +116,16 @@ export class Wiki {
       let baseHead = "";
       let batchId = "";
 
-      // A rollback that was committed but not published must be settled before any new batch.
-      if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled);
       // A batch whose commit already exists is never restored from files; drop the stale marker
       // so the tree check cannot mistake it for an interrupted writing phase.
       if (reconciled.markerResolution === "committed") await this.marker.remove();
 
-      const previewCommit = reconciled.lastBatchId === null ? null : await this.findCommit("Vex-Batch", reconciled.lastBatchId);
-      if (reconciled.bootstrap === "pending" && previewCommit !== null && !(await this.repo.isAncestor(previewCommit, await this.repo.originHead()))) {
-        throw new Error("bootstrap preview awaiting review");
-      }
+      if (reconciled.preview) throw new Error("bootstrap preview awaiting review");
 
       try {
         await inspectAndCleanTree(this.repo, this.marker);
+        // Settle a committed-but-unpublished rollback only after the tree is clean, so its rebase cannot fail on leftovers.
+        if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled);
         await this.repo.rebase();
         if (!(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
         baseHead = await this.repo.head();
@@ -137,13 +136,16 @@ export class Wiki {
 
       // A compile run ingests every note added since the last scan, splitting them across as
       // many agent calls as `maxNotesPerRun` allows. On-demand runs skip detection entirely.
-      const from = reconciled.lastScanCommit ?? null;
+      const cursor = reconciled.lastScanCommit ?? null;
+      const from = cursor !== null && !(await this.repo.isAncestor(cursor, await this.repo.head())) ? null : cursor;
       if (kind.kind !== "on-demand") {
         const changes = await detectChanges(this.repo, from);
         if (changes.length === 0) {
           const current = (await this.stateStore.read()) ?? emptyState();
-          await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null });
+          await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind.kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
+          if (kind.kind === "bootstrap") await this.repo.updateRef("refs/vex/wiki-bootstrap", baseHead);
           this.cachedNextAttemptAt = null;
+          this.statusCache = null;
           return null;
         }
         batchId = randomUUID();
@@ -195,8 +197,10 @@ export class Wiki {
           throw new Error("wiki run advanced HEAD without recording any paths");
         }
         const current = (await this.stateStore.read()) ?? emptyState();
-        await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null });
+        await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind.kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
+        if (kind.kind === "bootstrap") await this.repo.updateRef("refs/vex/wiki-bootstrap", baseHead);
         this.cachedNextAttemptAt = null;
+        this.statusCache = null;
         await this.marker.remove();
         return null;
       }
@@ -244,7 +248,7 @@ export class Wiki {
         });
         await this.marker.remove();
       } catch (error) {
-        if (this.opts.notifyEnabled) await this.opts.notify(`wiki: batch ${batchId} committed but not finalized`);
+        if (this.opts.notifyEnabled) await this.opts.notify(`wiki: batch ${batchId} committed but not finalized`).catch(() => undefined);
         throw error;
       }
 
@@ -252,9 +256,12 @@ export class Wiki {
         await this.opts.notify(kind.kind === "bootstrap" ? "wiki: preview ready for review" : `wiki: ingested ${touched.length} paths`).catch(() => undefined);
       }
       this.cachedNextAttemptAt = null;
+      this.statusCache = null;
       return { commit: sha, pages: touched.map((entry) => entry.path), pushed };
       } catch (error) {
         await this.recordFailure();
+        // Every terminal failure is reported when notifications are on, not just successes.
+        if (this.opts.notifyEnabled) await this.opts.notify(`wiki: run failed: ${(error as Error).message}`).catch(() => undefined);
         throw error;
       }
     });
@@ -274,6 +281,7 @@ export class Wiki {
   async rollback(signal: AbortSignal): Promise<WikiRollbackResult> {
     signal.throwIfAborted();
     return this.withLock(async () => {
+      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -326,6 +334,7 @@ export class Wiki {
   async approveBootstrap(signal: AbortSignal): Promise<{ pushed: boolean; message: string }> {
     signal.throwIfAborted();
     return this.withLock(async () => {
+      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -349,6 +358,7 @@ export class Wiki {
   async rejectBootstrap(signal: AbortSignal): Promise<{ discarded: boolean; message: string }> {
     signal.throwIfAborted();
     return this.withLock(async () => {
+      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);

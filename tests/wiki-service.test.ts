@@ -200,6 +200,40 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
+  it("completes an empty-vault bootstrap instead of relaunching it", async () => {
+    const home = join(dir, "home");
+    const { wiki } = await seed(home, {
+      runAgent: async () => {
+        throw new Error("the agent must not run for an empty vault");
+      },
+    });
+    await wiki.init();
+
+    const result = await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+
+    expect(result).toBeNull();
+    expect((await wiki.status()).bootstrap).toBe("done");
+    await wiki.close();
+  });
+
+  it("reports a failed run to the owner once", async () => {
+    const home = join(dir, "home");
+    const notifications: string[] = [];
+    const { wiki } = await seed(home, {
+      notifyEnabled: true,
+      notify: async (text) => { notifications.push(text); },
+      runAgent: async () => {
+        throw new Error("agent exploded");
+      },
+    });
+    await wiki.init();
+
+    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow("agent exploded");
+
+    expect(notifications.filter((text) => text.includes("run failed"))).toHaveLength(1);
+    await wiki.close();
+  });
+
   it("restores writing-phase paths and clears the marker when the agent fails", async () => {
     const home = join(dir, "home");
     const { wiki, root } = await seed(home, {
