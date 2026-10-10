@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { VaultConfig } from "../config/schema.js";
+import { abortBatch, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
 import { WikiRepo, type GitRunner } from "./git.js";
-import { MarkerStore } from "./marker.js";
+import { fingerprint, MarkerStore } from "./marker.js";
 import { validateSubtreeRoots } from "./paths.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
-import { StateStore, type WikiState } from "./state.js";
+import { emptyState, StateStore, type WikiState } from "./state.js";
 
 export interface WikiRollbackResult {
   reverted: boolean;
@@ -77,6 +79,142 @@ export class Wiki {
 
   async close(): Promise<void> {
     this.reconciled = null;
+  }
+
+  async run(
+    kind: { kind: "scheduled" | "bootstrap" | "on-demand"; source?: { title?: string; url?: string; text?: string } },
+    signal: AbortSignal,
+  ): Promise<{ commit: string | null; pages: string[]; pushed: boolean } | null> {
+    return this.withLock(async () => {
+      await this.repo.fetch();
+      const state = await this.stateStore.read();
+      const reconciled = await this.runReconcile(state);
+      this.reconciled = reconciled;
+
+      const advancesScan = kind.kind !== "on-demand";
+      let baseHead = "";
+      let batchId = "";
+
+      try {
+        // `reconcile` already resolves a marker whose batch is in history as committed, so a
+        // clean tree here is never restored; only attributable writing-phase changes are.
+        await inspectAndCleanTree(this.repo, this.marker);
+        if (reconciled.rollback) throw new Error("pending rollback must be settled");
+        if (
+          reconciled.bootstrap === "pending" &&
+          reconciled.lastBatchId !== null &&
+          !(await this.repo.isAncestor(reconciled.lastBatchId, await this.repo.originHead()))
+        ) {
+          throw new Error("bootstrap preview awaiting review");
+        }
+        await this.repo.rebase();
+        if (!(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
+        baseHead = await this.repo.head();
+        batchId = randomUUID();
+        await this.marker.begin({
+          batchId,
+          kind: kind.kind,
+          advancesScan,
+          scanBase: advancesScan ? baseHead : null,
+          baseHead,
+          phase: "writing",
+          commit: null,
+          touched: [],
+        });
+        await this.opts.runAgent(ingestPrompt(kind.kind), { repo: this.repo, marker: this.marker, roots: this.roots }, signal);
+      } catch (error) {
+        await abortBatch(this.repo, this.marker);
+        throw error;
+      }
+
+      const inFlight = await this.marker.read();
+      const touched = inFlight?.touched ?? [];
+      const scanBase = inFlight?.scanBase ?? null;
+
+      if (touched.length === 0) {
+        if ((await this.repo.head()) !== (await this.repo.originHead())) {
+          await abortBatch(this.repo, this.marker);
+          throw new Error("wiki run advanced HEAD without recording any paths");
+        }
+        if (advancesScan) {
+          const current = (await this.stateStore.read()) ?? emptyState();
+          await this.stateStore.write({ ...current, lastScanCommit: baseHead });
+        }
+        await this.marker.remove();
+        return null;
+      }
+
+      let sha = "";
+      try {
+        if ((await this.repo.head()) !== baseHead) throw new Error("wiki run changed HEAD before committing the batch");
+        for (const entry of touched) {
+          const current = await fingerprint(join(this.repo.root, entry.path));
+          const expected = entry.after;
+          if (!expected || current.type !== expected.type || current.hash !== expected.hash) {
+            throw new Error(`wiki path changed since the batch recorded it: ${entry.path}`);
+          }
+        }
+        sha = await this.repo.commit(
+          touched.map((entry) => entry.path),
+          ingestMessage(kind.kind, batchId, scanBase, touched.length, new Date()),
+        );
+      } catch (error) {
+        await abortBatch(this.repo, this.marker);
+        throw error;
+      }
+      await this.marker.setCommitted(sha);
+
+      let pushed = false;
+      try {
+        if (kind.kind !== "bootstrap") {
+          await this.pushWithRetry();
+          pushed = true;
+          const headAfterPush = await this.repo.head();
+          if (headAfterPush !== sha) {
+            sha = headAfterPush;
+            await this.marker.setCommitted(sha);
+          }
+        }
+        const current = (await this.stateStore.read()) ?? emptyState();
+        await this.stateStore.write({
+          ...current,
+          lastBatchId: batchId,
+          lastScanCommit: advancesScan && pushed ? scanBase : current.lastScanCommit,
+          rollback: null,
+          failureStreak: 0,
+          nextAttemptAt: null,
+          lastRunAt: Date.now(),
+        });
+        await this.marker.remove();
+      } catch (error) {
+        if (this.opts.notifyEnabled) await this.opts.notify(`wiki: batch ${batchId} committed but not finalized`);
+        throw error;
+      }
+
+      if (this.opts.notifyEnabled) {
+        await this.opts.notify(kind.kind === "bootstrap" ? "wiki: preview ready for review" : `wiki: ingested ${touched.length} paths`);
+      }
+      return { commit: sha, pages: touched.map((entry) => entry.path), pushed };
+    });
+  }
+
+  /** Pushes the committed batch; on a rejected push it integrates the remote once and retries, accepting an already-published HEAD. */
+  private async pushWithRetry(): Promise<void> {
+    try {
+      await this.repo.push();
+      return;
+    } catch {
+      // Another writer advanced the remote; fetch, rebase and retry once.
+    }
+    await this.repo.fetch();
+    await this.repo.rebase();
+    try {
+      await this.repo.push();
+    } catch (error) {
+      await this.repo.fetch();
+      if (await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead())) return;
+      throw error;
+    }
   }
 
   private async runReconcile(state: WikiState | null): Promise<ReconcileResult> {
