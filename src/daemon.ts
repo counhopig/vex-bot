@@ -148,7 +148,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
     onWarning: (message) => log.warn(message),
   }) : undefined;
-  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, ...(wiki ? { copy: wiki } : {}), onWarning: (message) => log.warn(message) }) : undefined;
+  const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, ...(wiki ? { copy: wiki.notesCopy } : {}), onWarning: (message) => log.warn(message) }) : undefined;
   const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
     signal,
     ...(request ? { request } : {}),

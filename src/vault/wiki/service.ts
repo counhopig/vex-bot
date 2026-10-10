@@ -10,6 +10,9 @@ import { validateSubtreeRoot, validateSubtreeRoots, wikiRawPath } from "./paths.
 import { reconcile, type ReconcileResult } from "./reconcile.js";
 import { emptyState, StateStore, type WikiState } from "./state.js";
 import { writeWikiFile } from "./write.js";
+import { WikiLock } from "./lock.js";
+import { WikiReadCopy } from "./readCopy.js";
+import type { NotesCopy } from "../notes.js";
 
 export interface WikiRunResult {
   batchId: string | null;
@@ -67,8 +70,6 @@ export interface WikiPreview {
   pages: string[];
 }
 
-const READ_SYNC_MS = 60_000;
-
 export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
 
 /**
@@ -109,47 +110,23 @@ export class Wiki {
   private reconciled: ReconcileResult | null = null;
   private cachedNextAttemptAt: number | null = null;
   private statusCache: { at: number; value: { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
-  private lock: Promise<unknown> = Promise.resolve();
-  // Operations queued on or holding the lock; note reads never wait behind them.
-  private lockUsers = 0;
-  private readSync: { at: number; error?: string } | null = null;
+  private readonly lock = new WikiLock();
+  /** The clone as the vault reads it; it shares this lock and never waits for wiki work. */
+  readonly notesCopy: NotesCopy;
 
-  constructor(private readonly opts: WikiOptions) {}
+  constructor(private readonly opts: WikiOptions) {
+    this.notesCopy = new WikiReadCopy({
+      lock: this.lock,
+      open: () => this.repo ? { repo: this.repo, marker: this.marker } : undefined,
+      onAdvanced: () => { this.statusCache = null; },
+      ...(opts.now ? { now: opts.now } : {}),
+      ...(opts.onWarning ? { onWarning: opts.onWarning } : {}),
+    });
+  }
 
   /** The writable working copy root, which general file tools must not touch. */
   get root(): string {
     return this.repo.root;
-  }
-
-  /**
-   * The copy note reads use. With the wiki on, the vault has no separate mirror: this clone is
-   * fast-forwarded to the remote at most once a minute, and only while no wiki operation is queued,
-   * there is no in-flight batch and the tree is clean. Local unpublished commits stay as they are.
-   */
-  async readableCopy(): Promise<{ root: string; source: string }> {
-    if (!this.repo) throw new Error("The notes vault is still opening; try again shortly.");
-    const now = (this.opts.now ?? Date.now)();
-    if (this.lockUsers === 0 && (this.readSync === null || now - this.readSync.at >= READ_SYNC_MS)) {
-      try {
-        await this.withLock(() => this.syncForReading());
-        this.readSync = { at: now };
-      } catch (error) {
-        const message = (error as Error).message;
-        this.readSync = { at: now, error: message };
-        this.opts.onWarning?.(`The notes vault could not be updated: ${message}`);
-      }
-    }
-    const sync = this.readSync;
-    const source = sync === null ? "git copy; a wiki run is updating it"
-      : sync.error ? `git copy; the latest sync failed: ${sync.error}`
-        : `git copy synced ${new Date(sync.at).toISOString()}`;
-    return { root: this.repo.root, source };
-  }
-
-  private async syncForReading(): Promise<void> {
-    await this.repo.fetch();
-    if (await this.marker.read() || !(await this.cleanTree())) return;
-    if (await this.repo.fastForward()) this.statusCache = null;
   }
 
   /** Reminds the owner of a bootstrap preview left unpublished by an earlier process. */
@@ -216,7 +193,7 @@ export class Wiki {
     if (kind.kind === "on-demand" && kind.source?.url && !kind.source.text?.trim()) {
       return { batchId: null, commit: null, pages: [], publication: "not-needed" };
     }
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       try {
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -541,7 +518,7 @@ export class Wiki {
   /** Reverts the most recent committed compile batch exactly once, or completes a pending rollback. */
   async rollback(signal: AbortSignal): Promise<WikiRollbackResult> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -616,7 +593,7 @@ export class Wiki {
 
   async approveBootstrap(signal: AbortSignal): Promise<{ pushed: boolean; message: string }> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -642,7 +619,7 @@ export class Wiki {
   /** Discards an unpublished bootstrap preview locally, or marks it done when it was already published. */
   async rejectBootstrap(signal: AbortSignal): Promise<{ discarded: boolean; message: string }> {
     signal.throwIfAborted();
-    return this.withLock(async () => {
+    return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
@@ -854,49 +831,6 @@ export class Wiki {
       const expected = entry.expectedBefore.type === after.type && entry.expectedBefore.hash === after.hash ? entry.expectedBefore : after;
       const actual = await this.repo.fingerprintAt(commit.sha, entry.path);
       if (actual.type !== expected.type || actual.hash !== expected.hash) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} commit content does not match ${entry.path}; preserving marker`);
-    }
-  }
-
-  /** Serializes wiki runs: callers queue behind the previous one instead of interleaving repository work. */
-  private async withLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    this.lockUsers += 1;
-    try { return await this.lockedRun(fn, signal); }
-    finally { this.lockUsers -= 1; }
-  }
-
-  private async lockedRun<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-    const previous = this.lock;
-    let release!: () => void;
-    this.lock = new Promise<unknown>((resolve) => {
-      release = () => resolve(undefined);
-    });
-    let onAbort: (() => void) | undefined;
-    try {
-      if (signal) {
-        signal.throwIfAborted();
-        await Promise.race([
-          previous.catch(() => undefined),
-          new Promise<never>((_, reject) => {
-            onAbort = () => reject(signal.reason ?? new Error("Cancelled"));
-            signal.addEventListener("abort", onAbort, { once: true });
-          }),
-        ]);
-        signal.throwIfAborted();
-      } else {
-        await previous.catch(() => undefined);
-      }
-    } catch (error) {
-      // Keep later callers behind the previous operation even though this waiter
-      // can return promptly on cancellation.
-      void previous.then(release, release);
-      throw error;
-    } finally {
-      if (onAbort) signal?.removeEventListener("abort", onAbort);
-    }
-    try {
-      return await fn();
-    } finally {
-      release();
     }
   }
 }
