@@ -117,6 +117,87 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
+  it("rollback reverts the last published batch and clears the reference", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    await wiki.run({ kind: "on-demand" }, new AbortController().signal);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
+
+    const result = await wiki.rollback(new AbortController().signal);
+
+    expect(result.reverted).toBe(true);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastBatchId).toBeNull();
+    await wiki.close();
+  });
+
+  it("rollback completes a pending rollback instead of reverting twice", async () => {
+    const home = join(dir, "home");
+    const { wiki } = await seed(home);
+    await wiki.init();
+    const stateFile = join(home, "state", "wiki.json");
+    mkdirSync(join(home, "state"), { recursive: true });
+    writeFileSync(stateFile, JSON.stringify({ ...emptyState(), lastBatchId: "missing", rollback: { targetBatchId: "b", revertId: "r" } }));
+
+    const pending = await wiki.rollback(new AbortController().signal);
+
+    expect(pending.message).toMatch(/pending rollback|nothing/i);
+    await wiki.close();
+  });
+
+  it("approveBootstrap publishes the preview and marks bootstrap done", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
+
+    const approved = await wiki.approveBootstrap(new AbortController().signal);
+
+    expect(approved.pushed).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrap).toBe("done");
+    await wiki.close();
+  });
+
+  it("rejectBootstrap discards an unpublished preview locally without pushing", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+
+    const rejected = await wiki.rejectBootstrap(new AbortController().signal);
+
+    expect(rejected.discarded).toBe(true);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrap).toBe("pending");
+    await wiki.close();
+  });
+
   it("restores writing-phase paths and clears the marker when the agent fails", async () => {
     const home = join(dir, "home");
     const { wiki, root } = await seed(home, {

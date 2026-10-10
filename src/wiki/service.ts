@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { VaultConfig } from "../config/schema.js";
 import { abortBatch, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
-import { WikiRepo, type GitRunner } from "./git.js";
+import { parseTrailers, WikiRepo, type GitRunner } from "./git.js";
 import { fingerprint, MarkerStore } from "./marker.js";
 import { validateSubtreeRoots } from "./paths.js";
 import { reconcile, type ReconcileResult } from "./reconcile.js";
@@ -35,9 +35,9 @@ export interface WikiOptions {
 }
 
 /**
- * The wiki subsystem's shared runtime. This slice installs the repository,
- * subtree roots, crash marker, durable state, and the reconciled history
- * snapshot; the run/rollback/bootstrap operations are layered on top later.
+ * The wiki subsystem's shared runtime: one writable clone, a serial run lock, the
+ * crash marker, durable state, and history reconciliation. All vault writes happen
+ * inside `run` through the run-scoped tools built from its `WikiRunContext`.
  */
 export class Wiki {
   private repo!: WikiRepo;
@@ -63,12 +63,14 @@ export class Wiki {
     const state = await this.stateStore.read();
     const reconciled = await this.runReconcile(state);
     this.reconciled = reconciled;
+    // `lastBatchId` is a batch UUID, not a commit; resolve it before any ancestry probe.
     const lastBatchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
 
     let bootstrap: "pending" | "awaiting-review" | "done" = "pending";
     if (lastBatchId !== null) {
+      const commit = await this.findCommit("Vex-Batch", lastBatchId);
       const originHead = await this.repo.originHead();
-      if (!(await this.repo.isAncestor(lastBatchId, originHead))) bootstrap = "awaiting-review";
+      if (commit !== null && !(await this.repo.isAncestor(commit, originHead))) bootstrap = "awaiting-review";
       else if (reconciled.bootstrap === "done") bootstrap = "done";
     } else if (reconciled.bootstrap === "done") {
       bootstrap = "done";
@@ -95,18 +97,19 @@ export class Wiki {
       let baseHead = "";
       let batchId = "";
 
+      // A rollback that was committed but not published must be settled before any new batch.
+      if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled);
+      // A batch whose commit already exists is never restored from files; drop the stale marker
+      // so the tree check cannot mistake it for an interrupted writing phase.
+      if (reconciled.markerResolution === "committed") await this.marker.remove();
+
+      const previewCommit = reconciled.lastBatchId === null ? null : await this.findCommit("Vex-Batch", reconciled.lastBatchId);
+      if (reconciled.bootstrap === "pending" && previewCommit !== null && !(await this.repo.isAncestor(previewCommit, await this.repo.originHead()))) {
+        throw new Error("bootstrap preview awaiting review");
+      }
+
       try {
-        // `reconcile` already resolves a marker whose batch is in history as committed, so a
-        // clean tree here is never restored; only attributable writing-phase changes are.
         await inspectAndCleanTree(this.repo, this.marker);
-        if (reconciled.rollback) throw new Error("pending rollback must be settled");
-        if (
-          reconciled.bootstrap === "pending" &&
-          reconciled.lastBatchId !== null &&
-          !(await this.repo.isAncestor(reconciled.lastBatchId, await this.repo.originHead()))
-        ) {
-          throw new Error("bootstrap preview awaiting review");
-        }
         await this.repo.rebase();
         if (!(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
         baseHead = await this.repo.head();
@@ -196,6 +199,129 @@ export class Wiki {
       }
       return { commit: sha, pages: touched.map((entry) => entry.path), pushed };
     });
+  }
+
+  /** Reverts the most recent committed compile batch exactly once, or completes a pending rollback. */
+  async rollback(signal: AbortSignal): Promise<WikiRollbackResult> {
+    signal.throwIfAborted();
+    return this.withLock(async () => {
+      await this.repo.fetch();
+      const state = await this.stateStore.read();
+      const reconciled = await this.runReconcile(state);
+
+      if (reconciled.rollback || state?.rollback) {
+        await this.settleRollback(state, reconciled);
+        return { reverted: true, commit: await this.repo.head(), message: "completed a pending rollback" };
+      }
+
+      if ((await this.repo.status()).length > 0) return { reverted: false, commit: null, message: "working tree is not clean" };
+
+      const batchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
+      if (!batchId) return { reverted: false, commit: null, message: "there is nothing to roll back" };
+
+      const target = await this.findCommit("Vex-Batch", batchId);
+      if (!target) {
+        await this.clearBatchRef();
+        return { reverted: false, commit: null, message: "the last batch no longer exists" };
+      }
+
+      if (!(await this.repo.isAncestor(target, await this.repo.originHead()))) {
+        if ((await this.repo.head()) !== target) return { reverted: false, commit: null, message: "the unpublished batch is not the local tip; kept" };
+        await this.repo.resetHard(`${target}^`);
+        await this.clearBatchRef();
+        return { reverted: true, commit: await this.repo.head(), message: "discarded the unpublished batch" };
+      }
+
+      const revertId = randomUUID();
+      let revertSha: string;
+      try {
+        revertSha = await this.repo.revert(target, `wiki: rollback ${batchId}\n\nVex-Rollback: ${revertId}\nVex-Revert-Of: ${batchId}`);
+      } catch (error) {
+        await this.repo.resetHard(await this.repo.head());
+        return { reverted: false, commit: null, message: `revert failed: ${(error as Error).message}` };
+      }
+
+      const current = (await this.stateStore.read()) ?? emptyState();
+      await this.stateStore.write({ ...current, rollback: { targetBatchId: batchId, revertId } });
+      try {
+        await this.pushWithRetry();
+      } catch {
+        return { reverted: false, commit: revertSha, message: "revert committed locally but push failed; a later run will complete it" };
+      }
+      await this.clearBatchRef();
+      return { reverted: true, commit: await this.repo.head(), message: "reverted the last batch" };
+    });
+  }
+
+  /** Publishes an unpublished bootstrap preview and marks the bootstrap done. */
+  async approveBootstrap(signal: AbortSignal): Promise<{ pushed: boolean; message: string }> {
+    signal.throwIfAborted();
+    return this.withLock(async () => {
+      await this.repo.fetch();
+      const state = await this.stateStore.read();
+      const reconciled = await this.runReconcile(state);
+      const batchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
+      const commit = batchId === null ? null : await this.findCommit("Vex-Batch", batchId);
+      if (commit === null || reconciled.bootstrap !== "pending" || (await this.repo.isAncestor(commit, await this.repo.originHead()))) {
+        return { pushed: false, message: "there is nothing to approve" };
+      }
+      try {
+        await this.pushWithRetry();
+      } catch (error) {
+        return { pushed: false, message: `could not publish the preview: ${(error as Error).message}` };
+      }
+      const current = (await this.stateStore.read()) ?? emptyState();
+      await this.stateStore.write({ ...current, bootstrap: "done", lastRunAt: Date.now() });
+      return { pushed: true, message: "bootstrap preview published" };
+    });
+  }
+
+  /** Discards an unpublished bootstrap preview locally, or marks it done when it was already published. */
+  async rejectBootstrap(signal: AbortSignal): Promise<{ discarded: boolean; message: string }> {
+    signal.throwIfAborted();
+    return this.withLock(async () => {
+      await this.repo.fetch();
+      const state = await this.stateStore.read();
+      const reconciled = await this.runReconcile(state);
+      const batchId = reconciled.lastBatchId ?? state?.lastBatchId ?? null;
+      const commit = batchId === null ? null : await this.findCommit("Vex-Batch", batchId);
+      if (commit === null) return { discarded: false, message: "there is nothing to reject" };
+
+      const current = (await this.stateStore.read()) ?? emptyState();
+      if (await this.repo.isAncestor(commit, await this.repo.originHead())) {
+        await this.stateStore.write({ ...current, bootstrap: "done" });
+        return { discarded: false, message: "the preview was already published; bootstrap marked done" };
+      }
+      if ((await this.repo.head()) !== commit) return { discarded: false, message: "the unpublished preview is not the local tip; kept" };
+
+      await this.repo.resetHard(`${commit}^`);
+      await this.marker.remove();
+      await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending" });
+      return { discarded: true, message: "bootstrap preview discarded" };
+    });
+  }
+
+  /** Finds the newest commit whose message carries `trailer: value`. */
+  private async findCommit(trailer: string, value: string): Promise<string | null> {
+    const parts = (await this.repo.log("HEAD")).split("\0");
+    for (let index = 0; index + 1 < parts.length; index += 2) {
+      const sha = (parts[index] ?? "").trim();
+      const body = parts[index + 1] ?? "";
+      if (parseTrailers(body)[trailer]?.includes(value)) return sha;
+    }
+    return null;
+  }
+
+  /** Publishes a pending rollback, clearing the batch reference; throws when the push cannot complete. */
+  private async settleRollback(state: WikiState | null, reconciled: ReconcileResult): Promise<void> {
+    if (!reconciled.rollback && !state?.rollback) return;
+    await this.pushWithRetry();
+    await this.clearBatchRef();
+  }
+
+  private async clearBatchRef(): Promise<void> {
+    const current = (await this.stateStore.read()) ?? emptyState();
+    await this.stateStore.write({ ...current, lastBatchId: null, rollback: null });
   }
 
   /** Pushes the committed batch; on a rejected push it integrates the remote once and retries, accepting an already-published HEAD. */
