@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { VexPaths } from "../paths.js";
 import type { EventBus, VexEvent } from "./events.js";
@@ -102,8 +102,20 @@ export class SessionManager {
           throw err;
         }
       }
-      await rm(transcriptPath, { force: true });
-      await this.index.remove(id);
+      // Move the transcript aside first, so a failed index save can put it back; only
+      // after the index no longer lists the conversation is the transcript removed.
+      const removed = `${transcriptPath}.deleted`;
+      const moved = await rename(transcriptPath, removed).then(() => true, (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT") return false;
+        throw err;
+      });
+      try {
+        await this.index.remove(id);
+      } catch (err) {
+        if (moved) await rename(removed, transcriptPath);
+        throw err;
+      }
+      if (moved) await rm(removed, { force: true }).catch((err: unknown) => this.opts.onError?.(err));
       this.untitledFirstMessage.delete(id);
       this.opts.bus.emit({ type: "sessions_changed" });
     } finally {
