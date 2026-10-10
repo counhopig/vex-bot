@@ -24,6 +24,8 @@ beforeEach(async () => {
   faux = createFaux();
 });
 afterEach(async () => {
+  // A failed fake-timer test must not leave later tests waiting on a frozen clock.
+  vi.useRealTimers();
   client?.close();
   client = undefined;
   await daemon?.stop();
@@ -212,7 +214,8 @@ describe("startDaemon", () => {
 
   it("builds the consolidation profile prompt and workspace-only toolset in the assembled daemon", async () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-10-11T02:59:59+08:00"));
+    // Consolidation fires at 03:00 local time, so the clock must be local too.
+    vi.setSystemTime(new Date(2026, 9, 11, 2, 59, 59));
     let prompt = "";
     let tools: string[] = [];
     let task = "";
