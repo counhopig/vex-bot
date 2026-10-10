@@ -404,6 +404,36 @@ describe("speech to text", () => {
     await expect(transcribeVideo({ url: "https://x", audioSource: async () => ({ url: "https://evil.example/a.m4a", headers: {} }) }, stt, { runCommand, fetchFn: router })).rejects.toThrow("not on an allowed domain");
   });
 
+  it("enforces the download limit on received bytes and checks every redirect hop", async () => {
+    const audio = (url: string) => ({ url: "https://x", audioSource: async () => ({ url, headers: {} }) });
+    // No Content-Length: only the bytes actually received can enforce the limit.
+    const unannounced = vi.fn(async (url: string) => url.includes("/audio/transcriptions")
+      ? new Response(JSON.stringify({ text: "t" }))
+      : new Response(new ReadableStream({ start(c) { for (let i = 0; i < 4; i++) c.enqueue(new Uint8Array(10)); c.close(); } })));
+    await expect(transcribeVideo(audio("https://upos-sz.bilivideo.com/a.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: unannounced, maxDownloadBytes: 25 })).rejects.toThrow("too large");
+    expect(await transcribeVideo(audio("https://upos-sz.bilivideo.com/a.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: unannounced, maxDownloadBytes: 40 })).toBe("t");
+
+    const hops: { url: string; redirect: RequestRedirect | undefined }[] = [];
+    const redirecting = (location: string) => vi.fn(async (url: string, init: RequestInit) => {
+      if (url.includes("/audio/transcriptions")) return new Response(JSON.stringify({ text: "t" }));
+      hops.push({ url, redirect: init.redirect });
+      return url.endsWith("/start.m4a") ? new Response(null, { status: 302, headers: { location } }) : new Response(Buffer.from("m4a"));
+    });
+    await expect(transcribeVideo(audio("https://upos-sz.bilivideo.com/start.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: redirecting("http://169.254.169.254/latest") })).rejects.toThrow("not on an allowed domain");
+    expect(hops.map((hop) => hop.url)).toEqual(["https://upos-sz.bilivideo.com/start.m4a"]);
+    expect(hops[0]!.redirect).toBe("manual");
+    expect(await transcribeVideo(audio("https://upos-sz.bilivideo.com/start.m4a"), stt, { runCommand: runner(1).runCommand, fetchFn: redirecting("https://cn.hdslb.com/a.m4a") })).toBe("t");
+    expect(hops.at(-1)!.url).toBe("https://cn.hdslb.com/a.m4a");
+  });
+
+  it("limits yt-dlp downloads to the same size", async () => {
+    const { runCommand, calls } = runner(1);
+    await transcribeVideo({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", durationSeconds: 60 }, stt, { runCommand, fetchFn: router, maxDownloadBytes: 5 });
+    expect(calls[0]!.args.slice(calls[0]!.args.indexOf("--max-filesize"), calls[0]!.args.indexOf("--max-filesize") + 2)).toEqual(["--max-filesize", "5"]);
+    // The fake yt-dlp writes 5 bytes, more than allowed.
+    await expect(transcribeVideo({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ", durationSeconds: 60 }, stt, { runCommand: runner(1).runCommand, fetchFn: router, maxDownloadBytes: 3 })).rejects.toThrow("too large");
+  });
+
   it("refuses videos over the length limit and reports a missing program", async () => {
     await expect(transcribeVideo({ url: "https://x", durationSeconds: 100 * 60 }, stt, { runCommand: runner(1).runCommand, fetchFn: router })).rejects.toThrow("90-minute limit");
     await expect(transcribeVideo({ url: "https://x", durationSeconds: 60 }, stt, { runCommand: async () => { throw new Error("yt-dlp was not found; install it to transcribe audio"); }, fetchFn: router })).rejects.toThrow("yt-dlp was not found");
