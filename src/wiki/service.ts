@@ -27,6 +27,16 @@ function wikiOutcomeText(rawPaths: string[], pages: string[], publication: "publ
   return `Wiki run: ${parts.join(" ")}`;
 }
 
+/** Tells the owner a bootstrap preview exists; publishing it goes through `wiki_bootstrap` and its approval prompt. */
+export function previewNotice(preview: WikiPreview): string {
+  const pages = preview.pages.slice(0, 8).map((page) => `- ${page}`);
+  return [
+    `Wiki bootstrap preview is awaiting review: ${preview.pages.length} files, commit ${preview.commit.slice(0, 12)}. It has not been pushed.`,
+    ...pages, ...(preview.pages.length > 8 ? [`${preview.pages.length - 8} more files.`] : []),
+    "Say \"approve the Wiki preview\" to publish it or \"reject the Wiki preview\" to discard it; you will confirm before anything is pushed.",
+  ].join("\n");
+}
+
 function splitSource(text: string, limit: number): string[] {
   const segments: string[] = [];
   for (let offset = 0; offset < text.length;) {
@@ -77,7 +87,6 @@ export interface WikiOptions {
   maxNotesPerRun: number;
   notifyEnabled: boolean;
   notify: (text: string) => Promise<void>;
-  requestPreviewReview?: (preview: WikiPreview) => void;
   runAgent: (prompt: string, context: WikiRunContext, signal: AbortSignal) => Promise<string>;
   sourceSegmentBudget?: (prefix: string, context: WikiRunContext) => Promise<number>;
   now?: () => number;
@@ -459,12 +468,9 @@ export class Wiki {
         return { batchId, commit: sha, pages: committedPages, publication: "pending" };
       }
 
-      if (kind.kind === "bootstrap" && this.opts.requestPreviewReview) {
-        try { this.opts.requestPreviewReview({ batchId, commit: sha, pages: committedPages }); }
-        catch (error) { this.opts.onWarning?.(`wiki preview review could not be queued: ${(error as Error).message}`); }
-      } else if (this.opts.notifyEnabled) {
+      if (this.opts.notifyEnabled) {
         await this.opts.notify(kind.kind === "bootstrap"
-          ? `Wiki bootstrap preview is awaiting review: ${touched.length} files, commit ${sha.slice(0, 12)}. It has not been pushed. Use the existing approval prompt to approve and publish or reject the preview.`
+          ? previewNotice({ batchId, commit: sha, pages: committedPages })
           : wikiOutcomeText(committedRawPaths, committedPages, pushed ? "published" : "pending")).catch(() => undefined);
       }
       this.cachedNextAttemptAt = null;

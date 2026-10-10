@@ -103,7 +103,7 @@ function localUnsupported(reply: string, state: ReturnType<typeof currentTurn>):
   }).join(" ");
   const claims: { pattern: RegExp; tools: string[]; check: (receipt: Record<string, unknown> | undefined, success: boolean) => boolean }[] = [
     { pattern: /\b(saved|archived)\b|已(?:保存|归档)/i, tools: ["wiki_ingest"], check: (r) => Boolean(r && r.sourceAvailable === true && typeof r.rawPath === "string" && r.rawPath && !["failed-read", "failed-run", "bootstrap-pending"].includes(String(r.status))) },
-    { pattern: /\b(published|pushed)\b|已(?:发布|推送)/i, tools: ["wiki_ingest"], check: (r) => Boolean(r && r.publication === "published") },
+    { pattern: /\b(published|pushed)\b|已(?:发布|推送)/i, tools: ["wiki_ingest", "wiki_bootstrap"], check: (r) => Boolean(r && r.publication === "published") },
     { pattern: /\b(compiled)\b|已编译/i, tools: ["wiki_ingest", "wiki_write", "wiki_edit"], check: (r, success) => success && (r === undefined || Array.isArray(r.compiledPages) && r.compiledPages.length > 0) },
     { pattern: /\b(read|retrieved|downloaded)\b|已(?:读取|读完|获取)/i, tools: ["web_fetch", "wiki_ingest", "read", "vault_read"], check: (r, success) => success && (r?.sourceAvailable === true || r === undefined) },
     { pattern: /\bsearched\b|已搜索/i, tools: ["web_search", "memory_search", "vault_search"], check: (_r, success) => success },

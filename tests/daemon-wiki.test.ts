@@ -80,7 +80,7 @@ async function startScenario(responses: Parameters<FauxProviderHandle["setRespon
 }
 
 describe("daemon Wiki notifications", () => {
-  it("restores a real pending bootstrap preview and keeps its original owner approval", async () => {
+  it("reminds the owner of a restored bootstrap preview and publishes it through the wiki_bootstrap approval", async () => {
     const { remote, work } = makeRemote(join(dir, "preview-seed"));
     commit(work, { "wiki/Existing.md": "# Existing\n", "notes/Pending.md": "# Pending\n" }, "2026-10-01T10:00:00+0000");
     const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
@@ -106,7 +106,7 @@ describe("daemon Wiki notifications", () => {
     await writeFile(join(paths.wechat, "state.json"), JSON.stringify({ contextToken: "ctx-owner1" }));
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("wiki_bootstrap", { action: "approve" }, { id: "model-approve" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("The preview remains pending until you approve it."),
+      fauxAssistantMessage("The Wiki preview was published."),
     ]);
     const config: VexConfig = {
       model: { provider: faux.getModel().provider, id: faux.getModel().id },
@@ -117,15 +117,15 @@ describe("daemon Wiki notifications", () => {
       wiki: { enabled: true, every: "1d", notify: true, maxNotesPerRun: 20 },
     };
     daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit });
-    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("Wiki bootstrap")])), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("Wiki bootstrap preview is awaiting review")])), { timeout: 5000 });
+    expect(ilink.sentTexts().some((text) => text.includes("[Approval needed]"))).toBe(false);
     ilink.queueUpdates(textMessage("owner1", "Approve the Wiki preview.", { message_id: "review-attempt" }));
-    await vi.waitFor(() => expect(ilink.sentTexts()).toContain("The preview remains pending until you approve it."), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts().filter((text) => text.includes("[Approval needed]") && text.includes("Publish the Wiki bootstrap preview"))).toHaveLength(1), { timeout: 5000 });
     expect(git(remote, ["rev-parse", "main"])).toBe(unpublishedHead);
-    expect(ilink.sentTexts().filter((text) => text.includes("[Approval needed]") && text.includes("Wiki bootstrap"))).toHaveLength(1);
 
     ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "review-yes" }));
     await vi.waitFor(() => expect(git(remote, ["rev-parse", "main"])).not.toBe(unpublishedHead), { timeout: 5000 });
-    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("preview approved and pushed")])), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toContain("The Wiki preview was published."), { timeout: 5000 });
     expect(git(remote, ["show", "main:wiki/Recovered.md"])).toContain("# Recovered");
   });
 

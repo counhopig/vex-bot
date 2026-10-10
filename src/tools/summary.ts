@@ -22,9 +22,10 @@ export function approvalDetail(toolName: string, args: unknown, workspace?: stri
   };
   let text: string;
   const path = pick("path");
-  if (toolName === "wiki_bootstrap" && Array.isArray(record.pages) && pick("commit")) {
-    const pages = record.pages.filter((page): page is string => typeof page === "string");
-    text = [`Wiki bootstrap generated ${pages.length} files. They have not been pushed.`, `Commit: ${pick("commit")!.slice(0, 12)}`, "Page summary:", ...pages.slice(0, 8).map((page) => `- ${page}`), ...(pages.length > 8 ? [`${pages.length - 8} more files.`] : []), "Approval pushes to the notes repository; rejection discards only the local preview."].join("\n");
+  if (toolName === "wiki_bootstrap" && (pick("action") === "approve" || pick("action") === "reject")) {
+    text = pick("action") === "approve"
+      ? "Publish the Wiki bootstrap preview: push its commit to the notes repository."
+      : "Reject the Wiki bootstrap preview: discard it locally without pushing.";
   } else if (toolName === "bash" && pick("command") !== undefined) {
     text = pick("command")!;
   } else if ((toolName === "write" || toolName === "edit") && path !== undefined) {
