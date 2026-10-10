@@ -704,16 +704,16 @@ const SETTINGS_TABS = [
     ] },
     { title: "Notes vault", fields: [
       { path: "vault.path", label: "Folder", type: "text", placeholder: "/vault", help: "A folder of Markdown notes (an Obsidian vault works) as vexd sees it; in Docker, mount it into the container first. Fill in either the folder or the git address; with a folder, leave the git address, branch, username and token empty. Vex only reads the notes." },
-      { path: "vault.url", label: "Git address", type: "text", placeholder: "https://git.example.com/you/notes.git", help: "vexd keeps a read-only copy of this repository and updates it when you ask about your notes. Use an http or https address without a username or password in it." },
+      { path: "vault.url", label: "Git address", type: "text", placeholder: "https://git.example.com/you/notes.git", help: "vexd keeps one copy of this repository and updates it when you ask about your notes; with the wiki on, the wiki writes into the same copy. Use an http or https address without a username or password in it." },
       { path: "vault.branch", label: "Branch", type: "text", placeholder: "Default branch" },
       { path: "vault.username", label: "Username", type: "text", help: "The account name your git host expects together with the token; some hosts accept any value." },
-      { path: "vault.token", label: "Access token", type: "secret", help: "A read-only token for this repository; not needed for a public one." },
+      { path: "vault.token", label: "Access token", type: "secret", help: "A read-only token is enough without the wiki; the wiki needs write access. Not needed to read a public repository." },
     ] },
     { title: "Wiki", fields: [
-      { path: "wiki.enabled", label: "Maintain a wiki", type: "bool", help: "Vex turns what it reads into linked wiki notes in the vault. Requires a git-backed vault. Takes effect after a restart." },
-      { path: "wiki.every", label: "Wiki interval", type: "text", placeholder: "6h", help: "How often the wiki is updated; a number followed by s, m, h or d; default 6h." },
-      { path: "wiki.notify", label: "Notify about wiki updates", type: "bool", help: "Send a message when a wiki run changes notes." },
-      { path: "wiki.maxNotesPerRun", label: "Most notes per run", type: "number", min: 1, max: 200, help: "How many notes one wiki run may write; default 20." },
+      { path: "vault.wiki.enabled", label: "Maintain a wiki", type: "bool", help: "Vex turns what it reads into linked wiki notes in the vault. Requires a git-backed vault. Takes effect after a restart." },
+      { path: "vault.wiki.every", label: "Wiki interval", type: "text", placeholder: "6h", help: "How often the wiki is updated; a number followed by s, m, h or d, or a cron expression; default 6h." },
+      { path: "vault.wiki.notify", label: "Notify about wiki updates", type: "bool", help: "Send a message when a wiki run changes notes." },
+      { path: "vault.wiki.maxNotesPerRun", label: "Most notes per run", type: "number", min: 1, max: 200, help: "How many notes one wiki run may write; default 20." },
     ] },
   ] },
   { id: "life", label: "Routine", sections: [

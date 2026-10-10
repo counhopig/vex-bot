@@ -449,6 +449,15 @@ export class WikiRepo {
     }
   }
 
+  /** Moves HEAD to the fetched remote tip when that is a pure fast-forward; returns whether it moved. */
+  async fastForward(): Promise<boolean> {
+    const head = await this.head();
+    const tip = await this.originHead();
+    if (head === tip || !(await this.isAncestor(head, tip))) return false;
+    await this.git(["merge", "--ff-only", tip]);
+    return true;
+  }
+
   /** `git diff --name-status` reduced to added/modified/deleted paths; other statuses are dropped. */
   async diffNames(from: string, to: string, glob: string): Promise<Array<{ path: string; status: "A" | "M" | "D" }>> {
     const output = await this.git(["diff", "--name-status", "--no-renames", `${from}..${to}`, "--", glob]);

@@ -87,8 +87,9 @@ stt:
   chunkMinutes: 10
   maxMinutes: 90
 
-# Notes vault: read-only access to an Obsidian vault or a folder of Markdown notes.
-# Set a folder or a git repository, not both.
+# Notes vault: an Obsidian vault or a folder of Markdown notes.
+# Set a folder or a git repository, not both. The optional wiki compiles a git
+# vault into wiki/ pages in the same repository; it needs a token with write access.
 # vault:
 #   path: /vault
 #
@@ -97,14 +98,11 @@ stt:
 #   branch: main
 #   username: me
 #   token: "READ_ONLY_TOKEN"
-
-# Optional LLM wiki: compile the git-backed vault into wiki/ pages and push the
-# result. Requires vault.url and a token with write access.
-# wiki:
-#   enabled: true
-#   every: 6h
-#   notify: true
-#   maxNotesPerRun: 20
+#   wiki:
+#     enabled: true
+#     every: 6h
+#     notify: true
+#     maxNotesPerRun: 20
 
 # Bilibili SESSDATA cookie, for subtitles that need a login.
 links:

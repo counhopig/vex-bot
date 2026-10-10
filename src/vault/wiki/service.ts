@@ -67,6 +67,8 @@ export interface WikiPreview {
   pages: string[];
 }
 
+const READ_SYNC_MS = 60_000;
+
 export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
 
 /**
@@ -108,12 +110,53 @@ export class Wiki {
   private cachedNextAttemptAt: number | null = null;
   private statusCache: { at: number; value: { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
   private lock: Promise<unknown> = Promise.resolve();
+  // Operations queued on or holding the lock; note reads never wait behind them.
+  private lockUsers = 0;
+  private readSync: { at: number; error?: string } | null = null;
 
   constructor(private readonly opts: WikiOptions) {}
 
-  /** The writable working copy root, for the daemon to point `Vault` reads at. */
+  /** The writable working copy root, which general file tools must not touch. */
   get root(): string {
     return this.repo.root;
+  }
+
+  /**
+   * The copy note reads use. With the wiki on, the vault has no separate mirror: this clone is
+   * fast-forwarded to the remote at most once a minute, and only while no wiki operation is queued,
+   * there is no in-flight batch and the tree is clean. Local unpublished commits stay as they are.
+   */
+  async readableCopy(): Promise<{ root: string; source: string }> {
+    if (!this.repo) throw new Error("The notes vault is still opening; try again shortly.");
+    const now = (this.opts.now ?? Date.now)();
+    if (this.lockUsers === 0 && (this.readSync === null || now - this.readSync.at >= READ_SYNC_MS)) {
+      try {
+        await this.withLock(() => this.syncForReading());
+        this.readSync = { at: now };
+      } catch (error) {
+        const message = (error as Error).message;
+        this.readSync = { at: now, error: message };
+        this.opts.onWarning?.(`The notes vault could not be updated: ${message}`);
+      }
+    }
+    const sync = this.readSync;
+    const source = sync === null ? "git copy; a wiki run is updating it"
+      : sync.error ? `git copy; the latest sync failed: ${sync.error}`
+        : `git copy synced ${new Date(sync.at).toISOString()}`;
+    return { root: this.repo.root, source };
+  }
+
+  private async syncForReading(): Promise<void> {
+    await this.repo.fetch();
+    if (await this.marker.read() || !(await this.cleanTree())) return;
+    if (await this.repo.fastForward()) this.statusCache = null;
+  }
+
+  /** Reminds the owner of a bootstrap preview left unpublished by an earlier process. */
+  async remindPendingPreview(): Promise<void> {
+    if (!this.opts.notifyEnabled) return;
+    const preview = await this.preview();
+    if (preview) await this.opts.notify(previewNotice(preview));
   }
 
   /** Synchronous backoff gate for the scheduler. */
@@ -816,6 +859,12 @@ export class Wiki {
 
   /** Serializes wiki runs: callers queue behind the previous one instead of interleaving repository work. */
   private async withLock<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    this.lockUsers += 1;
+    try { return await this.lockedRun(fn, signal); }
+    finally { this.lockUsers -= 1; }
+  }
+
+  private async lockedRun<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     const previous = this.lock;
     let release!: () => void;
     this.lock = new Promise<unknown>((resolve) => {

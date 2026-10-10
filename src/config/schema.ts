@@ -89,6 +89,7 @@ export const ConfigSchema = Type.Object({
     branch: Type.Optional(Type.String({ minLength: 1 })),
     username: Type.Optional(Type.String({ minLength: 1 })),
     token: Type.Optional(Type.String()),
+    wiki: Type.Optional(WikiSchema),
   })),
   jev: Type.Optional(Type.Object({
     enabled: Type.Optional(Type.Boolean()),
@@ -97,7 +98,6 @@ export const ConfigSchema = Type.Object({
     confidence: Type.Optional(Type.Number({ minimum: 0.5, maximum: 1 })),
     timeoutMs: Type.Optional(Type.Integer({ minimum: 100, maximum: 30000 })),
   }, { additionalProperties: false })),
-  wiki: Type.Optional(WikiSchema),
   mcpServers: Type.Optional(Type.Record(Type.String({ pattern: "^[A-Za-z0-9-]{1,32}$" }), Type.Union([
     Type.Object({ command: Type.String({ minLength: 1 }), args: Type.Optional(Type.Array(Type.String())), env: Type.Optional(Type.Record(Type.String(), Type.String())), cwd: Type.Optional(Type.String()) }),
     Type.Object({ url: Type.String({ minLength: 1 }), headers: Type.Optional(Type.Record(Type.String(), Type.String())) }),
@@ -117,9 +117,10 @@ export type ModelRef = Static<typeof ModelRefSchema>;
 export type CustomModelConfig = Static<typeof CustomModelSchema>;
 export type ProviderConfig = Static<typeof ProviderSchema>;
 
-export interface VaultConfig { path?: string; url?: string; branch?: string; username?: string; token?: string }
+/** The notes vault; `wiki` is present only when the wiki is enabled, which requires a git `url`. */
+export interface VaultConfig { path?: string; url?: string; branch?: string; username?: string; token?: string; wiki?: WikiConfig }
 
-export interface WikiConfig { enabled: boolean; every: string; notify: boolean; maxNotesPerRun: number }
+export interface WikiConfig { every: string; notify: boolean; maxNotesPerRun: number }
 
 export interface VexConfig {
   model: ModelRef;
@@ -138,7 +139,6 @@ export interface VexConfig {
   stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
   links?: { bilibili?: { sessdata?: string } };
   vault?: VaultConfig;
-  wiki?: WikiConfig;
   jev?: import("../providers/jev.js").JevConfig;
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;
 }
