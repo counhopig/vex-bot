@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { applySettings } from "../src/config/settings.js";
+import { resolvePaths } from "../src/paths.js";
 
 class Element {
   children: Element[] = [];
@@ -123,6 +125,21 @@ describe("web app", () => {
     runInContext('handle({ type: "settings_saved", ok: false, error: "model 无效" })', context);
     expect(get("settings-result").textContent).toBe("model 无效");
     expect(get("settings-result").className).toBe("bad");
+  });
+
+  it("saves a custom provider address that the server accepts", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    runInContext(`handle(${settingsMessage({ "model.provider": "custom", "model.id": "m", "providers.custom.baseUrl": "https://old.example", "providers.custom.api": "openai-completions" })})`, context);
+    const base = find(get("settings-form"), (el) => el.id === "f-base-model-provider")!;
+    expect(base.value).toBe("https://old.example");
+    base.value = "https://new.example";
+    base.dispatch("input");
+    get("save-settings").dispatch("click");
+    const sent = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(sent).toEqual({ type: "save_settings", set: { "providers.custom.baseUrl": "https://new.example" }, unset: [] });
+    const yaml = "model: { provider: custom, id: m }\nproviders:\n  custom: { baseUrl: https://old.example, api: openai-completions }\n";
+    expect(applySettings(yaml, { set: sent.set, unset: sent.unset }, resolvePaths("/tmp/vex-web-app-test")).text).toContain("https://new.example");
   });
 
   it("sends typed secrets, clears saved ones and skips a save with no changes", async () => {

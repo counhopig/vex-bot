@@ -783,7 +783,6 @@ function renderField(field, draft) {
   const id = `f-${field.path.replace(/[^\w]/g, "-")}`;
   const label = element("label", "", fieldLabel(field, draft));
   label.htmlFor = id;
-  const track = (input, read) => input.addEventListener("input", () => { draft[field.path] = read(input); });
   switch (field.type) {
     case "bool": {
       const row = element("label", "check");
@@ -844,7 +843,8 @@ function renderField(field, draft) {
       input.id = id;
       const key = `providers.${draft[field.of]}.baseUrl`;
       input.value = draft[key] ?? "";
-      track(input, (el) => { draft[key] = el.value.trim(); return el.value.trim(); });
+      // field.path only identifies the control; the draft holds real configuration paths.
+      input.addEventListener("input", () => { draft[key] = input.value.trim(); });
       wrap.append(label, input);
       break;
     }
