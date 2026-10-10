@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { runWeChat, type WeChatRuntime } from "./channels/wechat/setup.js";
 import { ConfigError, parseConfig, saveConfigText } from "./config/load.js";
 import { clearReloadError, readReloadError, writePendingReload } from "./config/reload.js";
+import { configuredSecrets } from "./config/secrets.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { applySettings, readSettings } from "./config/settings.js";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -156,6 +157,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     timeSection(),
   ];
 
+  const judgeConfidence = config.jev?.confidence ?? 0.8;
   const runStarted = new Map<string, number>();
   const logSessionEvent = (key: string, event: SessionEvent) => {
     switch (event.kind) {
@@ -209,17 +211,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       const decisionJudge = config.jev?.enabled || opts.decisionJudge
         ? opts.decisionJudge ?? new Jev(config.jev ?? {}, fetch, (decision) => log.info({ session: key, ...decision }, "jev decision"))
         : undefined;
-      const evidenceSecrets = () => [
-        ...Object.values(config.providers ?? {}).flatMap((provider) => provider.apiKey ? [provider.apiKey] : []),
-        config.jev?.apiKey, process.env.TYPESAFE_API_KEY, getApiKey(model.provider),
-        config.links?.bilibili?.sessdata, process.env.BILIBILI_SESSDATA,
-        config.web.token, config.webSearch?.apiKey, config.stt?.apiKey, ...urlCredentialValues(config.stt?.baseUrl),
-        config.vault?.token, config.vault?.username, ...urlCredentialValues(config.vault?.url),
-        ...Object.values(config.mcpServers ?? {}).flatMap((server) => "env" in server ? Object.values(server.env ?? {}) : "headers" in server ? Object.values(server.headers ?? {}) : []),
-        ...Object.values(config.mcpServers ?? {}).flatMap((server) => urlCredentialValues("url" in server ? server.url : undefined)),
-        ...Object.entries(process.env).filter(([name, value]) => /(?:key|token|secret|password|cookie|credential|auth|sessdata)/i.test(name) && typeof value === "string").map(([, value]) => value),
-      ]
-        .filter((secret): secret is string => typeof secret === "string" && secret.length > 0);
+      const evidenceSecrets = () => {
+        const modelKey = getApiKey(model.provider);
+        return modelKey ? [...configuredSecrets(config), modelKey] : configuredSecrets(config);
+      };
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
       const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
       const beforeToolCall: NonNullable<Parameters<typeof Session.open>[0]["beforeToolCall"]> = async (ctx, signal) => {
@@ -239,7 +234,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
         if (temporary === "wiki") return policy.filter([...commonTools.filter((tool) => ["vault_search", "vault_read"].includes(tool.name)), ...createWikiWriteTools(wikiContext!)]);
         const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wikiRuntime ? createWikiInteractiveTools(wikiRuntime.wiki, { sourceResolver: wikiSourceResolver }) : [])]);
-        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, ...(decisionJudge ? { judge: decisionJudge } : {}), confidence: config.jev?.confidence ?? 0.8, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable"), secrets: evidenceSecrets })]);
+        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, ...(decisionJudge ? { judge: decisionJudge } : {}), confidence: judgeConfidence, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable"), secrets: evidenceSecrets })]);
       };
       const session = await Session.open({
         key,
@@ -248,16 +243,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         thinking: temporary ? config.backgroundModel.thinking : config.model.thinking,
         tools: getTools(),
         streamFn: models.streamFn,
-        ...(decisionJudge && !temporary ? { toolRouter: { judge: decisionJudge, confidence: config.jev?.confidence ?? 0.8, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") } } : {}),
+        ...(decisionJudge && !temporary ? { toolRouter: { judge: decisionJudge, confidence: judgeConfidence, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") } } : {}),
         evidenceSecrets,
         ...(!temporary ? { requestActions: {
-          confidence: config.jev?.confidence ?? 0.8,
+          confidence: judgeConfidence,
           classify: async (input: string, urls: string[], signal?: AbortSignal) => {
-            const judge = decisionJudge ?? new Jev(config.jev ?? {}, fetch, (decision) => log.info({ session: key, ...decision }, "jev decision"));
-            if (!config.jev?.enabled && !opts.decisionJudge) throw new Error("Jev link classification is disabled.");
-            if (!judge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
+            if (!decisionJudge) throw new Error("Jev link classification is disabled.");
+            if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
             const clean = redactForExternalEvaluation({ input, urls }, evidenceSecrets());
-            return judge.classifyLinks(clean.input, clean.urls, signal);
+            return decisionJudge.classifyLinks(clean.input, clean.urls, signal);
           },
           warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
         } } : {}),
@@ -516,14 +510,4 @@ function wikiReply(session: Session): string {
   const failedWrites = outcome.failedTools.filter((name) => name === "wiki_write" || name === "wiki_edit");
   if (failedWrites.length) throw new Error(`Wiki compilation tool failed: ${failedWrites.join(", ")}`);
   throw new Error(outcome.failureReason ?? "The wiki run did not finish");
-}
-
-function urlCredentialValues(value: string | undefined): string[] {
-  if (!value) return [];
-  try {
-    const url = new URL(value);
-    const secrets = [url.username, url.password];
-    for (const [key, item] of url.searchParams) if (/(?:key|token|secret|password|cookie|auth|credential)/i.test(key)) secrets.push(item);
-    return secrets.filter(Boolean);
-  } catch { return []; }
 }
