@@ -15,6 +15,7 @@ const ALLOWED = [
   /^stt\.(provider|baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
   /^vault\.(path|url|branch|username|token)$/,
+  /^wiki\.(enabled|every|notify|maxNotesPerRun)$/,
   /^webSearch\.(provider|apiKey|baseUrl)$/,
   /^heartbeat\.(every|activeHours)$/,
   /^memory\.consolidateAt$/,

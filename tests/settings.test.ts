@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../src/config/load.js";
-import { applySettings, readSettings } from "../src/config/settings.js";
+import { applySettings, isEditable, readSettings } from "../src/config/settings.js";
 import { resolvePaths } from "../src/paths.js";
 
 const paths = resolvePaths("/tmp/vex-settings-test");
@@ -16,6 +16,7 @@ tools:
 mcpServers:
   local: { command: node }
 `;
+const withVault = "model: { provider: p, id: m }\nvault: { url: https://example.com/v.git }\n";
 
 describe("settings", () => {
   it("lists editable values and reports secrets without revealing them", () => {
@@ -61,6 +62,16 @@ describe("settings", () => {
     expect(() => applySettings("model: [", { set: { "model.id": "x" } }, paths)).toThrow("YAML");
     expect(() => applySettings(base, { set: { "backgroundModel.provider": "deepseek" } }, paths)).toThrow(ConfigError);
     expect(() => applySettings(base, { set: { "heartbeat.every": "500ms" } }, paths)).toThrow(/heartbeat/);
+  });
+
+  it("accepts wiki settings", () => {
+    for (const key of ["wiki.enabled", "wiki.every", "wiki.notify", "wiki.maxNotesPerRun"]) expect(isEditable(key)).toBe(true);
+  });
+
+  it("round-trips a wiki patch", () => {
+    const next = applySettings(withVault, { set: { "wiki.enabled": true, "wiki.every": "12h" } }, paths);
+    expect(next.restartRequired).toBe(true);
+    expect(next.text).toMatch(/wiki:[\s\S]*enabled: true/);
   });
 
   it("edits the notes vault and keeps its token secret", () => {
