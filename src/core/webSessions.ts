@@ -53,26 +53,29 @@ export class WebSessionIndex {
     return meta ? { ...meta } : undefined;
   }
 
-  async create(now: number): Promise<WebSessionMeta> {
+  create(now: number): Promise<WebSessionMeta> {
     const meta: WebSessionMeta = { id: randomUUID(), title: DEFAULT_TITLE, titled: false, createdAt: now, updatedAt: now };
-    this.metas.set(meta.id, meta);
-    await this.save();
-    return { ...meta };
+    return this.transact((metas) => {
+      metas.set(meta.id, meta);
+      return { ...meta };
+    });
   }
 
-  async update(
+  update(
     id: string,
     patch: Partial<Pick<WebSessionMeta, "title" | "titled" | "updatedAt">>,
   ): Promise<WebSessionMeta | undefined> {
-    const meta = this.metas.get(id);
-    if (!meta) return undefined;
-    Object.assign(meta, patch);
-    await this.save();
-    return { ...meta };
+    return this.transact((metas) => {
+      const meta = metas.get(id);
+      if (!meta) return undefined;
+      const next = { ...meta, ...patch };
+      metas.set(id, next);
+      return { ...next };
+    });
   }
 
-  async remove(id: string): Promise<void> {
-    if (this.metas.delete(id)) await this.save();
+  remove(id: string): Promise<void> {
+    return this.transact((metas) => { metas.delete(id); });
   }
 
   private async rebuild(): Promise<void> {
@@ -98,11 +101,25 @@ export class WebSessionIndex {
     if (this.metas.size > 0) await this.save();
   }
 
-  private save(): Promise<void> {
-    // Serialize writes so an older snapshot can never land after a newer one.
-    const run = this.saving.then(() => writeFileAtomic(this.file, JSON.stringify([...this.metas.values()], null, 2)));
-    this.saving = run.catch(() => {});
+  /**
+   * Applies a change to a copy of the index, saves it, and only then makes it the
+   * current state, so a failed save leaves the index as it was. Changes run one at
+   * a time, so each starts from the result of the previous one.
+   */
+  private transact<T>(change: (metas: Map<string, WebSessionMeta>) => T): Promise<T> {
+    const run = this.saving.then(async () => {
+      const next = new Map(this.metas);
+      const result = change(next);
+      await writeFileAtomic(this.file, JSON.stringify([...next.values()], null, 2));
+      this.metas = next;
+      return result;
+    });
+    this.saving = run.then(() => {}, () => {});
     return run;
+  }
+
+  private save(): Promise<void> {
+    return this.transact(() => {});
   }
 }
 

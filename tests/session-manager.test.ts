@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, getCurrentSystemPrompt, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -150,6 +150,44 @@ describe("SessionManager", () => {
     await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
     await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);
+  });
+
+  it("leaves the index unchanged when saving it fails", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const kept = await manager.createWeb();
+    const index = join(paths.webSessions, "index.json");
+    // A directory in place of the index file makes every save fail.
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.createWeb()).rejects.toThrow();
+    await expect(manager.renameWeb(kept.id, "renamed")).rejects.toThrow();
+    expect(manager.listWeb()).toEqual([expect.objectContaining({ id: kept.id, title: "New chat" })]);
+  });
+
+  it("keeps the conversation and its transcript when deletion cannot save the index", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("x")]);
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const session = await manager.get(webSessionKey(meta.id));
+    session.send("hi");
+    await session.whenIdle();
+    const transcript = join(paths.webSessions, `${meta.id}.jsonl`);
+    const before = await readFile(transcript, "utf8");
+    const index = join(paths.webSessions, "index.json");
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.deleteWeb(meta.id)).rejects.toThrow();
+    expect(manager.listWeb().map((m) => m.id)).toEqual([meta.id]);
+    expect(await readFile(transcript, "utf8")).toBe(before);
+    // Once the index can be saved again, deletion can be retried.
+    await rm(index, { recursive: true });
+    await manager.deleteWeb(meta.id);
+    expect(manager.listWeb()).toEqual([]);
+    await expect(stat(transcript)).rejects.toThrow();
   });
 
   it("allows retrying after session disposal fails during deletion", async () => {
