@@ -312,6 +312,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     openSession,
     generateTitle: createTitleGenerator({ model: backgroundModel, complete: models.completeSimple, getApiKey }),
     onError: (err) => log.warn({ err }, "session manager task failed"),
+    // A WebChat session waiting for the owner's approval stays open until the answer arrives.
+    retain: (key) => approvals.pending().some((request) => request.sessionKey === key),
   });
   await sessions.init();
   startupCleanup.push(() => sessions.shutdown());

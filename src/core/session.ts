@@ -147,6 +147,12 @@ export class Session {
     return this.current !== undefined;
   }
 
+  /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
+  get idle(): boolean {
+    return !this.current && !this.closing && !this.drainingAssistant && !this.assistantDrain
+      && this.assistantQueue.length === 0 && this.afterStop.length === 0;
+  }
+
   async maxUserPromptBytes(prefix: string): Promise<number> {
     const systemPrompt = await this.opts.buildSystemPrompt();
     const baseline = estimateProviderInput({
