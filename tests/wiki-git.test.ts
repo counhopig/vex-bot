@@ -231,6 +231,24 @@ describe("WikiRepo recovery and history", () => {
     expect(parseTrailers(body ?? "")).toMatchObject({ "Vex-Batch": ["b1"], "Vex-Kind": ["scheduled"], "Vex-Scan-Base": [base] });
   });
 
+  it("reads and writes a ref outside the branch history", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    await r.open();
+    const sha = await r.head();
+    await r.updateRef("refs/vex/wiki-bootstrap", sha);
+    expect(await r.ref("refs/vex/wiki-bootstrap")).toBe(sha);
+  });
+
+  it("returns null for a missing ref", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    await r.open();
+    expect(await r.ref("refs/vex/does-not-exist")).toBeNull();
+  });
+
   it("diffNames reports added, modified and deleted markdown only", async () => {
     const { remote, work } = makeRemote(join(dir, "seed"));
     commit(work, { "wiki/a.md": "a", "wiki/b.md": "b", "wiki/keep.txt": "t" }, "2026-10-01T10:00:00+0000");
