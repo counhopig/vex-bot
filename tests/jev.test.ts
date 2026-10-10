@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { Jev } from "../src/decision/jev.js";
+import { Jev } from "../src/providers/jev.js";
 
 it("uses the official typed API and keeps the key out of the payload", async () => {
   const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ answers: { next_tool: { type: "choice", choice: "web_fetch", confidence: 0.95 } } }));
@@ -70,7 +70,7 @@ it("classifies each bounded owner URL with a typed intent and ignores untrusted 
 });
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
-import { withEvidenceBoundary } from "../src/decision/routing.js";
+import { withEvidenceBoundary } from "../src/context/evidence.js";
 import { CONTEXT_BUDGET_ERROR, estimateProviderInput, withContextBudget } from "../src/context/budget.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 

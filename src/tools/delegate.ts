@@ -1,8 +1,8 @@
 import { Agent, type AgentOptions, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { boundedEvidenceReceipt, redactForExternalEvaluation, withEvidenceBoundary } from "../decision/routing.js";
-import type { DecisionJudge } from "../decision/jev.js";
+import { boundedEvidenceReceipt, redactForExternalEvaluation, withEvidenceBoundary } from "../context/evidence.js";
+import type { DecisionJudge } from "../policy/judge.js";
 import { profileSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
 import { RESIDENT_LINE_LIMITS } from "../workspace/workspace.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";

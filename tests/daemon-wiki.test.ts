@@ -12,7 +12,7 @@ import { createModelRegistry } from "../src/providers/models.js";
 import { runGit } from "../src/vault/git.js";
 import { readOriginalSource } from "../src/links/source.js";
 import type { PageRequest } from "../src/tools/web.js";
-import type { DecisionJudge } from "../src/decision/jev.js";
+import type { DecisionJudge } from "../src/policy/judge.js";
 import { fingerprint } from "../src/wiki/marker.js";
 import { Wiki } from "../src/wiki/service.js";
 import { createFaux, fauxModels, lastUserText } from "./helpers/faux.js";

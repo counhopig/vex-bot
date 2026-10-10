@@ -1,7 +1,8 @@
 import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEvent, type Message, type TranscriptContext } from "@earendil-works/pi-ai";
-import type { DecisionJudge } from "./jev.js";
-import { CONTEXT_BUDGET_ERROR, ContextBudgetError } from "../context/budget.js";
+import type { DecisionJudge } from "../policy/judge.js";
+import { addUsage, zeroUsage } from "../providers/usage.js";
+import { CONTEXT_BUDGET_ERROR, ContextBudgetError } from "./budget.js";
 
 export const TOOL_EVIDENCE_ERROR = "The reply could not be verified against tool results. Please retry the request.";
 const MAX_EXCERPT = 1000;
@@ -298,15 +299,4 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     }
     throw new Error("Evidence check did not complete.");
   };
-}
-
-/** Compatibility name; route advice and evidence checking now share one boundary. */
-export function withToolRouting(stream: StreamFn, judge: DecisionJudge, tools: () => AgentTool<any>[], confidence: number, warn: (error: unknown) => void, secrets?: () => string[], messages?: () => TranscriptContext["messages"], takeUsage?: () => AssistantMessage["usage"] | undefined): StreamFn {
-  return withEvidenceBoundary(stream, { judge, tools, confidence, warn, secrets, messages, takeUsage });
-}
-
-function zeroUsage(): AssistantMessage["usage"] { return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }; }
-function addUsage(a: AssistantMessage["usage"], b: AssistantMessage["usage"]): AssistantMessage["usage"] {
-  return { input: a.input + b.input, output: a.output + b.output, cacheRead: a.cacheRead + b.cacheRead, cacheWrite: a.cacheWrite + b.cacheWrite, totalTokens: a.totalTokens + b.totalTokens,
-    cost: { input: a.cost.input + b.cost.input, output: a.cost.output + b.cost.output, cacheRead: a.cost.cacheRead + b.cost.cacheRead, cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite, total: a.cost.total + b.cost.total } };
 }

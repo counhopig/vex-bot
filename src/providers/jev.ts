@@ -1,3 +1,5 @@
+import type { DecisionJudge, LinkIntent, ToolRoute } from "../policy/judge.js";
+
 export interface JevConfig {
   enabled?: boolean;
   apiKey?: string;
@@ -6,13 +8,6 @@ export interface JevConfig {
   timeoutMs?: number;
 }
 
-export interface ToolRoute { tool: string | null; confidence: number }
-export interface LinkIntent { url: string; intent: "archive" | "read" | "defer"; confidence: number }
-export interface DecisionJudge {
-  route(state: unknown, tools: { name: string; description: string }[], signal?: AbortSignal): Promise<ToolRoute>;
-  unsupported(state: unknown, signal?: AbortSignal): Promise<number>;
-  classifyLinks?(input: string, urls: string[], signal?: AbortSignal): Promise<LinkIntent[]>;
-}
 
 export class Jev implements DecisionJudge {
   constructor(private readonly config: JevConfig, private readonly request: typeof fetch = fetch, private readonly onDecision: (event: Record<string, string | number | null>) => void = () => {}) {}
