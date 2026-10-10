@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEvent } from "../src/core/events.js";
 import { Session, type SessionOptions } from "../src/core/session.js";
 import type { LinkIntent } from "../src/policy/judge.js";
+import { LinkActionController, type LinkActionOptions } from "../src/links/actions.js";
+import type { TurnControllerFactory } from "../src/core/turnController.js";
 import { createRequestActionOutcomeTool } from "../src/tools/requestOutcome.js";
 import { estimateProviderInput } from "../src/context/budget.js";
 import type { Wiki } from "../src/vault/wiki/service.js";
@@ -35,6 +37,14 @@ const echoTool: AgentTool<typeof EchoParams> = {
   parameters: EchoParams,
   execute: async (_id, { text }) => ({ content: [{ type: "text", text: `echo:${text}` }], details: {} }),
 };
+
+/** The daemon's link-action controller with its routes, for sessions under test. */
+function linkActions(options: Omit<LinkActionOptions, "routes" | "fallbackTools">): TurnControllerFactory {
+  return (host) => new LinkActionController({
+    routes: { archive: "wiki_ingest", read: "web_fetch" }, fallbackTools: ["bash", "delegate"],
+    onOutcome: (message) => host.enqueueAssistant(message), onUsage: (usage) => host.recordUsage(usage), ...options,
+  });
+}
 
 function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
   return Session.open({
@@ -198,7 +208,7 @@ describe("Session", () => {
     const session = await Session.open({
       key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => systemPrompt,
-      requestActions: { confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } },
+      controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } }),
       toolRouter: { confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } },
       emit: (event) => events.push(event), retry: { attempts: 1, baseDelayMs: 1 },
     });
@@ -306,7 +316,7 @@ describe("Session", () => {
       expect(context.messages.some((message) => message.role === "toolResult" && message.toolName === "wiki_ingest")).toBe(true);
       return fauxAssistantMessage("A short summary.");
     }]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -331,7 +341,7 @@ describe("Session", () => {
       fauxAssistantMessage("The action was denied."),
     ]);
     const s = await open({ tools: [ingest, bash], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
-      requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) },
+      controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }),
       toolRouter: { confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } },
     });
     s.send(`summarize ${url}`);
@@ -348,7 +358,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true, rawPath: "raw/source.md", publication: "published", compiledPages: ["wiki/page.md"] } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("Archived once.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -363,7 +373,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage(fauxToolCall("date", {}), { stopReason: "toolUse" }), fauxAssistantMessage("Done.")]);
-    const s = await open({ tools: [dateTool, ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [dateTool, ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -376,7 +386,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { order.push((rawArgs as { url: string }).url); return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Both links were summarized.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a and https://example.com/b");
     await s.whenIdle();
     expect(order).toEqual(["https://example.com/a", "https://example.com/b"]);
@@ -393,7 +403,7 @@ describe("Session", () => {
       fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: "https://example.com/a" }), { stopReason: "toolUse" }),
       fauxAssistantMessage("Read without saving."),
     ]);
-    const s = await open({ tools: [ingest, fetch], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "read", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "read", confidence: 0.99 })) }) });
     s.send("check https://example.com/a and do not save it");
     await s.whenIdle();
     expect(reads).toBe(1);
@@ -410,7 +420,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] })),
       fauxAssistantMessage("Summary."),
     ]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -421,7 +431,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.4 }] })),
       fauxAssistantMessage("The link was not archived."),
     ]);
-    const uncertain = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => [] } });
+    const uncertain = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => [] }) });
     uncertain.send(`summarize ${url}`);
     await uncertain.whenIdle();
     expect(ingests).toBe(1);
@@ -433,7 +443,7 @@ describe("Session", () => {
       fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] }), { stopReason: "length" }),
       fauxAssistantMessage("The partial classification was ignored."),
     ]);
-    const partial = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } } });
+    const partial = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
     partial.send(`summarize ${url}`);
     await partial.whenIdle();
     expect(ingests).toBe(1);
@@ -445,16 +455,16 @@ describe("Session", () => {
     const url = "https://example.com/restored";
     let ingests = 0;
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
-    const requestActions = { confidence: 0.8, classify: async (_input: string, urls: string[]) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) };
+    const controller = linkActions({ confidence: 0.8, classify: async (_input: string, urls: string[]) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) });
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Saved.")]);
-    const first = await open({ tools: [ingest], requestActions });
+    const first = await open({ tools: [ingest], controller });
     first.send(`summarize ${url}`);
     await first.whenIdle();
     await first.dispose();
 
     const callsBeforeRestore = faux.state.callCount;
-    const restored = await open({ tools: [ingest], requestActions });
+    const restored = await open({ tools: [ingest], controller });
     await restored.whenIdle();
     expect(ingests).toBe(1);
     expect(faux.state.callCount).toBe(callsBeforeRestore);
@@ -470,7 +480,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { ingested.push((rawArgs as { url: string }).url); return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([async () => { ready(); await wait; return fauxAssistantMessage("First reply."); }, fauxAssistantMessage("Second reply.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await started;
     s.send("also summarize https://example.com/b");
@@ -495,7 +505,7 @@ describe("Session", () => {
       if (input.startsWith("please summarize")) { classificationStarted(); await gate; return urls.map((url) => ({ url, intent: "archive" as const, confidence: 0.99 })); }
       return urls.map((url) => ({ url, intent: "read" as const, confidence: 0.99 }));
     };
-    const s = await open({ tools: [ingest, fetch], requestActions: { confidence: 0.8, classify } });
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify }) });
     s.send("please summarize https://example.com/a");
     await started;
     s.send("for https://example.com/a, do not save it; just read");
@@ -519,7 +529,7 @@ describe("Session", () => {
     } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("unused")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await running;
     s.stop();
@@ -533,7 +543,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "temporary provider error" }), fauxAssistantMessage("Summary after retry.")]);
-    const s = await open({ tools: [ingest], retry: { attempts: 1, baseDelayMs: 1 }, requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], retry: { attempts: 1, baseDelayMs: 1 }, controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(ingests).toBe(1);
@@ -545,7 +555,7 @@ describe("Session", () => {
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({ content: [{ type: "text", text: "awaiting review" }], details: { receipt: { status: "bootstrap-pending", sourceAvailable: false } } }) };
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("Summary only.")]);
-    const s = await open({ tools: [ingest], requestActions: { confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) } });
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("awaiting bootstrap review"), injected: true }));

@@ -23,7 +23,8 @@ import {
   profileSection,
 } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
-import { Session } from "./core/session.js";
+import { Session, type SessionOptions } from "./core/session.js";
+import { LinkActionController } from "./links/actions.js";
 import { SessionManager } from "./core/sessionManager.js";
 import { createTitleGenerator } from "./core/title.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
@@ -252,7 +253,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         streamFn: models.streamFn,
         ...(decisionJudge && !temporary ? { toolRouter: { judge: decisionJudge, confidence: judgeConfidence, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") } } : {}),
         evidenceSecrets,
-        ...(!temporary ? { requestActions: {
+        ...(!temporary ? { controller: (host) => new LinkActionController({
+          routes: LINK_ROUTES,
+          fallbackTools: ["bash", "delegate"],
+          onOutcome: (message) => host.enqueueAssistant(message),
+          onUsage: (usage) => host.recordUsage(usage),
           confidence: judgeConfidence,
           classify: async (input: string, urls: string[], signal?: AbortSignal) => {
             if (!decisionJudge) throw new Error("Jev link classification is disabled.");
@@ -261,7 +266,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
             return decisionJudge.classifyLinks(clean.input, clean.urls, signal);
           },
           warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
-        } } : {}),
+        }) } satisfies Partial<SessionOptions> : {}),
         getApiKey,
         buildSystemPrompt: sessionPrompt,
         beforeToolCall,
@@ -494,15 +499,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   }
 }
 
+/** Shared links are archived into the wiki or read from the web. */
+const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
+
 type TemporaryKind = "heartbeat" | "consolidation" | "wiki";
 const TEMPORARY_WINDOW_LABELS: Record<TemporaryKind, string> = { heartbeat: "heartbeat", consolidation: "memory consolidation", wiki: "wiki" };
 
-/** A wiki compilation run succeeds only with a checked reply; a failed wiki write names the tool. */
+/** A wiki compilation run succeeds only with a checked reply and no failed wiki write. */
 function wikiReply(session: Session): string {
   const outcome = session.completionOutcome;
-  const reply = session.successfulReply;
-  if (outcome.successful && reply) return reply;
   const failedWrites = outcome.failedTools.filter((name) => name === "wiki_write" || name === "wiki_edit");
   if (failedWrites.length) throw new Error(`Wiki compilation tool failed: ${failedWrites.join(", ")}`);
+  const reply = session.successfulReply;
+  if (outcome.successful && reply) return reply;
   throw new Error(outcome.failureReason ?? "The wiki run did not finish");
 }
