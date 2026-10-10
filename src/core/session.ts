@@ -14,8 +14,7 @@ import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessa
 import type { ThinkingSetting } from "../config/schema.js";
 import { ContextCompactor, isCompactionRecord, type CompactionOptions } from "../context/compaction.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, estimateProviderInput, withContextBudget } from "../context/budget.js";
-import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary } from "../context/evidence.js";
-import type { DecisionJudge } from "../policy/judge.js";
+import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { appendJsonl, readJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
@@ -30,8 +29,8 @@ export interface SessionOptions {
   streamFn: StreamFn;
   getApiKey: (provider: string) => string | undefined;
   buildSystemPrompt: () => Promise<string>;
-  toolRouter?: { judge: DecisionJudge; confidence: number; warn: (error: unknown) => void };
-  evidenceSecrets?: () => string[];
+  /** What tool results prove, optional outside advice, and the secrets kept out of that advice. */
+  evidence: Pick<EvidenceBoundaryOptions, "profiles" | "advisor" | "secrets" | "warn">;
   /** Runtime-owned turn behaviour, such as the owner's link actions. */
   controller?: TurnControllerFactory;
   beforeToolCall?: (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
@@ -135,11 +134,8 @@ export class Session {
   private checkedStream(opts: SessionOptions): StreamFn {
     const budgeted = withContextBudget(opts.streamFn);
     const checked = withEvidenceBoundary(budgeted, {
-      ...(opts.toolRouter ? { judge: opts.toolRouter.judge } : {}),
+      ...opts.evidence,
       tools: () => this.agent.state.tools,
-      confidence: opts.toolRouter?.confidence,
-      warn: opts.toolRouter?.warn,
-      secrets: opts.evidenceSecrets,
       messages: () => this.agent.state.messages.slice(this.activeRunStart),
       takeUsage: () => this.takePendingProviderUsage(),
       returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },

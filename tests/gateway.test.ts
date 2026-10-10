@@ -22,6 +22,7 @@ import { createCoreTools } from "../src/tools/registry.js";
 import { TestClient } from "./helpers/client.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 const staticDir = fileURLToPath(new URL("../src/web/static/", import.meta.url));
 
@@ -57,7 +58,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     paths,
     bus,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({
+      Session.open({ evidence,
         key,
         transcriptPath,
         model: faux.getModel(),

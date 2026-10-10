@@ -71,6 +71,7 @@ it("classifies each bounded owner URL with a typed intent and ignores untrusted 
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { withEvidenceBoundary } from "../src/context/evidence.js";
+import { judged, TOOL_EVIDENCE } from "./helpers/evidence.js";
 import { CONTEXT_BUDGET_ERROR, estimateProviderInput, withContextBudget } from "../src/context/budget.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 
@@ -81,7 +82,7 @@ it("keeps prospective or negated tool narration and suppresses mixed unsupported
     fauxAssistantMessage("I'll read https://example.test/a now. It was saved and pushed."),
     fauxAssistantMessage("I'll read https://example.test/a now. It was saved and pushed."),
   ]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "Read https://example.test/a", timestamp: Date.now() }] } as TranscriptContext;
   const first = await boundary(faux.getModel(), context, undefined);
   expect((await first.result()).content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "text", text: expect.stringContaining("I'll read") })]));
@@ -94,7 +95,7 @@ it("keeps prospective or negated tool narration and suppresses mixed unsupported
 it("guards completed Chinese claims even when the request has no English operation keyword", async () => {
   const faux = createFaux();
   faux.setResponses([fauxAssistantMessage("已更新并已运行。"), fauxAssistantMessage("没有可验证的执行回执，无法确认已更新或运行。")]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "你好", timestamp: Date.now() }] } as TranscriptContext;
   const first = await boundary(faux.getModel(), context, undefined);
   expect((await first.result()).content[0]).toMatchObject({ type: "text", text: expect.stringContaining("could not verify") });
@@ -103,7 +104,7 @@ it("guards completed Chinese claims even when the request has no English operati
 it("retains supported pre-tool narration alongside an unexecuted call", async () => {
   const faux = createFaux();
   faux.setResponses([fauxAssistantMessage([{ type: "text", text: "I'll read it now." }, fauxToolCall("web_fetch", { url: "https://example.test/a" })], { stopReason: "toolUse" })]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "Read https://example.test/a", timestamp: Date.now() }] } as TranscriptContext;
   const stream = await boundary(faux.getModel(), context, undefined);
   const message = await stream.result();
@@ -116,7 +117,7 @@ it("removes partial prose from provider error and abort results", async () => {
     fauxAssistantMessage("Saved and pushed before failure.", { stopReason: "error", errorMessage: "partial saved claim" }),
     fauxAssistantMessage("Saved and pushed before cancellation.", { stopReason: "aborted", errorMessage: "partial aborted claim" }),
   ]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "Save https://example.test/a", timestamp: Date.now() }] } as TranscriptContext;
   const errors: string[] = [];
   for (let index = 0; index < 2; index++) {
@@ -136,7 +137,7 @@ it("rejects a routed request when the added routing instruction exhausts its bud
   const base = estimateProviderInput(context);
   const model = { ...faux.getModel(), contextWindow: base + 101, maxTokens: 100 };
   const boundary = withEvidenceBoundary(withContextBudget(provider), {
-    judge: { route: async () => ({ tool: "echo", confidence: 0.99 }), unsupported: async () => 0 }, tools: () => [],
+    ...judged({ judge: { route: async () => ({ tool: "echo", confidence: 0.99 }), unsupported: async () => 0 } }), tools: () => [],
   });
   await expect(boundary(model, context, undefined)).rejects.toMatchObject({ code: "VEX_CONTEXT_BUDGET" });
   expect(provider).not.toHaveBeenCalled();
@@ -150,7 +151,7 @@ it("checks the corrective request again and does not restart an oversized correc
   const base = estimateProviderInput(context);
   const model = { ...faux.getModel(), contextWindow: base + 120, maxTokens: 100 };
   const boundary = withEvidenceBoundary(withContextBudget(provider), {
-    judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, tools: () => [],
+    ...judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 } }), tools: () => [],
   });
   const result = await boundary(model, context, undefined);
   expect(provider).toHaveBeenCalledTimes(1);
@@ -167,7 +168,7 @@ it("preserves only the canonical local budget marker through error sanitization"
     fauxAssistantMessage("", { stopReason: "error", errorMessage: CONTEXT_BUDGET_ERROR }),
     fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider secret detail" }),
   ]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "hello", timestamp: 1 }] } as TranscriptContext;
   const local = await boundary(faux.getModel(), context, undefined);
   expect((await local.result()).errorMessage).toBe(CONTEXT_BUDGET_ERROR);
@@ -186,7 +187,7 @@ it("includes rejected and corrective provider usage in the checked fallback", as
     stream.end(message);
     return stream;
   };
-  const guarded = await withEvidenceBoundary(streamFn as never, { confidence: 0.8 });
+  const guarded = await withEvidenceBoundary(streamFn as never, { profiles: TOOL_EVIDENCE });
   const context = { messages: [{ role: "user" as const, content: "Save https://example.test/a", timestamp: Date.now() }] } as TranscriptContext;
   const output = await guarded({} as never, context, undefined);
   const message = await output.result();
@@ -207,7 +208,7 @@ it("does not use a prior turn's receipt to support a new operation claim", async
     { role: "toolResult" as const, toolCallId: "old-call", toolName: "wiki_ingest", content: [{ type: "text" as const, text: JSON.stringify(priorReceipt) }], details: { receipt: priorReceipt }, isError: false, timestamp: 2 },
     { role: "user" as const, content: "Archive https://example.test/new", timestamp: 3 },
   ] } as TranscriptContext;
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: evidence }, tools: () => [] });
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { ...judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: evidence } }), tools: () => [] });
   const output = await boundary(faux.getModel(), context, undefined);
   expect((await output.result()).content[0]).toMatchObject({ type: "text", text: expect.stringContaining("could not verify") });
   expect(JSON.stringify(evidence.mock.calls)).not.toContain("old-call");
@@ -222,7 +223,7 @@ it("returns consumed classification usage when routing rejects before the main p
   const context = { messages: [{ role: "user" as const, content: "Archive https://example.test/new", timestamp: 1 }] } as TranscriptContext;
   const base = estimateProviderInput(context);
   const model = { ...faux.getModel(), contextWindow: base + 100, maxTokens: 99 };
-  const boundary = withEvidenceBoundary(withContextBudget(provider), { takeUsage: () => usage, returnUsage: (value) => { returned = value; }, judge: { route: async () => ({ tool: "wiki_ingest", confidence: 0.99 }), unsupported: async () => 0 }, tools: () => [] });
+  const boundary = withEvidenceBoundary(withContextBudget(provider), { takeUsage: () => usage, returnUsage: (value) => { returned = value; }, ...judged({ judge: { route: async () => ({ tool: "wiki_ingest", confidence: 0.99 }), unsupported: async () => 0 } }), tools: () => [] });
   await expect(boundary(model, context, undefined)).rejects.toMatchObject({ code: "VEX_CONTEXT_BUDGET" });
   expect(provider).not.toHaveBeenCalled();
   expect(returned).toMatchObject({ input: 7, output: 2, totalTokens: 9, cost: { total: 9 } });
@@ -236,7 +237,7 @@ it("accepts a published claim only from a wiki_bootstrap receipt that reports pu
   ] } as TranscriptContext);
   const faux = createFaux();
   faux.setResponses([fauxAssistantMessage("The preview was published."), fauxAssistantMessage("The preview was published."), fauxAssistantMessage("The preview was published.")]);
-  const boundary = withEvidenceBoundary(fauxStreamFn(faux));
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
   const published = await (await boundary(faux.getModel(), contextFor("published"), undefined)).result();
   expect(published.content[0]).toMatchObject({ type: "text", text: "The preview was published." });
   const kept = await (await boundary(faux.getModel(), contextFor("preview"), undefined)).result();
