@@ -63,8 +63,7 @@ async function startScenario(responses: Parameters<FauxProviderHandle["setRespon
     providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
     toolPolicy: scenarioOptions.toolPolicy ?? {}, bashEnvPassthrough: [], wechat: { enabled: true, baseUrl: ilink.baseUrl, ownerId: "owner1" },
     ...(scenarioOptions.mcpServers ? { mcpServers: scenarioOptions.mcpServers } : {}),
-    vault: { path: join(dir, "vault"), url: remote },
-    wiki: { enabled: true, every: scenarioOptions.scheduled ? "5s" : "1d", notify: true, maxNotesPerRun: 20 },
+    vault: { url: remote, wiki: { every: scenarioOptions.scheduled ? "5s" : "1d", notify: true, maxNotesPerRun: 20 } },
   };
   const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => {
     if (scenarioOptions.failPush && args[0] === "push") return Promise.reject(new Error("simulated local push failure"));
@@ -113,8 +112,7 @@ describe("daemon Wiki notifications", () => {
       backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
       providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
       toolPolicy: {}, bashEnvPassthrough: [], wechat: { enabled: true, baseUrl: ilink.baseUrl, ownerId: "owner1" },
-      vault: { path: join(dir, "vault"), url: remote },
-      wiki: { enabled: true, every: "1d", notify: true, maxNotesPerRun: 20 },
+      vault: { url: remote, wiki: { every: "1d", notify: true, maxNotesPerRun: 20 } },
     };
     daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit });
     await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("Wiki bootstrap preview is awaiting review")])), { timeout: 5000 });

@@ -98,8 +98,7 @@ describe("assembled shared-link workflow", () => {
       backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
       providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
       toolPolicy: {}, bashEnvPassthrough: [], wechat: { enabled: false, baseUrl: "http://127.0.0.1:1" },
-      vault: { path: join(dir, "vault"), url: remote },
-      wiki: { enabled: true, every: "1d", notify: false, maxNotesPerRun: 20 },
+      vault: { url: remote, wiki: { every: "1d", notify: false, maxNotesPerRun: 20 } },
     };
     const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
     daemon = await startDaemon({

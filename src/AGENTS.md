@@ -20,8 +20,8 @@ src/
 ├── scheduler/             # Persistent schedules and temporary background turns
 ├── index/                 # Memory indexing, tokenization and search
 ├── persona/               # Mood, rest and proactive conversation state
-├── vault/                 # Read-only notes vault: git mirror, note parsing, search tools
-├── wiki/                  # LLM wiki: writable vault clone, batch transactions, runtime and tools
+├── vault/                 # Notes vault: git mirror or folder, note parsing, search tools
+│   └── wiki/              # LLM wiki over the vault's single writable clone: transactions and tools
 ├── workspace/             # Owner files, templates and daily notes
 ├── skills/                # Skill discovery and prompt integration
 ├── store/                 # Atomic writes and append-only JSONL
@@ -41,7 +41,7 @@ src/
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
 | Change link actions or evidence checks | `core/execution.ts`, `core/session.ts`, `context/evidence.ts`, `context/budget.ts`, `policy/judge.ts`, `providers/jev.ts`, `tools/requestOutcome.ts`, `tools/delegate.ts`, `daemon.ts` |
-| Change the LLM wiki | `wiki/service.ts`, `wiki/runtime.ts`, `wiki/tools.ts`, `wiki/write.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts` |
+| Change the LLM wiki | `vault/wiki/service.ts`, `vault/wiki/tools.ts`, `vault/wiki/write.ts`, `vault/notes.ts`, `config/schema.ts` (`vault.wiki`), `config/settings.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts`, `web/static/app.js` |
 | Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 
 ## LOCAL CONVENTIONS
@@ -71,8 +71,9 @@ src/
 - Persist a schedule's advanced trigger/one-time disable state before launching delivery; serialize mutations and restore in-memory state on save failure (`scheduler/index.ts:76`, `scheduler/index.ts:160`).
 - Each proactive-chat prompt carries the current time and quiet-period facts; an identical repeated prompt makes the model copy its previous reply from the history (`persona/index.ts:141`, `daemon.ts:241`).
 - Memory indexing excludes temporary `sessions/runs` transcripts and messages with `vexSource`; temporary heartbeat/consolidation transcripts are removed on disposal (`index/memory.ts:74`, `index/memory.ts:105`, `daemon.ts:229`).
-- The vault is read-only and its tools have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
-- The wiki plugs in through the existing seams: the scheduler owns only its cadence and asks `hooks.wikiWork`/`hooks.runWiki`; `Wiki.dueWork` decides bootstrap, backoff and review gating (`scheduler/index.ts`, `wiki/service.ts`). Compiler runs are ordinary temporary `run:` sessions built by the daemon's temporary-session helper, with a `SystemPromptBuilder` prompt and the `llm-wiki` skill resolved through skill discovery (`daemon.ts`, `skills/discovery.ts`).
-- Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`wiki/write.ts`, `policy/policy.ts`).
+- The repository is cloned once. With `vault.wiki` the vault takes the wiki as its `copy` and creates no mirror; `Wiki.readableCopy` fast-forwards that clone only when no wiki operation is queued, no batch is in flight and the tree is clean (`vault/notes.ts`, `vault/wiki/service.ts`).
+- The vault tools are read-only and have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
+- The wiki plugs in through the existing seams: the scheduler owns only its cadence and asks `hooks.wikiWork`/`hooks.runWiki`; `Wiki.dueWork` decides bootstrap, backoff and review gating (`scheduler/index.ts`, `vault/wiki/service.ts`). Compiler runs are ordinary temporary `run:` sessions built by the daemon's temporary-session helper, with a `SystemPromptBuilder` prompt and the `llm-wiki` skill resolved through skill discovery (`daemon.ts`, `skills/discovery.ts`).
+- Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`vault/wiki/write.ts`, `policy/policy.ts`).
 - Every model request passes the budget check, then the evidence boundary, which withholds operation claims without a matching tool result; text sent to an external judge is redacted with `configuredSecrets` (`core/session.ts`, `context/evidence.ts`, `config/secrets.ts`). The judge is advisory: link actions and their outcomes still go through the normal tool gate (`core/execution.ts`, `tools/requestOutcome.ts`).
-- A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt that the evidence boundary checks (`wiki/tools.ts`, `context/evidence.ts`).
+- A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt that the evidence boundary checks (`vault/wiki/tools.ts`, `context/evidence.ts`).

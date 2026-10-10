@@ -33,8 +33,8 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
 | `policy/` | Approval policy, pending approvals and the `DecisionJudge` contract |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
-| `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
-| `wiki/` | LLM wiki over a writable vault clone: scheduled ingest, batch commits and push, history reconciliation, rollback; `WikiRuntime` wires it into the daemon |
+| `vault/` | Notes vault: git mirror or folder, note parsing and link resolution, `vault_search` and `vault_read` |
+| `vault/wiki/` | LLM wiki over the vault's writable clone, which the vault then reads instead of a mirror: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
@@ -146,7 +146,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Notes wiki
 
-When `wiki.enabled` is set, `wiki/` maintains a writable clone of the git-backed vault and compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
+The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `Wiki.readableCopy()`, which fast-forwards it only while no wiki operation is queued, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 

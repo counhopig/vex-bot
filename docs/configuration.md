@@ -77,13 +77,13 @@ Saving in WebChat settings applies the change without a manual restart:
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
-| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps a read-only copy. The address must not contain credentials |
+| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps one copy, shared with the wiki. The address must not contain credentials |
 | `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
-| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and a read-only access token (some hosts accept any username); only with `vault.url` |
-| `wiki.enabled` | `false` | Compile a git-backed vault into `wiki/` and `raw/` pages and push the result; requires `vault.url` |
-| `wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
-| `wiki.notify` | `true` | Send a WeChat notification after each wiki batch |
-| `wiki.maxNotesPerRun` | `20` | Notes compiled per model call; a run processes every pending note and makes one commit |
+| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and an access token (read-only without the wiki, write access with it; some hosts accept any username); only with `vault.url` |
+| `vault.wiki.enabled` | `false` | Compile a git-backed vault into `wiki/` and `raw/` pages and push the result; requires `vault.url` |
+| `vault.wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
+| `vault.wiki.notify` | `true` | Send a WeChat notification after each wiki batch |
+| `vault.wiki.maxNotesPerRun` | `20` | Notes compiled per model call; a run processes every pending note and makes one commit |
 | `jev.enabled` | `false` | Use TypeSafe Jev for tool suggestions and tool-evidence checks in owner conversations |
 | `jev.apiKey` | none | Official TypeSafe API key; `TYPESAFE_API_KEY` also works |
 | `jev.model` | `jev-latest` | TypeSafe decision model |
@@ -238,7 +238,7 @@ vault:
   path: /vault
 ```
 
-**A git repository** (`vault.url`). With Wiki disabled, Vex keeps a read-only mirror in `<data dir>/vault/<hash>/`. With Wiki enabled, it uses a shared working clone so Wiki and raw-source commits can be written to that repository:
+**A git repository** (`vault.url`). Vex keeps exactly one copy. With the wiki disabled it is a read-only mirror in `<data dir>/vault/<hash>/`; with the wiki enabled it is the wiki's working clone in `<data dir>/wiki/<hash>/`, which the vault tools read too:
 
 ```yaml
 vault:
@@ -248,7 +248,7 @@ vault:
   token: "READ_ONLY_TOKEN"   # not needed for a public repository
 ```
 
-The first time a vault tool runs, Vex clones the repository; later, when you ask about your notes, it fetches again if the last update is more than a minute old. The copy is a mirror, so force pushes are fine. Startup makes no network request. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
+The first time a vault tool runs, Vex clones the repository; later, when you ask about your notes, it fetches again if the last update is more than a minute old. Without the wiki the copy is a mirror, so force pushes are fine. With the wiki, the shared clone only fast-forwards: it is not moved while a wiki run is queued or in progress, while a batch is in flight, or while a local bootstrap preview awaits review, and a rewritten remote history is reported instead of applied. Startup makes no network request. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
 
 Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration. Vex sends `vault.username` as the account name, or `git` when you leave it empty.
 
@@ -260,15 +260,22 @@ Treat note text as untrusted input, not as instructions: a page you clipped into
 
 ## Notes wiki
 
-With a git-backed vault (`vault.url`), set `wiki.enabled: true` to have Vex compile your notes into a wiki inside the same repository. A scheduled ingest reads the notes that changed since the last run, writes synthesized pages under `wiki/` (and fetched material under `raw/`), updates `wiki/_index.md`, and commits and pushes the batch. When you ask a question, the agent reads `wiki/` first and cites the pages it used.
+With a git-backed vault (`vault.url`), set `vault.wiki.enabled: true` to have Vex compile your notes into a wiki inside the same repository. A scheduled ingest reads the notes that changed since the last run, writes synthesized pages under `wiki/` (and fetched material under `raw/`), updates `wiki/_index.md`, and commits and pushes the batch. When you ask a question, the agent reads `wiki/` first and cites the pages it used.
 
-- `wiki.every` is the cadence (a duration such as `6h`, or a cron expression).
-- `wiki.maxNotesPerRun` bounds how many notes one model call compiles; a run still processes every pending note and makes a single commit.
-- `wiki.notify` sends a WeChat message after each batch.
+```yaml
+vault:
+  url: https://git.example.com/me/notes.git
+  token: "WRITE_TOKEN"
+  wiki:
+    enabled: true
+    every: 6h             # a duration, or a cron expression
+    notify: true          # a WeChat message after each batch
+    maxNotesPerRun: 20    # notes per model call; a run still makes a single commit
+```
 
-The first ingest is a preview: Vex commits it locally but withholds the push until you approve or reject it through the existing approval prompt (`/y` publishes, `/n` discards the local preview). The cadence stays paused until review. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed). Completion messages list archived raw paths and compiled Wiki pages separately, then state whether publication completed or remains pending. A raw-only commit does not count as a compiled Wiki page.
+The first ingest is a preview: Vex commits it locally, tells you which pages it generated and withholds the push. Say "approve the Wiki preview" or "reject the Wiki preview"; Vex then calls `wiki_bootstrap`, and you confirm that call in the ordinary approval prompt (`/y` publishes, `/n` keeps the preview). After a restart Vex reminds you of a preview that is still waiting. The cadence stays paused until review. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed). Completion messages list archived raw paths and compiled Wiki pages separately, then state whether publication completed or remains pending. A raw-only commit does not count as a compiled Wiki page.
 
-With Wiki enabled, Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. With Wiki disabled, the mirror remains read-only and can use a read-only token. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
+With Wiki enabled, Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. With the wiki disabled, the mirror remains read-only and can use a read-only token. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
 
 ## Scheduled messages
 

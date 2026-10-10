@@ -44,17 +44,17 @@ describe("parseConfig", () => {
     for (const [block, message] of bad) expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(message);
   });
 
-  it("defaults the wiki block when enabled with a vault url", () => {
-    const config = parseConfig("model: { provider: p, id: m }\nvault: { url: https://example.com/v.git }\nwiki: { enabled: true }\n", paths);
-    expect(config.wiki).toEqual({ enabled: true, every: "6h", notify: true, maxNotesPerRun: 20 });
+  it("defaults the vault wiki block when enabled with a vault url", () => {
+    const config = parseConfig("model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: true } }\n", paths);
+    expect(config.vault).toEqual({ url: "https://example.com/v.git", wiki: { every: "6h", notify: true, maxNotesPerRun: 20 } });
   });
 
-  it("rejects wiki.enabled without vault.url", () => {
-    expect(() => parseConfig("model: { provider: p, id: m }\nwiki: { enabled: true }\n", paths)).toThrow(/wiki.*vault\.url/);
+  it("rejects vault.wiki.enabled without a git url", () => {
+    expect(() => parseConfig("model: { provider: p, id: m }\nvault: { path: /v, wiki: { enabled: true } }\n", paths)).toThrow(/wiki\.enabled requires url/);
   });
 
-  it("omits wiki when disabled or absent", () => {
-    expect(parseConfig("model: { provider: p, id: m }\n", paths).wiki).toBeUndefined();
+  it("omits the wiki when it is disabled", () => {
+    expect(parseConfig("model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: false } }\n", paths).vault).toEqual({ url: "https://example.com/v.git" });
   });
 
   it("fills defaults for a minimal config", () => {

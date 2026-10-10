@@ -74,14 +74,15 @@ describe("settings", () => {
     expect(() => applySettings(base, { set: { "heartbeat.every": "500ms" } }, paths)).toThrow(/heartbeat/);
   });
 
-  it("accepts wiki settings", () => {
-    for (const key of ["wiki.enabled", "wiki.every", "wiki.notify", "wiki.maxNotesPerRun"]) expect(isEditable(key)).toBe(true);
+  it("accepts wiki settings under the vault only", () => {
+    for (const key of ["vault.wiki.enabled", "vault.wiki.every", "vault.wiki.notify", "vault.wiki.maxNotesPerRun"]) expect(isEditable(key)).toBe(true);
+    expect(isEditable("wiki.enabled")).toBe(false);
   });
 
   it("round-trips a wiki patch", () => {
-    const next = applySettings(withVault, { set: { "wiki.enabled": true, "wiki.every": "12h" } }, paths);
+    const next = applySettings(withVault, { set: { "vault.wiki.enabled": true, "vault.wiki.every": "12h" } }, paths);
     expect(next.restartRequired).toBe(true);
-    expect(next.text).toMatch(/wiki:[\s\S]*enabled: true/);
+    expect(next.text).toMatch(/vault:[\s\S]*wiki:[\s\S]*enabled: true/);
   });
 
   it("edits the notes vault and keeps its token secret", () => {
