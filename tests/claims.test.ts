@@ -85,3 +85,24 @@ it("does not treat URL punctuation or negation words as prose", () => {
   expect(unsupportedClaim(`I read ${a}. I did not read ${b}.`, turn, TOOL_EVIDENCE)).toBe(false);
   expect(unsupportedClaim(`I read ${b}.`, turn, TOOL_EVIDENCE)).toBe(true);
 });
+
+it("checks completion claims when unrelated words describe an absence or failure", () => {
+  const url = "https://example.test/article";
+  const turn = { urls: [url], evidence: [] };
+  for (const reply of [
+    `I archived ${url} with no errors.`,
+    `I archived ${url} without failure.`,
+    `已归档 ${url} 且没有错误。`,
+    `I archived ${url} and did not read it.`,
+  ]) expect(unsupportedClaim(reply, turn, TOOL_EVIDENCE)).toBe(true);
+  for (const reply of [
+    `I did not archive ${url}.`,
+    `I haven't saved ${url}.`,
+    `The source was not read.`,
+    `I failed to read ${url}.`,
+    "I cannot verify a new read in this turn.",
+    "I cannot confirm a read.",
+    "No source was read.",
+    `没有归档 ${url}。`,
+  ]) expect(unsupportedClaim(reply, turn, TOOL_EVIDENCE)).toBe(false);
+});

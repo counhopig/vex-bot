@@ -74,6 +74,16 @@ export class WebSessionIndex {
     });
   }
 
+  setTitleIfUntitled(id: string, title: string): Promise<WebSessionMeta | undefined> {
+    return this.transact((metas) => {
+      const meta = metas.get(id);
+      if (!meta || meta.titled) return undefined;
+      const next = { ...meta, title, titled: true };
+      metas.set(id, next);
+      return { ...next };
+    });
+  }
+
   remove(id: string): Promise<void> {
     return this.transact((metas) => { metas.delete(id); });
   }

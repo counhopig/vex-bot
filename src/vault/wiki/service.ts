@@ -42,13 +42,20 @@ export function previewNotice(preview: WikiPreview): string {
 
 function splitSource(text: string, limit: number): string[] {
   const segments: string[] = [];
-  for (let offset = 0; offset < text.length;) {
-    let end = Math.min(text.length, offset + limit);
-    const last = text.charCodeAt(end - 1);
-    if (end < text.length && last >= 0xd800 && last <= 0xdbff) end -= 1;
-    segments.push(text.slice(offset, end));
-    offset = end;
+  let segment = "";
+  let bytes = 0;
+  for (const character of text) {
+    const cost = Buffer.byteLength(character, "utf8");
+    if (cost > limit) throw new Error("The source segment byte budget is too small for a source character.");
+    if (bytes + cost > limit) {
+      segments.push(segment);
+      segment = "";
+      bytes = 0;
+    }
+    segment += character;
+    bytes += cost;
   }
+  if (segment) segments.push(segment);
   return segments.length ? segments : [""];
 }
 
@@ -541,6 +548,14 @@ export class Wiki {
       await this.checkIntegrity();
       const batchId = reconciled.lastBatchId;
       if (!batchId) return { reverted: false, commit: null, message: "there is nothing to roll back" };
+
+      const head = await this.repo.head();
+      const origin = await this.repo.originHead();
+      if (head !== origin && await this.repo.isAncestor(head, origin)) {
+        if (!(await this.cleanTree())) return { reverted: false, commit: null, message: "working tree or index changed; rollback stopped" };
+        await this.repo.fastForward();
+        await this.checkIntegrity();
+      }
 
       const target = await this.findCommit("Vex-Batch", batchId);
       if (!target) {
