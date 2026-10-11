@@ -12,19 +12,22 @@ class Element {
   textContent = "";
   value = "";
   checked = false;
+  disabled = false;
   hidden = false;
   id = "";
   href = "";
   style: Record<string, string> = {};
   scrollHeight = 0;
   scrollTop = 0;
+  parent?: Element;
   private listeners = new Map<string, ((event: object) => void)[]>();
 
   constructor(readonly tagName = "div") {}
   get firstChild() { return this.children[0]; }
-  append(...children: Element[]) { this.children.push(...children); }
-  replaceChildren() { this.children = []; }
-  remove() {}
+  append(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; this.children.push(child); } }
+  prepend(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; } this.children.unshift(...children); }
+  replaceChildren(...children: Element[]) { for (const child of [...this.children]) child.remove(); this.append(...children); }
+  remove() { if (this.parent) { this.parent.children = this.parent.children.filter((child) => child !== this); this.parent = undefined; } }
   setAttribute(name: string, value: string) { this.attributes[name] = value; }
   addEventListener(type: string, listener: (event: object) => void) {
     this.listeners.set(type, [...this.listeners.get(type) ?? [], listener]);
@@ -77,6 +80,22 @@ async function loadApp() {
 }
 
 describe("web app", () => {
+  it("prepends earlier history without clearing live streaming or sending duplicate page requests", async () => {
+    const { get, context, socket } = await loadApp();
+    runInContext('handle({ type: "history", sessionId: "one", items: [{ kind: "user", text: "recent", timestamp: 1 }], busy: true, streaming: "live", nextBefore: 100 })', context);
+    const recent = get("messages").children.find((item) => textOf(item) === "recent")!;
+    const streaming = get("messages").children.find((item) => textOf(item) === "live")!;
+    const button = get("messages").children[0]!;
+    button.dispatch("click");
+    button.dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "open", sessionId: "one", before: 100 });
+    expect(socket.send.mock.calls.filter(([raw]) => JSON.parse(raw).before === 100)).toHaveLength(1);
+    runInContext('handle({ type: "history", sessionId: "one", before: 100, items: [{ kind: "assistant", text: "older", timestamp: 1 }], busy: false })', context);
+    expect(get("messages").children).toEqual([expect.objectContaining({ className: "bubble assistant" }), recent, streaming]);
+    expect(textOf(get("messages").children[0]!)).toBe("older");
+    expect(runInContext("state.busy", context)).toBe(true);
+    expect(runInContext("state.streamText", context)).toBe("live");
+  });
   it("keeps a title node attached through both clicks of a rename", async () => {
     const { get, socket, prompt } = await loadApp();
     const row = get("session-list").children[1]!;

@@ -218,8 +218,9 @@ export class Gateway {
         const key = webSessionKey(message.sessionId);
         const session = await sessions.get(key);
         sessions.assertAvailable(key);
-        const { items, streaming } = session.history();
-        send(ws, { type: "history", sessionId: message.sessionId, items, busy: session.busy, streaming });
+        const page = await session.historyPage(message.before);
+        sessions.assertAvailable(key);
+        send(ws, { type: "history", sessionId: message.sessionId, ...page, busy: session.busy, ...(message.before !== undefined ? { before: message.before } : {}) });
         return;
       }
       case "send": {

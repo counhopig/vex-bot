@@ -17,7 +17,7 @@ const WorkspaceFileName = Type.Union([
 export type WorkspaceFile = Static<typeof WorkspaceFileName>;
 
 export const ClientMessageSchema = Type.Union([
-  Type.Object({ type: Type.Literal("open"), sessionId: SessionId }),
+  Type.Object({ type: Type.Literal("open"), sessionId: SessionId, before: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })) }),
   Type.Object({ type: Type.Literal("send"), sessionId: SessionId, text: Type.String({ minLength: 1, maxLength: 100_000 }) }),
   Type.Object({ type: Type.Literal("stop"), sessionId: SessionId }),
   Type.Object({ type: Type.Literal("create_session") }),
@@ -74,7 +74,7 @@ export interface StatusInfo {
 export type ServerMessage =
   | { type: "sessions"; sessions: WebSessionMeta[] }
   | { type: "session_created"; session: WebSessionMeta }
-  | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string }
+  | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string; before?: number; nextBefore?: number }
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "file"; name: WorkspaceFile; text: string }

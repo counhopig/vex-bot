@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { parseClientMessage } from "../src/protocol/messages.js";
 
 describe("parseClientMessage", () => {
+  it("accepts a history cursor and rejects invalid offsets", () => {
+    expect(parseClientMessage(JSON.stringify({ type: "open", sessionId: "s", before: 100 }))).toEqual({ type: "open", sessionId: "s", before: 100 });
+    for (const before of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "100"]) {
+      expect(parseClientMessage(JSON.stringify({ type: "open", sessionId: "s", before }))).toBeUndefined();
+    }
+  });
   it("accepts every client message shape", () => {
     const valid = [
       { type: "open", sessionId: "s" },
