@@ -89,8 +89,9 @@ const CLAUSE_BREAK = /(?<=[.!?;])\s+|[。！？；，、]|,\s*|\bbut\b|\bhowever
 const PROSPECTIVE = /^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b|^\s*(?:我(?:会|将|来|准备|正在)|正在|准备|稍后)/i;
 // A clause opening with the verb is an instruction ("Read the README first"), not a report.
 const IMPERATIVE = /^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i;
-// A negated or failed operation is not a completion claim, whatever its verb.
-const NEGATED = /\b(?:not|never|no|failed|fails|unable|cannot|can't|couldn't|didn't|haven't|hasn't|wasn't|weren't|won't)\b|未|没有|没能|无法|不能|失败|尚未/i;
+// Remove only negated operations; unrelated phrases such as "no errors" leave claims checkable.
+const NEGATED_OPERATION = /\b(?:not|never|cannot|can't|couldn't|didn't|haven't|hasn't|wasn't|weren't|won't|unable\s+to|failed\s+to|fails\s+to)\s+(?:(?:be|been|have|has|had|successfully|yet|already|fully|completely|actually|ever)\s+)*(?:(?:verify|confirm|report|claim)\s+(?:(?:a|an|the|new|successful|completed)\s+)*)?(?:saved|archived|published|pushed|compiled|read|retrieved|downloaded)\b|(?:尚未|未|没有|没能|无法|不能)(?:能|够|成功|完成|已)*(?:保存|归档|发布|推送|编译|读取|读完|获取)/gi;
+const NO_SOURCE_OPERATION = /\bno\s+(?:source|page|article|text|link|content|file|document|note)s?\s+(?:(?:was|were|has|have|been|successfully)\s+)*(?:saved|archived|published|pushed|compiled|read|retrieved|downloaded)\b/gi;
 
 /**
  * The reply's affirmative clauses, each with the links it names. Binding an operation to the links
@@ -105,8 +106,9 @@ function statements(reply: string): Statement[] {
     return `URLTOKEN${urls.length - 1}END${suffix}`;
   });
   return protectedReply.split(CLAUSE_BREAK).flatMap((clause) => {
-    if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause) || NEGATED.test(clause)) return [];
-    const text = clause.replace(/URLTOKEN(\d+)END/g, (_match, index: string) => urls[Number(index)] ?? "");
+    if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause)) return [];
+    const text = clause.replace(NEGATED_OPERATION, "").replace(NO_SOURCE_OPERATION, "")
+      .replace(/URLTOKEN(\d+)END/g, (_match, index: string) => urls[Number(index)] ?? "");
     return [{ text, urls: extractUrls(text) }];
   });
 }

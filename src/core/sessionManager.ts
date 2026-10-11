@@ -241,10 +241,8 @@ export class SessionManager {
     try {
       const title = await this.opts.generateTitle!(userText, assistantText);
       if (this.deleting.has(webSessionKey(id))) return;
-      const current = this.index.get(id);
-      if (!current || current.titled) return;
-      await this.index.update(id, { title, titled: true });
-      this.opts.bus.emit({ type: "sessions_changed" });
+      const updated = await this.index.setTitleIfUntitled(id, title);
+      if (updated) this.opts.bus.emit({ type: "sessions_changed" });
     } catch (err) {
       this.opts.onError?.(err);
     }

@@ -123,6 +123,30 @@ describe("SessionManager", () => {
     expect(manager.windowLabel(webSessionKey(meta.id))).toBe('WebChat conversation "我的标题"');
   });
 
+  it("keeps an owner rename when an automatic title finishes during its save", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    let finishTitle!: (title: string) => void;
+    const generateTitle = vi.fn(() => new Promise<string>((resolve) => { finishTitle = resolve; }));
+    const manager = makeManager(generateTitle);
+    await manager.init();
+    try {
+      const meta = await manager.createWeb();
+      const session = await manager.get(webSessionKey(meta.id));
+      session.send("hello");
+      await session.whenIdle();
+      expect(generateTitle).toHaveBeenCalledTimes(1);
+      const renaming = manager.renameWeb(meta.id, "Owner title");
+      finishTitle("Automatic title");
+      await renaming;
+      // A following index transaction waits for the generated title's queued update.
+      await manager.createWeb();
+      expect(manager.listWeb().find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+      const index = JSON.parse(await readFile(join(paths.webSessions, "index.json"), "utf8")) as { id: string; title: string }[];
+      expect(index.find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+    } finally { await manager.shutdown(); }
+  });
+
   it("orders sessions by latest activity", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("x")]);

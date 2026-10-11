@@ -294,6 +294,32 @@ describe("WikiRepo recovery and history", () => {
     expect(await r.ref("refs/vex/does-not-exist")).toBeNull();
   });
 
+  it("diffNames preserves Chinese filenames and embedded tabs and newlines", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    const modified = "wiki/中文.md";
+    const deleted = "wiki/删除\t笔记.md";
+    const added = "wiki/新增\n笔记.md";
+    commit(work, { [modified]: "before", [deleted]: "deleted content" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const from = await r.head();
+    writeFileSync(join(root, modified), "after");
+    rmSync(join(root, deleted));
+    writeFileSync(join(root, added), "new content");
+    const to = await r.commit(["wiki"], "batch");
+    const changes = await r.diffNames(from, to, "*.md");
+    expect(changes).toHaveLength(3);
+    expect(changes).toEqual(expect.arrayContaining([
+      { path: modified, status: "M" },
+      { path: deleted, status: "D" },
+      { path: added, status: "A" },
+    ]));
+    for (const change of changes) {
+      expect(await r.show(change.status === "D" ? from : to, change.path))
+        .toBe(change.status === "D" ? "deleted content" : change.status === "M" ? "after" : "new content");
+    }
+  });
+
   it("diffNames reports added, modified and deleted markdown only", async () => {
     const { remote, work } = makeRemote(join(dir, "seed"));
     commit(work, { "wiki/a.md": "a", "wiki/b.md": "b", "wiki/keep.txt": "t" }, "2026-10-01T10:00:00+0000");

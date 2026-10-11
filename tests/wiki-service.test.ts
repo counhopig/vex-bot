@@ -848,6 +848,57 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
+  it("keeps Chinese and emoji source segments within the UTF-8 byte budget", async () => {
+    const body = "中🙂".repeat(2_000);
+    const segments: string[] = [];
+    const { wiki, root } = await seed(join(dir, "home"), {
+      sourceSegmentBudget: async () => 4_000,
+      runAgent: async (prompt) => { segments.push(prompt.split("Source text:\n")[1] ?? ""); return "ok"; },
+    });
+    await wiki.init();
+    const url = "https://example.com/chinese";
+    await wiki.run({ kind: "on-demand", source: { url, text: body } }, new AbortController().signal);
+    expect(segments.length).toBeGreaterThan(1);
+    expect(segments.every((segment) => Buffer.byteLength(segment, "utf8") <= 4_000)).toBe(true);
+    expect(segments.join("")).toBe(body);
+    expect(segments.every((segment) => Buffer.from(segment).toString("utf8") === segment)).toBe(true);
+    expect(readFileSync(join(root, `raw/link-${createHash("sha256").update(url).digest("hex")}.md`), "utf8")).toContain(body);
+    await wiki.close();
+  });
+
+  it("rejects a byte budget too small for one source character before writing", async () => {
+    let calls = 0;
+    const { wiki, root } = await seed(join(dir, "home"), {
+      sourceSegmentBudget: async () => 1,
+      runAgent: async () => { calls++; return "ok"; },
+    });
+    await wiki.init();
+    const head = git(root, ["rev-parse", "HEAD"]);
+    await expect(wiki.run({ kind: "on-demand", source: { url: "https://example.com/emoji", text: "🙂" } }, new AbortController().signal))
+      .rejects.toThrow("byte budget is too small");
+    expect(calls).toBe(0);
+    expect(git(root, ["rev-parse", "HEAD"])).toBe(head);
+    expect(git(root, ["status", "--porcelain"])).toBe("");
+    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(false);
+    await wiki.close();
+  });
+
+  it("rolls back the latest published batch when the local clone is behind", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "base" }, "2026-10-01T10:00:00+0000");
+    const wiki = makeWiki(join(dir, "home"), remote);
+    await wiki.init();
+    writeFileSync(join(work, "wiki/a.md"), "generated");
+    git(work, ["add", "wiki/a.md"]);
+    git(work, ["commit", "-m", "wiki: ingest\n\nVex-Batch: remote-batch\nVex-Kind: on-demand\nVex-Scan-Base: none"]);
+    git(work, ["push", "origin", "main"]);
+    const result = await wiki.rollback(new AbortController().signal);
+    expect(result.reverted).toBe(true);
+    expect(git(remote, ["show", "main:wiki/a.md"])).toBe("base");
+    expect(git(remote, ["log", "-1", "--format=%B"])).toContain("Vex-Revert-Of: remote-batch");
+    await wiki.close();
+  });
+
   it("adapts long URL segments before the batch while archiving the complete body", async () => {
     const home = join(dir, "home");
     const url = "https://example.com/long";

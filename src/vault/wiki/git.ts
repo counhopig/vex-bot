@@ -460,11 +460,12 @@ export class WikiRepo {
 
   /** `git diff --name-status` reduced to added/modified/deleted paths; other statuses are dropped. */
   async diffNames(from: string, to: string, glob: string): Promise<Array<{ path: string; status: "A" | "M" | "D" }>> {
-    const output = await this.git(["diff", "--name-status", "--no-renames", `${from}..${to}`, "--", glob]);
+    const output = await this.git(["diff", "--name-status", "-z", "--no-renames", `${from}..${to}`, "--", glob]);
     const entries: Array<{ path: string; status: "A" | "M" | "D" }> = [];
-    for (const line of output.split("\n")) {
-      if (line === "") continue;
-      const [status, path] = line.split("\t");
+    const fields = output.split("\0");
+    for (let i = 0; i < fields.length - 1; i += 2) {
+      const status = fields[i];
+      const path = fields[i + 1];
       if (path === undefined) continue;
       if (status === "A" || status === "M" || status === "D") entries.push({ path, status });
     }
