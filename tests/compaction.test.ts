@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,66 @@ afterEach(async () => { await removeTmpDir(dir); });
 const user = (content: string, timestamp = 1) => ({ role: "user" as const, content, timestamp });
 
 describe("context compaction", () => {
+  it("recovers a legacy disk prefix in bounded batches and restores absolute checkpoints", async () => {
+    const path = join(dir, "legacy.jsonl");
+    const history = Array.from({ length: 300 }, (_, index) => [user(`legacy question ${index}`), fauxAssistantMessage(`legacy answer ${index}`)]).flat();
+    await writeFile(path, history.map((message) => JSON.stringify(message)).join("\n") + "\n");
+    const faux = createFaux();
+    const rescue = createFaux();
+    rescue.setResponses(Array.from({ length: 20 }, () => fauxAssistantMessage("No additional memory.")));
+    const complete = vi.fn(async () => fauxAssistantMessage("Legacy summary including question zero."));
+    faux.setResponses([
+      (context) => {
+        expect(JSON.stringify(context.messages)).toContain("Legacy summary including question zero.");
+        expect(JSON.stringify(context.messages)).not.toContain('"content":"legacy question 0"');
+        expect(JSON.stringify(context.messages)).toContain("legacy question 299");
+        return fauxAssistantMessage("current answer");
+      },
+      (context) => { expect(JSON.stringify(context.messages)).toContain("Legacy summary including question zero."); return fauxAssistantMessage("restored answer"); },
+    ]);
+    const model = { ...faux.getModel(), contextWindow: 20_000, maxTokens: 512 };
+    const opts = {
+      evidence, key: "wechat", transcriptPath: path, model, tools: [], getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: () => {},
+      streamFn: ((m, context, options) => getCurrentSystemPrompt(context.messages).includes("silently rescuing") ? fauxStreamFn(rescue)(m, context, options) : fauxStreamFn(faux)(m, context, options)) satisfies import("@earendil-works/pi-agent-core").StreamFn,
+      compaction: { backgroundModel: model, complete, workspace: dir },
+    };
+    const session = await Session.open(opts);
+    expect(complete).not.toHaveBeenCalled();
+    session.send("current question");
+    await session.whenIdle();
+    expect(JSON.stringify(complete.mock.calls[0])).toContain("legacy question 0");
+    const records = await readJsonl<unknown>(path);
+    const checkpoints = records.filter((record): record is CompactionRecord => Boolean(record && typeof record === "object" && (record as CompactionRecord).kind === "compaction"));
+    expect(checkpoints.map((record) => record.through)).toEqual([88, 596]);
+    expect((session as unknown as { agent: { state: { messages: unknown[] } } }).agent.state.messages.length).toBe(6);
+    await session.dispose();
+    const restored = await Session.open(opts);
+    const calls = complete.mock.calls.length;
+    restored.send("after restart");
+    await restored.whenIdle();
+    expect(complete).toHaveBeenCalledTimes(calls);
+    expect((await restored.historyPage()).items).toHaveLength(100);
+    await restored.dispose();
+  });
+
+  it("does not checkpoint over an unrecovered prefix when a recovery batch fails", async () => {
+    const faux = createFaux();
+    faux.setResponses(Array.from({ length: 20 }, () => fauxAssistantMessage("No additional memory.")));
+    const history = Array.from({ length: 512 }, (_, index) => [user(`old ${index}`), fauxAssistantMessage("reply")]).flat();
+    const complete = vi.fn(async () => complete.mock.calls.length === 2
+      ? fauxAssistantMessage("", { stopReason: "error", errorMessage: "summary unavailable" }) : fauxAssistantMessage("prefix summary"));
+    const saved: CompactionRecord[] = [];
+    const model = { ...faux.getModel(), contextWindow: 50_000, maxTokens: 512 };
+    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: async (record) => { saved.push(record); }, loadHistory: async function* () { yield* history; } });
+    compactor.discardPrefix(1024);
+    await compactor.transform([user("current")]);
+    expect(saved.map((record) => record.through)).toEqual([512]);
+    await compactor.transform([user("current")]);
+    expect(complete).toHaveBeenCalledTimes(2);
+    await compactor.transform([user("current")], new AbortController().signal);
+    expect(saved.map((record) => record.through)).toEqual([512, 1024]);
+  });
+
   it("rescues memory silently, summarizes older turns, preserves full UI history and restores the summary", async () => {
     const path = join(dir, "session.jsonl");
     const history = [user("主人喜欢香港".repeat(400)), fauxAssistantMessage("记住了"), user("最近原文"), fauxAssistantMessage("最近回复")];
@@ -49,6 +109,7 @@ describe("context compaction", () => {
     const session = await Session.open(opts);
     session.send("现在请求");
     await session.whenIdle();
+    expect(JSON.stringify((session as unknown as { agent: { state: { messages: unknown[] } } }).agent.state.messages)).not.toContain("主人喜欢香港".repeat(400));
     expect(await readFile(join(dir, "memory", "2026-10-03.md"), "utf8")).toContain("主人喜欢香港");
     expect(JSON.stringify(events)).not.toContain("silent rescue");
     expect(JSON.stringify(events)).not.toContain("append_memory");
