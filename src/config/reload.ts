@@ -17,6 +17,7 @@ async function readJson(file: string): Promise<Record<string, unknown> | undefin
 }
 
 export async function writePendingReload(paths: VexPaths, previous: string): Promise<void> {
+  if (await readPendingReload(paths)) return;
   await mkdir(join(paths.home, "state"), { recursive: true, mode: 0o700 });
   await writeFileAtomic(pendingFile(paths), JSON.stringify({ previous, at: Date.now() }), 0o600);
 }

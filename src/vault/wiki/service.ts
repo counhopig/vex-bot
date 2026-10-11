@@ -226,14 +226,14 @@ export class Wiki {
           await inspectAndCleanTree(this.repo, this.marker);
         }
         // Settle a committed-but-unpublished rollback only after the tree is clean, so its rebase cannot fail on leftovers.
-        if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled);
+        if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled, signal);
         await this.checkIntegrity();
         await this.repo.rebase();
         if (pendingCompile) {
           let settledSha = await this.findCommit("Vex-Batch", pendingCompile.batchId);
           if (!settledSha) throw new WikiIntegrityError("committed wiki batch is missing during settlement; preserving marker");
           await this.validateCommittedMarker();
-          if (!(await this.repo.isAncestor(settledSha, await this.repo.originHead()))) await this.pushWithRetry();
+          if (!(await this.repo.isAncestor(settledSha, await this.repo.originHead()))) await this.pushWithRetry(false, signal);
           settledSha = await this.findCommit("Vex-Batch", pendingCompile.batchId) ?? settledSha;
           await this.marker.setCommitted(settledSha);
           const current = (await this.stateStore.read()) ?? emptyState();
@@ -469,7 +469,7 @@ export class Wiki {
       let pushed = false;
       try {
         if (kind.kind !== "bootstrap") {
-          await this.pushWithRetry();
+          await this.pushWithRetry(false, signal);
           pushed = true;
           const headAfterPush = await this.repo.head();
           if (headAfterPush !== sha) {
@@ -535,7 +535,7 @@ export class Wiki {
         const clean = await this.cleanTree();
         if (!clean) return { reverted: false, commit: null, message: "working tree or index is not clean; pending rollback kept" };
         try {
-          await this.settleRollback(state, reconciled);
+          await this.settleRollback(state, reconciled, signal);
         } catch (error) {
           if (error instanceof WikiIntegrityError) return { reverted: false, commit: null, message: error.message };
           throw error;
@@ -567,6 +567,7 @@ export class Wiki {
         if ((await this.repo.head()) !== target) return { reverted: false, commit: null, message: "the unpublished batch is not the local tip; kept" };
         await this.checkIntegrity();
         if (!(await this.cleanTree())) return { reverted: false, commit: null, message: "working tree or index changed; unpublished batch kept" };
+        signal.throwIfAborted();
         await this.repo.resetHard(`${target}^`);
         await this.clearBatchRef();
         return { reverted: true, commit: await this.repo.head(), message: "discarded the unpublished batch" };
@@ -577,6 +578,7 @@ export class Wiki {
       try {
         await this.checkIntegrity();
         if (!(await this.cleanTree())) return { reverted: false, commit: null, message: "working tree or index changed; rollback stopped" };
+        signal.throwIfAborted();
         revertSha = await this.repo.revert(target, `wiki: rollback ${batchId}\n\nVex-Rollback: ${revertId}\nVex-Revert-Of: ${batchId}`);
       } catch (error) {
         if (error instanceof WikiIntegrityError) return { reverted: false, commit: null, message: error.message };
@@ -587,13 +589,14 @@ export class Wiki {
       await this.stateStore.write({ ...current, rollback: { targetBatchId: batchId, revertId } });
       if (!(await this.cleanTree())) return { reverted: false, commit: revertSha, message: "rollback committed locally but the tree changed; publication is pending" };
       try {
-        await this.pushWithRetry(true);
+        signal.throwIfAborted();
+        await this.pushWithRetry(true, signal);
       } catch {
         return { reverted: false, commit: revertSha, message: "revert committed locally but push failed; a later run will complete it" };
       }
       await this.clearBatchRef();
       return { reverted: true, commit: await this.repo.head(), message: "reverted the last batch" };
-    });
+    }, signal);
   }
 
   /** Returns the local bootstrap preview awaiting owner review. */
@@ -621,14 +624,15 @@ export class Wiki {
         return { pushed: false, message: "there is nothing to approve" };
       }
       try {
-        await this.pushWithRetry(true);
+        signal.throwIfAborted();
+        await this.pushWithRetry(true, signal);
       } catch (error) {
         return { pushed: false, message: `could not publish the preview: ${(error as Error).message}` };
       }
       const current = (await this.stateStore.read()) ?? emptyState();
       await this.stateStore.write({ ...current, bootstrap: "done", lastRunAt: Date.now() });
       return { pushed: true, message: "bootstrap preview published" };
-    });
+    }, signal);
   }
 
   /** Discards an unpublished bootstrap preview locally, or marks it done when it was already published. */
@@ -654,11 +658,12 @@ export class Wiki {
 
       await this.checkIntegrity();
       if (!(await this.cleanTree())) return { discarded: false, message: "working tree or index changed; preview kept" };
+      signal.throwIfAborted();
       await this.repo.resetHard(`${commit}^`);
       await this.marker.remove();
       await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending" });
       return { discarded: true, message: "bootstrap preview discarded" };
-    });
+    }, signal);
   }
 
   private sourcePath(url: string): string {
@@ -712,7 +717,7 @@ export class Wiki {
   }
 
   /** Publishes a pending rollback, clearing the batch reference; throws when the push cannot complete. */
-  private async settleRollback(state: WikiState | null, reconciled: ReconcileResult): Promise<void> {
+  private async settleRollback(state: WikiState | null, reconciled: ReconcileResult, signal: AbortSignal): Promise<void> {
     if (!(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; pending rollback preserved");
     const pending = reconciled.rollback;
     if (!pending) {
@@ -736,7 +741,8 @@ export class Wiki {
       await this.clearBatchRef();
       return;
     }
-    await this.pushWithRetry(true);
+    signal.throwIfAborted();
+    await this.pushWithRetry(true, signal);
     await this.clearBatchRef();
   }
 
@@ -759,25 +765,30 @@ export class Wiki {
   }
 
   /** Pushes the committed batch; on a rejected push it integrates the remote once and retries, accepting an already-published HEAD. */
-  private async pushWithRetry(requireClean = false): Promise<void> {
+  private async pushWithRetry(requireClean = false, signal?: AbortSignal): Promise<void> {
     try {
       await this.checkIntegrity();
       if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing publication");
+      signal?.throwIfAborted();
       await this.repo.push();
       return;
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       if (error instanceof WikiIntegrityError) throw error;
       // Another writer advanced the remote; fetch, rebase and retry once.
     }
     await this.repo.fetch();
     await this.checkIntegrity();
     if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing rebase");
+    signal?.throwIfAborted();
     await this.repo.rebase();
     try {
       await this.checkIntegrity();
       if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing publication");
+      signal?.throwIfAborted();
       await this.repo.push();
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       if (error instanceof WikiIntegrityError) throw error;
       await this.repo.fetch();
       await this.checkIntegrity();

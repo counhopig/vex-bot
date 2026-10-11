@@ -36,3 +36,9 @@ describe("reload safety net", () => {
     expect(await readPendingReload(paths)).toBeUndefined();
   });
 });
+
+it("keeps the original working configuration across multiple pending saves", async () => {
+  await writePendingReload(paths, "working");
+  await writePendingReload(paths, "not-yet-started");
+  expect(await readPendingReload(paths)).toEqual({ previous: "working" });
+});

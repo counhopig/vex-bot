@@ -44,6 +44,24 @@ async function seed(home: string, overrides: Partial<WikiOptions> = {}): Promise
 }
 
 describe("Wiki service", () => {
+  it("cancels queued publication, rejection and rollback before repository work", async () => {
+    let entered!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { wiki } = await seed(join(dir, "home"), { runAgent: async () => { entered(); await gate; return "ok"; } });
+    await wiki.init();
+    const active = wiki.run({ kind: "on-demand" }, new AbortController().signal);
+    await ready;
+    const controller = new AbortController();
+    const queued = [wiki.approveBootstrap(controller.signal), wiki.rejectBootstrap(controller.signal), wiki.rollback(controller.signal)];
+    const results = Promise.allSettled(queued);
+    controller.abort(new Error("cancelled"));
+    try {
+      expect(await results).toEqual(queued.map(() => ({ status: "rejected", reason: new Error("cancelled") })));
+    } finally { release(); await active; await wiki.close(); }
+  });
+
   it("init creates the wiki and raw subtrees", async () => {
     const home = join(dir, "home");
     const { wiki, root } = await seed(home);

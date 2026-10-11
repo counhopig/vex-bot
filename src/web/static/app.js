@@ -21,6 +21,8 @@ const state = {
   filePage: "soul",
   fileAreas: new Map(),
   fileBases: new Map(),
+  configBase: undefined,
+  savingConfig: undefined,
   savingFiles: new Map(),
   notes: null,
   pendingSaves: 0,
@@ -111,11 +113,16 @@ function handle(msg) {
       else showSaved(false, "", msg.error);
       break;
     case "config":
-      if (state.settingsTab === "yaml") $("settings-text").value = msg.text;
+      if (state.settingsTab === "yaml" && state.configBase === undefined) {
+        $("settings-text").value = msg.text;
+        $("settings-text").disabled = false;
+        state.configBase = msg.text;
+      }
       break;
     case "file":
-      if (state.fileAreas.has(msg.name)) {
+      if (state.fileAreas.has(msg.name) && !state.fileBases.has(msg.name)) {
         state.fileAreas.get(msg.name).value = msg.text;
+        state.fileAreas.get(msg.name).disabled = false;
         state.fileBases.set(msg.name, msg.text);
       }
       break;
@@ -123,6 +130,8 @@ function handle(msg) {
       renderNotes(msg.names);
       break;
     case "config_saved":
+      if (msg.ok && state.savingConfig !== undefined) state.configBase = state.savingConfig;
+      state.savingConfig = undefined;
       showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
       break;
     case "file_saved":
@@ -1062,6 +1071,7 @@ function renderFileEditors(page) {
     section.append(element("p", "hint", file.hint));
     const area = element("textarea", "file-text");
     area.spellcheck = false;
+    area.disabled = true;
     section.append(area);
     box.append(section);
     state.fileAreas.set(file.name, area);
@@ -1074,6 +1084,7 @@ function renderFileEditors(page) {
     select.setAttribute("aria-label", "Daily note");
     const area = element("textarea", "file-text");
     area.spellcheck = false;
+    area.disabled = true;
     const empty = element("p", "hint", "No daily notes yet.");
     select.hidden = area.hidden = empty.hidden = true;
     select.addEventListener("change", () => openNote(select.value));
@@ -1100,10 +1111,12 @@ function renderNotes(names) {
 
 function openNote(name) {
   const notes = state.notes;
-  if (notes.name) state.fileAreas.delete(notes.name);
+  if (notes.name) { state.fileAreas.delete(notes.name); state.fileBases.delete(notes.name); }
   notes.name = name;
   notes.select.value = name;
   notes.area.value = "";
+  notes.area.disabled = true;
+  state.fileBases.delete(name);
   state.fileAreas.set(name, notes.area);
   send({ type: "get_file", name });
 }
@@ -1137,6 +1150,8 @@ function openSettingsTab() {
     renderFileEditors(FILE_PAGES.find((page) => page.id === state.filePage));
   } else {
     $("settings-hint").textContent = YAML_HINT;
+    state.configBase = undefined;
+    $("settings-text").disabled = true;
     send({ type: "get_config" });
   }
 }
@@ -1314,6 +1329,10 @@ function saveSettings() {
     if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "No changes"); return; }
     send({ type: "save_settings", ...patch });
   } else if (tab.pages) {
+    if ([...state.fileAreas.keys()].some((name) => !state.fileBases.has(name))) {
+      showSaved(false, "", "Wait for the files to finish loading");
+      return;
+    }
     state.pendingSaves = state.fileAreas.size;
     state.saveWarnings = [];
     state.savingFiles = new Map();
@@ -1323,7 +1342,9 @@ function saveSettings() {
       send({ type: "save_file", name, text: area.value, ...(base === undefined ? {} : { base }) });
     }
   } else {
-    send({ type: "save_config", text: $("settings-text").value });
+    if (state.configBase === undefined) { showSaved(false, "", "Wait for the configuration to finish loading"); return; }
+    state.savingConfig = $("settings-text").value;
+    send({ type: "save_config", text: state.savingConfig, base: state.configBase });
   }
 }
 

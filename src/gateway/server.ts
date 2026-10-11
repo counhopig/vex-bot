@@ -20,7 +20,7 @@ export interface GatewayOptions {
   sessions: SessionManager;
   approvals: ApprovalManager;
   bus: EventBus;
-  config: { read: () => Promise<string>; save: (text: string) => Promise<{ restarting?: boolean } | void> };
+  config: { read: () => Promise<string>; save: (text: string, base?: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
   schedules: {
     list: () => { tasks: ScheduledTask[]; targets: { id: string; label: string }[] };
@@ -298,7 +298,7 @@ export class Gateway {
         return;
       case "save_config":
         try {
-          const saved = await this.opts.config.save(message.text);
+          const saved = await this.opts.config.save(message.text, message.base);
           send(ws, { type: "config_saved", ok: true, restarting: saved?.restarting });
         } catch (err) {
           if (!(err instanceof ConfigError)) throw err;

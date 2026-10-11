@@ -9,6 +9,7 @@ export interface TouchedPath {
   path: string;
   expectedBefore: FileFingerprint;
   after?: FileFingerprint;
+  intendedAfter?: FileFingerprint;
 }
 
 export interface InFlightMarker {
@@ -48,7 +49,7 @@ function parseMarker(text: string): InFlightMarker | null {
   const marker = parsed as InFlightMarker;
   if (typeof marker.batchId !== "string") return null;
   if (marker.phase !== "writing" && marker.phase !== "committed") return null;
-  if (!Array.isArray(marker.touched) || !marker.touched.every((entry) => typeof entry?.path === "string" && isFingerprint(entry.expectedBefore))) return null;
+  if (!Array.isArray(marker.touched) || !marker.touched.every((entry) => typeof entry?.path === "string" && isFingerprint(entry.expectedBefore) && (entry.after === undefined || isFingerprint(entry.after)) && (entry.intendedAfter === undefined || isFingerprint(entry.intendedAfter)))) return null;
   return marker;
 }
 
@@ -88,10 +89,10 @@ export class MarkerStore {
     await rm(this.file, { force: true });
   }
 
-  async recordIntent(path: string, expectedBefore: FileFingerprint): Promise<void> {
+  async recordIntent(path: string, expectedBefore: FileFingerprint, intendedAfter?: FileFingerprint): Promise<void> {
     const marker = await this.load();
     const touched = marker.touched.filter((entry) => entry.path !== path);
-    touched.push({ path, expectedBefore });
+    touched.push({ path, expectedBefore, ...(intendedAfter ? { intendedAfter } : {}) });
     await this.write({ ...marker, touched });
   }
 
