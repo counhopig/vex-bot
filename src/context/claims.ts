@@ -97,9 +97,17 @@ const NEGATED = /\b(?:not|never|no|failed|fails|unable|cannot|can't|couldn't|did
  * in its own clause keeps "I read A. I did not read B." from being checked as a claim about B.
  */
 function statements(reply: string): Statement[] {
-  return reply.split(CLAUSE_BREAK).flatMap((clause) => {
+  const urls: string[] = [];
+  // URL paths and query strings can contain clause separators and negation words.
+  const protectedReply = reply.replace(/https?:\/\/[^\s<>"'。！？；，、]+/g, (value) => {
+    const suffix = value.match(/[),.!?]+$/)?.[0] ?? "";
+    urls.push(value.slice(0, value.length - suffix.length));
+    return `URLTOKEN${urls.length - 1}END${suffix}`;
+  });
+  return protectedReply.split(CLAUSE_BREAK).flatMap((clause) => {
     if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause) || NEGATED.test(clause)) return [];
-    return [{ text: clause, urls: extractUrls(clause) }];
+    const text = clause.replace(/URLTOKEN(\d+)END/g, (_match, index: string) => urls[Number(index)] ?? "");
+    return [{ text, urls: extractUrls(text) }];
   });
 }
 
