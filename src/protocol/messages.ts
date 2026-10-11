@@ -59,7 +59,7 @@ export const ClientMessageSchema = Type.Union([
   }),
   Type.Object({ type: Type.Literal("delete_schedule"), id: Type.String({ minLength: 1, maxLength: 100 }) }),
   Type.Object({ type: Type.Literal("get_config") }),
-  Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }) }),
+  Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }), base: Type.Optional(Type.String({ maxLength: 1_000_000 })) }),
 ]);
 
 export type ClientMessage = Static<typeof ClientMessageSchema>;

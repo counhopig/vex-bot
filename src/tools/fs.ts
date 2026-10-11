@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { writeFileAtomic } from "../store/atomic.js";
@@ -17,9 +17,20 @@ export function createReadTool(workspace: string): AgentTool<typeof ReadParams> 
     label: "Read file",
     description: "Reads a text file, with a line number before each line.",
     parameters: ReadParams,
-    async execute(_id, { path, offset = 1, limit = 2000 }) {
+    async execute(_id, { path, offset = 1, limit = 2000 }, signal) {
       const abs = resolveToolPath(workspace, path);
-      const lines = (await readFile(abs, "utf8")).split("\n");
+      signal?.throwIfAborted();
+      const handle = await open(abs, "r");
+      let bytes: Buffer;
+      try {
+        const size = (await handle.stat()).size;
+        if (size > 1_000_000) throw new Error("File exceeds the read limit of 1 MB; use a targeted search or bounded shell command");
+        const buffer = Buffer.alloc(size);
+        const { bytesRead } = await handle.read(buffer, 0, size, 0);
+        bytes = buffer.subarray(0, bytesRead);
+      } finally { await handle.close(); }
+      signal?.throwIfAborted();
+      const lines = bytes.toString("utf8").split("\n");
       const start = offset - 1;
       const body = lines
         .slice(start, start + limit)

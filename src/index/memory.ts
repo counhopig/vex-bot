@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, open, readdir, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { markdownChunks, tokenize } from "./tokenize.js";
 
@@ -23,8 +23,8 @@ async function files(root: string, recursive = false): Promise<string[]> {
 const WINDOW = 4096;
 const INDEX_VERSION = 1;
 function digest(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
-// Reads the bytes in [start, size) of a file.
-async function readRange(source: string, start: number, end = Infinity): Promise<Buffer> {
+// Reads a bounded byte range.
+async function readRange(source: string, start: number, end: number): Promise<Buffer> {
   const handle = await open(source, "r");
   try {
     const length = Math.max(0, Math.min((await handle.stat()).size, end) - start);
@@ -84,17 +84,31 @@ export class MemoryIndex {
       // A session file only grows by appends; the window before the stored offset detects rewrites.
       const append = isSession && !!old && info.size >= old.offset && digest(await readRange(source, Math.max(0, old.offset - WINDOW), old.offset)) === old.hash;
       const start = append ? old!.offset : 0;
-      const bytes = isSession ? await readRange(source, start) : await readFile(source);
-      const offset = isSession ? start + bytes.lastIndexOf(10) + 1 : bytes.length;
       const date = /\d{4}-\d{2}-\d{2}/.exec(basename(source))?.[0] ?? new Date(info.mtimeMs).toISOString().slice(0, 10);
-      const state = isSession ? digest(await readRange(source, Math.max(0, offset - WINDOW), offset)) : "";
       const insert = this.db.prepare("INSERT INTO chunks(tokens,text,source,date,session,scope) VALUES(?,?,?,?,?,?)");
-      this.db.transaction(() => {
-        if (!append) this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
-        if (!isSession) {
-          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
-        } else {
-          for (const line of bytes.subarray(0, offset - start).toString("utf8").split("\n")) {
+      const save = this.db.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?)");
+      if (!isSession) {
+        const bytes = info.size <= 1_000_000 ? await readRange(source, 0, 1_000_000) : undefined;
+        if (!bytes) this.opts.onWarning?.(`Memory file exceeds the 1 MB indexing limit: ${source}`);
+        this.db.transaction(() => {
+          this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
+          for (const text of bytes ? markdownChunks(bytes.toString("utf8")) : []) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
+          save.run(source, info.mtimeMs, info.size, info.size, "");
+        })();
+        continue;
+      }
+      if (!append) {
+        this.db.transaction(() => {
+          this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
+          save.run(source, 0, 0, 0, digest(Buffer.alloc(0)));
+        })();
+      }
+      let offset = start;
+      for await (const batch of sessionBatches(source, start, info.size, () => this.opts.onWarning?.(`Skipped a session record exceeding 1 MB: ${source}`))) {
+        offset = batch.offset;
+        const hash = digest(await readRange(source, Math.max(0, offset - WINDOW), offset));
+        this.db.transaction(() => {
+          for (const line of batch.lines) {
             if (!line.trim()) continue;
             let record;
             try { record = JSON.parse(line); } catch { continue; }
@@ -109,9 +123,12 @@ export class MemoryIndex {
             const parsedDate = timestamp === undefined ? undefined : new Date(timestamp);
             insert.run(tokenize(text, true).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions");
           }
-        }
-        this.db.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?)").run(source, info.mtimeMs, start + bytes.length, offset, state);
-      })();
+          save.run(source, 0, offset, offset, hash);
+        })();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      const hash = digest(await readRange(source, Math.max(0, offset - WINDOW), offset));
+      save.run(source, info.mtimeMs, info.size, offset, hash);
     }
     this.db.transaction(() => {
       for (const { source } of this.db.prepare("SELECT source FROM files").all() as { source: string }[]) {
@@ -130,4 +147,39 @@ export class MemoryIndex {
     return this.db.prepare(`SELECT text,source,date,session,bm25(chunks) AS score FROM chunks WHERE chunks MATCH ? ${scope === "all" ? "" : "AND scope = ?"} ORDER BY score LIMIT ?`).all(...(scope === "all" ? [match, limit] : [match, scope, limit])) as MemoryResult[];
   }
   async close(): Promise<void> { await this.queue; this.db.close(); }
+}
+
+/** Reads complete records in bounded batches; a torn trailing record stays before the saved offset. */
+async function* sessionBatches(source: string, start: number, end: number, oversized: () => void): AsyncGenerator<{ lines: string[]; offset: number }> {
+  const handle = await open(source, "r");
+  const buffer = Buffer.alloc(64 * 1024);
+  let position = start;
+  let carry = Buffer.alloc(0);
+  let skipping = false;
+  try {
+    while (position < end) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, end - position), position);
+      if (!bytesRead) break;
+      const lines: string[] = [];
+      let complete = position;
+      let cursor = 0;
+      while (cursor < bytesRead) {
+        const newline = buffer.subarray(0, bytesRead).indexOf(10, cursor);
+        const stop = newline < 0 ? bytesRead : newline;
+        const part = buffer.subarray(cursor, stop);
+        if (!skipping) {
+          if (carry.length + part.length > 1_000_000) { carry = Buffer.alloc(0); skipping = true; oversized(); }
+          else carry = Buffer.concat([carry, part]);
+        }
+        if (newline < 0) break;
+        if (!skipping) lines.push(carry.toString("utf8"));
+        carry = Buffer.alloc(0);
+        skipping = false;
+        cursor = newline + 1;
+        complete = position + cursor;
+      }
+      if (complete > position) yield { lines, offset: complete };
+      position += bytesRead;
+    }
+  } finally { await handle.close(); }
 }

@@ -69,7 +69,7 @@ async function startScenario(responses: Parameters<FauxProviderHandle["setRespon
     if (scenarioOptions.failPush && args[0] === "push") return Promise.reject(new Error("simulated local push failure"));
     return runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
   };
-  if (!scenarioOptions.deferOwnerMessage) ilink.queueUpdates(textMessage("owner1", scenarioOptions.ownerMessage ?? "Please ingest this article", { message_id: "m1" }));
+  if (!scenarioOptions.deferOwnerMessage) ilink.queueUpdates(textMessage("owner1", scenarioOptions.ownerMessage ?? "Please ingest this article", { message_id: scenarioOptions.seed ?? "m1" }));
   const articleHtml: PageRequest = async () => ({ status: 200, headers: { "content-type": "text/html" }, body: '<html><head><meta property="og:title" content="Article"></head><body><div id="js_content"><p>An original article body.</p></div></body></html>' });
   daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit,
     ...(scenarioOptions.decisionJudge ? { decisionJudge: scenarioOptions.decisionJudge } : {}),
