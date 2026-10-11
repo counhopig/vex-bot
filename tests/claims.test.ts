@@ -77,3 +77,11 @@ it("binds each clause's operation to the links that clause names", () => {
   expect(unsupportedClaim(`我已读取 ${a}；也已读取 ${b}。`, turn, TOOL_EVIDENCE)).toBe(true);
   expect(unsupportedClaim("Both links were read.", turn, TOOL_EVIDENCE)).toBe(true);
 });
+
+it("does not treat URL punctuation or negation words as prose", () => {
+  const a = "https://example.test/read?q=one,two;three";
+  const b = "https://example.test/failed/no";
+  const turn = { urls: [a, b], evidence: [call("web_fetch", { url: a }, false, { sourceAvailable: true })] };
+  expect(unsupportedClaim(`I read ${a}. I did not read ${b}.`, turn, TOOL_EVIDENCE)).toBe(false);
+  expect(unsupportedClaim(`I read ${b}.`, turn, TOOL_EVIDENCE)).toBe(true);
+});
