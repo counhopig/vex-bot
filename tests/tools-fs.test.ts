@@ -36,6 +36,11 @@ describe("tool paths", () => {
 });
 
 describe("read", () => {
+  it("refuses an oversized single line before loading its contents", async () => {
+    await writeFile(join(ws, "large.txt"), "x".repeat(1_000_001));
+    await expect(createReadTool(ws).execute("1", { path: "large.txt", limit: 1 })).rejects.toThrow("read limit");
+  });
+
   it("returns numbered lines", async () => {
     await writeFile(join(ws, "a.txt"), "one\ntwo\nthree", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt" });

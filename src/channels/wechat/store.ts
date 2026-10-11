@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { InboundMessage } from "./client.js";
 import { writeFileAtomic } from "../../store/atomic.js";
 
 export interface WeChatCredentials {
@@ -12,6 +13,8 @@ export interface WeChatCredentials {
 export interface WeChatState {
   contextToken?: string;
   syncBuf?: string;
+  pendingMessages?: InboundMessage[];
+  seenIds?: string[];
 }
 
 export class WeChatStore {
@@ -43,10 +46,12 @@ export class WeChatStore {
   async loadState(): Promise<WeChatState> {
     const value = await readJson(this.stateFile);
     if (!value || typeof value !== "object") return {};
-    const { contextToken, syncBuf } = value as Record<string, unknown>;
+    const { contextToken, syncBuf, pendingMessages, seenIds } = value as Record<string, unknown>;
     return {
       ...(typeof contextToken === "string" && contextToken ? { contextToken } : {}),
       ...(typeof syncBuf === "string" && syncBuf ? { syncBuf } : {}),
+      ...(Array.isArray(pendingMessages) ? { pendingMessages: pendingMessages.filter((m): m is InboundMessage => !!m && typeof m.messageId === "string" && typeof m.fromUserId === "string" && typeof m.contextToken === "string" && Array.isArray(m.items)) } : {}),
+      ...(Array.isArray(seenIds) ? { seenIds: seenIds.filter((id): id is string => typeof id === "string").slice(-500) } : {}),
     };
   }
 

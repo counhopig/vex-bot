@@ -31,6 +31,24 @@ export async function assertBatchOwnership(repo: WikiRepo, touched: TouchedPath[
   }
 }
 
+async function recoverWrites(repo: WikiRepo, touched: TouchedPath[]): Promise<TouchedPath[]> {
+  const recovered: TouchedPath[] = [];
+  for (const entry of touched) {
+    await assertSafeTouchedPath(repo, entry.path);
+    const current = await fingerprint(join(repo.root, entry.path));
+    if (entry.after) {
+      if (!sameFingerprint(entry.after, current)) throw new Error(`wiki path changed since the batch recorded it: ${entry.path}`);
+    } else {
+      if (!entry.intendedAfter) throw new Error(`incomplete write intent for ${entry.path}`);
+      if (!sameFingerprint(entry.expectedBefore, current) && !sameFingerprint(entry.intendedAfter, current)) {
+        throw new Error(`wiki path changed since the batch recorded it: ${entry.path}`);
+      }
+    }
+    recovered.push({ ...entry, after: current });
+  }
+  return recovered;
+}
+
 async function restoreTouched(repo: WikiRepo, touched: TouchedPath[], baseHead: string): Promise<void> {
   // Whether a path is tracked is a property of `baseHead`, not of the per-write `expectedBefore`:
   // a new file written twice records `expectedBefore: file`, and `git checkout <baseHead> --` on a
@@ -73,16 +91,11 @@ export async function inspectAndCleanTree(repo: WikiRepo, marker: MarkerStore): 
   const touched = new Map(inFlight.touched.map((entry) => [entry.path, entry]));
   const unknown = [...dirtyPaths].filter((path) => !touched.has(path));
   if (unknown.length) throw new Error("dirty paths are not owned by the wiki batch: " + unknown.join(", "));
-  for (const touched of inFlight.touched) {
-    await assertSafeTouchedPath(repo, touched.path);
-    if (!touched.after) throw new Error(`incomplete write intent for ${touched.path}`);
-    const current = await fingerprint(join(repo.root, touched.path));
-    if (!sameFingerprint(touched.after, current)) throw new Error(`wiki path changed since the batch recorded it: ${touched.path}`);
-  }
+  const recovered = await recoverWrites(repo, inFlight.touched);
   const before = new Map(await Promise.all(inFlight.touched.map(async (entry) => [entry.path, await repo.fingerprintAt(inFlight.baseHead, entry.path)] as const)));
-  const after = new Map(inFlight.touched.map((entry) => [entry.path, entry.after!]));
+  const after = new Map(recovered.map((entry) => [entry.path, entry.after!]));
   await repo.assertIndexFingerprints(before, after);
-  await restoreTouched(repo, inFlight.touched.filter((entry) => dirtyPaths.has(entry.path)), inFlight.baseHead);
+  await restoreTouched(repo, recovered.filter((entry) => dirtyPaths.has(entry.path)), inFlight.baseHead);
   await marker.remove();
 }
 
@@ -95,16 +108,10 @@ export async function abortBatch(repo: WikiRepo, marker: MarkerStore): Promise<v
   const dirtyPaths = new Set(entries.flatMap((entry) => entry.originalPath ? [entry.path, entry.originalPath] : [entry.path]));
   const unknown = [...dirtyPaths].filter((path) => !inFlight.touched.some((entry) => entry.path === path));
   if (unknown.length) throw new Error("dirty paths are not owned by the wiki batch: " + unknown.join(", "));
-  const attributable: TouchedPath[] = [];
-  for (const touched of inFlight.touched) {
-    await assertSafeTouchedPath(repo, touched.path);
-    if (!touched.after) throw new Error(`incomplete write intent for ${touched.path}`);
-    const current = await fingerprint(join(repo.root, touched.path));
-    if (!sameFingerprint(touched.after, current)) throw new Error(`wiki path changed since the batch recorded it: ${touched.path}`);
-    if (dirtyPaths.has(touched.path)) attributable.push(touched);
-  }
+  const recovered = await recoverWrites(repo, inFlight.touched);
+  const attributable = recovered.filter((entry) => dirtyPaths.has(entry.path));
   const before = new Map(await Promise.all(inFlight.touched.map(async (entry) => [entry.path, await repo.fingerprintAt(inFlight.baseHead, entry.path)] as const)));
-  const after = new Map(inFlight.touched.map((entry) => [entry.path, entry.after!]));
+  const after = new Map(recovered.map((entry) => [entry.path, entry.after!]));
   await repo.assertIndexFingerprints(before, after);
   await restoreTouched(repo, attributable, inFlight.baseHead);
   await marker.remove();

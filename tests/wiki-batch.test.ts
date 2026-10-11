@@ -63,6 +63,26 @@ describe("ingestPrompt", () => {
 });
 
 describe("inspectAndCleanTree", () => {
+  it.each([false, true])("recovers an interrupted write with its target recorded (written=%s)", async (written) => {
+    const { repo, root, marker } = await setup({ "wiki/a.md": "baseline" });
+    const base = await repo.head();
+    await marker.begin(writingMarker(base, [{ path: "wiki/a.md", expectedBefore: fileHash("baseline"), intendedAfter: fileHash("generated") }]));
+    if (written) write(join(root, "wiki/a.md"), "generated");
+    await inspectAndCleanTree(repo, marker);
+    expect(readFileSync(join(root, "wiki/a.md"), "utf8")).toBe("baseline");
+    expect(await marker.read()).toBeNull();
+    expect(await repo.status()).toEqual([]);
+  });
+
+  it("preserves an owner edit after an interrupted write with a recorded target", async () => {
+    const { repo, root, marker } = await setup({ "wiki/a.md": "baseline" });
+    await marker.begin(writingMarker(await repo.head(), [{ path: "wiki/a.md", expectedBefore: fileHash("baseline"), intendedAfter: fileHash("generated") }]));
+    write(join(root, "wiki/a.md"), "owner edit");
+    await expect(inspectAndCleanTree(repo, marker)).rejects.toThrow("wiki path changed");
+    expect(readFileSync(join(root, "wiki/a.md"), "utf8")).toBe("owner edit");
+    expect(await marker.read()).not.toBeNull();
+  });
+
   it("removes a new file written twice during crash recovery", async () => {
     const { repo, root, marker } = await setup({ "notes/a.md": "source" });
     const base = await repo.head();

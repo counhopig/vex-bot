@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { mkdir, rename, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { writeFileAtomic } from "../../store/atomic.js";
 import type { WikiRepo } from "./git.js";
 import { assertUnchanged, expectedBeforeFor, fingerprint, type FileFingerprint, type InFlightMarker, type MarkerStore } from "./marker.js";
 import { resolveInSubtree, validateSubtreeRoot } from "./paths.js";
@@ -40,15 +41,26 @@ async function commitWrite(ctx: WikiWriteContext, path: string, abs: string, con
   validateSubtreeRoot(path.startsWith("wiki/") ? ctx.roots.wiki : ctx.roots.raw);
   const baseline = await baselineFrom(ctx.repo, state.baseHead, path);
   const expected = expectedBeforeFor(state, path, baseline);
-  await marker.recordIntent(path, expected);
+  const intendedAfter: FileFingerprint = { type: "file", hash: createHash("sha256").update(content, "utf8").digest("hex") };
+  await marker.recordIntent(path, expected, intendedAfter);
   validateSubtreeRoot(path.startsWith("wiki/") ? ctx.roots.wiki : ctx.roots.raw);
   await assertUnchanged(abs, expected);
   const fresh = await resolveVaultPath(ctx.roots, path);
   if (fresh !== abs) throw new Error(`wiki path changed while preparing write: ${path}`);
   await mkdir(dirname(abs), { recursive: true });
   if (ctx.writeFile) await ctx.writeFile(abs, content);
-  else await writeFile(abs, content, "utf8");
-  const intendedAfter: FileFingerprint = { type: "file", hash: createHash("sha256").update(content, "utf8").digest("hex") };
+  else {
+    // Staging inside .git keeps interrupted temporary writes outside the managed tree.
+    const staged = join(ctx.repo.root, ".git", "vex-wiki-write.tmp");
+    let mode = 0o644;
+    try { mode = (await stat(abs)).mode & 0o7777; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    await writeFileAtomic(staged, content, mode);
+    validateSubtreeRoot(path.startsWith("wiki/") ? ctx.roots.wiki : ctx.roots.raw);
+    if (await resolveVaultPath(ctx.roots, path) !== abs) throw new Error(`wiki path changed while preparing write: ${path}`);
+    await assertUnchanged(abs, expected);
+    await rename(staged, abs);
+  }
   const observedAfter = await fingerprint(abs);
   if (observedAfter.type !== intendedAfter.type || observedAfter.hash !== intendedAfter.hash) {
     throw new Error(`wiki path changed while completing write: ${path}`);

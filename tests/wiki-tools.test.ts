@@ -134,7 +134,7 @@ describe("wiki_write", () => {
     expect((await marker.read())?.touched[0]).toMatchObject({ path: "wiki/owner.md", expectedBefore: { type: "absent", hash: null } });
     expect((await marker.read())?.touched[0]?.after).toBeUndefined();
     const { abortBatch } = await import("../src/vault/wiki/batch.js");
-    await expect(abortBatch(repo, marker)).rejects.toThrow(/incomplete write intent/);
+    await expect(abortBatch(repo, marker)).rejects.toThrow(/wiki path changed/);
     expect(readFileSync(target, "utf8")).toBe("owner bytes");
     expect(await marker.read()).not.toBeNull();
   });

@@ -8,7 +8,7 @@ import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from ".
 import type { WeChatStore } from "./store.js";
 
 export interface WeChatSessions {
-  get(key: string): Promise<{ send(text: string): void; stop(): void; readonly busy: boolean }>;
+  get(key: string): Promise<{ send(text: string, source?: string, existingRequestId?: string): void; stop(): void; readonly busy: boolean }>;
 }
 
 export interface WeChatChannelOptions {
@@ -43,6 +43,9 @@ const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string) => string> = {
 export class WeChatChannel {
   private readonly abort = new AbortController();
   private readonly seen = new Set<string>();
+  private readonly pending = new Map<string, InboundMessage>();
+  private readonly dispatched = new Set<string>();
+  private stateWrites: Promise<void> = Promise.resolve();
   private readonly announced = new Set<string>();
   private contextToken: string | undefined;
   private syncBuf: string | undefined;
@@ -67,6 +70,8 @@ export class WeChatChannel {
     const state = await this.opts.store.loadState();
     this.contextToken = state.contextToken;
     this.syncBuf = state.syncBuf;
+    for (const id of state.seenIds ?? []) this.seen.add(id);
+    for (const message of state.pendingMessages ?? []) this.pending.set(message.messageId, message);
     this.unsubscribe = this.opts.bus.on((event) => this.onBusEvent(event));
     this.loop = this.pollLoop();
   }
@@ -78,6 +83,7 @@ export class WeChatChannel {
     this.turn = undefined;
     await this.loop;
     await this.outbox;
+    await this.stateWrites;
   }
 
   /** Resolves once every queued outgoing message has been attempted. */
@@ -91,20 +97,20 @@ export class WeChatChannel {
     let backoff = initialBackoff;
     while (!this.abort.signal.aborted) {
       try {
+        await this.dispatchPending();
         const { messages, syncBuf } = await this.opts.client.getUpdates(this.syncBuf ?? "", this.abort.signal);
         backoff = initialBackoff;
         for (const message of messages) {
-          if (this.abort.signal.aborted) return;
-          try {
-            await this.handleInbound(message);
-          } catch (err) {
-            this.opts.log.warn({ err }, "failed to handle wechat message");
+          if (message.fromUserId === this.opts.ownerId && !this.seen.has(message.messageId) && !this.pending.has(message.messageId)) {
+            this.pending.set(message.messageId, message);
           }
         }
-        if (syncBuf && syncBuf !== this.syncBuf) {
-          this.syncBuf = syncBuf;
-          await this.saveState();
-        }
+        // The inbox and cursor share one atomic snapshot, before any message is dispatched.
+        const previous = this.syncBuf;
+        if (syncBuf) this.syncBuf = syncBuf;
+        try { if (messages.length || syncBuf !== undefined) await this.saveState(); }
+        catch (error) { this.syncBuf = previous; throw error; }
+        await this.dispatchPending();
         if (messages.length === 0) await this.sleep(this.opts.idleDelayMs ?? 1000);
       } catch (err) {
         if (this.abort.signal.aborted) return;
@@ -113,7 +119,7 @@ export class WeChatChannel {
         if (err instanceof WeChatApiError && err.errcode === SESSION_EXPIRED_ERRCODE) {
           this.sessionExpired = true;
           this.syncBuf = undefined;
-          await this.saveState();
+          await this.saveState().catch(() => {});
           this.opts.log.error("The WeChat login has expired; run vex wechat login to sign in again, then restart vexd");
           return;
         }
@@ -130,8 +136,6 @@ export class WeChatChannel {
       return;
     }
     if (this.seen.has(message.messageId)) return;
-    this.seen.add(message.messageId);
-    if (this.seen.size > SEEN_LIMIT) this.seen.delete(this.seen.values().next().value as string);
 
     if (message.contextToken && message.contextToken !== this.contextToken) {
       this.contextToken = message.contextToken;
@@ -155,15 +159,43 @@ export class WeChatChannel {
       else this.send("Nothing is running right now.");
       return;
     }
-    session.send(command.text);
+    this.dispatched.add(message.messageId);
+    try { session.send(command.text, undefined, message.messageId); }
+    catch (error) { this.dispatched.delete(message.messageId); throw error; }
+  }
+
+  private async dispatchPending(): Promise<void> {
+    if (this.pending.size) await this.saveState();
+    for (const message of [...this.pending.values()]) {
+      if (this.abort.signal.aborted) return;
+      if (this.dispatched.has(message.messageId)) continue;
+      try {
+        await this.handleInbound(message);
+        if (!this.dispatched.has(message.messageId)) {
+          this.acknowledge(message.messageId);
+          await this.saveState();
+        }
+      } catch (err) { this.opts.log.warn({ err }, "failed to handle wechat message; retained in inbox"); }
+    }
+  }
+
+  private acknowledge(id: string): void {
+    this.pending.delete(id);
+    this.dispatched.delete(id);
+    this.seen.add(id);
+    if (this.seen.size > SEEN_LIMIT) this.seen.delete(this.seen.values().next().value as string);
   }
 
   private async saveState(): Promise<void> {
     const state = {
       ...(this.contextToken ? { contextToken: this.contextToken } : {}),
       ...(this.syncBuf ? { syncBuf: this.syncBuf } : {}),
+      ...(this.pending.size ? { pendingMessages: [...this.pending.values()] } : {}),
+      ...(this.seen.size ? { seenIds: [...this.seen] } : {}),
     };
-    await this.opts.store.saveState(state).catch((err: unknown) => this.opts.log.warn({ err }, "failed to save wechat state"));
+    const write = this.stateWrites.then(() => this.opts.store.saveState(state));
+    this.stateWrites = write.catch((err: unknown) => this.opts.log.warn({ err }, "failed to save wechat state"));
+    await write;
   }
 
   private answerOldest(answer: ApprovalAnswer): void {
@@ -197,6 +229,12 @@ export class WeChatChannel {
 
   private onSessionEvent(event: SessionEvent): void {
     switch (event.kind) {
+      case "user_message":
+        if (event.requestId && this.pending.has(event.requestId)) {
+          this.acknowledge(event.requestId);
+          void this.saveState().catch(() => {});
+        }
+        return;
       case "busy":
         if (event.busy) this.beginTurn(event.source === "proactive chat");
         else this.endTurn(event.discardReply);
