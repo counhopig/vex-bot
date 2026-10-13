@@ -159,6 +159,25 @@ describe("WeChatChannel inbound", () => {
     expect(session.sent).toEqual([]);
   });
 
+  it("settles messages cancelled by /stop instead of redelivering them after a restart", async () => {
+    session.busy = true;
+    await startChannel();
+    ilink.queueUpdates(textMessage("owner1", "queued while stopping", { message_id: "q1" }));
+    await vi.waitFor(() => expect(session.sent).toEqual(["queued while stopping"]));
+    ilink.queueUpdates(textMessage("owner1", "/stop", { message_id: "s1" }));
+    await vi.waitFor(() => expect(session.stops).toBe(1));
+    await vi.waitFor(async () => {
+      const state = await store.loadState();
+      expect(state.pendingMessages).toBeUndefined();
+      expect(state.seenIds).toContain("q1");
+    });
+    await channel!.stop();
+    session.sent.length = 0;
+    await startChannel();
+    await vi.waitFor(() => expect(ilink.updateBodies().length).toBeGreaterThan(2));
+    expect(session.sent).toEqual([]);
+  });
+
   it("retries a failed message without losing the rest of the batch", async () => {
     let getCallCount = 0;
     await startChannel({

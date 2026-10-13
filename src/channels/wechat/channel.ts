@@ -155,8 +155,11 @@ export class WeChatChannel {
     }
     const session = await this.opts.sessions.get(WECHAT_SESSION_KEY);
     if (command.kind === "stop") {
-      if (session.busy) session.stop();
-      else this.send("Nothing is running right now.");
+      if (session.busy) {
+        session.stop();
+        // Stopping discards every queued message the transcript has not accepted yet.
+        for (const id of [...this.dispatched]) this.acknowledge(id);
+      } else this.send("Nothing is running right now.");
       return;
     }
     this.dispatched.add(message.messageId);

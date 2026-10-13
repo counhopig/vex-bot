@@ -91,6 +91,15 @@ describe("public webpage access", () => {
     expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ sourceAvailable: false, textKind: null, title: "Video" });
     await expect(tool.execute("2", { url: "https://video.example/watch/1" }, AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
   });
+  it("flags failed reads as tool errors and keeps the receipt", async () => {
+    const request = vi.fn(async () => ({ status: 404, headers: {}, body: "missing" }));
+    const failed = await createWebFetchTool({ request }).execute("1", { url: "https://example.com/missing" });
+    expect(failed.isError).toBe(true);
+    expect(failed.details.receipt).toMatchObject({ sourceAvailable: false, error: expect.stringContaining("Read failed") });
+    const metadata = await createWebFetchTool({ sourceResolver: async () => ({ requestedUrl: "https://video.example/1", canonicalUrl: "https://video.example/1", title: "Video", text: "", textKind: "subtitles", truncated: false }) })
+      .execute("2", { url: "https://video.example/1" });
+    expect(metadata.isError).toBeUndefined();
+  });
   it("returns a failed-read receipt for unsupported binary content", async () => {
     const request = vi.fn(async () => ({ status: 200, headers: { "content-type": "application/pdf" }, body: "%PDF" }));
     const result = await createWebFetchTool({ request }).execute("1", { url: "https://example.com/file.pdf" });

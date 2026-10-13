@@ -188,7 +188,7 @@ export function createWebFetchTool(options: {
         operationSignal.throwIfAborted();
         const reason = error instanceof Error ? error.message.slice(0, 240) : "unknown read error";
         const receipt: WebReadReceipt = { version: 1, requestedUrl: url, canonicalUrl: url, title: "", sourceAvailable: false, textKind: null, truncated: false, excerpt: "", error: `Read failed: ${reason}` };
-        return { content: [{ type: "text", text: JSON.stringify({ type: "web_read_receipt", ...receipt }) }], details: { receipt } };
+        return { content: [{ type: "text", text: JSON.stringify({ type: "web_read_receipt", ...receipt }) }], details: { receipt }, isError: true };
       }
       const source = original!;
       const available = source.text.trim().length > 0;
