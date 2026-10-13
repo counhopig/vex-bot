@@ -215,8 +215,6 @@ export class Wiki {
       let baseHead = "";
       let batchId = "";
 
-      await this.checkIntegrity();
-
       if (reconciled.preview) throw new Error("bootstrap preview awaiting review");
 
       try {

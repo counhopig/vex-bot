@@ -81,7 +81,7 @@ The JSONL transcript keeps every message. Completed runs release durably summari
 
 Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run.
 
-WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory.
+WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory, starting from the nearest indexed byte offset (one every 1,000 items, extended as the transcript grows and rebuilt if it is rewritten).
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
 
@@ -138,7 +138,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Memory
 
-- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`.
+- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`. The agent's `write` and `edit` calls refuse to take `MEMORY.md` past 100 lines or 32 KB.
 - Indexing: `index.sqlite` holds chunks of `memory/*.md`, `MEMORY.md`, `USER.md` and WeChat/WebChat transcripts (not temporary runs, not scheduled or proactive markers). Runs of Chinese, Japanese or Korean text are indexed as single characters and overlapping pairs. Updates are incremental: only bytes appended to a transcript are read, and a rewritten file is re-indexed. The index is versioned and rebuilt when the version changes or the file is corrupt.
 - Retrieval: `memory_search(query, limit?, scope?)` with scope `memory`, `sessions` or `all`; results are snippets with source and date, ranked by BM25.
 - Consolidation: at `memory.consolidateAt` (03:00) a temporary session reads the last seven daily notes plus `MEMORY.md` and `USER.md`, merges duplicates, removes stale entries and keeps `MEMORY.md` under 100 lines. It sends nothing to the owner.

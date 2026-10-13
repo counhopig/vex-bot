@@ -1,4 +1,6 @@
+import { open } from "node:fs/promises";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { scanJsonlLines } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem } from "./events.js";
 
@@ -14,10 +16,23 @@ export function isTranscriptMessage(value: unknown): value is AgentMessage {
 export class HistoryWindow {
   private entries: { index: number; item: HistoryItem; bytes: number }[] = [];
   private tools = new Map<string, Extract<HistoryItem, { kind: "tool" }>>();
-  private count = 0;
+  private count: number;
   private bytes = 0;
 
-  constructor(private readonly limit = HISTORY_PAGE_SIZE, private readonly before = Infinity) {}
+  /** `start` is the absolute index of the first item added, for windows that begin mid-transcript. */
+  constructor(private readonly limit = HISTORY_PAGE_SIZE, private readonly before = Infinity, start = 0) {
+    this.count = start;
+  }
+
+  get items(): number { return this.count; }
+
+  /** Number of history items a message adds, matching `add`. */
+  static itemCount(message: AgentMessage): number {
+    if (message.role === "user") return 1;
+    if (message.role !== "assistant") return 0;
+    const text = message.content.some((part) => part.type === "text" && part.text);
+    return (text || message.stopReason === "aborted" ? 1 : 0) + message.content.filter((part) => part.type === "toolCall").length;
+  }
 
   add(message: AgentMessage): void {
     if (message.role === "user") {
@@ -53,5 +68,69 @@ export class HistoryWindow {
   page(): { items: HistoryItem[]; nextBefore?: number } {
     const first = this.entries[0]?.index;
     return { items: this.entries.map(({ item }) => ({ ...item })), ...(first !== undefined && first > 0 ? { nextBefore: first } : {}) };
+  }
+}
+
+/**
+ * Pages the complete transcript on disk. Byte offsets of every `every`-th item are indexed
+ * incrementally, so a page reads from the nearest checkpoint instead of the start of the file.
+ */
+export class TranscriptHistory {
+  private checkpoints: { item: number; offset: number }[] = [];
+  private indexed = { offset: 0, items: 0 };
+  private queue: Promise<unknown> = Promise.resolve();
+
+  constructor(private readonly path: string, private readonly every = 1000) {}
+
+  page(before: number): Promise<{ items: HistoryItem[]; nextBefore?: number }> {
+    const run = this.queue.then(() => this.read(before));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  private async read(before: number): Promise<{ items: HistoryItem[]; nextBefore?: number }> {
+    await this.extend();
+    const first = Math.max(0, before - HISTORY_PAGE_SIZE);
+    const from = this.checkpoints.findLast((checkpoint) => checkpoint.item <= first) ?? { item: 0, offset: 0 };
+    const window = new HistoryWindow(undefined, before, from.item);
+    for await (const { record } of scanJsonlLines(this.path, from.offset)) {
+      if (!isTranscriptMessage(record)) continue;
+      // Results that follow the boundary still settle tool items inside the page.
+      if (window.items >= before && record.role !== "toolResult") break;
+      window.add(record);
+    }
+    return window.page();
+  }
+
+  private async extend(): Promise<void> {
+    if (!(await this.continues())) {
+      this.checkpoints = [];
+      this.indexed = { offset: 0, items: 0 };
+    }
+    for await (const { record, start, end, complete } of scanJsonlLines(this.path, this.indexed.offset)) {
+      if (!complete) break;
+      if (isTranscriptMessage(record)) {
+        if (this.indexed.items - (this.checkpoints.at(-1)?.item ?? 0) >= this.every) this.checkpoints.push({ item: this.indexed.items, offset: start });
+        this.indexed.items += HistoryWindow.itemCount(record);
+      }
+      this.indexed.offset = end;
+    }
+  }
+
+  /** The indexed prefix still ends at a line boundary within the file; a rewrite resets the index. */
+  private async continues(): Promise<boolean> {
+    if (this.indexed.offset === 0) return true;
+    let handle;
+    try { handle = await open(this.path, "r"); }
+    catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw err;
+    }
+    try {
+      if ((await handle.stat()).size < this.indexed.offset) return false;
+      const last = Buffer.alloc(1);
+      await handle.read(last, 0, 1, this.indexed.offset - 1);
+      return last[0] === 10;
+    } finally { await handle.close(); }
   }
 }

@@ -13,13 +13,13 @@ import {
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingSetting } from "../config/schema.js";
 import { ContextCompactor, isCompactionRecord, type CompactionOptions, type CompactionRecord } from "../context/compaction.js";
-import { CONTEXT_BUDGET_ERROR, ContextBudgetError, estimateProviderInput, withContextBudget } from "../context/budget.js";
+import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
 import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
-import { HistoryWindow, isTranscriptMessage } from "./history.js";
+import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
 import { MessageWindow } from "../context/window.js";
 
 export interface SessionOptions {
@@ -62,6 +62,7 @@ export class Session {
   private drainingAssistant = false;
   private assistantDrain: Promise<void> | undefined;
   private readonly recentHistory: HistoryWindow;
+  private readonly transcriptHistory: TranscriptHistory;
   private readonly compactor?: ContextCompactor;
   private historyOffset: number;
   private pendingOwner = 0;
@@ -118,6 +119,7 @@ export class Session {
     });
     const messages = window.messages;
     this.recentHistory = history;
+    this.transcriptHistory = new TranscriptHistory(opts.transcriptPath);
     this.historyOffset = window.offset;
     this.compactor = opts.compaction ? new ContextCompactor({
       ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey,
@@ -184,18 +186,6 @@ export class Session {
   get idle(): boolean {
     return !this.current && !this.closing && !this.drainingAssistant && !this.assistantDrain
       && this.assistantQueue.length === 0 && this.afterStop.length === 0;
-  }
-
-  async maxUserPromptBytes(prefix: string): Promise<number> {
-    const systemPrompt = await this.opts.buildSystemPrompt();
-    const baseline = estimateProviderInput({
-      systemPrompt,
-      messages: [{ role: "user", content: prefix, timestamp: 0 }],
-      tools: this.agent.state.tools,
-    });
-    const available = this.opts.model.contextWindow - this.opts.model.maxTokens - baseline - 512;
-    if (available < 1) throw new ContextBudgetError("The Wiki instructions and tool schemas leave no room for a source segment.");
-    return Math.floor(available);
   }
 
   send(text: string, source?: string, requestId?: string): void {
@@ -384,11 +374,7 @@ export class Session {
   async historyPage(before?: number): Promise<{ items: HistoryItem[]; nextBefore?: number; streaming?: string }> {
     if (before === undefined) return { ...this.recentHistory.page(), streaming: this.history().streaming };
     await this.writes;
-    const history = new HistoryWindow(undefined, before);
-    for await (const record of scanJsonl(this.opts.transcriptPath)) {
-      if (isTranscriptMessage(record)) history.add(record);
-    }
-    return { ...history.page(), streaming: this.history().streaming };
+    return { ...await this.transcriptHistory.page(before), streaming: this.history().streaming };
   }
 
   private releaseHistory(): void {

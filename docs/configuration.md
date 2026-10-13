@@ -148,7 +148,7 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `memory/YYYY-MM-DD.md` | Daily notes written by the agent; editable in WebChat under Memory | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
-The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). Templates for these files are created on first start.
+The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). The agent's own `write` and `edit` calls cannot take `MEMORY.md` past 100 lines or 32 KB; it has to merge or remove older entries first. Templates for these files are created on first start.
 
 The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), the instructions for memory consolidation and proactive chat, and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries are built in; shape Vex's personality and habits through `SOUL.md` instead.
 

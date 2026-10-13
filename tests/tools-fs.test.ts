@@ -76,6 +76,22 @@ describe("read", () => {
   });
 });
 
+describe("MEMORY.md limits", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, i) => `- fact ${i}`).join("\n") + "\n";
+
+  it("refuses writes and edits that take MEMORY.md past 100 lines", async () => {
+    await createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(100) });
+    await expect(createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(101) })).rejects.toThrow("101 lines, over the 100-line limit");
+    await expect(createEditTool(ws).execute("1", { path: "MEMORY.md", oldText: "- fact 99\n", newText: "- fact 99\n- fact 100\n" })).rejects.toThrow("over the 100-line limit");
+    expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(100));
+  });
+
+  it("refuses writes that take MEMORY.md past 32 KB and leaves other files alone", async () => {
+    await expect(createWriteTool(ws).execute("1", { path: "./MEMORY.md", content: "x".repeat(32 * 1024 + 1) })).rejects.toThrow("MEMORY.md would exceed 32 KB");
+    await createWriteTool(ws).execute("1", { path: "notes/long.md", content: lines(500) });
+  });
+});
+
 describe("write", () => {
   it("creates parent directories", async () => {
     const result = await createWriteTool(ws).execute("1", { path: "memory/2026-10-02.md", content: "note" });

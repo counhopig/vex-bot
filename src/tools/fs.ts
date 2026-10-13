@@ -3,6 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { writeFileAtomic } from "../store/atomic.js";
 import { withFileLock } from "../store/fileLock.js";
+import { assertMemoryFileLimits } from "../workspace/workspace.js";
 import { displayPath, resolveToolPath } from "./paths.js";
 
 const READ_LIMIT = 1_000_000;
@@ -86,6 +87,7 @@ export function createWriteTool(workspace: string): AgentTool<typeof WriteParams
     parameters: WriteParams,
     async execute(_id, { path, content }) {
       const abs = resolveToolPath(workspace, path);
+      assertMemoryFileLimits(workspace, abs, content);
       await withFileLock(abs, (target) => writeFileAtomic(target, content));
       const bytes = Buffer.byteLength(content, "utf8");
       return {
@@ -122,6 +124,7 @@ export function createEditTool(workspace: string): AgentTool<typeof EditParams> 
           throw new Error(`oldText occurs ${found} times; add more context to make it unique, or set replaceAll`);
         }
         const updated = replaceAll ? original.split(oldText).join(newText) : original.replace(oldText, () => newText);
+        assertMemoryFileLimits(workspace, abs, updated);
         await writeFileAtomic(target, updated);
         return found;
       });

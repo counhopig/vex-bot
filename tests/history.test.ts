@@ -1,9 +1,9 @@
-import { writeFile } from "node:fs/promises";
+import { appendFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { HistoryWindow } from "../src/core/history.js";
+import { HistoryWindow, TranscriptHistory } from "../src/core/history.js";
 import { MAX_CONTEXT_MESSAGES, MessageWindow } from "../src/context/window.js";
 import { Session } from "../src/core/session.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
@@ -36,6 +36,33 @@ it("keeps a paged tool's outcome even when its result follows the page boundary"
   history.add(fauxAssistantMessage("later response"));
   history.add({ role: "toolResult", toolName: "read", toolCallId: "call", content: [], isError: true, timestamp: 1 });
   expect(history.page().items).toMatchObject([{ kind: "user" }, { kind: "tool", toolCallId: "call", isError: true }]);
+});
+
+it("pages from indexed checkpoints with the same items as a full scan, after appends and rewrites", async () => {
+  const turn = (i: number): unknown[] => [
+    user(`question ${i}`),
+    fauxAssistantMessage([{ type: "text", text: `answer ${i}` }, fauxToolCall("read", { path: `f${i}` }, { id: `call-${i}` })], { stopReason: "toolUse" }),
+    { role: "toolResult", toolName: "read", toolCallId: `call-${i}`, content: [], isError: i % 3 === 0, timestamp: 1 },
+    { type: "provider_usage", timestamp: 1 },
+  ];
+  const turns = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => turn(from + i)).flat();
+  const jsonl = (records: unknown[]) => records.map((record) => JSON.stringify(record)).join("\n") + "\n";
+  const reference = (records: unknown[], before: number) => {
+    const window = new HistoryWindow(undefined, before);
+    for (const record of records) if ((record as { role?: string }).role) window.add(record as AgentMessage);
+    return window.page();
+  };
+  const path = join(dir, "paged.jsonl");
+  const initial = turns(0, 120);
+  await writeFile(path, jsonl(initial));
+  const history = new TranscriptHistory(path, 7);
+  for (const before of [0, 1, 2, 3, 50, 101, 250, 359, 360]) expect(await history.page(before)).toEqual(reference(initial, before));
+  const appended = turns(120, 150);
+  await appendFile(path, jsonl(appended));
+  for (const before of [359, 400, 450]) expect(await history.page(before)).toEqual(reference([...initial, ...appended], before));
+  const rewritten = turns(500, 520);
+  await writeFile(path, jsonl(rewritten));
+  for (const before of [10, 60]) expect(await history.page(before)).toEqual(reference(rewritten, before));
 });
 
 it("restores a bounded model window while paging the complete transcript without gaps", async () => {
