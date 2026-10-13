@@ -5,6 +5,8 @@ import { writeFileAtomic } from "../store/atomic.js";
 import { withFileLock } from "../store/fileLock.js";
 import { displayPath, resolveToolPath } from "./paths.js";
 
+const READ_LIMIT = 1_000_000;
+
 const ReadParams = Type.Object({
   path: Type.String({ description: "File path; relative paths resolve inside the workspace" }),
   offset: Type.Optional(Type.Integer({ minimum: 1, description: "First line number (starting at 1)" })),
@@ -21,23 +23,52 @@ export function createReadTool(workspace: string): AgentTool<typeof ReadParams> 
       const abs = resolveToolPath(workspace, path);
       signal?.throwIfAborted();
       const handle = await open(abs, "r");
-      let bytes: Buffer;
+      const lines: string[] = [];
+      let more = false;
       try {
-        const size = (await handle.stat()).size;
-        if (size > 1_000_000) throw new Error("File exceeds the read limit of 1 MB; use a targeted search or bounded shell command");
-        const buffer = Buffer.alloc(size);
-        const { bytesRead } = await handle.read(buffer, 0, size, 0);
-        bytes = buffer.subarray(0, bytesRead);
+        const chunk = Buffer.alloc(65_536);
+        let parts: Buffer[] = [];
+        let lineNumber = 1;
+        let lineBytes = 0;
+        let outputBytes = 0;
+        let position = 0;
+        scan: for (;;) {
+          signal?.throwIfAborted();
+          const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+          if (bytesRead === 0) break;
+          position += bytesRead;
+          const data = chunk.subarray(0, bytesRead);
+          let start = 0;
+          while (start < bytesRead) {
+            const newline = data.indexOf(10, start);
+            const end = newline === -1 ? bytesRead : newline;
+            if (lineNumber >= offset) {
+              lineBytes += end - start;
+              if (outputBytes + lineBytes > READ_LIMIT) {
+                if (!lines.length) throw new Error(`Line ${lineNumber} exceeds the read limit of 1 MB; use a targeted search or bounded shell command`);
+                more = true;
+                break scan;
+              }
+              parts.push(Buffer.from(data.subarray(start, end)));
+            }
+            if (newline === -1) break;
+            if (lineNumber >= offset) {
+              lines.push(Buffer.concat(parts).toString("utf8"));
+              outputBytes += lineBytes;
+              parts = [];
+              lineBytes = 0;
+              if (lines.length === limit) { more = true; break scan; }
+            }
+            lineNumber++;
+            start = newline + 1;
+          }
+        }
+        if (!more && lineNumber >= offset) lines.push(Buffer.concat(parts).toString("utf8"));
       } finally { await handle.close(); }
       signal?.throwIfAborted();
-      const lines = bytes.toString("utf8").split("\n");
-      const start = offset - 1;
-      const body = lines
-        .slice(start, start + limit)
-        .map((line, i) => `${offset + i}\t${line}`)
-        .join("\n");
-      const more = start + limit < lines.length ? `\n… (${lines.length} lines in total; use offset to continue reading)` : "";
-      return { content: [{ type: "text", text: body + more }], details: { path: abs } };
+      const body = lines.map((line, i) => `${offset + i}\t${line}`).join("\n");
+      const hint = more ? `\n… (use offset ${offset + lines.length} to continue reading)` : "";
+      return { content: [{ type: "text", text: body + hint }], details: { path: abs } };
     },
   };
 }

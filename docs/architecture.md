@@ -103,7 +103,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
-`read` accepts files up to 1 MB. `grep` skips files over 1 MB and executes in a worker with a five-second deadline; cancellation terminates the worker. Memory indexing reads session JSONL in bounded batches, skips records over 1 MB with a warning, and excludes memory files over 1 MB.
+`read` streams the file line by line and returns at most 1 MB of text per call, ending with the offset to continue from; a single selected line over 1 MB is refused. `grep` skips files over 1 MB and executes in a worker with a five-second deadline; cancellation terminates the worker. Memory indexing reads session JSONL in bounded batches, skips records over 1 MB with a warning, and indexes only the first 1 MB of a larger memory file, up to its last complete line, with a warning.
 
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
 

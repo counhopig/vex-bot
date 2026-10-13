@@ -88,11 +88,14 @@ export class MemoryIndex {
       const insert = this.db.prepare("INSERT INTO chunks(tokens,text,source,date,session,scope) VALUES(?,?,?,?,?,?)");
       const save = this.db.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?)");
       if (!isSession) {
-        const bytes = info.size <= 1_000_000 ? await readRange(source, 0, 1_000_000) : undefined;
-        if (!bytes) this.opts.onWarning?.(`Memory file exceeds the 1 MB indexing limit: ${source}`);
+        let bytes = await readRange(source, 0, 1_000_000);
+        if (info.size > 1_000_000) {
+          bytes = bytes.subarray(0, bytes.lastIndexOf(10) + 1);
+          this.opts.onWarning?.(`Memory file exceeds the 1 MB indexing limit; only its first 1 MB is indexed: ${source}`);
+        }
         this.db.transaction(() => {
           this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
-          for (const text of bytes ? markdownChunks(bytes.toString("utf8")) : []) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
+          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
           save.run(source, info.mtimeMs, info.size, info.size, "");
         })();
         continue;
