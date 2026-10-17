@@ -58,6 +58,8 @@ function next(rule: ScheduleRule, now: number): number | null {
   try { return cron.nextRun(new Date(now))?.getTime() ?? null; } finally { cron.stop(); }
 }
 function cadenceRule(every: string): ScheduleRule { return DURATION.test(every) ? { every } : { cron: every }; }
+/** Throws when `every` is neither a valid duration nor a valid cron expression. */
+export function checkCadence(every: string): void { next(cadenceRule(every), Date.now()); }
 
 export class Scheduler {
   private tasks: ScheduledTask[] = [];

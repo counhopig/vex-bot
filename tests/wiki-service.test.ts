@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runGit, type GitRunner } from "../src/vault/git.js";
 import { fingerprint } from "../src/vault/wiki/marker.js";
 import { dueWikiWork, previewNotice, Wiki, type WikiOptions } from "../src/vault/wiki/service.js";
@@ -62,6 +62,30 @@ describe("Wiki service", () => {
     } finally { release(); await active; await wiki.close(); }
   });
 
+  it("opens the clone in the background and retries a failed clone a minute later", async () => {
+    let now = Date.parse("2026-10-17T00:00:00Z");
+    let offline = true;
+    const warnings: string[] = [];
+    const { wiki, root } = await seed(join(dir, "home"), {
+      now: () => now,
+      onWarning: (message) => warnings.push(message),
+      run: (args, options) => offline && args[0] === "clone" ? Promise.reject(new Error("network unreachable")) : fileRun(args, options),
+    });
+    expect(wiki.root).toBe(root);
+    expect(await wiki.dueWork(now, true)).toBeNull();
+    await expect.poll(() => warnings).toEqual([expect.stringContaining("network unreachable")]);
+    await expect(wiki.status()).rejects.toThrow(/not available yet: network unreachable/);
+    offline = false;
+    now += 59_000;
+    expect(await wiki.dueWork(now, true)).toBeNull();
+    await expect(wiki.status()).rejects.toThrow(/not available yet/);
+    now += 1_000;
+    expect(await wiki.dueWork(now, true)).toBeNull();
+    await expect.poll(async () => (await wiki.status()).bootstrap).toBe("pending");
+    expect(await wiki.dueWork(now, true)).toBe("bootstrap");
+    await wiki.close();
+  });
+
   it("init creates the wiki and raw subtrees", async () => {
     const home = join(dir, "home");
     const { wiki, root } = await seed(home);
@@ -71,6 +95,52 @@ describe("Wiki service", () => {
     expect(existsSync(join(root, "wiki"))).toBe(true);
     expect(existsSync(join(root, "raw"))).toBe(true);
     await wiki.close();
+  });
+
+  it("reconciles a long batch history in a few git calls and reuses it while refs and state are unchanged", async () => {
+    const { remote, work } = makeRemote(join(dir, "history"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    let scanBase = git(work, ["rev-parse", "HEAD"]).trim();
+    for (let index = 0; index < 12; index++) {
+      git(work, ["commit", "--allow-empty", "-m", `wiki: compile\n\nVex-Batch: b${index}\nVex-Kind: ${index === 0 ? "bootstrap" : "scheduled"}\nVex-Scan-Base: ${scanBase}`]);
+      scanBase = git(work, ["rev-parse", "HEAD"]).trim();
+    }
+    git(work, ["push", "origin", "HEAD:refs/heads/main"]);
+    await makeWiki(join(dir, "home"), remote).init();
+    const calls: string[][] = [];
+    const wiki = makeWiki(join(dir, "home"), remote, { run: (args, options) => { calls.push(args); return fileRun(args, options); } });
+    await wiki.init();
+    expect(calls.length).toBeLessThan(10);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      calls.length = 0;
+      vi.setSystemTime(Date.now() + 60_000);
+      expect(await wiki.status()).toMatchObject({ bootstrap: "done", lastBatchId: "b11" });
+      expect(calls.map((args) => args[0])).not.toContain("log");
+    } finally { vi.useRealTimers(); await wiki.close(); }
+  });
+
+  it("reports the last settled status without reading history while a run holds the lock", async () => {
+    let entered!: () => void;
+    const inRun = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const calls: string[][] = [];
+    const { wiki } = await seed(join(dir, "home"), {
+      run: (args, options) => { calls.push(args); return fileRun(args, options); },
+      runAgent: async () => { entered(); await gate; return "ok"; },
+    });
+    await wiki.init();
+    const before = await wiki.status();
+    const active = wiki.run({ kind: "on-demand" }, new AbortController().signal);
+    await inRun;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 60_000);
+      calls.length = 0;
+      expect(await wiki.status()).toEqual(before);
+      expect(calls).toEqual([]);
+    } finally { vi.useRealTimers(); release(); await active; await wiki.close(); }
   });
 
   it("status reports a fresh clone as pending with no state", async () => {
@@ -594,7 +664,7 @@ describe("Wiki service", () => {
     const work = join(dir, "seed", "work");
     writeFileSync(join(work, "wiki/a.md"), "orphan content");
     git(work, ["add", "wiki/a.md"]);
-    git(work, ["commit", "-m", "wiki: rollback", "-m", "Vex-Rollback: orphan", "-m", "Vex-Revert-Of: missing-batch"]);
+    git(work, ["commit", "-m", "wiki: rollback", "-m", "Vex-Rollback: orphan\nVex-Revert-Of: missing-batch"]);
     git(work, ["push", "origin", "HEAD:refs/heads/main", "--force"]);
     const localHead = git(root, ["rev-parse", "HEAD"]).trim();
     const remoteHead = git(remote, ["rev-parse", "refs/heads/main"]).trim();
@@ -724,7 +794,7 @@ describe("Wiki service", () => {
     const preview = await wiki.preview();
     writeFileSync(join(root, "wiki/extra.md"), "later local batch");
     git(root, ["add", "wiki/extra.md"]);
-    git(root, ["-c", "user.name=Vex Bot", "-c", "user.email=vex@localhost", "commit", "-m", "wiki: ingest follow-up", "-m", "Vex-Batch: follow-up", "-m", "Vex-Kind: on-demand", "-m", "Vex-Scan-Base: none"]);
+    git(root, ["-c", "user.name=Vex Bot", "-c", "user.email=vex@localhost", "commit", "-m", "wiki: ingest follow-up", "-m", "Vex-Batch: follow-up\nVex-Kind: on-demand\nVex-Scan-Base: none"]);
     const head = git(root, ["rev-parse", "HEAD"]).trim();
 
     const rejected = await wiki.rejectBootstrap(new AbortController().signal);
@@ -750,6 +820,32 @@ describe("Wiki service", () => {
 
     expect(result).toMatchObject({ publication: "not-needed" });
     expect((await wiki.status()).bootstrap).toBe("done");
+    await wiki.close();
+  });
+
+  it("reports consecutive failed runs once until a run succeeds", async () => {
+    const home = join(dir, "home");
+    const notifications: string[] = [];
+    let failing = true;
+    const { wiki } = await seed(home, {
+      notifyEnabled: true,
+      notify: async (text) => { notifications.push(text); },
+      runAgent: async () => {
+        if (failing) throw new Error("agent exploded");
+        return "ok";
+      },
+    });
+    await wiki.init();
+    const failures = () => notifications.filter((text) => text.includes("run failed"));
+
+    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow("agent exploded");
+    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow("agent exploded");
+    expect(failures()).toHaveLength(1);
+    failing = false;
+    await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+    failing = true;
+    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow("agent exploded");
+    expect(failures()).toHaveLength(2);
     await wiki.close();
   });
 

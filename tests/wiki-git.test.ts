@@ -129,7 +129,13 @@ describe("WikiRepo", () => {
   });
 
   it("parses trailer keys case-insensitively and keeps every value", () => {
-    expect(parseTrailers("subject\n\nvex-batch: first\nVex-Batch: second\nother text")).toEqual({ "vex-batch": ["first", "second"] });
+    expect(parseTrailers("subject\n\nvex-batch: first\nVex-Batch: second\n")).toEqual({ "vex-batch": ["first", "second"] });
+  });
+
+  it("reads trailers only from a final paragraph made entirely of trailers", () => {
+    expect(parseTrailers("Vex-Batch: subject")).toEqual({});
+    expect(parseTrailers("notes\n\nVex-Batch: quoted in the body\n\nSigned-off-by: Owner")).toEqual({ "Signed-off-by": ["Owner"] });
+    expect(parseTrailers("notes\n\nVex-Batch: x\nsee the log above")).toEqual({});
   });
 
   it("points at the token when git cannot authenticate", async () => {

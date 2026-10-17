@@ -49,6 +49,13 @@ describe("parseConfig", () => {
     expect(config.vault).toEqual({ url: "https://example.com/v.git", wiki: { every: "6h", notify: true, maxNotesPerRun: 20 } });
   });
 
+  it("validates the vault wiki cadence", () => {
+    const vault = (every: string) => `model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: true, every: "${every}" } }\n`;
+    expect(() => parseConfig(vault("6 hours"), paths)).toThrow(/vault: wiki\.every/);
+    expect(() => parseConfig(vault("0m"), paths)).toThrow(/vault: wiki\.every/);
+    expect(parseConfig(vault("0 4 * * *"), paths).vault?.wiki?.every).toBe("0 4 * * *");
+  });
+
   it("rejects vault.wiki.enabled without a git url", () => {
     expect(() => parseConfig("model: { provider: p, id: m }\nvault: { path: /v, wiki: { enabled: true } }\n", paths)).toThrow(/wiki\.enabled requires url/);
   });

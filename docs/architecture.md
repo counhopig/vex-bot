@@ -224,6 +224,7 @@ The channel talks to the iLink OC API (`getupdates` long polling with a persiste
 |---|---|
 | Model call fails | Up to three retries, then the error goes to the window |
 | MCP server unreachable | Skipped at startup, retried in the background |
+| Wiki clone fails | Startup continues; the clone is retried in the background no sooner than a minute later |
 | WeChat poll fails | Reconnect with backoff |
 | WeChat session expired | QR login in vexd or `vex wechat login` |
 | Approval times out | Denied |

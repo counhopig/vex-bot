@@ -48,18 +48,8 @@ function parseKind(value: string | undefined): CompileBatch["kind"] {
 
 /** The candidate that is a descendant of every other; `null` when the candidates are incomparable. */
 async function newestCandidate(repo: WikiRepo, candidates: string[]): Promise<string | null> {
-  for (const candidate of candidates) {
-    let wins = true;
-    for (const other of candidates) {
-      if (other === candidate) continue;
-      if (!(await repo.isAncestor(other, candidate))) {
-        wins = false;
-        break;
-      }
-    }
-    if (wins) return candidate;
-  }
-  return null;
+  const tips = await repo.independent(candidates);
+  return tips.length === 1 && candidates.includes(tips[0]!) ? tips[0]! : null;
 }
 
 /**
@@ -85,15 +75,6 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   const { repo, state, marker, bootstrapRef } = input;
   const origin = await repo.originHead();
 
-  const publishedCache = new Map<string, boolean>();
-  const isPublished = async (sha: string): Promise<boolean> => {
-    const cached = publishedCache.get(sha);
-    if (cached !== undefined) return cached;
-    const value = await repo.isAncestor(sha, origin);
-    publishedCache.set(sha, value);
-    return value;
-  };
-
   const batches: CompileBatch[] = [];
   const rollbacks: RollbackCommit[] = [];
   const alerts: string[] = [];
@@ -101,6 +82,9 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
 
   const localHead = await repo.head();
   const historyRef = await repo.isAncestor(localHead, origin) ? origin : "HEAD";
+  // Every commit in the scanned history is published unless it is local-only.
+  const unpublished = new Set(historyRef === origin ? [] : await repo.commitsBetween(origin, "HEAD"));
+  const isPublished = (sha: string): boolean => !unpublished.has(sha);
   for (const record of parseLog(await repo.log(historyRef))) {
     const trailers = parseTrailers(record.body);
     const batchId = trailer(trailers, "Vex-Batch");
@@ -110,7 +94,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     if (batchId !== undefined) {
       const kind = parseKind(trailer(trailers, "Vex-Kind"));
       const scanBase = trailer(trailers, "Vex-Scan-Base");
-      const batchPublished = await isPublished(record.sha);
+      const batchPublished = isPublished(record.sha);
       const subject = record.body.split("\n")[0] ?? "";
       batches.push({
         sha: record.sha,
@@ -126,7 +110,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
       if (rollbackIds.length !== 1 || !rollbackIds[0] || revertTargets.length !== 1 || !revertTargets[0]) {
         alerts.push(`wiki history has an invalid rollback relationship on ${record.sha}`);
       } else {
-        rollbacks.push({ sha: record.sha, id: rollbackIds[0], revertOf: revertTargets[0], published: await isPublished(record.sha) });
+        rollbacks.push({ sha: record.sha, id: rollbackIds[0], revertOf: revertTargets[0], published: isPublished(record.sha) });
       }
     }
   }

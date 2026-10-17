@@ -266,7 +266,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         tools: getTools(),
         streamFn: models.streamFn,
         evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") },
-        ...(!temporary ? { controller: (host) => new LinkActionController({
+        ...(!temporary && wiki ? { controller: (host) => new LinkActionController({
           routes: LINK_ROUTES,
           fallbackTools: LINK_FALLBACK_TOOLS,
           onOutcome: (message) => host.enqueueAssistant(message),
@@ -276,7 +276,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
             if (!decisionJudge) throw new Error("Jev link classification is disabled.");
             if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
             const clean = redactSecrets({ input, urls }, evidenceSecrets());
-            return decisionJudge.classifyLinks(clean.input, clean.urls, signal);
+            const choices = await decisionJudge.classifyLinks(clean.input, clean.urls, signal);
+            // Redaction can rewrite a URL; answers follow the order of the URLs sent.
+            return choices.map((choice, index) => ({ ...choice, url: urls[index] ?? choice.url }));
           },
           warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
         }) } satisfies Partial<SessionOptions> : {}),
@@ -327,7 +329,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   startupCleanup.push(() => sessions.shutdown());
 
   if (wiki) {
-    await wiki.init();
     protectedRoots.push(wiki.root);
     startupCleanup.push(() => wiki.close());
   }
@@ -469,7 +470,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log });
   startupCleanup.push(() => wechatRuntime?.stop());
   startupCleanup.push(() => scheduler.close());
-  await wiki?.remindPendingPreview().catch((err: unknown) => log.warn({ err }, "wiki preview reminder failed"));
+  wiki?.start();
   await scheduler.start();
   const host = config.web.host.includes(":") ? `[${config.web.host}]` : config.web.host;
   const url = `http://${host}:${port}`;

@@ -415,6 +415,22 @@ describe("Session", () => {
     await s.dispose();
   });
 
+  it("reads a model fallback classification wrapped in a JSON code fence", async () => {
+    const url = "https://example.com/a";
+    let ingests = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(`\`\`\`json\n${JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] })}\n\`\`\``),
+      fauxAssistantMessage("Summary."),
+    ]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    await s.dispose();
+  });
+
   it("uses one schema-validated model fallback, and reports uncertain intent as deferred", async () => {
     const url = "https://example.com/a";
     let ingests = 0;

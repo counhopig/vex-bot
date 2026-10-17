@@ -21,6 +21,12 @@ export interface WikiRunResult {
   publication: "not-needed" | "preview" | "published" | "pending";
 }
 
+const OPEN_RETRY_MS = 60_000;
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function wikiOutcomeText(rawPaths: string[], pages: string[], publication: "published" | "pending"): string {
   const parts = [
     rawPaths.length ? `Archived original source: ${rawPaths.join(", ")}.` : "No raw source was archived.",
@@ -79,6 +85,19 @@ export interface WikiPreview {
 
 export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
 
+export interface WikiStatus { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null }
+
+function statusOf(state: WikiState | null, reconciled: ReconcileResult): WikiStatus {
+  // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
+  // scheduled/on-demand batch is left alone so the cadence can retry its push.
+  const bootstrap: WikiBootstrapStatus = reconciled.preview
+    ? "awaiting-review"
+    : reconciled.bootstrap === "done"
+      ? "done"
+      : "pending";
+  return { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId: reconciled.lastBatchId };
+}
+
 /**
  * Which wiki work the scheduler may start: a pending bootstrap once the backoff gate opens, or a
  * scheduled run once both the gate and the cadence allow it. Nothing runs while a preview awaits review.
@@ -110,21 +129,30 @@ export interface WikiOptions {
  * inside `run` through the run-scoped tools built from its `WikiRunContext`.
  */
 export class Wiki {
-  private repo!: WikiRepo;
+  private readonly repo: WikiRepo;
   private roots!: { wiki: string; raw: string };
   private marker!: MarkerStore;
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
+  private reconcileMemo: { key: string; result: ReconcileResult } | null = null;
   private cachedNextAttemptAt: number | null = null;
-  private statusCache: { at: number; value: { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null } } | null = null;
+  private statusCache: { at: number; value: WikiStatus } | null = null;
+  private lastStatus: WikiStatus | null = null;
   private readonly lock = new WikiLock();
+  private opened = false;
+  private closed = false;
+  private opening: Promise<void> | null = null;
+  private openRetryAt = 0;
+  private openError: unknown = null;
   /** The clone as the vault reads it; it shares this lock and never waits for wiki work. */
   readonly notesCopy: NotesCopy;
 
   constructor(private readonly opts: WikiOptions) {
+    const { home, vault, branch, run, onWarning } = opts;
+    this.repo = new WikiRepo({ home, url: vault.url, branch, username: vault.username, token: vault.token, run, onWarning });
     this.notesCopy = new WikiReadCopy({
       lock: this.lock,
-      open: () => this.repo ? { repo: this.repo, marker: this.marker } : undefined,
+      open: () => this.opened ? { repo: this.repo, marker: this.marker } : undefined,
       onAdvanced: () => { this.statusCache = null; },
       ...(opts.now ? { now: opts.now } : {}),
       ...(opts.onWarning ? { onWarning: opts.onWarning } : {}),
@@ -139,6 +167,7 @@ export class Wiki {
   /** Reminds the owner of a bootstrap preview left unpublished by an earlier process. */
   async remindPendingPreview(): Promise<void> {
     if (!this.opts.notifyEnabled) return;
+    await this.ready();
     const preview = await this.preview();
     if (preview) await this.opts.notify(previewNotice(preview));
   }
@@ -148,47 +177,77 @@ export class Wiki {
     return this.cachedNextAttemptAt;
   }
 
+  /**
+   * Opens the clone in the background, then reminds the owner of a pending preview. Wiki work
+   * waits for an open in progress; after a failed open, it is retried no sooner than a minute later.
+   */
+  start(): void {
+    if (this.opened || this.opening || this.clock() < this.openRetryAt) return;
+    this.init().then(
+      () => this.closed ? undefined : this.remindPendingPreview().catch((error: unknown) => this.opts.onWarning?.(`wiki: preview reminder failed: ${errorText(error)}`)),
+      (error: unknown) => this.opts.onWarning?.(`wiki: could not open the vault clone: ${errorText(error)}`),
+    );
+  }
+
+  /** Clones on first use and reconciles history; concurrent callers share one attempt. */
   async init(): Promise<void> {
-    const { home, vault, branch, run, onWarning } = this.opts;
-    this.repo = new WikiRepo({ home, url: vault.url, branch, username: vault.username, token: vault.token, run, onWarning });
+    if (this.opened) return;
+    this.opening ??= this.open().then(
+      () => { this.opened = true; this.opening = null; this.openError = null; },
+      (error: unknown) => { this.opening = null; this.openError = error; this.openRetryAt = this.clock() + OPEN_RETRY_MS; throw error; },
+    );
+    await this.opening;
+  }
+
+  private async ready(): Promise<void> {
+    if (this.opened) return;
+    if (!this.opening && this.clock() < this.openRetryAt) throw new Error(`wiki is not available yet: ${errorText(this.openError)}`);
+    await this.init();
+  }
+
+  private clock(): number {
+    return (this.opts.now ?? Date.now)();
+  }
+
+  private async open(): Promise<void> {
     const root = await this.repo.open();
     this.roots = await validateSubtreeRoots(root);
     this.marker = new MarkerStore(join(root, ".git"));
-    this.stateStore = new StateStore(join(home, "state", "wiki.json"));
+    this.stateStore = new StateStore(join(this.opts.home, "state", "wiki.json"));
     const state = await this.stateStore.read();
     this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     this.reconciled = await this.runReconcile(state);
+    this.lastStatus = statusOf(state, this.reconciled);
     this.statusCache = null;
   }
 
   /** The work the scheduler may start now; see `dueWikiWork`. */
   async dueWork(now: number, cadenceDue: boolean): Promise<"bootstrap" | "scheduled" | null> {
+    if (!this.opened) { this.start(); return null; }
     const gate = this.nextAttemptAt();
+    if (gate !== null && now < gate) return null;
     const { bootstrap } = await this.status();
     return dueWikiWork({ bootstrap, gate, now, cadenceDue });
   }
 
-  async status(): Promise<{ bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null }> {
+  async status(): Promise<WikiStatus> {
     // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
     if (this.statusCache && Date.now() - this.statusCache.at < 10_000) return this.statusCache.value;
+    await this.ready();
+    // A running operation may be mid-rebase; report the last settled status instead of reading history.
+    if (this.lock.busy && this.lastStatus) return this.lastStatus;
     const state = await this.stateStore.read();
     const reconciled = await this.runReconcile(state);
     this.reconciled = reconciled;
     this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
-    const lastBatchId = reconciled.lastBatchId;
-    // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
-    // scheduled/on-demand batch is left alone so the cadence can retry its push.
-    const bootstrap: WikiBootstrapStatus = reconciled.preview
-      ? "awaiting-review"
-      : reconciled.bootstrap === "done"
-        ? "done"
-        : "pending";
-    const value = { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId };
+    const value = statusOf(state, reconciled);
+    this.lastStatus = value;
     this.statusCache = { at: Date.now(), value };
     return value;
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     this.reconciled = null;
     this.statusCache = null;
   }
@@ -200,6 +259,7 @@ export class Wiki {
     if (kind.kind === "on-demand" && kind.source?.url && !kind.source.text?.trim()) {
       return { batchId: null, commit: null, pages: [], publication: "not-needed" };
     }
+    await this.ready();
     return this.lock.run(async () => {
       try {
       await this.repo.fetch();
@@ -502,27 +562,29 @@ export class Wiki {
       this.statusCache = null;
       return { batchId, commit: sha, pages: committedPages, publication: kind.kind === "bootstrap" ? "preview" : pushed ? "published" : "pending" };
       } catch (error) {
-        await this.recordFailure();
-        // Every terminal failure is reported when notifications are on, not just successes.
-        if (this.opts.notifyEnabled) await this.opts.notify(`wiki: run failed: ${(error as Error).message}`).catch(() => undefined);
+        const failureStreak = await this.recordFailure();
+        // A run of consecutive failures is reported once, when it starts.
+        if (this.opts.notifyEnabled && failureStreak === 1) await this.opts.notify(`wiki: run failed: ${(error as Error).message}`).catch(() => undefined);
         throw error;
       }
     }, signal);
   }
 
-  /** Records a failed run and the exponential backoff that gates the next attempt. */
-  private async recordFailure(): Promise<void> {
+  /** Records a failed run and the exponential backoff that gates the next attempt; returns the consecutive failure count. */
+  private async recordFailure(): Promise<number> {
     const current = (await this.stateStore.read()) ?? emptyState();
     const failureStreak = current.failureStreak + 1;
     const backoff = Math.min(60 * 60_000, 5 * 60_000 * 2 ** (failureStreak - 1));
     const nextAttemptAt = Date.now() + backoff;
     await this.stateStore.write({ ...current, failureStreak, nextAttemptAt });
     this.cachedNextAttemptAt = nextAttemptAt;
+    return failureStreak;
   }
 
   /** Reverts the most recent committed compile batch exactly once, or completes a pending rollback. */
   async rollback(signal: AbortSignal): Promise<WikiRollbackResult> {
     signal.throwIfAborted();
+    await this.ready();
     return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
@@ -609,6 +671,7 @@ export class Wiki {
 
   async approveBootstrap(signal: AbortSignal): Promise<{ pushed: boolean; message: string }> {
     signal.throwIfAborted();
+    await this.ready();
     return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
@@ -636,6 +699,7 @@ export class Wiki {
   /** Discards an unpublished bootstrap preview locally, or marks it done when it was already published. */
   async rejectBootstrap(signal: AbortSignal): Promise<{ discarded: boolean; message: string }> {
     signal.throwIfAborted();
+    await this.ready();
     return this.lock.run(async () => {
       this.statusCache = null;
       await this.repo.fetch();
@@ -796,14 +860,17 @@ export class Wiki {
     }
   }
 
+  /** Reconciles history; the result is reused while the refs, state and marker it was built from are unchanged. */
   private async runReconcile(state: WikiState | null): Promise<ReconcileResult> {
-    const result = await reconcile({
-      repo: this.repo,
-      state,
-      marker: await this.marker.read(),
-      bootstrapRef: await this.repo.ref("refs/vex/wiki-bootstrap"),
-    });
-    for (const alert of result.alerts) this.opts.onWarning?.(alert);
+    const marker = await this.marker.read();
+    const bootstrapRef = await this.repo.ref("refs/vex/wiki-bootstrap");
+    const key = JSON.stringify([await this.repo.head(), await this.repo.originHead(), bootstrapRef, state, marker]);
+    let result = this.reconcileMemo?.key === key ? this.reconcileMemo.result : undefined;
+    if (!result) {
+      result = await reconcile({ repo: this.repo, state, marker, bootstrapRef });
+      this.reconcileMemo = { key, result };
+      for (const alert of result.alerts) this.opts.onWarning?.(alert);
+    }
     const invalidRollback = result.alerts.find((alert) => /invalid rollback relationship|duplicate Vex-Rollback/i.test(alert));
     if (invalidRollback) throw new WikiIntegrityError(`${invalidRollback}; preserving repository and state`);
     return result;

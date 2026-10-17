@@ -44,6 +44,7 @@ export interface LinkActionOptions {
 const URLS_PER_CLASSIFICATION = 10;
 const INPUT_LIMIT = 4_000;
 const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
+const FENCED_JSON = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i;
 /**
  * Runs the owner's shared links as fixed actions for one live session: classify each URL's intent,
  * call the routed tool through the normal gate, and keep the model from contradicting the owner.
@@ -222,7 +223,7 @@ export class LinkActionController implements TurnController {
         this.opts.onUsage?.(message.usage);
         if (message.stopReason !== "stop") throw new Error("The link intent fallback did not complete normally.");
         const raw = message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("").slice(0, 4000);
-        const decoded: unknown = JSON.parse(raw);
+        const decoded: unknown = JSON.parse(FENCED_JSON.exec(raw)?.[1] ?? raw);
         if (decoded && typeof decoded === "object" && "actions" in decoded && Array.isArray(decoded.actions)) choices = decoded.actions as LinkIntent[];
         if (!choices || !validChoices(choices, urls) || choices.some((choice) => choice.confidence < this.opts.confidence)) choices = undefined;
       } catch (error) {

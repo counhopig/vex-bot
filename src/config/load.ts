@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { Value } from "typebox/value";
 import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
+import { checkCadence } from "../scheduler/index.js";
 import { writeFileAtomic } from "../store/atomic.js";
 import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
 
@@ -22,6 +23,9 @@ function checkVault(vault: RawVault, paths: VexPaths): VaultConfig {
   let address: URL;
   try { address = new URL(vault.url!); } catch { return fail("url is not a valid address"); }
   if (address.username || address.password) return fail("url must not contain a username or password; use the username and token settings");
+  if (vault.wiki?.enabled && vault.wiki.every !== undefined) {
+    try { checkCadence(vault.wiki.every); } catch (err) { return fail(`wiki.every must be a duration like "6h" or a cron expression: ${(err as Error).message}`); }
+  }
   const { wiki, ...git } = vault;
   return {
     ...git,

@@ -172,6 +172,16 @@ export class WikiRepo {
     }
   }
 
+  /** Commits reachable from `to` but not from `from`, as one `rev-list`. */
+  async commitsBetween(from: string, to: string): Promise<string[]> {
+    return (await this.git(["rev-list", `${from}..${to}`])).split("\n").filter(Boolean);
+  }
+
+  /** The supplied commits that are not ancestors of another supplied commit (`merge-base --independent`). */
+  async independent(shas: string[]): Promise<string[]> {
+    return (await this.git(["merge-base", "--independent", ...shas])).split("\n").filter(Boolean);
+  }
+
   async mergeBase(a: string, b: string): Promise<string | null> {
     try { return (await this.git(["merge-base", a, b])).trim(); }
     catch (error) { if ((error as { code?: unknown }).code === 1) return null; throw error; }
@@ -502,13 +512,18 @@ export class WikiRepo {
 const TRAILER_LINE = /^\s*([A-Za-z0-9][A-Za-z0-9-]*):\s?(.*?)\s*$/;
 
 /**
- * Trailer lines (`Key: value`) from a commit message, keyed case-insensitively.
+ * Trailer lines (`Key: value`) from a commit message, keyed case-insensitively. Only the final
+ * paragraph after the subject counts, and only when every line in it is a trailer.
  * A key keeps the spelling of its first occurrence and collects the value of every line it appears on.
  */
 export function parseTrailers(message: string): Record<string, string[]> {
   const trailers: Record<string, string[]> = {};
   const spellings = new Map<string, string>();
-  for (const line of message.split("\n")) {
+  const paragraphs = message.replace(/\r\n/g, "\n").trimEnd().split(/\n[ \t]*\n/);
+  if (paragraphs.length < 2) return trailers;
+  const lines = (paragraphs.at(-1) ?? "").split("\n").filter((line) => line.trim() !== "");
+  if (!lines.every((line) => TRAILER_LINE.test(line))) return trailers;
+  for (const line of lines) {
     const match = TRAILER_LINE.exec(line);
     const rawKey = match?.[1];
     if (!rawKey) continue;

@@ -79,6 +79,19 @@ async function startScenario(responses: Parameters<FauxProviderHandle["setRespon
 }
 
 describe("daemon Wiki notifications", () => {
+  it("starts while the wiki remote is unreachable", async () => {
+    const config: VexConfig = {
+      model: { provider: faux.getModel().provider, id: faux.getModel().id },
+      backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
+      providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
+      toolPolicy: {}, bashEnvPassthrough: [], wechat: { enabled: false, baseUrl: ilink.baseUrl },
+      vault: { url: "https://git.invalid/notes.git", wiki: { every: "1d", notify: true, maxNotesPerRun: 20 } },
+    };
+    const unreachable = () => Promise.reject(new Error("network unreachable"));
+    daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: unreachable });
+    expect(daemon.port).toBeGreaterThan(0);
+  });
+
   it("reminds the owner of a restored bootstrap preview and publishes it through the wiki_bootstrap approval", async () => {
     const { remote, work } = makeRemote(join(dir, "preview-seed"));
     commit(work, { "wiki/Existing.md": "# Existing\n", "notes/Pending.md": "# Pending\n" }, "2026-10-01T10:00:00+0000");
