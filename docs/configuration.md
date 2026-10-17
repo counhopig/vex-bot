@@ -91,7 +91,7 @@ Saving in WebChat settings applies the change without a manual restart:
 | `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
+Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` and `wiki_rollback` are `allow`; `wiki_bootstrap`, `bash` and MCP tools are `ask`; `write` and `edit` are `allow` inside the workspace and `ask` outside.
 
 ## Models
 
@@ -154,7 +154,7 @@ The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md
 
 ## Skills
 
-A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads skill bodies and runs their scripts according to their runtime interface and the applicable tool policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
+A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`, `llm-wiki`); a workspace skill with the same name overrides a built-in one. Vex reads skill bodies and runs their scripts according to their runtime interface and the applicable tool policy. The Wiki compiler receives `llm-wiki` directly with its restricted tool set. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
 
@@ -238,7 +238,7 @@ vault:
   path: /vault
 ```
 
-**A git repository** (`vault.url`). Vex keeps a read-only copy in `<data dir>/vault/<hash>/`:
+**A git repository** (`vault.url`). Vex keeps exactly one copy. With the wiki disabled it is a read-only mirror in `<data dir>/vault/<hash>/`; with the wiki enabled it is the wiki's working clone in `<data dir>/wiki/<hash>/`, which the vault tools read too:
 
 ```yaml
 vault:
@@ -248,7 +248,7 @@ vault:
   token: "READ_ONLY_TOKEN"   # not needed for a public repository
 ```
 
-The first time a vault tool runs, Vex clones the repository; later, when you ask about your notes, it fetches again if the last update is more than a minute old. The copy is a mirror, so force pushes are fine. Startup makes no network request. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
+Without the wiki, Vex clones the repository the first time a vault tool runs; with the wiki, it clones in the background once the daemon has started, and wiki tools report that the wiki is not available yet until the clone is ready, retrying a failed clone a minute later. Later, when you ask about your notes, it fetches again if the last update is more than a minute old. Without the wiki the copy is a mirror, so force pushes are fine. With the wiki, the shared clone only fast-forwards: it is not moved while a wiki run is queued or in progress, while a batch is in flight, or while a local bootstrap preview awaits review, and a rewritten remote history is reported instead of applied. Startup never waits for the network. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
 
 Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration. Vex sends `vault.username` as the account name, or `git` when you leave it empty.
 
@@ -257,6 +257,25 @@ The agent gets two tools. `vault_search` takes `query` (keywords separated by sp
 Files and folders whose names start with `.`, symlinks, non-Markdown files (`.md`, case-insensitive) and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call; in a measured run, a search over 1,000 notes took about 0.1 s, and over 5,000 notes about 0.46 s warm and about 1 s cold. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
 
 Treat note text as untrusted input, not as instructions: a page you clipped into the vault can carry text aimed at the model. If the vault holds third-party content, set `tools.policy.web_fetch: ask` so a note cannot make Vex fetch an address silently, and set `tools.policy.write` and `tools.policy.edit` to `ask` too if you want the same for files.
+
+## Notes wiki
+
+With a git-backed vault (`vault.url`), set `vault.wiki.enabled: true` to have Vex compile your notes into a wiki inside the same repository. A scheduled ingest reads the notes that changed since the last run, writes synthesized pages under `wiki/` (and fetched material under `raw/`), updates `wiki/_index.md`, and commits and pushes the batch. When you ask a question, the agent reads `wiki/` first and cites the pages it used.
+
+```yaml
+vault:
+  url: https://git.example.com/me/notes.git
+  token: "WRITE_TOKEN"
+  wiki:
+    enabled: true
+    every: 6h             # a duration, or a cron expression
+    notify: true          # a WeChat message after each batch
+    maxNotesPerRun: 20    # notes per model call; a run still makes a single commit
+```
+
+The first ingest is a preview: Vex commits it locally, tells you which pages it generated and withholds the push. Say "approve the Wiki preview" or "reject the Wiki preview"; Vex then calls `wiki_bootstrap`, and you confirm that call in the ordinary approval prompt (`/y` publishes, `/n` keeps the preview). After a restart Vex reminds you of a preview that is still waiting. The cadence stays paused until review. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed). Completion messages list archived raw paths and compiled Wiki pages separately, then state whether publication completed or remains pending. A raw-only commit does not count as a compiled Wiki page.
+
+With Wiki enabled, Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. With the wiki disabled, the mirror remains read-only and can use a read-only token. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
 
 ## Scheduled messages
 

@@ -21,7 +21,8 @@ src/
 ├── scheduler/             # Persistent schedules and temporary background turns
 ├── index/                 # Memory indexing, tokenization and search
 ├── persona/               # Mood, rest and proactive conversation state
-├── vault/                 # Read-only notes vault: git mirror, note parsing, search tools
+├── vault/                 # Notes vault: git mirror or folder, note parsing, search tools
+│   └── wiki/              # LLM wiki over the vault's single writable clone: transactions and tools
 ├── workspace/             # Owner files, templates and daily notes
 ├── skills/                # Skill discovery and prompt integration
 ├── store/                 # Atomic writes and append-only JSONL
@@ -40,8 +41,9 @@ src/
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
-| Change what a tool's result proves | the owning module's `evidence.ts` (`tools/`, `vault/`), `daemon.ts` (`TOOL_EVIDENCE`) |
+| Change what a tool's result proves | the owning module's `evidence.ts` (`tools/`, `vault/`, `vault/wiki/`), `daemon.ts` (`TOOL_EVIDENCE`) |
 | Change the evidence check or judge advice | `context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `policy/judge.ts`, `providers/jev.ts`, `config/secrets.ts` |
+| Change the LLM wiki | `vault/wiki/service.ts`, `vault/wiki/tools.ts`, `vault/wiki/write.ts`, `vault/notes.ts`, `config/schema.ts` (`vault.wiki`), `config/settings.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts`, `web/static/app.js` |
 | Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 
 ## LOCAL CONVENTIONS
@@ -72,6 +74,10 @@ src/
 - Persist a schedule's advanced trigger/one-time disable state before launching delivery; serialize mutations and restore in-memory state on save failure (`scheduler/index.ts:76`, `scheduler/index.ts:160`).
 - Each proactive-chat prompt carries the current time and quiet-period facts; an identical repeated prompt makes the model copy its previous reply from the history (`persona/index.ts:141`, `daemon.ts:241`).
 - Memory indexing excludes temporary `sessions/runs` transcripts and messages with `vexSource`; temporary heartbeat/consolidation transcripts are removed on disposal (`index/memory.ts:74`, `index/memory.ts:105`, `daemon.ts:229`).
-- The vault is read-only and its tools have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
+- The repository is cloned once. With `vault.wiki` the vault takes `wiki.notesCopy` as its `copy` and creates no mirror; `WikiReadCopy` fast-forwards that clone only when nothing holds or waits for `WikiLock`, no batch is in flight and the tree is clean, so reads during a compile run never wait (`vault/notes.ts`, `vault/wiki/readCopy.ts`, `vault/wiki/lock.ts`).
+- The vault tools are read-only and have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
+- The wiki plugs in through the existing seams: the scheduler owns only its cadence and asks `hooks.wikiWork`/`hooks.runWiki`; `Wiki.dueWork` decides bootstrap, backoff and review gating (`scheduler/index.ts`, `vault/wiki/service.ts`). Compiler runs are ordinary temporary `run:` sessions built by the daemon's temporary-session helper, with a `SystemPromptBuilder` prompt and the `llm-wiki` skill resolved through skill discovery (`daemon.ts`, `skills/discovery.ts`).
+- Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`vault/wiki/write.ts`, `policy/policy.ts`).
 - `Session` knows no tool or business rule. Runtime behaviour reaches it only through a `TurnController` (tools, stream wrapper, a gate in front of the owner's gate, lifecycle hooks) (`core/turnController.ts`).
 - Every model request passes the budget check, then the evidence boundary, which withholds operation claims without a matching tool result. `context/` names no tool: each module declares what its tools prove as `ToolEvidence` profiles, and the daemon combines them. Text sent to an external judge is redacted with `redactSecrets`; the judge is an optional advisor, and tools still go through the normal tool gate (`context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `config/secrets.ts`).
+- A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt that its evidence profile checks (`vault/wiki/tools.ts`, `vault/wiki/evidence.ts`).

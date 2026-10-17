@@ -213,7 +213,8 @@ describe("startDaemon", () => {
     await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
     let calls = 0;
     let heartbeatPrompt = "";
-    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    let heartbeatTools: string[] = [];
+    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); heartbeatTools = getCurrentTools(ctx.messages).map((tool) => tool.name); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
     await new Promise(resolve => setTimeout(resolve, 1400));
     await daemon.stop(); daemon = undefined;
@@ -222,6 +223,7 @@ describe("startDaemon", () => {
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
     expect(heartbeatPrompt).toContain("## Available tools");
+    expect(heartbeatTools).not.toContain("wiki_ingest");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
   });
@@ -239,6 +241,7 @@ describe("startDaemon", () => {
     await vi.waitFor(() => expect(prompt).toContain("Window: memory consolidation"));
     expect(task).toContain("Distil what recurs or is clearly important");
     expect(tools).toEqual(expect.arrayContaining(["read", "write", "edit", "grep", "find", "memory_search"]));
+    expect(tools).not.toContain("wiki_ingest");
     await daemon.stop(); daemon = undefined;
     vi.useRealTimers();
   });

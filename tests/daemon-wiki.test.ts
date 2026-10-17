@@ -1,0 +1,289 @@
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle, type FauxResponseFactory, type ToolResultMessage, type TranscriptContext } from "@earendil-works/pi-ai";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { VexConfig } from "../src/config/schema.js";
+import { startDaemon, type Daemon } from "../src/daemon.js";
+import { createLogger } from "../src/logger.js";
+import { resolvePaths, type VexPaths } from "../src/paths.js";
+import { createModelRegistry } from "../src/providers/models.js";
+import { runGit } from "../src/vault/git.js";
+import { readOriginalSource } from "../src/links/source.js";
+import type { PageRequest } from "../src/tools/web.js";
+import type { DecisionJudge } from "../src/policy/judge.js";
+import { fingerprint } from "../src/vault/wiki/marker.js";
+import { Wiki } from "../src/vault/wiki/service.js";
+import { createFaux, fauxModels, lastUserText } from "./helpers/faux.js";
+import { FakeIlink, textMessage } from "./helpers/ilink.js";
+import { commit, makeRemote } from "./helpers/gitRemote.js";
+import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+
+let dir: string;
+let paths: VexPaths;
+let faux: FauxProviderHandle;
+let ilink: FakeIlink;
+let daemon: Daemon | undefined;
+
+beforeEach(async () => {
+  dir = await makeTmpDir();
+  paths = resolvePaths(dir);
+  faux = createFaux();
+  ilink = new FakeIlink();
+  await ilink.start();
+});
+afterEach(async () => {
+  await daemon?.stop();
+  await ilink.stop();
+  await removeTmpDir(dir);
+});
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } }).trim();
+}
+
+async function startScenario(responses: Parameters<FauxProviderHandle["setResponses"]>[0], scenarioOptions: { seed?: string; failPush?: boolean; scheduled?: boolean; ownerMessage?: string; deferOwnerMessage?: boolean; bootstrap?: "done" | "awaiting-review"; toolPolicy?: VexConfig["toolPolicy"]; mcpServers?: VexConfig["mcpServers"]; webPageRequest?: PageRequest; decisionJudge?: DecisionJudge; wikiSourceResolver?: (url: string, signal: AbortSignal) => ReturnType<typeof readOriginalSource> } = {}): Promise<{ remote: string; head: string; identity: string }> {
+  const { remote, work } = makeRemote(join(dir, scenarioOptions.seed ?? "seed"));
+  commit(work, { "wiki/Existing.md": "# Existing\n" }, "2026-10-01T10:00:00+0000");
+  const head = git(work, ["rev-parse", "HEAD"]);
+  if (scenarioOptions.scheduled) commit(work, { "notes/Pending.md": "# Pending\n" }, "2026-10-02T10:00:00+0000");
+  const identity = createHash("sha256").update(`${remote}\n`).digest("hex").slice(0, 12);
+  await mkdir(join(paths.home, "state"), { recursive: true });
+  await writeFile(join(paths.home, "state", "wiki.json"), JSON.stringify({
+    lastScanCommit: head, lastRunAt: null, lastBatchId: null, bootstrap: scenarioOptions.bootstrap ?? "done", rollback: null,
+    nextAttemptAt: null, failureStreak: 0,
+  }));
+  await mkdir(paths.wechat, { recursive: true });
+  await writeFile(join(paths.wechat, "credentials.json"), JSON.stringify({ token: "tok", accountId: "bot1", baseUrl: ilink.baseUrl, userId: "owner1" }));
+  faux.setResponses(responses);
+  const config: VexConfig = {
+    model: { provider: faux.getModel().provider, id: faux.getModel().id },
+    backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
+    providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
+    toolPolicy: scenarioOptions.toolPolicy ?? {}, bashEnvPassthrough: [], wechat: { enabled: true, baseUrl: ilink.baseUrl, ownerId: "owner1" },
+    ...(scenarioOptions.mcpServers ? { mcpServers: scenarioOptions.mcpServers } : {}),
+    vault: { url: remote, wiki: { every: scenarioOptions.scheduled ? "5s" : "1d", notify: true, maxNotesPerRun: 20 } },
+  };
+  const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => {
+    if (scenarioOptions.failPush && args[0] === "push") return Promise.reject(new Error("simulated local push failure"));
+    return runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
+  };
+  if (!scenarioOptions.deferOwnerMessage) ilink.queueUpdates(textMessage("owner1", scenarioOptions.ownerMessage ?? "Please ingest this article", { message_id: scenarioOptions.seed ?? "m1" }));
+  const articleHtml: PageRequest = async () => ({ status: 200, headers: { "content-type": "text/html" }, body: '<html><head><meta property="og:title" content="Article"></head><body><div id="js_content"><p>An original article body.</p></div></body></html>' });
+  daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit,
+    ...(scenarioOptions.decisionJudge ? { decisionJudge: scenarioOptions.decisionJudge } : {}),
+    ...(scenarioOptions.webPageRequest ? { webPageRequest: scenarioOptions.webPageRequest } : {}),
+    wikiSourceResolver: scenarioOptions.wikiSourceResolver ?? ((url, signal) => readOriginalSource(url, { signal, request: articleHtml })) });
+  return { remote, head, identity };
+}
+
+describe("daemon Wiki notifications", () => {
+  it("starts while the wiki remote is unreachable", async () => {
+    const config: VexConfig = {
+      model: { provider: faux.getModel().provider, id: faux.getModel().id },
+      backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
+      providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
+      toolPolicy: {}, bashEnvPassthrough: [], wechat: { enabled: false, baseUrl: ilink.baseUrl },
+      vault: { url: "https://git.invalid/notes.git", wiki: { every: "1d", notify: true, maxNotesPerRun: 20 } },
+    };
+    const unreachable = () => Promise.reject(new Error("network unreachable"));
+    daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: unreachable });
+    expect(daemon.port).toBeGreaterThan(0);
+  });
+
+  it("reminds the owner of a restored bootstrap preview and publishes it through the wiki_bootstrap approval", async () => {
+    const { remote, work } = makeRemote(join(dir, "preview-seed"));
+    commit(work, { "wiki/Existing.md": "# Existing\n", "notes/Pending.md": "# Pending\n" }, "2026-10-01T10:00:00+0000");
+    const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
+    const previewWriter = new Wiki({
+      home: paths.home, vault: { url: remote }, maxNotesPerRun: 20, notifyEnabled: false,
+      notify: async () => {}, run: localGit,
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/Recovered.md");
+        await context.marker.recordIntent("wiki/Recovered.md", await fingerprint(abs));
+        await writeFile(abs, "# Recovered\n");
+        await context.marker.recordAfter("wiki/Recovered.md", await fingerprint(abs));
+        return "compiled";
+      },
+    });
+    await previewWriter.init();
+    const generated = await previewWriter.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(generated.publication).toBe("preview");
+    const unpublishedHead = git(remote, ["rev-parse", "main"]);
+    await previewWriter.close();
+
+    await mkdir(paths.wechat, { recursive: true });
+    await writeFile(join(paths.wechat, "credentials.json"), JSON.stringify({ token: "tok", accountId: "bot1", baseUrl: ilink.baseUrl, userId: "owner1" }));
+    await writeFile(join(paths.wechat, "state.json"), JSON.stringify({ contextToken: "ctx-owner1" }));
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("wiki_bootstrap", { action: "approve" }, { id: "model-approve" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("The Wiki preview was published."),
+    ]);
+    const config: VexConfig = {
+      model: { provider: faux.getModel().provider, id: faux.getModel().id },
+      backgroundModel: { provider: faux.getModel().provider, id: faux.getModel().id },
+      providers: {}, web: { host: "127.0.0.1", port: 0 }, workspace: join(dir, "workspace"),
+      toolPolicy: {}, bashEnvPassthrough: [], wechat: { enabled: true, baseUrl: ilink.baseUrl, ownerId: "owner1" },
+      vault: { url: remote, wiki: { every: "1d", notify: true, maxNotesPerRun: 20 } },
+    };
+    daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("Wiki bootstrap preview is awaiting review")])), { timeout: 5000 });
+    expect(ilink.sentTexts().some((text) => text.includes("[Approval needed]"))).toBe(false);
+    ilink.queueUpdates(textMessage("owner1", "Approve the Wiki preview.", { message_id: "review-attempt" }));
+    await vi.waitFor(() => expect(ilink.sentTexts().filter((text) => text.includes("[Approval needed]") && text.includes("Publish the Wiki bootstrap preview"))).toHaveLength(1), { timeout: 5000 });
+    expect(git(remote, ["rev-parse", "main"])).toBe(unpublishedHead);
+
+    ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "review-yes" }));
+    await vi.waitFor(() => expect(git(remote, ["rev-parse", "main"])).not.toBe(unpublishedHead), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toContain("The Wiki preview was published."), { timeout: 5000 });
+    expect(git(remote, ["show", "main:wiki/Recovered.md"])).toContain("# Recovered");
+  });
+
+  it("lets a real WeChat wiki_ingest turn finish before delivering its notification", async () => {
+    const rawPath = `raw/link-${createHash("sha256").update("https://example.com/article").digest("hex")}.md`;
+    let compilerPrompt = "";
+    let compilerTools: string[] = [];
+    const { remote, head, identity } = await startScenario([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: "https://example.com/article" }, { id: "ingest" }), { stopReason: "toolUse" }),
+      (context) => {
+        compilerPrompt = getCurrentSystemPrompt(context.messages);
+        compilerTools = getCurrentTools(context.messages).map((tool) => tool.name);
+        return fauxAssistantMessage(fauxToolCall("wiki_write", { path: "wiki/Article.md", content: `# Article\n\nAn original article body.\n\nSource: ${rawPath}\n` }, { id: "write" }), { stopReason: "toolUse" });
+      },
+      fauxAssistantMessage("Compiled the Wiki page."),
+      (context) => {
+        const toolResult = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
+        const receiptText = toolResult?.content.map((part) => part.type === "text" ? part.text : "").join("") ?? "";
+        expect(JSON.parse(receiptText)).toMatchObject({ version: 1, requestedUrl: "https://example.com/article", canonicalUrl: "https://example.com/article", sourceAvailable: true, rawPath });
+        return fauxAssistantMessage("The article was archived and compiled.");
+      },
+    ]);
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([
+      "The article was archived and compiled.",
+      expect.stringContaining("Compiled Wiki pages: wiki/Article.md."),
+    ])), { timeout: 8000 });
+    await vi.waitFor(() => expect(faux.getPendingResponseCount()).toBe(0));
+    expect(compilerTools).toEqual(["vault_search", "vault_read", "wiki_write", "wiki_edit"]);
+    expect(compilerPrompt).toContain("# LLM Wiki");
+    expect(compilerPrompt).toContain("vault_search, vault_read, wiki_write, wiki_edit");
+    expect(compilerPrompt).not.toMatch(/read tool|bash|delegate|web_fetch|\bMCP\b/i);
+    expect(git(join(paths.home, "wiki", identity), ["rev-parse", "HEAD"])).not.toBe(head);
+    expect(git(remote, ["show", "main:wiki/Article.md"])).toContain("An original article body.");
+    expect(git(remote, ["show", `main:${rawPath}`])).toContain("An original article body.");
+    expect(await readFile(join(paths.sessions, "wechat.jsonl"), "utf8")).toContain(`"rawPath":"${rawPath}"`);
+  });
+
+  it("terminates the owner turn when publication fails after a local Wiki commit", async () => {
+    const { remote, head, identity } = await startScenario([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { title: "Article", text: "An original article body." }, { id: "ingest" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("wiki_write", { path: "wiki/Article.md", content: "# Article\n\nAn original article body.\n" }, { id: "write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("Compiled the Wiki page."),
+      (context) => {
+        const toolResult = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
+        const resultText = toolResult?.content.map((part) => part.type === "text" ? part.text : "").join("") ?? "";
+        expect(JSON.parse(resultText)).toMatchObject({ status: "completed", publication: "pending", sourceAvailable: true, batchId: expect.any(String), commit: expect.any(String) });
+        return fauxAssistantMessage("Compilation succeeded; publication is pending.");
+      },
+    ], { failPush: true });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([
+      "Compilation succeeded; publication is pending.", expect.stringContaining("Committed locally; publication is pending."),
+    ])), { timeout: 8000 });
+    expect(git(join(paths.home, "wiki", identity), ["rev-parse", "HEAD"])).not.toBe(head);
+    expect(git(remote, ["rev-parse", "refs/heads/main"])).toBe(head);
+  });
+
+  it("rejects a compiler narration after a failed Wiki write and preserves the successful read receipt", async () => {
+    const sourceUrl = "https://example.com/article";
+    const rawPath = `raw/link-${createHash("sha256").update(sourceUrl).digest("hex")}.md`;
+    let failureReceipt: unknown;
+    const { remote, head, identity } = await startScenario([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: sourceUrl }, { id: "ingest" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage(fauxToolCall("wiki_write", { path: "outside/Article.md", content: "# Article" }, { id: "failed-write" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("The Wiki page was compiled successfully."),
+      fauxAssistantMessage("Compilation failed because the Wiki write returned an error."),
+      (context) => {
+        const result = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
+        const receiptText = result?.content.map((part) => part.type === "text" ? part.text : "").join("") ?? "";
+        failureReceipt = JSON.parse(receiptText);
+        return fauxAssistantMessage("The source was read, but Wiki compilation failed.");
+      },
+    ]);
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([
+      "The source was read, but Wiki compilation failed.", expect.stringContaining("wiki: run failed"),
+    ])), { timeout: 8000 });
+    expect(failureReceipt).toMatchObject({ status: "failed-run", sourceAvailable: true, rawPath: null, compiledPages: [] });
+    expect(git(remote, ["rev-parse", "refs/heads/main"])).toBe(head);
+    expect(git(join(paths.home, "wiki", identity), ["rev-parse", "HEAD"])).toBe(head);
+    await expect(readFile(join(paths.home, "wiki", identity, rawPath), "utf8")).rejects.toThrow();
+  });
+
+  it("runs scheduled Wiki work while the owner ingestion notification is queued", async () => {
+    faux = createFaux();
+    const ownerRequest = "Please ingest this article";
+    let scheduledObserved = false;
+    let scheduledOverlapped = false;
+    let scheduledWriteCompleted = false;
+    let ownerToolCallIssued = false;
+    let ownerCompilationObserved = false;
+    let ownerFinalStarted = false;
+    const response: FauxResponseFactory = (context, options) => {
+      const prompt = lastUserText(context);
+      const hasToolResult = (name: string) => context.messages.some((message) => message.role === "toolResult" && message.toolName === name);
+      if (prompt === ownerRequest) {
+        if (hasToolResult("wiki_ingest")) {
+          ownerFinalStarted = true;
+          return new Promise((resolve) => {
+            const signal = options?.signal;
+            if (signal?.aborted) return resolve(fauxAssistantMessage(""));
+            signal?.addEventListener("abort", () => resolve(fauxAssistantMessage("")), { once: true });
+          });
+        }
+        ownerToolCallIssued = true;
+        return fauxAssistantMessage(fauxToolCall("wiki_ingest", { title: "Article", text: "An original article body." }, { id: "ingest" }), { stopReason: "toolUse" });
+      }
+      if (prompt.includes("Apply these vault changes") && prompt.includes("notes/Pending.md")) {
+        scheduledObserved = true;
+        scheduledOverlapped = ownerFinalStarted;
+        if (hasToolResult("wiki_write")) {
+          scheduledWriteCompleted = true;
+          return fauxAssistantMessage("Scheduled compilation finished.");
+        }
+        return fauxAssistantMessage(fauxToolCall("wiki_write", { path: "wiki/Pending.md", content: "# Pending\n\nScheduled note.\n" }, { id: "scheduled-write" }), { stopReason: "toolUse" });
+      }
+      if (prompt.includes("Source text:") && prompt.includes("An original article body.")) {
+        if (hasToolResult("wiki_write")) {
+          ownerCompilationObserved = true;
+          return fauxAssistantMessage("Compiled the Wiki page.");
+        }
+        return fauxAssistantMessage(fauxToolCall("wiki_write", { path: "wiki/Article.md", content: "# Article\n\nAn original article body.\n" }, { id: "write" }), { stopReason: "toolUse" });
+      }
+      return fauxAssistantMessage("Scheduled work settled.");
+    };
+    const { remote } = await startScenario(Array.from({ length: 12 }, () => response), { scheduled: true });
+    await vi.waitFor(() => expect(ownerFinalStarted).toBe(true), { timeout: 8000 });
+    await vi.waitFor(() => expect(scheduledObserved).toBe(true), { timeout: 8000 });
+    expect(scheduledOverlapped).toBe(true);
+    await vi.waitFor(() => expect(ownerCompilationObserved).toBe(true), { timeout: 5000 });
+    await vi.waitFor(() => expect(scheduledWriteCompleted).toBe(true), { timeout: 5000 });
+    await vi.waitFor(() => expect(git(remote, ["ls-tree", "-r", "--name-only", "main"]).split("\n")).toContain("wiki/Pending.md"), { timeout: 5000 });
+    expect(git(remote, ["show", "main:wiki/Pending.md"])).toContain("Scheduled note.");
+    expect(git(remote, ["show", "main:wiki/Article.md"])).toContain("An original article body.");
+    const started = Date.now();
+    await daemon!.stop(); daemon = undefined;
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(ilink.sentTexts()).not.toEqual(expect.arrayContaining([expect.stringContaining("wiki: ingested")]));
+  });
+
+  it("terminates the owner turn after the Wiki compiler provider fails", async () => {
+    const { remote, head } = await startScenario([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { title: "Article", text: "An original article body." }, { id: "ingest" }), { stopReason: "toolUse" }),
+      ...Array.from({ length: 4 }, () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "compiler provider failed" })),
+      fauxAssistantMessage("The Wiki compilation failed."),
+    ]);
+    await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([
+      "The Wiki compilation failed.", expect.stringContaining("wiki: run failed"),
+    ])), { timeout: 15000 });
+    expect(git(remote, ["rev-parse", "refs/heads/main"])).toBe(head);
+  });
+});
