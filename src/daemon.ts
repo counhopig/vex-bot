@@ -40,10 +40,11 @@ import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createScheduleTool } from "./tools/schedule.js";
-import { createWebFetchTool, createWebSearchTool } from "./tools/web.js";
+import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
 import { createDelegateTool } from "./tools/delegate.js";
 import { skillsSection } from "./skills/index.js";
+import { readPlatformOriginalSource } from "./links/source.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { SessionEvent } from "./core/events.js";
 
@@ -55,6 +56,8 @@ export interface DaemonOptions {
   staticDir?: string;
   /** Restarts the process in place so saved settings take effect; absent where that is unsupported. */
   restart?: () => Promise<void>;
+  /** Public page request override for isolated WebChat integration tests. */
+  webPageRequest?: PageRequest;
 }
 
 export interface Daemon {
@@ -108,8 +111,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   startupCleanup.push(() => mcp.close());
   await mcp.start();
   const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, onWarning: (message) => log.warn(message) }) : undefined;
+  const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
+    signal,
+    ...(request ? { request } : {}),
+    sessdata: config.links?.bilibili?.sessdata || process.env.BILIBILI_SESSDATA,
+    ...(config.stt ? { stt: config.stt } : {}),
+  });
   const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config }),
-    createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool(), createWebSearchTool(config.webSearch),
+    createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool({
+      ...(opts.webPageRequest ? { request: opts.webPageRequest } : {}),
+      sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),
+    }), createWebSearchTool(config.webSearch),
     ...(vault ? createVaultTools(vault) : [])];
   const prompt = new SystemPromptBuilder([
     baseInstructionsSection(config.workspace),

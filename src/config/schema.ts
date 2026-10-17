@@ -73,6 +73,9 @@ export const ConfigSchema = Type.Object({
     chunkMinutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })),
     maxMinutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 600 })),
   })),
+  links: Type.Optional(Type.Object({
+    bilibili: Type.Optional(Type.Object({ sessdata: Type.Optional(Type.String()) })),
+  })),
   vault: Type.Optional(Type.Object({
     path: Type.Optional(Type.String({ minLength: 1 })),
     url: Type.Optional(Type.String({ pattern: "^https?://\\S+$" })),
@@ -123,6 +126,7 @@ export interface VexConfig {
   persona?: { sleep?: [string, string]; outreach?: { enabled?: boolean; checkEvery?: string; socialThreshold?: number; quietHours?: number; dailyLimit?: number } };
   webSearch?: { provider: "brave" | "tavily" | "searxng"; apiKey?: string; baseUrl?: string };
   stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
+  links?: { bilibili?: { sessdata?: string } };
   vault?: VaultConfig;
   jev?: import("../providers/jev.js").JevConfig;
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;

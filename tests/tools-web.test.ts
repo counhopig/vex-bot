@@ -38,6 +38,9 @@ describe("public webpage access", () => {
     const request = vi.fn(async () => ({ status: 302, headers: { location: "http://127.0.0.1/private" }, body: "" }));
     await expect(fetchPublicPage("https://example.com", { request })).rejects.toThrow("private");
     expect(request).toHaveBeenCalledTimes(1);
+    const receipt = await createWebFetchTool({ request }).execute("1", { url: "https://example.com" });
+    expect(JSON.parse((receipt.content[0] as { text: string }).text)).toMatchObject({ sourceAvailable: false, error: expect.stringContaining("Read failed") });
+    expect(request).toHaveBeenCalledTimes(2);
   });
   it("follows relative redirects and limits loops", async () => {
     const request = vi.fn(async (url: URL) => url.pathname === "/next"
@@ -51,13 +54,48 @@ describe("public webpage access", () => {
       body: '<h1>Hello</h1><p><a href="https://example.org">Link</a></p><pre><code>hello()</code></pre><script>alert(1)</script><style>bad</style>',
     }) });
     const result = await tool.execute("1", { url: "https://example.com" });
-    expect(result.content).toEqual([{ type: "text", text: "# Hello\n\n[Link](https://example.org)\n\n```\nhello()\n```" }]);
+    expect((result.content[1] as { text: string }).text).toBe("# Hello\n\n[Link](https://example.org)\n\n```\nhello()\n```");
   });
   it("caps output and surfaces HTTP errors and cancellation", async () => {
     const tool = createWebFetchTool({ request: async () => ({ status: 200, headers: { "content-type": "text/plain" }, body: "x".repeat(200) }) });
     expect(await tool.execute("1", { url: "https://example.com", maxLength: 100 })).toMatchObject({ details: { truncated: true } });
     await expect(fetchPublicPage("https://example.com", { request: async () => ({ status: 500, headers: {}, body: "fail" }) })).rejects.toThrow("HTTP 500");
     await expect(tool.execute("2", { url: "https://example.com" }, AbortSignal.abort())).rejects.toThrow();
+  });
+  it("returns a versioned source receipt with a bounded excerpt", async () => {
+    const body = "原文".repeat(20_000);
+    const tool = createWebFetchTool({ sourceResolver: async () => ({
+      requestedUrl: "https://example.com/a", canonicalUrl: "https://example.com/a", title: "原文标题",
+      text: body, textKind: "article", truncated: false,
+    }) });
+    const result = await tool.execute("1", { url: "https://example.com/a", maxLength: 500 });
+    const receipt = JSON.parse((result.content[0] as { text: string }).text);
+    expect(receipt).toMatchObject({ type: "web_read_receipt", version: 1, sourceAvailable: true, truncated: false, title: "原文标题" });
+    expect(receipt.excerpt).toHaveLength(1_000);
+    expect((result.content[1] as { text: string }).text).toHaveLength(514);
+    expect(result.details).toMatchObject({ receipt: { canonicalUrl: "https://example.com/a" } });
+  });
+  it("returns generic page metadata and receipt without treating an empty body as archived", async () => {
+    const tool = createWebFetchTool({ request: async () => ({ status: 200, headers: { "content-type": "text/html" }, body: "<title>Metadata</title><script>ignored</script>" }) });
+    const result = await tool.execute("1", { url: "https://example.com/metadata" });
+    const receipt = JSON.parse((result.content[0] as { text: string }).text);
+    expect(receipt).toMatchObject({ version: 1, sourceAvailable: false, title: "Metadata", canonicalUrl: "https://example.com/metadata" });
+    expect((result.content[1] as { text: string }).text).toContain("No readable original text");
+  });
+  it("keeps metadata-only platform reads explicit and propagates cancellation", async () => {
+    const tool = createWebFetchTool({ sourceResolver: async (_url, signal) => {
+      signal.throwIfAborted();
+      return { requestedUrl: "https://video.example/watch/1", canonicalUrl: "https://video.example/watch/1", title: "Video", text: "", textKind: "subtitles", truncated: false };
+    } });
+    const result = await tool.execute("1", { url: "https://video.example/watch/1" });
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ sourceAvailable: false, textKind: null, title: "Video" });
+    await expect(tool.execute("2", { url: "https://video.example/watch/1" }, AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
+  });
+  it("returns a failed-read receipt for unsupported binary content", async () => {
+    const request = vi.fn(async () => ({ status: 200, headers: { "content-type": "application/pdf" }, body: "%PDF" }));
+    const result = await createWebFetchTool({ request }).execute("1", { url: "https://example.com/file.pdf" });
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ sourceAvailable: false, error: expect.stringContaining("Read failed") });
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });
 

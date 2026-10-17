@@ -83,7 +83,7 @@ Messages are rendered to plain text for estimation and summarisation (tool resul
 |---|---|
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
 | `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
-| `web_fetch` | Public pages only (see Security); output is Markdown |
+| `web_fetch` | Reads public pages and returns a JSON receipt with an excerpt (see Security) |
 | `web_search` | Tavily, SearXNG or Brave Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
 | `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
@@ -108,7 +108,7 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 ### Link reading
 
-The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run through `bash`) picks a platform from a link, or from a whole pasted share text, and reads it through that platform's public endpoints. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch` (the script reuses `fetchPublicPage`).
+The bundled link reader (`skills/link-reader/scripts/read.mjs`) picks a platform from a link or pasted share text and reads it through that platform's public endpoints. Owner-facing reads use the programmatic reader; manual skill-script runs use `bash` and its approval policy. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch`.
 
 | Platform | Metadata | Text |
 |---|---|---|
