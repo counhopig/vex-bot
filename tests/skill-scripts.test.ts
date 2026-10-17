@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -49,9 +49,10 @@ describe("builtin skill scripts", () => {
     expect(completeSimple).not.toHaveBeenCalled();
   });
 
-  it.skipIf(process.env.VEX_VERIFY_DIST !== "1")( "loads the compiled CLI and bundled link-reader assets", async () => {
+  it.skipIf(process.env.VEX_VERIFY_DIST !== "1")( "loads the compiled CLI and bundled Wiki and link-reader assets", async () => {
     const dist = join(process.cwd(), "dist");
     expect((await stat(join(dist, "cli/index.js"))).isFile()).toBe(true);
+    expect((await readFile(join(dist, "skills/llm-wiki/SKILL.md"), "utf8"))).toContain("# LLM Wiki");
     expect((await stat(join(dist, "skills/link-reader/scripts/read.mjs"))).isFile()).toBe(true);
     const built = await import(pathToFileURL(join(dist, "links/source.js")).href) as typeof import("../src/links/source.js");
     const id = "64a1b2c3d4e5f60718293a4b";
