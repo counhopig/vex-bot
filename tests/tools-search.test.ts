@@ -60,7 +60,8 @@ describe("grep file limits", () => {
     expect(out).toContain("notes.txt");
   });
 
-  it("skips unreadable files instead of aborting", async () => {
+  // Root reads mode-000 files, so the premise only holds for an ordinary user.
+  it.skipIf(process.getuid?.() === 0)("skips unreadable files instead of aborting", async () => {
     await writeFile(join(ws, "locked.txt"), "coffee\n", "utf8");
     await chmod(join(ws, "locked.txt"), 0o000);
     const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
