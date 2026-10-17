@@ -1,4 +1,4 @@
-import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, getCurrentSystemPrompt, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -121,6 +121,30 @@ describe("SessionManager", () => {
     expect(manager.windowLabel(webSessionKey(meta.id))).toBe('WebChat conversation "我的标题"');
   });
 
+  it("keeps an owner rename when an automatic title finishes during its save", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    let finishTitle!: (title: string) => void;
+    const generateTitle = vi.fn(() => new Promise<string>((resolve) => { finishTitle = resolve; }));
+    const manager = makeManager(generateTitle);
+    await manager.init();
+    try {
+      const meta = await manager.createWeb();
+      const session = await manager.get(webSessionKey(meta.id));
+      session.send("hello");
+      await session.whenIdle();
+      expect(generateTitle).toHaveBeenCalledTimes(1);
+      const renaming = manager.renameWeb(meta.id, "Owner title");
+      finishTitle("Automatic title");
+      await renaming;
+      // A following index transaction waits for the generated title's queued update.
+      await manager.createWeb();
+      expect(manager.listWeb().find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+      const index = JSON.parse(await readFile(join(paths.webSessions, "index.json"), "utf8")) as { id: string; title: string }[];
+      expect(index.find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+    } finally { await manager.shutdown(); }
+  });
+
   it("orders sessions by latest activity", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("x")]);
@@ -151,6 +175,44 @@ describe("SessionManager", () => {
     await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
     await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);
+  });
+
+  it("leaves the index unchanged when saving it fails", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const kept = await manager.createWeb();
+    const index = join(paths.webSessions, "index.json");
+    // A directory in place of the index file makes every save fail.
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.createWeb()).rejects.toThrow();
+    await expect(manager.renameWeb(kept.id, "renamed")).rejects.toThrow();
+    expect(manager.listWeb()).toEqual([expect.objectContaining({ id: kept.id, title: "New chat" })]);
+  });
+
+  it("keeps the conversation and its transcript when deletion cannot save the index", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("x")]);
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const session = await manager.get(webSessionKey(meta.id));
+    session.send("hi");
+    await session.whenIdle();
+    const transcript = join(paths.webSessions, `${meta.id}.jsonl`);
+    const before = await readFile(transcript, "utf8");
+    const index = join(paths.webSessions, "index.json");
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.deleteWeb(meta.id)).rejects.toThrow();
+    expect(manager.listWeb().map((m) => m.id)).toEqual([meta.id]);
+    expect(await readFile(transcript, "utf8")).toBe(before);
+    // Once the index can be saved again, deletion can be retried.
+    await rm(index, { recursive: true });
+    await manager.deleteWeb(meta.id);
+    expect(manager.listWeb()).toEqual([]);
+    await expect(stat(transcript)).rejects.toThrow();
   });
 
   it("allows retrying after session disposal fails during deletion", async () => {
