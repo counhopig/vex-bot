@@ -25,19 +25,20 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus` |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
-| `context/` | System prompt assembly, context compaction, memory rescue |
-| `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
-| `policy/` | Approval policy and pending approvals |
+| `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
+| `links/` | Original-source reading for shared links |
+| `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
+| `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
 | `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
-| `providers/` | Model resolution and API keys |
+| `providers/` | Model resolution and API keys, usage accounting, the TypeSafe Jev judge |
 | `store/` | Append-only JSONL and atomic file writes |
 | `cli/` | The `vex` command |
 
@@ -66,6 +67,8 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
+Interactive, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. Jev advises on intent and tool routing; tools still run through the regular tool gate. Receipts and tool results ground owner-facing operation claims.
+
 ### Compaction
 
 When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation):
@@ -76,6 +79,8 @@ When the projected history exceeds `compaction.threshold` of the context window 
 Compaction changes only what is sent to the model; transcripts keep every message. A failed compaction is not retried within the same run, and `transformContext` never throws: over budget, it trims to the most recent turns.
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
+
+Before each provider call, Vex reserves the configured output allowance and applies a conservative local input estimate to the assembled prompt, tools, messages, and image payloads. Tokenization and image accounting vary by provider, so the estimate is a local guard rather than a provider billing count.
 
 ## Tools
 
@@ -89,7 +94,7 @@ Messages are rendered to plain text for estimation and summarisation (tool resul
 | `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
-| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns only its final reply |
+| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
