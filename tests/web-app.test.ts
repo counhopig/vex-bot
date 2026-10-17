@@ -12,19 +12,22 @@ class Element {
   textContent = "";
   value = "";
   checked = false;
+  disabled = false;
   hidden = false;
   id = "";
   href = "";
   style: Record<string, string> = {};
   scrollHeight = 0;
   scrollTop = 0;
+  parent?: Element;
   private listeners = new Map<string, ((event: object) => void)[]>();
 
   constructor(readonly tagName = "div") {}
   get firstChild() { return this.children[0]; }
-  append(...children: Element[]) { this.children.push(...children); }
-  replaceChildren() { this.children = []; }
-  remove() {}
+  append(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; this.children.push(child); } }
+  prepend(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; } this.children.unshift(...children); }
+  replaceChildren(...children: Element[]) { for (const child of [...this.children]) child.remove(); this.append(...children); }
+  remove() { if (this.parent) { this.parent.children = this.parent.children.filter((child) => child !== this); this.parent = undefined; } }
   setAttribute(name: string, value: string) { this.attributes[name] = value; }
   addEventListener(type: string, listener: (event: object) => void) {
     this.listeners.set(type, [...this.listeners.get(type) ?? [], listener]);
@@ -77,6 +80,24 @@ async function loadApp() {
 }
 
 describe("web app", () => {
+  it("does not save unloaded files or replace edits with duplicate load replies", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[4]!.dispatch("click");
+    const area = runInContext('state.fileAreas.get("SOUL.md")', context) as Element;
+    expect(area.disabled).toBe(true);
+    socket.send.mockClear();
+    get("save-settings").dispatch("click");
+    expect(socket.send).not.toHaveBeenCalled();
+    runInContext('handle({ type: "file", name: "SOUL.md", text: "original" })', context);
+    expect(area.disabled).toBe(false);
+    area.value = "edited";
+    runInContext('handle({ type: "file", name: "SOUL.md", text: "late response" })', context);
+    expect(area.value).toBe("edited");
+    get("save-settings").dispatch("click");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "SOUL.md", text: "edited", base: "original" }));
+  });
+
   it("keeps a title node attached through both clicks of a rename", async () => {
     const { get, socket, prompt } = await loadApp();
     const row = get("session-list").children[1]!;
@@ -226,9 +247,10 @@ describe("web app", () => {
     expect(area("SOUL.md").value).toBe("你是一只猫");
     get("file-tabs").children[1]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "USER.md" }));
+    runInContext('handle({ type: "file", name: "USER.md", text: "old" })', context);
     area("USER.md").value = "喜欢咖啡";
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡", base: "old" }));
     runInContext('handle({ type: "file_saved", name: "USER.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
     expect(get("settings-text").hidden).toBe(true);
@@ -239,7 +261,7 @@ describe("web app", () => {
     runInContext('handle({ type: "config", text: "model: {}" })', context);
     expect(get("settings-text").value).toBe("model: {}");
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}", base: "model: {}" }));
   });
 
   it("groups the persona files into four pages and saves every editor on the open page", async () => {
@@ -249,9 +271,10 @@ describe("web app", () => {
     expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Heartbeat"]);
     get("file-tabs").children[3]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "HEARTBEAT.md" }));
+    runInContext('handle({ type: "file", name: "HEARTBEAT.md", text: "" })', context);
     runInContext('state.fileAreas.get("HEARTBEAT.md").value = "check mail"', context);
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "HEARTBEAT.md", text: "check mail" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "HEARTBEAT.md", text: "check mail", base: "" }));
     runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true, warning: "Too long." })', context);
     expect(get("settings-result").textContent).toBe("Saved. Too long.");
     expect(get("settings-result").className).toBe("warn");
@@ -281,11 +304,12 @@ describe("web app", () => {
     expect(sent().at(-1)).toEqual({ type: "get_file", name: "memory/2026-10-04.md" });
     runInContext('handle({ type: "file", name: "memory/2026-10-05.md", text: "stale" })', context);
     expect(runInContext('state.notes.area.value', context)).toBe("");
+    runInContext('handle({ type: "file", name: "MEMORY.md", text: "" }); handle({ type: "file", name: "memory/2026-10-04.md", text: "" })', context);
     runInContext('state.notes.area.value = "older note"; state.fileAreas.get("MEMORY.md").value = "facts"', context);
     get("save-settings").dispatch("click");
     expect(sent().slice(-2)).toEqual([
-      { type: "save_file", name: "MEMORY.md", text: "facts" },
-      { type: "save_file", name: "memory/2026-10-04.md", text: "older note" },
+      { type: "save_file", name: "MEMORY.md", text: "facts", base: "" },
+      { type: "save_file", name: "memory/2026-10-04.md", text: "older note", base: "" },
     ]);
     runInContext('handle({ type: "file_saved", name: "MEMORY.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saving…");

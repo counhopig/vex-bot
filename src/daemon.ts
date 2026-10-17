@@ -28,6 +28,7 @@ import { isLoopback, WebAuth } from "./gateway/auth.js";
 import { Gateway } from "./gateway/server.js";
 import type { Logger } from "./logger.js";
 import type { VexPaths } from "./paths.js";
+import { withFileLock } from "./store/fileLock.js";
 import { MemoryIndex } from "./index/memory.js";
 import { createMemorySearchTool } from "./index/tool.js";
 import { ApprovalManager } from "./policy/approvals.js";
@@ -41,8 +42,7 @@ import { judgeAdvisor } from "./policy/advice.js";
 import { CORE_TOOL_EVIDENCE } from "./tools/evidence.js";
 import { VAULT_TOOL_EVIDENCE } from "./vault/evidence.js";
 import { createCoreTools } from "./tools/registry.js";
-import { writeFileAtomic } from "./store/atomic.js";
-import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning } from "./workspace/workspace.js";
+import { ensureWorkspace, listDailyNotes, readWorkspaceFile, RESIDENT_LINE_LIMITS, residentLimitWarning, saveWorkspaceFile } from "./workspace/workspace.js";
 import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
 import { Persona } from "./persona/index.js";
@@ -336,10 +336,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     bus,
     config: {
       read: () => readFile(paths.config, "utf8"),
-      save: async (text) => {
+      save: (text, base) => withFileLock(paths.config, async () => {
         const before = await readFile(paths.config, "utf8");
+        if (base !== undefined && base !== before) throw new ConfigError("Configuration changed after it was opened; reload it before saving");
         return { restarting: await commitConfig(before, text, text !== before) };
-      },
+      }),
     },
     schedules: {
       list: () => ({
@@ -368,14 +369,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     },
     settings: {
       read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: catalog() }),
-      save: async (patch) => {
+      save: (patch) => withFileLock(paths.config, async () => {
         const before = await readFile(paths.config, "utf8");
         const next = applySettings(before, patch, paths);
         const restarting = await commitConfig(before, next.text, next.restartRequired, [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])]);
         return { restartRequired: next.restartRequired, restarting };
-      },
+      }),
     },
-    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text) => { await writeFileAtomic(join(config.workspace, name), text, 0o644); return { warning: residentLimitWarning(name, text) }; } },
+    workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text, base) => { await saveWorkspaceFile(config.workspace, name, text, base); return { warning: residentLimitWarning(name, text) }; } },
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });

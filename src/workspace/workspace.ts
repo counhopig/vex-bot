@@ -1,5 +1,7 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { writeFileAtomic } from "../store/atomic.js";
+import { withFileLock } from "../store/fileLock.js";
 import { WORKSPACE_TEMPLATES } from "./templates.js";
 
 export async function ensureWorkspace(dir: string): Promise<void> {
@@ -21,6 +23,33 @@ export async function readWorkspaceFile(dir: string, name: string): Promise<stri
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return "";
     throw err;
   }
+}
+
+export class WorkspaceConflictError extends Error {}
+
+/**
+ * Saves an owner edit under the same per-file lock the file tools use. With base (the
+ * text the editor loaded), a file that changed since then is left alone instead of
+ * being overwritten; an unchanged editor never rewrites the file.
+ */
+export async function saveWorkspaceFile(dir: string, name: string, text: string, base?: string): Promise<void> {
+  await withFileLock(join(dir, name), async (target) => {
+    const current = await readWorkspaceFile(dir, name);
+    if (current === text) return;
+    if (base !== undefined && current !== base) {
+      throw new WorkspaceConflictError(`${name} changed after it was opened; reload it and apply your edits again`);
+    }
+    await writeFileAtomic(target, text, current === "" ? 0o644 : undefined);
+  });
+}
+
+/**
+ * Appends to a workspace file under the same per-file lock as the file tools, so an append never
+ * lands between another writer's read and its replacement of the file (which would discard it).
+ */
+export async function appendWorkspaceFile(path: string, text: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await withFileLock(path, (target) => appendFile(target, text, "utf8"));
 }
 
 export const DAILY_NOTE = /^memory\/\d{4}-\d{2}-\d{2}\.md$/;

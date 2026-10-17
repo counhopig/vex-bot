@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -59,6 +59,16 @@ describe("write", () => {
     expect(await readFile(join(ws, "memory/2026-10-02.md"), "utf8")).toBe("note");
     expect(textOf(result)).toBe("Wrote memory/2026-10-02.md (4 bytes)");
   });
+
+  it("replaces the file atomically, keeping its permissions and writing through a symlink", async () => {
+    await writeFile(join(ws, "real.md"), "old", "utf8");
+    await chmod(join(ws, "real.md"), 0o600);
+    await symlink(join(ws, "real.md"), join(ws, "link.md"));
+    await createWriteTool(ws).execute("1", { path: "link.md", content: "new" });
+    expect(await readFile(join(ws, "real.md"), "utf8")).toBe("new");
+    expect((await stat(join(ws, "real.md"))).mode & 0o777).toBe(0o600);
+    expect(await readdir(ws)).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.tmp$/)]));
+  });
 });
 
 describe("edit", () => {
@@ -74,6 +84,21 @@ describe("edit", () => {
     await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x" })).rejects.toThrow(/occurs 2 times/);
     await createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x", replaceAll: true });
     expect(await readFile(join(ws, "f.md"), "utf8")).toBe("x b x $1");
+  });
+
+  it("keeps every change when edits to one file run concurrently", async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `<line ${i}>`);
+    await writeFile(join(ws, "f.md"), lines.join("\n"), "utf8");
+    const edit = createEditTool(ws);
+    await Promise.all(lines.map((line) => edit.execute("1", { path: "f.md", oldText: line, newText: `${line} done` })));
+    // Concurrent edits through a symlink share the same lock as the real path.
+    await symlink(join(ws, "f.md"), join(ws, "alias.md"));
+    await Promise.all([
+      edit.execute("2", { path: "alias.md", oldText: "<line 0> done", newText: "first" }),
+      edit.execute("3", { path: "f.md", oldText: "<line 19> done", newText: "last" }),
+    ]);
+    const text = await readFile(join(ws, "f.md"), "utf8");
+    expect(text.split("\n")).toEqual(["first", ...lines.slice(1, 19).map((line) => `${line} done`), "last"]);
   });
 
   it("fails when the text is absent or empty", async () => {
