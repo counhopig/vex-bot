@@ -77,9 +77,9 @@ Saving in WebChat settings applies the change without a manual restart:
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
-| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps a read-only copy. The address must not contain credentials |
+| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps one copy, shared with the wiki. The address must not contain credentials |
 | `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
-| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and a read-only access token (some hosts accept any username); only with `vault.url` |
+| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and an access token (read-only without the wiki, write access with it; some hosts accept any username); only with `vault.url` |
 | `vault.wiki.enabled` | `false` | Compile a git-backed vault into `wiki/` and `raw/` pages and push the result; requires `vault.url` |
 | `vault.wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
 | `vault.wiki.notify` | `true` | Send a WeChat notification after each wiki batch, and once when consecutive runs start failing |

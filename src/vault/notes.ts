@@ -6,9 +6,16 @@ import { isInside } from "../tools/paths.js";
 import { CommitTimes, GitMirror, type GitRunner } from "./git.js";
 import { bodyOf, buildBacklinks, buildResolver, parseNote, type NoteMeta } from "./parse.js";
 
+/** A git working copy maintained elsewhere (the wiki's clone), read instead of a private mirror. */
+export interface NotesCopy {
+  readableCopy(): Promise<{ root: string; source: string }>;
+}
+
 export interface VaultOptions {
   home: string;
   config: VaultConfig;
+  /** With the wiki on, the vault reads the wiki's clone so the repository is cloned only once. */
+  copy?: NotesCopy;
   now?: () => number;
   run?: GitRunner;
   protocols?: string;
@@ -100,7 +107,7 @@ export class Vault {
 
   constructor(private readonly opts: VaultOptions) {
     const { config } = opts;
-    if (config.url) {
+    if (config.url && !opts.copy) {
       this.mirror = new GitMirror({
         home: opts.home, url: config.url, branch: config.branch, username: config.username, token: config.token,
         now: opts.now, run: opts.run, protocols: opts.protocols, onWarning: opts.onWarning,
@@ -194,6 +201,7 @@ export class Vault {
   }
 
   private async prepare(): Promise<{ root: string; source: string }> {
+    if (this.opts.copy) return this.opts.copy.readableCopy();
     if (this.mirror) {
       const state = await this.mirror.refresh();
       if (!state.root) throw new Error(`The notes vault could not be fetched: ${state.error ?? "unknown error"}`);
@@ -237,9 +245,9 @@ export class Vault {
    * git repository, a file edited after its last commit keeps its newer file time.
    */
   private async changedAt(root: string, notes: Map<string, CacheEntry>): Promise<(path: string) => number> {
-    const useGit = this.mirror !== undefined || (await stat(join(root, ".git")).then(() => true, () => false));
+    const useGit = this.mirror !== undefined || this.opts.copy !== undefined || (await stat(join(root, ".git")).then(() => true, () => false));
     const commits = useGit ? await this.times.get(root) : null;
-    const mirrored = this.mirror !== undefined;
+    const mirrored = this.mirror !== undefined || this.opts.copy !== undefined;
     return (path) => {
       const committed = commits?.get(path);
       const modified = notes.get(path)?.mtimeMs;
