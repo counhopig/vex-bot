@@ -764,6 +764,12 @@ const SETTINGS_TABS = [
       { path: "vault.username", label: "Username", type: "text", help: "The account name your git host expects together with the token; some hosts accept any value." },
       { path: "vault.token", label: "Access token", type: "secret", help: "A read-only token for this repository; not needed for a public one." },
     ] },
+    { title: "Wiki", fields: [
+      { path: "vault.wiki.enabled", label: "Maintain a wiki", type: "bool", help: "Vex turns what it reads into linked wiki notes in the vault. Requires a git-backed vault. Takes effect after a restart." },
+      { path: "vault.wiki.every", label: "Wiki interval", type: "text", placeholder: "6h", help: "How often the wiki is updated; a number followed by s, m, h or d, or a cron expression; default 6h." },
+      { path: "vault.wiki.notify", label: "Notify about wiki updates", type: "bool", help: "Send a message when a wiki run changes notes." },
+      { path: "vault.wiki.maxNotesPerRun", label: "Most notes per run", type: "number", min: 1, max: 200, help: "How many notes one wiki run may write; default 20." },
+    ] },
   ] },
   { id: "life", label: "Routine", sections: [
     { title: "Heartbeat and consolidation", fields: [

@@ -33,6 +33,13 @@ const ProviderSchema = Type.Object({
   models: Type.Optional(Type.Array(CustomModelSchema)),
 });
 
+export const WikiSchema = Type.Object({
+  enabled: Type.Optional(Type.Boolean()),
+  every: Type.Optional(Type.String()),
+  notify: Type.Optional(Type.Boolean()),
+  maxNotesPerRun: Type.Optional(Type.Integer({ minimum: 1, maximum: 200 })),
+}, { additionalProperties: false });
+
 export const ConfigSchema = Type.Object({
   model: ModelRefSchema,
   backgroundModel: Type.Optional(ModelRefSchema),
@@ -82,6 +89,7 @@ export const ConfigSchema = Type.Object({
     branch: Type.Optional(Type.String({ minLength: 1 })),
     username: Type.Optional(Type.String({ minLength: 1 })),
     token: Type.Optional(Type.String()),
+    wiki: Type.Optional(WikiSchema),
   })),
   jev: Type.Optional(Type.Object({
     enabled: Type.Optional(Type.Boolean()),
@@ -109,7 +117,10 @@ export type ModelRef = Static<typeof ModelRefSchema>;
 export type CustomModelConfig = Static<typeof CustomModelSchema>;
 export type ProviderConfig = Static<typeof ProviderSchema>;
 
-export interface VaultConfig { path?: string; url?: string; branch?: string; username?: string; token?: string }
+/** The notes vault; `wiki` is present only when the wiki is enabled, which requires a git `url`. */
+export interface VaultConfig { path?: string; url?: string; branch?: string; username?: string; token?: string; wiki?: WikiConfig }
+
+export interface WikiConfig { every: string; notify: boolean; maxNotesPerRun: number }
 
 export interface VexConfig {
   model: ModelRef;

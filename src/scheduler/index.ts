@@ -22,8 +22,9 @@ export interface SchedulerOptions {
   memory?: { consolidateAt: string };
   outreach?: { enabled: boolean; checkEvery: string };
 }
+const DURATION = /^(\d+(?:\.\d+)?)(s|m|h|d)$/;
 export function duration(value: string): number {
-  const match = /^(\d+(?:\.\d+)?)(s|m|h|d)$/.exec(value);
+  const match = DURATION.exec(value);
   if (!match) throw new Error("The interval must be a positive number followed by s, m, h or d");
   const result = Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[match[2]!] ?? 0);
   if (!Number.isFinite(result) || result < 1000) throw new Error("The interval must be at least one second");
@@ -50,6 +51,9 @@ function next(rule: ScheduleRule, now: number): number | null {
   const cron = new Cron(rule.cron, { paused: true });
   try { return cron.nextRun(new Date(now))?.getTime() ?? null; } finally { cron.stop(); }
 }
+function cadenceRule(every: string): ScheduleRule { return DURATION.test(every) ? { every } : { cron: every }; }
+/** Throws when `every` is neither a valid duration nor a valid cron expression. */
+export function checkCadence(every: string): void { next(cadenceRule(every), Date.now()); }
 
 export class Scheduler {
   private tasks: ScheduledTask[] = [];
