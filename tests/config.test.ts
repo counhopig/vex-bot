@@ -25,6 +25,45 @@ describe("parseConfig", () => {
       expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(ConfigError);
     }
   });
+  it("validates the notes vault: a folder or a git url, never both", () => {
+    expect(parseConfig(minimal, paths).vault).toBeUndefined();
+    expect(parseConfig(`${minimal}vault: { path: /vault }\n`, paths).vault).toEqual({ path: "/vault" });
+    expect(parseConfig(`${minimal}vault: { path: notes }\n`, paths).vault).toEqual({ path: join(dir, "notes") });
+    expect(parseConfig(`${minimal}vault: { path: "~/notes" }\n`, paths).vault).toEqual({ path: join(homedir(), "notes") });
+    expect(parseConfig(`${minimal}vault: { url: "https://git.example/me/notes.git", branch: main, username: me, token: t }\n`, paths).vault)
+      .toEqual({ url: "https://git.example/me/notes.git", branch: "main", username: "me", token: "t" });
+    expect(parseConfig(`${minimal}vault: { url: "http://gitea:3000/me/notes.git" }\n`, paths).vault).toEqual({ url: "http://gitea:3000/me/notes.git" });
+    const bad: [string, RegExp][] = [
+      ['vault: { path: /v, url: "https://g/x.git" }', /either path or url/],
+      ["vault: {}", /set path/],
+      ["vault: { path: /v, token: t }", /only to a git url/],
+      ['vault: { url: "https://me:pw@g/x.git" }', /must not contain a username or password/],
+      ['vault: { url: "ssh://git@g/x.git" }', /vault\/url/],
+      ['vault: { url: "git@g:me/notes.git" }', /vault\/url/],
+    ];
+    for (const [block, message] of bad) expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(message);
+  });
+
+  it("defaults the vault wiki block when enabled with a vault url", () => {
+    const config = parseConfig("model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: true } }\n", paths);
+    expect(config.vault).toEqual({ url: "https://example.com/v.git", wiki: { every: "6h", notify: true, maxNotesPerRun: 20 } });
+  });
+
+  it("validates the vault wiki cadence", () => {
+    const vault = (every: string) => `model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: true, every: "${every}" } }\n`;
+    expect(() => parseConfig(vault("6 hours"), paths)).toThrow(/vault: wiki\.every/);
+    expect(() => parseConfig(vault("0m"), paths)).toThrow(/vault: wiki\.every/);
+    expect(parseConfig(vault("0 4 * * *"), paths).vault?.wiki?.every).toBe("0 4 * * *");
+  });
+
+  it("rejects vault.wiki.enabled without a git url", () => {
+    expect(() => parseConfig("model: { provider: p, id: m }\nvault: { path: /v, wiki: { enabled: true } }\n", paths)).toThrow(/wiki\.enabled requires url/);
+  });
+
+  it("omits the wiki when it is disabled", () => {
+    expect(parseConfig("model: { provider: p, id: m }\nvault: { url: https://example.com/v.git, wiki: { enabled: false } }\n", paths).vault).toEqual({ url: "https://example.com/v.git" });
+  });
+
   it("fills defaults for a minimal config", () => {
     const config = parseConfig(minimal, paths);
     expect(config).toEqual({
@@ -98,6 +137,11 @@ describe("parseConfig", () => {
       expect(() => parseConfig(`${minimal}webSearch: ${body}\n`, paths)).not.toThrow();
     }
     expect(() => parseConfig(`${minimal}webSearch: { provider: bing }\n`, paths)).toThrow(/webSearch/);
+  });
+
+  it("keeps the link reader credentials", () => {
+    expect(parseConfig(`${minimal}links: { bilibili: { sessdata: abc } }\n`, paths).links).toEqual({ bilibili: { sessdata: "abc" } });
+    expect(parseConfig(minimal, paths).links).toBeUndefined();
   });
 
   it("validates the speech-to-text settings", () => {

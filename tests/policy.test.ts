@@ -31,12 +31,45 @@ describe("ToolPolicy", () => {
     for (const tool of ["web_fetch", "web_search", "memory_search", "feel", "schedule", "delegate"]) expect(policy.decide(tool, {})).toBe("allow");
   });
 
+  it("lets the read-only vault tools run without approval", () => {
+    expect(policy.decide("vault_search", { query: "x" })).toBe("allow");
+    expect(policy.decide("vault_read", { path: "a.md" })).toBe("allow");
+    const denying = new ToolPolicy({ workspace: "/ws", overrides: { vault_read: "deny" } });
+    expect(denying.filter([{ name: "vault_search" }, { name: "vault_read" }])).toEqual([{ name: "vault_search" }]);
+  });
+
   it("allows writes inside the workspace only", () => {
     expect(policy.decide("write", { path: "memory/a.md" })).toBe("allow");
     expect(policy.decide("edit", { path: "/ws/SOUL.md" })).toBe("allow");
     expect(policy.decide("write", { path: "/etc/hosts" })).toBe("ask");
     expect(policy.decide("edit", { path: "../outside.md" })).toBe("ask");
     expect(policy.decide("write", {})).toBe("ask");
+  });
+
+  it("clamps writes and edits out of protected roots even when overridden to allow", () => {
+    const vault = "/vault";
+    const scoped = new ToolPolicy({ workspace: "/ws", overrides: { write: "allow" }, protectedRoots: [vault] });
+    expect(scoped.decide("write", { path: `${vault}/wiki/a.md` })).toBe("deny");
+    expect(scoped.decide("edit", { path: `${vault}/raw/b.md` })).toBe("deny");
+    expect(scoped.decide("write", { path: `${vault}/notes/x.md` })).toBe("deny");
+  });
+
+  it("leaves path decisions unchanged without protected roots", () => {
+    const unscoped = new ToolPolicy({ workspace: "/ws", overrides: {} });
+    expect(unscoped.decide("write", { path: "memory/a.md" })).toBe("allow");
+    expect(unscoped.decide("write", { path: "/vault/wiki/a.md" })).toBe("ask");
+  });
+
+  it("asks before wiki bootstrap while allowing the other wiki tools", () => {
+    for (const tool of ["wiki_write", "wiki_edit", "wiki_ingest", "wiki_bootstrap", "wiki_rollback"]) {
+      expect(policy.decide(tool, {})).toBe(tool === "wiki_bootstrap" ? "ask" : "allow");
+    }
+  });
+
+  it("still applies deny overrides to the wiki tools", () => {
+    const denying = new ToolPolicy({ workspace: "/ws", overrides: { wiki_write: "deny" } });
+    expect(denying.decide("wiki_write", {})).toBe("deny");
+    expect(denying.filter([{ name: "wiki_write" }, { name: "wiki_edit" }])).toEqual([{ name: "wiki_edit" }]);
   });
 
   it("lets configuration override everything", () => {

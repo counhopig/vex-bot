@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseConfig } from "../src/config/load.js";
 import type { VexConfig } from "../src/config/schema.js";
 import { startDaemon, type Daemon } from "../src/daemon.js";
 import { createLogger } from "../src/logger.js";
@@ -24,6 +25,8 @@ beforeEach(async () => {
   faux = createFaux();
 });
 afterEach(async () => {
+  // A failed fake-timer test must not leave later tests waiting on a frozen clock.
+  vi.useRealTimers();
   client?.close();
   client = undefined;
   await daemon?.stop();
@@ -62,6 +65,21 @@ async function chat(text: string): Promise<string> {
 }
 
 describe("startDaemon", () => {
+  it("preserves concurrent settings patches and rejects a stale full configuration", async () => {
+    const original = `model: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`;
+    await writeFile(paths.config, original);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    client.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
+    client.send({ type: "save_settings", set: { "links.bilibili.sessdata": "cookie" } });
+    await vi.waitFor(() => expect(client!.messages.filter(m => m.type === "settings_saved" && m.ok)).toHaveLength(2));
+    const saved = parseConfig(await readFile(paths.config, "utf8"), paths);
+    expect(saved.stt).toMatchObject({ baseUrl: "https://s/v1", model: "m" });
+    expect(saved.links).toMatchObject({ bilibili: { sessdata: "cookie" } });
+    client.send({ type: "save_config", text: original, base: original });
+    expect(await client.waitFor(m => m.type === "config_saved")).toMatchObject({ ok: false, error: expect.stringContaining("changed after") });
+  });
+
   it("serves a working chat with the workspace in the system prompt", async () => {
     let systemPrompt = "";
     faux.setResponses([
@@ -100,6 +118,23 @@ describe("startDaemon", () => {
     ]);
   });
 
+  it("answers a shared link without a classification call when the wiki is off", async () => {
+    const prompts: string[] = [];
+    faux.setResponses([
+      (ctx) => {
+        prompts.push(getCurrentSystemPrompt(ctx.messages));
+        return fauxAssistantMessage("看过了");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("看看 https://example.com/a");
+    const replies = client!.messages.flatMap((m) => m.type === "event" && m.event.kind === "assistant_message" ? [m.event.text] : []);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("link-intent classifier");
+    expect(replies).toEqual(["看过了"]);
+  });
+
   it("hides denied tools from the model", async () => {
     let toolNames: string[] = [];
     faux.setResponses([
@@ -112,6 +147,42 @@ describe("startDaemon", () => {
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" } }), log: createLogger(), models: models() });
     await chat("hi");
     expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate"]);
+  });
+
+  it("offers the notes vault tools and prompt only when a vault is configured", async () => {
+    await mkdir(join(dir, "notes"), { recursive: true });
+    await writeFile(join(dir, "notes", "Idea.md"), "# Idea\nTry a weekly review\n");
+    let toolNames: string[] = [];
+    let systemPrompt = "";
+    faux.setResponses([
+      (ctx) => {
+        toolNames = getCurrentTools(ctx.messages).map((t) => t.name);
+        systemPrompt = getCurrentSystemPrompt(ctx.messages);
+        return fauxAssistantMessage("ok");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" }, vault: { path: join(dir, "notes") } }), log: createLogger(), models: models() });
+    await chat("hi");
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "vault_search", "vault_read", "schedule", "delegate"]);
+    expect(systemPrompt).toContain("## Notes vault");
+  });
+
+  it("does not mention the notes vault without configuration", async () => {
+    let toolNames: string[] = [];
+    let systemPrompt = "";
+    faux.setResponses([
+      (ctx) => {
+        toolNames = getCurrentTools(ctx.messages).map((t) => t.name);
+        systemPrompt = getCurrentSystemPrompt(ctx.messages);
+        return fauxAssistantMessage("ok");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("hi");
+    expect(toolNames).not.toContain("vault_search");
+    expect(systemPrompt).not.toContain("Notes vault");
   });
 
   it("loads persona and dynamic skills in order and settles only successful owner interaction", async () => {
@@ -130,9 +201,9 @@ describe("startDaemon", () => {
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(35, 1);
     await writeFile(join(workspace, "skills", "custom", "SKILL.md"), "---\nname: custom\ndescription: Changed skill\n---\nBody\n");
-    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("updated"); }]);
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("second reply"); }]);
     client!.send({ type: "send", sessionId: id, text: "again" });
-    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "updated");
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "second reply");
     expect(prompt).toContain("Changed skill");
   });
 
@@ -158,7 +229,9 @@ describe("startDaemon", () => {
     await mkdir(workspace, { recursive: true });
     await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
     let calls = 0;
-    faux.setResponses([(ctx) => { calls++; expect(getCurrentSystemPrompt(ctx.messages)).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    let heartbeatPrompt = "";
+    let heartbeatTools: string[] = [];
+    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); heartbeatTools = getCurrentTools(ctx.messages).map((tool) => tool.name); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
     await new Promise(resolve => setTimeout(resolve, 1400));
     await daemon.stop(); daemon = undefined;
@@ -166,8 +239,28 @@ describe("startDaemon", () => {
     expect(history).toContain("检查完成，需要注意");
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
+    expect(heartbeatPrompt).toContain("## Available tools");
+    expect(heartbeatTools).not.toContain("wiki_ingest");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
+  });
+
+  it("builds the consolidation profile prompt and workspace-only toolset in the assembled daemon", async () => {
+    vi.useFakeTimers();
+    // Consolidation fires at 03:00 local time, so the clock must be local too.
+    vi.setSystemTime(new Date(2026, 9, 11, 2, 59, 59));
+    let prompt = "";
+    let tools: string[] = [];
+    let task = "";
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); tools = getCurrentTools(ctx.messages).map((tool) => tool.name); task = String(ctx.messages.filter((message) => message.role === "user").at(-1)?.content ?? ""); return fauxAssistantMessage("Consolidation complete."); }]);
+    daemon = await startDaemon({ paths, config: config({ memory: { consolidateAt: "03:00" } }), log: createLogger(), models: models() });
+    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.waitFor(() => expect(prompt).toContain("Window: memory consolidation"));
+    expect(task).toContain("Distil what recurs or is clearly important");
+    expect(tools).toEqual(expect.arrayContaining(["read", "write", "edit", "grep", "find", "memory_search"]));
+    expect(tools).not.toContain("wiki_ingest");
+    await daemon.stop(); daemon = undefined;
+    vi.useRealTimers();
   });
 
   it("wires feel without approval and persists its temporary emotion", async () => {
@@ -205,9 +298,11 @@ describe("startDaemon", () => {
   });
 
   describe("applying saved settings", () => {
+    let running: VexConfig;
     async function startWithRestart(restart: () => Promise<void>) {
       await writeFile(paths.config, `# mine\nmodel: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
-      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models(), restart });
+      running = config();
+      daemon = await startDaemon({ paths, config: running, log: createLogger(), models: models(), restart });
       client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
     }
     const saved = () => client!.waitFor((m) => m.type === "settings_saved");
@@ -229,6 +324,13 @@ describe("startDaemon", () => {
       await startWithRestart(restart);
       client!.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
       expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      // The running daemon reads these per call, so the saved values must reach it.
+      expect(running.stt).toEqual({ baseUrl: "https://s/v1", model: "m" });
+      client!.messages.length = 0;
+      client!.send({ type: "save_settings", set: { "links.bilibili.sessdata": "fresh" }, unset: ["stt.baseUrl", "stt.model"] });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      expect(running.links).toEqual({ bilibili: { sessdata: "fresh" } });
+      expect(running.stt).toBeUndefined();
       await new Promise((resolve) => setTimeout(resolve, 900));
       expect(restart).not.toHaveBeenCalled();
     });
@@ -301,6 +403,21 @@ describe("startDaemon", () => {
     client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "- deploy cmp on Friday" });
     await client.waitFor((m) => m.type === "file_saved" && m.ok);
     expect(await readFile(join(dir, "workspace", "memory", "2026-10-05.md"), "utf8")).toBe("- deploy cmp on Friday");
+  });
+
+  it("refuses to overwrite a workspace file that changed after the editor loaded it", async () => {
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    const note = join(dir, "workspace", "memory", "2026-10-05.md");
+    await writeFile(note, "loaded");
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    await writeFile(note, "loaded\n- added by the assistant");
+    client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "owner edit", base: "loaded" });
+    expect(await client.waitFor((m) => m.type === "file_saved")).toMatchObject({ ok: false, error: expect.stringContaining("changed after it was opened") });
+    expect(await readFile(note, "utf8")).toBe("loaded\n- added by the assistant");
+    client.messages.length = 0;
+    client.send({ type: "save_file", name: "memory/2026-10-05.md", text: "owner edit", base: "loaded\n- added by the assistant" });
+    expect(await client.waitFor((m) => m.type === "file_saved")).toMatchObject({ ok: true });
+    expect(await readFile(note, "utf8")).toBe("owner edit");
   });
 
   it("lists, creates, updates and deletes scheduled tasks for the settings page", async () => {

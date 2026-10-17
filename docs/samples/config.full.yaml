@@ -87,6 +87,23 @@ stt:
   chunkMinutes: 10
   maxMinutes: 90
 
+# Notes vault: an Obsidian vault or a folder of Markdown notes.
+# Set a folder or a git repository, not both. The optional wiki compiles a git
+# vault into wiki/ pages in the same repository; it needs a token with write access.
+# vault:
+#   path: /vault
+#
+# vault:
+#   url: https://git.example.com/me/notes.git
+#   branch: main
+#   username: me
+#   token: "READ_ONLY_TOKEN"
+#   wiki:
+#     enabled: true
+#     every: 6h
+#     notify: true
+#     maxNotesPerRun: 20
+
 # Bilibili SESSDATA cookie, for subtitles that need a login.
 links:
   bilibili:
@@ -103,3 +120,11 @@ mcpServers:
     url: "https://example.com/mcp"
     headers:
       Authorization: "Bearer YOUR_TOKEN"
+
+# Optional typed tool routing and evidence checks (official TypeSafe API).
+jev:
+  enabled: false
+  model: jev-latest
+  # apiKey: ""                 # Or set TYPESAFE_API_KEY.
+  confidence: 0.8
+  timeoutMs: 5000

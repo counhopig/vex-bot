@@ -1,5 +1,6 @@
 import { isMap, parseDocument, type Document } from "yaml";
 import type { VexPaths } from "../paths.js";
+import type { VexConfig } from "./schema.js";
 import { ConfigError, parseConfig } from "./load.js";
 
 export type SettingValue = string | number | boolean | string[];
@@ -14,6 +15,9 @@ const ALLOWED = [
   /^wechat\.(enabled|ownerId)$/,
   /^stt\.(provider|baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
+  /^vault\.(path|url|branch|username|token)$/,
+  /^vault\.wiki\.(enabled|every|notify|maxNotesPerRun)$/,
+  /^jev\.(enabled|apiKey|model|confidence|timeoutMs)$/,
   /^webSearch\.(provider|apiKey|baseUrl)$/,
   /^heartbeat\.(every|activeHours)$/,
   /^memory\.consolidateAt$/,
@@ -21,9 +25,18 @@ const ALLOWED = [
   /^persona\.sleep$/,
   /^persona\.outreach\.(enabled|checkEvery|dailyLimit|socialThreshold|quietHours)$/,
 ];
-const SECRET = /\.(apiKey|sessdata)$/;
-// Skills read these on every run, so a saved change applies without a restart.
+const SECRET = /\.(apiKey|sessdata|token)$/;
+// Skills read these on every run and the daemon reads them per call; applyLiveSettings
+// updates the running configuration so a saved change applies without a restart.
 const LIVE = /^(stt|links)\./;
+
+/** Copies the settings that apply without a restart from a freshly parsed configuration into the running one. */
+export function applyLiveSettings(running: VexConfig, next: VexConfig): void {
+  if (next.stt) running.stt = next.stt;
+  else delete running.stt;
+  if (next.links) running.links = next.links;
+  else delete running.links;
+}
 
 export const isEditable = (path: string): boolean => ALLOWED.some((pattern) => pattern.test(path));
 

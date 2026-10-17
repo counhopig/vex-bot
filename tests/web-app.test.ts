@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
+import { applySettings } from "../src/config/settings.js";
+import { resolvePaths } from "../src/paths.js";
 
 class Element {
   children: Element[] = [];
@@ -10,19 +12,22 @@ class Element {
   textContent = "";
   value = "";
   checked = false;
+  disabled = false;
   hidden = false;
   id = "";
   href = "";
   style: Record<string, string> = {};
   scrollHeight = 0;
   scrollTop = 0;
+  parent?: Element;
   private listeners = new Map<string, ((event: object) => void)[]>();
 
   constructor(readonly tagName = "div") {}
   get firstChild() { return this.children[0]; }
-  append(...children: Element[]) { this.children.push(...children); }
-  replaceChildren() { this.children = []; }
-  remove() {}
+  append(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; this.children.push(child); } }
+  prepend(...children: Element[]) { for (const child of children) { child.remove(); child.parent = this; } this.children.unshift(...children); }
+  replaceChildren(...children: Element[]) { for (const child of [...this.children]) child.remove(); this.append(...children); }
+  remove() { if (this.parent) { this.parent.children = this.parent.children.filter((child) => child !== this); this.parent = undefined; } }
   setAttribute(name: string, value: string) { this.attributes[name] = value; }
   addEventListener(type: string, listener: (event: object) => void) {
     this.listeners.set(type, [...this.listeners.get(type) ?? [], listener]);
@@ -75,6 +80,40 @@ async function loadApp() {
 }
 
 describe("web app", () => {
+  it("does not save unloaded files or replace edits with duplicate load replies", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    get("settings-tabs").children[4]!.dispatch("click");
+    const area = runInContext('state.fileAreas.get("SOUL.md")', context) as Element;
+    expect(area.disabled).toBe(true);
+    socket.send.mockClear();
+    get("save-settings").dispatch("click");
+    expect(socket.send).not.toHaveBeenCalled();
+    runInContext('handle({ type: "file", name: "SOUL.md", text: "original" })', context);
+    expect(area.disabled).toBe(false);
+    area.value = "edited";
+    runInContext('handle({ type: "file", name: "SOUL.md", text: "late response" })', context);
+    expect(area.value).toBe("edited");
+    get("save-settings").dispatch("click");
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "SOUL.md", text: "edited", base: "original" }));
+  });
+
+  it("prepends earlier history without clearing live streaming or sending duplicate page requests", async () => {
+    const { get, context, socket } = await loadApp();
+    runInContext('handle({ type: "history", sessionId: "one", items: [{ kind: "user", text: "recent", timestamp: 1 }], busy: true, streaming: "live", nextBefore: 100 })', context);
+    const recent = get("messages").children.find((item) => textOf(item) === "recent")!;
+    const streaming = get("messages").children.find((item) => textOf(item) === "live")!;
+    const button = get("messages").children[0]!;
+    button.dispatch("click");
+    button.dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "open", sessionId: "one", before: 100 });
+    expect(socket.send.mock.calls.filter(([raw]) => JSON.parse(raw).before === 100)).toHaveLength(1);
+    runInContext('handle({ type: "history", sessionId: "one", before: 100, items: [{ kind: "assistant", text: "older", timestamp: 1 }], busy: false })', context);
+    expect(get("messages").children).toEqual([expect.objectContaining({ className: "bubble assistant" }), recent, streaming]);
+    expect(textOf(get("messages").children[0]!)).toBe("older");
+    expect(runInContext("state.busy", context)).toBe(true);
+    expect(runInContext("state.streamText", context)).toBe("live");
+  });
   it("keeps a title node attached through both clicks of a rename", async () => {
     const { get, socket, prompt } = await loadApp();
     const row = get("session-list").children[1]!;
@@ -125,6 +164,21 @@ describe("web app", () => {
     expect(get("settings-result").className).toBe("bad");
   });
 
+  it("saves a custom provider address that the server accepts", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    runInContext(`handle(${settingsMessage({ "model.provider": "custom", "model.id": "m", "providers.custom.baseUrl": "https://old.example", "providers.custom.api": "openai-completions" })})`, context);
+    const base = find(get("settings-form"), (el) => el.id === "f-base-model-provider")!;
+    expect(base.value).toBe("https://old.example");
+    base.value = "https://new.example";
+    base.dispatch("input");
+    get("save-settings").dispatch("click");
+    const sent = JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    expect(sent).toEqual({ type: "save_settings", set: { "providers.custom.baseUrl": "https://new.example" }, unset: [] });
+    const yaml = "model: { provider: custom, id: m }\nproviders:\n  custom: { baseUrl: https://old.example, api: openai-completions }\n";
+    expect(applySettings(yaml, { set: sent.set, unset: sent.unset }, resolvePaths("/tmp/vex-web-app-test")).text).toContain("https://new.example");
+  });
+
   it("sends typed secrets, clears saved ones and skips a save with no changes", async () => {
     const { get, socket, context, call } = await loadApp();
     get("open-settings").dispatch("click");
@@ -167,6 +221,27 @@ describe("web app", () => {
     expect(find(get("settings-form"), (el) => el.id === "f-webSearch-apiKey")).toBeDefined();
   });
 
+  it("edits the notes vault settings and never fills the saved token", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-settings").dispatch("click");
+    runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "x" }, ["vault.token"])})`, context);
+    get("settings-tabs").children[2]!.dispatch("click");
+    const form = get("settings-form");
+    expect(textOf(form)).toContain("Notes vault");
+    const token = find(form, (el) => el.id === "f-vault-token")!;
+    expect(token.value).toBe("");
+    expect((token as unknown as { placeholder: string }).placeholder).toBe("Set; leave empty to keep it");
+    const url = find(form, (el) => el.id === "f-vault-url")!;
+    url.value = "https://git.example/me/notes.git";
+    url.dispatch("input");
+    const user = find(form, (el) => el.id === "f-vault-username")!;
+    user.value = "me";
+    user.dispatch("input");
+    get("save-settings").dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "save_settings", set: { "vault.url": "https://git.example/me/notes.git", "vault.username": "me" }, unset: [] });
+    for (const id of ["f-vault-path", "f-vault-branch"]) expect(find(form, (el) => el.id === id)).toBeDefined();
+  });
+
   it("builds patches for cleared values, paired times and the shared background model", async () => {
     const { context, call } = await loadApp();
     runInContext(`handle(${settingsMessage({ "model.provider": "deepseek", "model.id": "a", "backgroundModel.provider": "deepseek", "backgroundModel.id": "b", "heartbeat.every": "30m", "persona.sleep": ["23:00", "07:00"] }, ["links.bilibili.sessdata"])})`, context);
@@ -188,9 +263,10 @@ describe("web app", () => {
     expect(area("SOUL.md").value).toBe("你是一只猫");
     get("file-tabs").children[1]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "USER.md" }));
+    runInContext('handle({ type: "file", name: "USER.md", text: "old" })', context);
     area("USER.md").value = "喜欢咖啡";
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "USER.md", text: "喜欢咖啡", base: "old" }));
     runInContext('handle({ type: "file_saved", name: "USER.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saved; applies from its next use");
     expect(get("settings-text").hidden).toBe(true);
@@ -201,7 +277,7 @@ describe("web app", () => {
     runInContext('handle({ type: "config", text: "model: {}" })', context);
     expect(get("settings-text").value).toBe("model: {}");
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_config", text: "model: {}", base: "model: {}" }));
   });
 
   it("groups the persona files into four pages and saves every editor on the open page", async () => {
@@ -211,9 +287,10 @@ describe("web app", () => {
     expect(get("file-tabs").children.map((button) => button.textContent)).toEqual(["Persona", "About me", "Memory", "Heartbeat"]);
     get("file-tabs").children[3]!.dispatch("click");
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "get_file", name: "HEARTBEAT.md" }));
+    runInContext('handle({ type: "file", name: "HEARTBEAT.md", text: "" })', context);
     runInContext('state.fileAreas.get("HEARTBEAT.md").value = "check mail"', context);
     get("save-settings").dispatch("click");
-    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "HEARTBEAT.md", text: "check mail" }));
+    expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "HEARTBEAT.md", text: "check mail", base: "" }));
     runInContext('handle({ type: "file_saved", name: "HEARTBEAT.md", ok: true, warning: "Too long." })', context);
     expect(get("settings-result").textContent).toBe("Saved. Too long.");
     expect(get("settings-result").className).toBe("warn");
@@ -243,11 +320,12 @@ describe("web app", () => {
     expect(sent().at(-1)).toEqual({ type: "get_file", name: "memory/2026-10-04.md" });
     runInContext('handle({ type: "file", name: "memory/2026-10-05.md", text: "stale" })', context);
     expect(runInContext('state.notes.area.value', context)).toBe("");
+    runInContext('handle({ type: "file", name: "MEMORY.md", text: "" }); handle({ type: "file", name: "memory/2026-10-04.md", text: "" })', context);
     runInContext('state.notes.area.value = "older note"; state.fileAreas.get("MEMORY.md").value = "facts"', context);
     get("save-settings").dispatch("click");
     expect(sent().slice(-2)).toEqual([
-      { type: "save_file", name: "MEMORY.md", text: "facts" },
-      { type: "save_file", name: "memory/2026-10-04.md", text: "older note" },
+      { type: "save_file", name: "MEMORY.md", text: "facts", base: "" },
+      { type: "save_file", name: "memory/2026-10-04.md", text: "older note", base: "" },
     ]);
     runInContext('handle({ type: "file_saved", name: "MEMORY.md", ok: true })', context);
     expect(get("settings-result").textContent).toBe("Saving…");

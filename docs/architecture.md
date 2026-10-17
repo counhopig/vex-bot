@@ -25,18 +25,21 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus` |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, evict idle WebChat sessions, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
-| `context/` | System prompt assembly, context compaction, memory rescue |
-| `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
-| `policy/` | Approval policy and pending approvals |
+| `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
+| `links/` | Original-source reading for shared links and `LinkActionController`, the turn controller that runs the owner's link actions |
+| `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
+| `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
+| `vault/` | Notes vault: git mirror or folder, note parsing and link resolution, `vault_search` and `vault_read` |
+| `vault/wiki/` | LLM wiki over the vault's writable clone, which the vault then reads instead of a mirror: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
-| `providers/` | Model resolution and API keys |
+| `providers/` | Model resolution and API keys, usage accounting, the TypeSafe Jev judge |
 | `store/` | Append-only JSONL and atomic file writes |
 | `cli/` | The `vex` command |
 
@@ -65,16 +68,24 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
+Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Jev advises on intent and tool routing; fixed link actions are executed by the runtime through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
+
 ### Compaction
 
-When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation):
+When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation), or the working history reaches 512 messages or 8 MiB of serialized data:
 
 1. Memory rescue: the messages about to be replaced are shown to a background run that appends lasting facts to today's `memory/YYYY-MM-DD.md`. Only messages not already rescued are processed.
 2. Summary: the background model summarises the older messages; the summary replaces them and recent turns stay verbatim.
 
-Compaction changes only what is sent to the model; transcripts keep every message. A failed compaction is not retried within the same run, and `transformContext` never throws: over budget, it trims to the most recent turns.
+The JSONL transcript keeps every message. Completed runs release durably summarized messages and condensed tool payloads from memory. The recent model window is bounded by 512 messages and 8 MiB, with one complete turn retained even if it exceeds these limits; tool calls and results are never separated. Without compaction, the model sees only this recent window. The request budget still checks every assembled provider request.
+
+Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run.
+
+WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory, starting from the nearest indexed byte offset (one every 1,000 items, extended as the transcript grows and rebuilt if it is rewritten).
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
+
+Before each provider call, Vex reserves the configured output allowance and applies a conservative local input estimate to the assembled prompt, tools, messages, and image payloads. Tokenization and image accounting vary by provider, so the estimate is a local guard rather than a provider billing count.
 
 ## Tools
 
@@ -82,13 +93,17 @@ Messages are rendered to plain text for estimation and summarisation (tool resul
 |---|---|
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
 | `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
-| `web_fetch` | Public pages only (see Security); output is Markdown |
+| `web_fetch` | Reads public pages and returns a JSON receipt with an excerpt (see Security) |
 | `web_search` | Tavily, SearXNG or Brave Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
+| `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
-| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns only its final reply |
+| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
+| `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
+
+`read` streams the file line by line and returns at most 1 MB of text per call, ending with the offset to continue from; a single selected line over 1 MB is refused. `grep` skips files over 1 MB and executes in a worker with a five-second deadline; cancellation terminates the worker. Memory indexing reads session JSONL in bounded batches, skips records over 1 MB with a warning, and indexes only the first 1 MB of a larger memory file, up to its last complete line, with a warning.
 
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
 
@@ -98,7 +113,8 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate` | allow |
+| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest`, `wiki_rollback` | allow |
+| `wiki_bootstrap` | ask |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 
@@ -106,7 +122,7 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 ### Link reading
 
-The bundled `link-reader` skill (`skills/link-reader/scripts/read.mjs`, run through `bash`) picks a platform from a link, or from a whole pasted share text, and reads it through that platform's public endpoints. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch` (the script reuses `fetchPublicPage`).
+The bundled link reader (`skills/link-reader/scripts/read.mjs`) picks a platform from a link or pasted share text and reads it through that platform's public endpoints. Owner-facing reads use the programmatic reader; manual skill-script runs use `bash` and its approval policy. Only the platform's own domains are contacted, with the same public-address checks as `web_fetch`.
 
 | Platform | Metadata | Text |
 |---|---|---|
@@ -122,10 +138,22 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Memory
 
-- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`.
+- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`. The agent's `write` and `edit` calls refuse to take `MEMORY.md` past 100 lines or 32 KB.
 - Indexing: `index.sqlite` holds chunks of `memory/*.md`, `MEMORY.md`, `USER.md` and WeChat/WebChat transcripts (not temporary runs, not scheduled or proactive markers). Runs of Chinese, Japanese or Korean text are indexed as single characters and overlapping pairs. Updates are incremental: only bytes appended to a transcript are read, and a rewritten file is re-indexed. The index is versioned and rebuilt when the version changes or the file is corrupt.
 - Retrieval: `memory_search(query, limit?, scope?)` with scope `memory`, `sessions` or `all`; results are snippets with source and date, ranked by BM25.
 - Consolidation: at `memory.consolidateAt` (03:00) a temporary session reads the last seven daily notes plus `MEMORY.md` and `USER.md`, merges duplicates, removes stale entries and keeps `MEMORY.md` under 100 lines. It sends nothing to the owner.
+
+## Notes vault
+
+`vault/` gives the agent read-only access to a Markdown notes folder. Its source is either a folder (`vault.path`, read in place) or a git repository (`vault.url`). For a repository, `GitMirror` keeps a clone in `<data dir>/vault/<hash of url and branch>/`, fetches and resets to the remote when a vault tool runs and the last attempt is more than a minute old, and falls back to the last copy with a note in the tool result when an update fails. Git runs with an allow-listed environment; credentials travel only as an `http.extraHeader` in `GIT_CONFIG_*` variables and are scrubbed from any error text.
+
+`Vault` scans the folder on every call (skipping hidden names, symlinks, non-Markdown files and notes over 1 MB), keeping parsed metadata (title, tags, aliases, links) per file keyed by size and modification time, so only changed notes are parsed again. Bodies are read from disk when a search needs them. Backlinks are computed from the links of all notes when a note is read. A note's date is the last git commit time of its file (one `git log` pass, cached per HEAD), or the file time when there is no repository.
+
+`vault_read` accepts only a relative `.md` path without hidden segments, found in the scan, whose real path is still inside the vault. The session system prompt gains a short `Notes vault` section only when a vault is configured.
+
+## Notes wiki
+
+The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `wiki.notesCopy` (`WikiReadCopy`), which fast-forwards it only while no wiki operation holds or waits for the shared lock, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 
@@ -196,6 +224,7 @@ The channel talks to the iLink OC API (`getupdates` long polling with a persiste
 |---|---|
 | Model call fails | Up to three retries, then the error goes to the window |
 | MCP server unreachable | Skipped at startup, retried in the background |
+| Wiki clone fails | Startup continues; the clone is retried in the background no sooner than a minute later |
 | WeChat poll fails | Reconnect with backoff |
 | WeChat session expired | QR login in vexd or `vex wechat login` |
 | Approval times out | Denied |

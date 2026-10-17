@@ -1,7 +1,8 @@
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const weather = await import(pathToFileURL(join(process.cwd(), "skills/weather/scripts/weather.mjs")).href);
@@ -46,5 +47,26 @@ describe("builtin skill scripts", () => {
     const registry = { resolve: () => ({ input: ["text"] }), completeSimple };
     await expect(image.analyzeImage({ image: await picture() }, registry, { provider: "faux", id: "text" })).rejects.toThrow("does not accept image");
     expect(completeSimple).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.env.VEX_VERIFY_DIST !== "1")( "loads the compiled CLI and bundled Wiki and link-reader assets", async () => {
+    const dist = join(process.cwd(), "dist");
+    expect((await stat(join(dist, "cli/index.js"))).isFile()).toBe(true);
+    expect((await readFile(join(dist, "skills/llm-wiki/SKILL.md"), "utf8"))).toContain("# LLM Wiki");
+    expect((await stat(join(dist, "skills/link-reader/scripts/read.mjs"))).isFile()).toBe(true);
+    const built = await import(pathToFileURL(join(dist, "links/source.js")).href) as typeof import("../src/links/source.js");
+    const id = "64a1b2c3d4e5f60718293a4b";
+    const state = { note: { noteDetailMap: { [id]: { note: { title: "Note", desc: "Built bundle original", type: "normal" } } } } };
+    const source = await built.readPlatformOriginalSource(`https://www.xiaohongshu.com/explore/${id}`, {
+      signal: AbortSignal.timeout(2_000),
+      request: async () => ({ status: 200, headers: { "content-type": "text/html" }, body: `<script>window.__INITIAL_STATE__=${JSON.stringify(state)}</script>` }),
+    });
+    expect(source).toMatchObject({ title: "Note", text: "Built bundle original", textKind: "text", truncated: false });
+    const home = await mkdtemp(join(tmpdir(), "vex-built-cli-")); roots.push(home);
+    const help = execFileSync(process.execPath, [join(dist, "cli/index.js")], {
+      encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: home, VEX_HOME: home, NODE_ENV: "test" },
+    });
+    expect(help).toContain("Usage: vex <command>");
+    expect(help).toContain("wechat login");
   });
 });

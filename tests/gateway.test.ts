@@ -22,6 +22,7 @@ import { createCoreTools } from "../src/tools/registry.js";
 import { TestClient } from "./helpers/client.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 const staticDir = fileURLToPath(new URL("../src/web/static/", import.meta.url));
 
@@ -57,7 +58,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     paths,
     bus,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({
+      Session.open({ evidence,
         key,
         transcriptPath,
         model: faux.getModel(),
@@ -203,6 +204,33 @@ describe("Gateway HTTP", () => {
 });
 
 describe("Gateway chat", () => {
+  it("pages older history with stable cursors while new messages arrive", async () => {
+    const host = await start();
+    const client = await connect(host);
+    client.send({ type: "create_session" });
+    const created = await client.waitFor(isType("session_created"));
+    if (created.type !== "session_created") throw new Error("unreachable");
+    const sessionId = created.session.id;
+    const session = await sessions!.get(`web:${sessionId}`);
+    for (let index = 0; index < 205; index++) await session.injectAssistant(`notice ${index}`);
+    client.send({ type: "open", sessionId });
+    const first = await client.waitFor((message) => message.type === "history" && message.sessionId === sessionId && message.nextBefore === 105);
+    if (first.type !== "history") throw new Error("unreachable");
+    expect(first.items).toHaveLength(100);
+    await session.injectAssistant("new notice");
+    client.send({ type: "open", sessionId, before: 105 });
+    const second = await client.waitFor((message) => message.type === "history" && message.before === 105);
+    if (second.type !== "history") throw new Error("unreachable");
+    expect(second.nextBefore).toBe(5);
+    expect(second.items[0]).toMatchObject({ kind: "assistant", text: "notice 5" });
+    expect(second.items.at(-1)).toMatchObject({ kind: "assistant", text: "notice 104" });
+    client.send({ type: "open", sessionId, before: 5 });
+    const last = await client.waitFor((message) => message.type === "history" && message.before === 5);
+    if (last.type !== "history") throw new Error("unreachable");
+    expect(last.items).toHaveLength(5);
+    expect(last.nextBefore).toBeUndefined();
+  });
+
   it("creates a session and streams a conversation", async () => {
     const host = await start({ responses: [fauxAssistantMessage("你好呀")] });
     const client = await connect(host);

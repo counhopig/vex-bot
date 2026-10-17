@@ -17,9 +17,9 @@ The settings page has seven tabs:
 
 | Tab | What it edits |
 |---|---|
-| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
+| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one; optional Jev tool routing |
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
-| Voice & links | Speech to text, the Bilibili `SESSDATA`, web search |
+| Voice & links | Speech to text, the Bilibili `SESSDATA`, web search, the notes vault |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
 | Persona & memory | Four pages: Persona (`SOUL.md`), About me (`USER.md`), Memory (`MEMORY.md`, plus the daily notes in `memory/`, newest first) and Heartbeat (`HEARTBEAT.md`) |
 | Schedules | Every scheduled task with its rule, next run and target: pause or resume, edit, delete, or create one (repeating cron rule, fixed interval, or a single date and time) |
@@ -76,13 +76,34 @@ Saving in WebChat settings applies the change without a manual restart:
 | `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30; at most 15 with MiMo); lower it for services with small upload limits |
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
+| `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
+| `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps one copy, shared with the wiki. The address must not contain credentials |
+| `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
+| `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and an access token (read-only without the wiki, write access with it; some hosts accept any username); only with `vault.url` |
+| `vault.wiki.enabled` | `false` | Compile a git-backed vault into `wiki/` and `raw/` pages and push the result; requires `vault.url` |
+| `vault.wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
+| `vault.wiki.notify` | `true` | Send a WeChat notification after each wiki batch, and once when consecutive runs start failing |
+| `vault.wiki.maxNotesPerRun` | `20` | Notes compiled per model call; a run processes every pending note and makes one commit |
+| `jev.enabled` | `false` | Use TypeSafe Jev for tool suggestions and tool-evidence checks in owner conversations |
+| `jev.apiKey` | none | Official TypeSafe API key; `TYPESAFE_API_KEY` also works |
+| `jev.model` | `jev-latest` | TypeSafe decision model |
+| `jev.confidence` | `0.8` | Minimum routing confidence and unsupported-claim probability for intervention (0.5–1) |
+| `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
+Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` and `wiki_rollback` are `allow`; `wiki_bootstrap`, `bash` and MCP tools are `ask`; `write` and `edit` are `allow` inside the workspace and `ask` outside.
 
 ## Models
 
 Built-in providers (DeepSeek, Kimi, MiniMax, Zhipu, Qwen, Xiaomi, OpenRouter and the others in the installed pi-ai registry) are referenced by `provider` and `id`. Any OpenAI- or Anthropic-compatible endpoint is declared under `providers` with `api` and `baseUrl`. A model can see images only when it declares `input: [text, image]`; the built-in image skill requires such a model.
+
+## Jev tool routing
+
+Enable Jev under **Settings → Model → Tool routing (Jev)** and enter your TypeSafe API key. Save to apply the configuration. The key is stored with the other secrets and is never returned in the settings response.
+
+Jev uses the [official TypeSafe evaluation API](https://docs.typesafe.ai/api). It receives the bounded request, available tool names and descriptions, execution evidence, and a proposed reply; configuration secrets are excluded. Jev classifies link intent and gives advisory tool suggestions. With the wiki enabled, the runtime owns fixed link actions and submits them through the normal tool and approval path. Without the wiki, shared links go to the model like any other message. When Jev is disabled, unavailable, or uncertain, Vex tries a bounded main-model JSON intent classification; if that remains uncertain, it reports the action as deferred. Local evidence checks remain active regardless of Jev. Receipts distinguish a successful read from archival, Wiki compilation, publication, pending publication, and bootstrap review; a model summary or child-agent narration is not execution evidence.
+
+When a run involves shared links, tool results or a required tool, final replies are held until their operation claims are checked against current-turn receipts; other replies stream as they are generated and are not sent to Jev for checking. Low-confidence routes do not force a tool. Jev API errors log a warning; the runtime still reports fixed actions as deferred when their intent cannot be classified. Each check adds an API request, and a corrective model request may also be needed. Background tasks use profile-specific tools and prompts.
 
 ## MCP servers
 
@@ -127,13 +148,13 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 | `memory/YYYY-MM-DD.md` | Daily notes written by the agent; editable in WebChat under Memory | Through `memory_search` |
 | `skills/<name>/SKILL.md` | Custom skills | Name and description every turn, body on demand |
 
-The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). Templates for these files are created on first start.
+The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). The agent's own `write` and `edit` calls cannot take `MEMORY.md` past 100 lines or 32 KB; it has to merge or remove older entries first. Templates for these files are created on first start.
 
 The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), the instructions for memory consolidation and proactive chat, and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries are built in; shape Vex's personality and habits through `SOUL.md` instead.
 
 ## Skills
 
-A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads the body with `read` and runs scripts with `bash`, which follows the approval policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
+A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`, `llm-wiki`); a workspace skill with the same name overrides a built-in one. Vex reads skill bodies and runs their scripts according to their runtime interface and the applicable tool policy. The Wiki compiler receives `llm-wiki` directly with its restricted tool set. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
 
@@ -188,13 +209,73 @@ The `link-reader` skill uses it for Bilibili and YouTube videos that have no sub
 
 ## Reading share links
 
-Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`), and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
+Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`). Owner-facing reads use the programmatic bundled reader; shared links selected for archival are read by the runtime and saved under `raw/` before Wiki compilation. A manual run of the `link-reader` skill script uses `bash` and follows the `bash` approval policy. See the architecture guide for what each platform returns. Limits to know about:
 
 - A Bilibili or YouTube video without subtitles is transcribed only when `stt` is set (see below); otherwise you get title, author, duration and description only. Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
 - Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
 - For WeChat articles, copy the article link and send it as text. Reading returns the title, account name and article body; verification pages, deleted articles and articles without a readable body return an error.
-- Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.
+- Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. For manual skill-script runs, you can adjust the script in a workspace copy (`skills/link-reader/`), which overrides the bundled one. Automatic owner-facing reads use the bundled programmatic reader.
+
+## Notes vault
+
+Vex can read an Obsidian vault, or any folder of Markdown notes, as a personal knowledge base. Access is read-only: Vex never changes your notes. Set exactly one source, `vault.path` or `vault.url`.
+
+**A folder** (`vault.path`). Vex reads the folder directly and never updates it, so keep it current yourself: Syncthing, `git pull` on a timer, rclone, or Obsidian itself on the same machine. In Docker, mount the folder into the container, read-only:
+
+```yaml
+# compose.yaml
+services:
+  vex:
+    volumes:
+      - vex-data:/data
+      - /path/to/vault:/vault:ro
+```
+
+```yaml
+# config.yaml
+vault:
+  path: /vault
+```
+
+**A git repository** (`vault.url`). Vex keeps exactly one copy. With the wiki disabled it is a read-only mirror in `<data dir>/vault/<hash>/`; with the wiki enabled it is the wiki's working clone in `<data dir>/wiki/<hash>/`, which the vault tools read too:
+
+```yaml
+vault:
+  url: https://git.example.com/me/notes.git
+  branch: main            # optional
+  username: me            # optional; some hosts require one together with the token
+  token: "READ_ONLY_TOKEN"   # not needed for a public repository
+```
+
+Without the wiki, Vex clones the repository the first time a vault tool runs; with the wiki, it clones in the background once the daemon has started, and wiki tools report that the wiki is not available yet until the clone is ready, retrying a failed clone a minute later. Later, when you ask about your notes, it fetches again if the last update is more than a minute old. Without the wiki the copy is a mirror, so force pushes are fine. With the wiki, the shared clone only fast-forwards: it is not moved while a wiki run is queued or in progress, while a batch is in flight, or while a local bootstrap preview awaits review, and a rewritten remote history is reported instead of applied. Startup never waits for the network. If an update fails, Vex keeps using the last copy and says so in the tool result. Only `http://` and `https://` addresses are supported; if you sync over SSH, use a folder instead. Over plain `http://` the token travels unencrypted, so use it only on a private network.
+
+Create a read-only token for the repository: on GitHub a fine-grained token with *Contents: Read-only*, on GitLab a token with the `read_repository` scope, on Gitea one with *repository: Read*. The token reaches git through the environment, so it never appears in a command line, a log or the repository's configuration. Vex sends `vault.username` as the account name, or `git` when you leave it empty.
+
+The agent gets two tools. `vault_search` takes `query` (keywords separated by spaces; matching is by case-insensitive substring and works for Chinese), `tag` (a parent tag also matches its children), `folder`, `since`, `before` and `limit` (default 10, maximum 30); without a query it lists notes by last change, newest first, which is how to review a period or browse a tag. `vault_read` returns one note with its tags, outgoing links and backlinks, truncated at 30,000 characters, understanding `[[wikilinks]]`, `[[note|alias]]`, `[[note#heading]]`, frontmatter `tags` and `aliases`, inline `#tags` and relative Markdown links. A note's date is its last git commit time for a git copy (or a folder that is itself a git repository) and its file modification time otherwise.
+
+Files and folders whose names start with `.`, symlinks, non-Markdown files (`.md`, case-insensitive) and notes over 1 MB are ignored, and at most 20,000 notes are used. Searches read the notes on every call; in a measured run, a search over 1,000 notes took about 0.1 s, and over 5,000 notes about 0.46 s warm and about 1 s cold. Note text reaches your model provider like any other message, so only give Vex notes you are comfortable sharing with it.
+
+Treat note text as untrusted input, not as instructions: a page you clipped into the vault can carry text aimed at the model. If the vault holds third-party content, set `tools.policy.web_fetch: ask` so a note cannot make Vex fetch an address silently, and set `tools.policy.write` and `tools.policy.edit` to `ask` too if you want the same for files.
+
+## Notes wiki
+
+With a git-backed vault (`vault.url`), set `vault.wiki.enabled: true` to have Vex compile your notes into a wiki inside the same repository. A scheduled ingest reads the notes that changed since the last run, writes synthesized pages under `wiki/` (and fetched material under `raw/`), updates `wiki/_index.md`, and commits and pushes the batch. When you ask a question, the agent reads `wiki/` first and cites the pages it used.
+
+```yaml
+vault:
+  url: https://git.example.com/me/notes.git
+  token: "WRITE_TOKEN"
+  wiki:
+    enabled: true
+    every: 6h             # a duration, or a cron expression
+    notify: true          # a WeChat message after each batch
+    maxNotesPerRun: 20    # notes per model call; a run still makes a single commit
+```
+
+The first ingest is a preview: Vex commits it locally, tells you which pages it generated and withholds the push. Say "approve the Wiki preview" or "reject the Wiki preview"; Vex then calls `wiki_bootstrap`, and you confirm that call in the ordinary approval prompt (`/y` publishes, `/n` keeps the preview). After a restart Vex reminds you of a preview that is still waiting. The cadence stays paused until review. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed). Completion messages list archived raw paths and compiled Wiki pages separately, then state whether publication completed or remains pending. A raw-only commit does not count as a compiled Wiki page.
+
+With Wiki enabled, Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. With the wiki disabled, the mirror remains read-only and can use a read-only token. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
 
 ## Scheduled messages
 

@@ -1,13 +1,14 @@
-import { readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, getCurrentSystemPrompt, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventBus, type VexEvent } from "../src/core/events.js";
 import { Session } from "../src/core/session.js";
-import { SessionManager, UnknownSessionError, WECHAT_SESSION_KEY, webSessionKey } from "../src/core/sessionManager.js";
+import { SessionManager, UnknownSessionError, WECHAT_SESSION_KEY, webSessionKey, type SessionManagerOptions } from "../src/core/sessionManager.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 let paths: VexPaths;
@@ -23,15 +24,17 @@ afterEach(async () => {
   await removeTmpDir(dir);
 });
 
-function makeManager(generateTitle?: (u: string, a: string) => Promise<string>) {
+function makeManager(generateTitle?: (u: string, a: string) => Promise<string>, extra: Partial<SessionManagerOptions> = {}) {
   const bus = new EventBus();
   bus.on((e) => busEvents.push(e));
   const manager = new SessionManager({
     paths,
     bus,
     generateTitle,
+    idleTimeoutMs: 0,
+    ...extra,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({
+      Session.open({ evidence,
         key,
         transcriptPath,
         model: faux.getModel(),
@@ -120,6 +123,30 @@ describe("SessionManager", () => {
     expect(manager.windowLabel(webSessionKey(meta.id))).toBe('WebChat conversation "我的标题"');
   });
 
+  it("keeps an owner rename when an automatic title finishes during its save", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    let finishTitle!: (title: string) => void;
+    const generateTitle = vi.fn(() => new Promise<string>((resolve) => { finishTitle = resolve; }));
+    const manager = makeManager(generateTitle);
+    await manager.init();
+    try {
+      const meta = await manager.createWeb();
+      const session = await manager.get(webSessionKey(meta.id));
+      session.send("hello");
+      await session.whenIdle();
+      expect(generateTitle).toHaveBeenCalledTimes(1);
+      const renaming = manager.renameWeb(meta.id, "Owner title");
+      finishTitle("Automatic title");
+      await renaming;
+      // A following index transaction waits for the generated title's queued update.
+      await manager.createWeb();
+      expect(manager.listWeb().find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+      const index = JSON.parse(await readFile(join(paths.webSessions, "index.json"), "utf8")) as { id: string; title: string }[];
+      expect(index.find((entry) => entry.id === meta.id)?.title).toBe("Owner title");
+    } finally { await manager.shutdown(); }
+  });
+
   it("orders sessions by latest activity", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("x")]);
@@ -150,6 +177,44 @@ describe("SessionManager", () => {
     await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
     await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);
+  });
+
+  it("leaves the index unchanged when saving it fails", async () => {
+    faux = createFaux();
+    const manager = makeManager();
+    await manager.init();
+    const kept = await manager.createWeb();
+    const index = join(paths.webSessions, "index.json");
+    // A directory in place of the index file makes every save fail.
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.createWeb()).rejects.toThrow();
+    await expect(manager.renameWeb(kept.id, "renamed")).rejects.toThrow();
+    expect(manager.listWeb()).toEqual([expect.objectContaining({ id: kept.id, title: "New chat" })]);
+  });
+
+  it("keeps the conversation and its transcript when deletion cannot save the index", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("x")]);
+    const manager = makeManager();
+    await manager.init();
+    const meta = await manager.createWeb();
+    const session = await manager.get(webSessionKey(meta.id));
+    session.send("hi");
+    await session.whenIdle();
+    const transcript = join(paths.webSessions, `${meta.id}.jsonl`);
+    const before = await readFile(transcript, "utf8");
+    const index = join(paths.webSessions, "index.json");
+    await rm(index);
+    await mkdir(join(index, "blocked"), { recursive: true });
+    await expect(manager.deleteWeb(meta.id)).rejects.toThrow();
+    expect(manager.listWeb().map((m) => m.id)).toEqual([meta.id]);
+    expect(await readFile(transcript, "utf8")).toBe(before);
+    // Once the index can be saved again, deletion can be retried.
+    await rm(index, { recursive: true });
+    await manager.deleteWeb(meta.id);
+    expect(manager.listWeb()).toEqual([]);
+    await expect(stat(transcript)).rejects.toThrow();
   });
 
   it("allows retrying after session disposal fails during deletion", async () => {
@@ -284,5 +349,172 @@ describe("SessionManager", () => {
     await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd is shutting down");
     await opened;
     await expect(manager.get(WECHAT_SESSION_KEY)).rejects.toThrow("vexd is shutting down");
+  });
+});
+
+describe("SessionManager idle eviction", () => {
+  const IDLE = 60_000;
+  let now: number;
+  const managerWithClock = (retain?: (key: string) => boolean) => makeManager(undefined, { idleTimeoutMs: IDLE, now: () => now, ...(retain ? { retain } : {}) });
+  beforeEach(() => { now = Date.parse("2026-10-11T10:00:00Z"); });
+
+  async function chatOnce(manager: SessionManager, text: string): Promise<{ key: string; session: Session }> {
+    const meta = await manager.createWeb();
+    const key = webSessionKey(meta.id);
+    const session = await manager.get(key);
+    session.send(text);
+    await session.whenIdle();
+    return { key, session };
+  }
+
+  it("disposes an idle WebChat session and restores the same history from its transcript", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+    const manager = managerWithClock();
+    await manager.init();
+    const { key, session } = await chatOnce(manager, "first question");
+    const dispose = vi.spyOn(session, "dispose");
+    const before = session.history().items;
+
+    now += IDLE - 1;
+    expect(await manager.evictIdle()).toEqual([]);
+    now += 1;
+    expect(await manager.evictIdle()).toEqual([key]);
+    expect(dispose).toHaveBeenCalledOnce();
+
+    const restored = await manager.get(key);
+    expect(restored).not.toBe(session);
+    expect(restored.history().items).toEqual(before);
+    restored.send("second question");
+    await restored.whenIdle();
+    expect(restored.history().items.map((item) => item.kind)).toEqual(["user", "assistant", "user", "assistant"]);
+    const lines = (await readFile(join(paths.webSessions, `${key.slice(4)}.jsonl`), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { role?: string });
+    expect(lines.filter((line) => line.role === "user")).toHaveLength(2);
+    await manager.shutdown();
+  });
+
+  it("keeps WeChat, running, recently used and retained sessions", async () => {
+    faux = createFaux();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    faux.setResponses([fauxAssistantMessage("done"), async () => { await gate; return fauxAssistantMessage("slow"); }, fauxAssistantMessage("wechat")]);
+    let retained = "";
+    const manager = managerWithClock((key) => key === retained);
+    await manager.init();
+    const held = await chatOnce(manager, "keep me");
+    retained = held.key;
+    const running = await manager.createWeb();
+    const runningKey = webSessionKey(running.id);
+    (await manager.get(runningKey)).send("long task");
+    const wechat = await manager.get(WECHAT_SESSION_KEY);
+    wechat.send("hi");
+    const recent = await manager.createWeb();
+    now += IDLE;
+    await manager.get(webSessionKey(recent.id));
+
+    expect(await manager.evictIdle()).toEqual([]);
+    retained = "";
+    expect(await manager.evictIdle()).toEqual([held.key]);
+    release();
+    await (await manager.get(runningKey)).whenIdle();
+    await wechat.whenIdle();
+    now += IDLE;
+    expect((await manager.evictIdle()).sort()).toEqual([runningKey, webSessionKey(recent.id)].sort());
+    expect(await manager.get(WECHAT_SESSION_KEY)).toBe(wechat);
+    await manager.shutdown();
+  });
+
+  it("makes requests during eviction wait for the flushed transcript and share one fresh instance", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const manager = managerWithClock();
+    await manager.init();
+    const { key, session } = await chatOnce(manager, "question");
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const dispose = session.dispose.bind(session);
+    vi.spyOn(session, "dispose").mockImplementation(async () => { await gate; await dispose(); order.push("disposed"); });
+    const open = vi.spyOn(Session, "open");
+
+    now += IDLE;
+    const eviction = manager.evictIdle();
+    const first = manager.get(key);
+    const second = manager.get(key);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(open).not.toHaveBeenCalled();
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    order.push("opened");
+    await eviction;
+    expect(a).toBe(b);
+    expect(a).not.toBe(session);
+    expect(open).toHaveBeenCalledOnce();
+    expect(order).toEqual(["disposed", "opened"]);
+    expect(a.history().items).toEqual(session.history().items);
+    open.mockRestore();
+    await manager.shutdown();
+  });
+
+  it("never hands out an instance that started disposing after its lookup began", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const manager = managerWithClock();
+    await manager.init();
+    const { key, session } = await chatOnce(manager, "question");
+    now += IDLE;
+    const lookup = manager.get(key);
+    now += IDLE;
+    await manager.evictIdle();
+    const loaded = await lookup;
+    expect(loaded).not.toBe(session);
+    expect(loaded.history().items).toEqual(session.history().items);
+    await manager.shutdown();
+  });
+
+  it("deletes a conversation only after its evicted instance has finished writing", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const manager = managerWithClock();
+    await manager.init();
+    const { key, session } = await chatOnce(manager, "question");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const dispose = session.dispose.bind(session);
+    let disposed = false;
+    vi.spyOn(session, "dispose").mockImplementation(async () => { await gate; await dispose(); disposed = true; });
+    now += IDLE;
+    const eviction = manager.evictIdle();
+    const deletion = manager.deleteWeb(key.slice(4));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(manager.listWeb()).toHaveLength(1);
+    release();
+    await deletion;
+    await eviction;
+    expect(disposed).toBe(true);
+    await expect(stat(join(paths.webSessions, `${key.slice(4)}.jsonl`))).rejects.toThrow();
+    await expect(manager.get(key)).rejects.toThrow(UnknownSessionError);
+    await manager.shutdown();
+  });
+
+  it("waits for an eviction in progress on shutdown", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("reply")]);
+    const manager = managerWithClock();
+    await manager.init();
+    const { session } = await chatOnce(manager, "question");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const dispose = session.dispose.bind(session);
+    let disposed = false;
+    vi.spyOn(session, "dispose").mockImplementation(async () => { await gate; await dispose(); disposed = true; });
+    now += IDLE;
+    void manager.evictIdle();
+    const shutdown = manager.shutdown();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(disposed).toBe(false);
+    release();
+    await shutdown;
+    expect(disposed).toBe(true);
   });
 });

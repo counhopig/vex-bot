@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { builtinSkillsDirectory, discoverSkills, skillsSection } from "../src/skills/discovery.js";
+import { builtinSkillsDirectory, discoverSkills, skillBodySection, skillsSection } from "../src/skills/discovery.js";
 
 describe("skill discovery", () => {
   const roots: string[] = [];
@@ -16,8 +16,14 @@ describe("skill discovery", () => {
 
   it("discovers the bundled skills", async () => {
     const skills = await discoverSkills({ workspace: await root() });
-    expect(skills.map((item) => item.name)).toEqual(["image", "link-reader", "weather"]);
+    expect(skills.map((item) => item.name)).toEqual(["image", "link-reader", "llm-wiki", "weather"]);
     expect(builtinSkillsDirectory()).toContain("skills");
+  });
+  it("discovers the bundled llm-wiki skill", async () => {
+    const skills = await discoverSkills({ workspace: await root() });
+    const wiki = skills.find((item) => item.name === "llm-wiki");
+    expect(wiki?.path).toContain(join("llm-wiki", "SKILL.md"));
+    expect(wiki?.description).toMatch(/^Use when/);
   });
   it("workspace names override builtins and changes appear next round", async () => {
     const builtinDir = await root();
@@ -29,6 +35,17 @@ describe("skill discovery", () => {
     expect(await section({ now: new Date(), windowLabel: "web" })).not.toContain("private skill body");
     await skill(join(workspace, "skills"), "notes", document("notes", "notes skill"));
     expect(await section({ now: new Date(), windowLabel: "web" })).toContain("notes skill");
+  });
+  it("inlines one skill body by name, preferring the workspace version", async () => {
+    const builtinDir = await root();
+    const workspace = await root();
+    const ctx = { now: new Date(), windowLabel: "wiki" };
+    await skill(builtinDir, "llm-wiki", document("llm-wiki", "built in", "bundled body"));
+    const section = skillBodySection("llm-wiki", "LLM Wiki skill", workspace, builtinDir);
+    expect(await section(ctx)).toMatch(/^## LLM Wiki skill\n[\s\S]*bundled body/);
+    await skill(join(workspace, "skills"), "my-wiki", document("llm-wiki", "user version", "owner body"));
+    expect(await section(ctx)).toContain("owner body");
+    await expect(skillBodySection("missing", "Missing", workspace, builtinDir)(ctx)).rejects.toThrow("missing skill is not available");
   });
   it("skips an unreadable skill with a warning and keeps the rest", async () => {
     const workspace = await root();

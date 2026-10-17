@@ -83,6 +83,37 @@ async function sentTexts(): Promise<string[]> {
 }
 
 describe("WeChatChannel inbound", () => {
+  it("persists the inbox with the cursor and restores messages until transcript acceptance", async () => {
+    await startChannel({ sessions: { get: async () => { throw new Error("unavailable"); } } });
+    ilink.queueBatch("accepted-cursor", textMessage("owner1", "recover me", { message_id: "recover-id" }));
+    await vi.waitFor(async () => expect(await store.loadState()).toMatchObject({ syncBuf: "accepted-cursor", pendingMessages: [expect.objectContaining({ messageId: "recover-id" })] }));
+    await channel!.stop();
+    await startChannel();
+    await vi.waitFor(() => expect(session.sent).toEqual(["recover me"]));
+    emit({ kind: "user_message", text: "recover me", timestamp: Date.now(), requestId: "recover-id" });
+    await vi.waitFor(async () => {
+      const state = await store.loadState();
+      expect(state.pendingMessages).toBeUndefined();
+      expect(state.seenIds).toContain("recover-id");
+    });
+    await channel!.stop();
+    session.sent.length = 0;
+    await startChannel();
+    ilink.queueUpdates(textMessage("owner1", "recover me", { message_id: "recover-id" }));
+    await vi.waitFor(() => expect(ilink.updateBodies().length).toBeGreaterThan(2));
+    expect(session.sent).toEqual([]);
+  });
+
+  it("does not dispatch a message when saving its inbox fails", async () => {
+    const save = vi.spyOn(store, "saveState").mockRejectedValue(new Error("disk unavailable"));
+    await startChannel();
+    ilink.queueBatch("cursor", textMessage("owner1", "wait", { message_id: "disk-id" }));
+    await vi.waitFor(() => expect(save).toHaveBeenCalled());
+    expect(session.sent).toEqual([]);
+    save.mockRestore();
+    await vi.waitFor(() => expect(session.sent).toEqual(["wait"]));
+  });
+
   it("reports successful delivery, failed delivery, and discarded internal output", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel();
@@ -113,7 +144,7 @@ describe("WeChatChannel inbound", () => {
     await startChannel();
     await vi.waitFor(() => expect(session.sent).toEqual(["你好", "第二句"]));
     expect(keys.every((k) => k === "wechat")).toBe(true);
-    expect(await store.loadState()).toEqual({ contextToken: "ctx-owner1" });
+    expect(await store.loadState()).toMatchObject({ contextToken: "ctx-owner1" });
   });
 
   it("stops a running turn on /stop and says so when idle", async () => {
@@ -128,7 +159,26 @@ describe("WeChatChannel inbound", () => {
     expect(session.sent).toEqual([]);
   });
 
-  it("continues handling the batch when sessions.get() fails for one message", async () => {
+  it("settles messages cancelled by /stop instead of redelivering them after a restart", async () => {
+    session.busy = true;
+    await startChannel();
+    ilink.queueUpdates(textMessage("owner1", "queued while stopping", { message_id: "q1" }));
+    await vi.waitFor(() => expect(session.sent).toEqual(["queued while stopping"]));
+    ilink.queueUpdates(textMessage("owner1", "/stop", { message_id: "s1" }));
+    await vi.waitFor(() => expect(session.stops).toBe(1));
+    await vi.waitFor(async () => {
+      const state = await store.loadState();
+      expect(state.pendingMessages).toBeUndefined();
+      expect(state.seenIds).toContain("q1");
+    });
+    await channel!.stop();
+    session.sent.length = 0;
+    await startChannel();
+    await vi.waitFor(() => expect(ilink.updateBodies().length).toBeGreaterThan(2));
+    expect(session.sent).toEqual([]);
+  });
+
+  it("retries a failed message without losing the rest of the batch", async () => {
     let getCallCount = 0;
     await startChannel({
       sessions: {
@@ -144,7 +194,7 @@ describe("WeChatChannel inbound", () => {
       textMessage("owner1", "第一句", { message_id: "f1" }),
       textMessage("owner1", "第二句", { message_id: "f2" }),
     );
-    await vi.waitFor(() => expect(session.sent).toEqual(["第二句"]));
+    await vi.waitFor(() => expect(session.sent).toEqual(["第二句", "第一句"]));
   });
 });
 

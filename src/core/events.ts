@@ -1,5 +1,5 @@
 export type SessionEvent =
-  | { kind: "user_message"; text: string; timestamp: number; source?: string }
+  | { kind: "user_message"; text: string; timestamp: number; source?: string; requestId?: string }
   | { kind: "text_delta"; delta: string }
   | { kind: "assistant_message"; text: string; stopReason: string; timestamp: number; injected?: boolean }
   | { kind: "tool_start"; toolCallId: string; toolName: string; summary: string }

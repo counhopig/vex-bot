@@ -10,6 +10,7 @@ import type { EventBus, VexEvent } from "../core/events.js";
 import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
+import { WorkspaceConflictError } from "../workspace/workspace.js";
 import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
@@ -19,7 +20,7 @@ export interface GatewayOptions {
   sessions: SessionManager;
   approvals: ApprovalManager;
   bus: EventBus;
-  config: { read: () => Promise<string>; save: (text: string) => Promise<{ restarting?: boolean } | void> };
+  config: { read: () => Promise<string>; save: (text: string, base?: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
   schedules: {
     list: () => { tasks: ScheduledTask[]; targets: { id: string; label: string }[] };
@@ -27,7 +28,7 @@ export interface GatewayOptions {
     remove: (id: string) => Promise<unknown>;
   };
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
-  workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string) => Promise<{ warning?: string } | void> };
+  workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string, base?: string) => Promise<{ warning?: string } | void> };
   staticDir: string;
   log: Logger;
 }
@@ -217,8 +218,9 @@ export class Gateway {
         const key = webSessionKey(message.sessionId);
         const session = await sessions.get(key);
         sessions.assertAvailable(key);
-        const { items, streaming } = session.history();
-        send(ws, { type: "history", sessionId: message.sessionId, items, busy: session.busy, streaming });
+        const page = await session.historyPage(message.before);
+        sessions.assertAvailable(key);
+        send(ws, { type: "history", sessionId: message.sessionId, ...page, busy: session.busy, ...(message.before !== undefined ? { before: message.before } : {}) });
         return;
       }
       case "send": {
@@ -280,9 +282,13 @@ export class Gateway {
         return;
       case "save_file":
         try {
-          const saved = await this.opts.workspace.save(message.name, message.text);
+          const saved = await this.opts.workspace.save(message.name, message.text, message.base);
           send(ws, { type: "file_saved", name: message.name, ok: true, warning: saved?.warning });
         } catch (err) {
+          if (err instanceof WorkspaceConflictError) {
+            send(ws, { type: "file_saved", name: message.name, ok: false, error: err.message });
+            return;
+          }
           this.opts.log.warn({ err, file: message.name }, "saving workspace file failed");
           send(ws, { type: "file_saved", name: message.name, ok: false, error: "Save failed; see the vexd log" });
         }
@@ -292,7 +298,7 @@ export class Gateway {
         return;
       case "save_config":
         try {
-          const saved = await this.opts.config.save(message.text);
+          const saved = await this.opts.config.save(message.text, message.base);
           send(ws, { type: "config_saved", ok: true, restarting: saved?.restarting });
         } catch (err) {
           if (!(err instanceof ConfigError)) throw err;

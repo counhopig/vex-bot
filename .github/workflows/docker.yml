@@ -21,8 +21,10 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
+      - run: npm run build
 
   image:
+    if: github.event_name != 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     env:
