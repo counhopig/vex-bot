@@ -147,10 +147,14 @@ export class Session {
     return this.current !== undefined;
   }
 
-  send(text: string, source?: string, existingRequestId?: string): void {
+  send(text: string, source?: string, requestId?: string): void {
+    this.sendMessage(text, source, requestId, true);
+  }
+
+  private sendMessage(text: string, source: string | undefined, existingRequestId: string | undefined, registerOwner: boolean): void {
     if (this.closing) return;
     const requestId = !source ? existingRequestId ?? randomUUID() : undefined;
-    if (!source && !existingRequestId) this.controller?.ownerMessage(requestId!, text);
+    if (!source && registerOwner) this.controller?.ownerMessage(requestId!, text);
     if (this.drainingAssistant || (this.current && (this.stopRequested || this.finishing))) {
       this.afterStop.push({ text, source, ...(requestId ? { requestId } : {}) });
       return;
@@ -261,7 +265,7 @@ export class Session {
   private async finishQueuedOwnerMessages(): Promise<void> {
     await this.drainAssistantQueue();
     if (!this.closing && !this.current && !this.drainingAssistant) {
-      for (const queued of this.afterStop.splice(0)) this.send(queued.text, queued.source, queued.requestId);
+      for (const queued of this.afterStop.splice(0)) this.sendMessage(queued.text, queued.source, queued.requestId, false);
     }
   }
 
@@ -423,7 +427,7 @@ export class Session {
         this.queueTranscriptWrite(message);
         await this.writes;
         if (message.role === "user") {
-          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource });
+          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource, requestId: (message as UserMessage & { vexRequestId?: string }).vexRequestId });
         } else if (message.role === "assistant") {
           this.lastResponse = message;
           const text = assistantText(message);
