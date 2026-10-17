@@ -286,3 +286,18 @@ it("logs the redacted provider error behind the owner-facing message", async () 
   expect((await output.result()).errorMessage).toBe("Provider generation failed before a checked reply was available.");
   expect(String(warn.mock.calls[0]?.[0])).toContain("HTTP 401: invalid key [redacted]");
 });
+
+it("accepts a published claim only from a wiki_bootstrap receipt that reports publication", async () => {
+  const contextFor = (publication: string) => ({ messages: [
+    { role: "user" as const, content: "Approve the Wiki preview", timestamp: Date.now() },
+    fauxAssistantMessage(fauxToolCall("wiki_bootstrap", { action: "approve" }, { id: "approve" }), { stopReason: "toolUse" }),
+    { role: "toolResult" as const, toolCallId: "approve", toolName: "wiki_bootstrap", content: [{ type: "text" as const, text: "done" }], details: { receipt: { publication } }, isError: false, timestamp: Date.now() },
+  ] } as TranscriptContext);
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("The preview was published."), fauxAssistantMessage("The preview was published."), fauxAssistantMessage("The preview was published.")]);
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
+  const published = await (await boundary(faux.getModel(), contextFor("published"), undefined)).result();
+  expect(published.content[0]).toMatchObject({ type: "text", text: "The preview was published." });
+  const kept = await (await boundary(faux.getModel(), contextFor("preview"), undefined)).result();
+  expect(kept.content[0]).toMatchObject({ type: "text", text: expect.not.stringContaining("was published") });
+});
