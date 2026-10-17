@@ -71,12 +71,16 @@ Interactive, consolidation, heartbeat, and delegate runs use separate instructio
 
 ### Compaction
 
-When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation):
+When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation), or the working history reaches 512 messages or 8 MiB of serialized data:
 
 1. Memory rescue: the messages about to be replaced are shown to a background run that appends lasting facts to today's `memory/YYYY-MM-DD.md`. Only messages not already rescued are processed.
 2. Summary: the background model summarises the older messages; the summary replaces them and recent turns stay verbatim.
 
-Compaction changes only what is sent to the model; transcripts keep every message. A failed compaction is not retried within the same run, and `transformContext` never throws: over budget, it trims to the most recent turns.
+The JSONL transcript keeps every message. Completed runs release durably summarized messages and condensed tool payloads from memory. The recent model window is bounded by 512 messages and 8 MiB, with one complete turn retained even if it exceeds these limits; tool calls and results are never separated. Without compaction, the model sees only this recent window. The request budget still checks every assembled provider request.
+
+Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run.
+
+WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory, starting from the nearest indexed byte offset (one every 1,000 items, extended as the transcript grows and rebuilt if it is rewritten).
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
 

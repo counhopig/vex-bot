@@ -12,6 +12,9 @@ const state = {
   streamText: "",
   streamFrame: false,
   toolEls: new Map(),
+  nextBefore: undefined,
+  loadingHistory: false,
+  historyButton: null,
   statusInfo: null,
   settings: null,
   settingsTab: "model",
@@ -146,6 +149,8 @@ function handle(msg) {
       }
       break;
     case "error":
+      state.loadingHistory = false;
+      if (state.historyButton) state.historyButton.disabled = false;
       flash(msg.message);
       break;
   }
@@ -456,15 +461,50 @@ function clearMessages() {
   state.streamEl = null;
   state.streamText = "";
   state.toolEls.clear();
+  state.nextBefore = undefined;
+  state.loadingHistory = false;
+  state.historyButton = null;
   setBusy(false);
 }
 
 function renderHistory(msg) {
-  clearMessages();
+  const older = msg.before !== undefined;
+  // Ignore a page superseded by a reconnect or another history request.
+  if (older && msg.before !== state.nextBefore) return;
+  const box = $("messages");
+  const previousHeight = box.scrollHeight;
+  const previousTop = box.scrollTop;
+  const existing = older ? [...box.children].filter((node) => node !== state.historyButton) : [];
+  if (older) { state.historyButton?.remove(); }
+  else clearMessages();
   for (const item of msg.items) {
     if (item.kind === "user") { if (item.source) addNotice(`${item.source}：${item.text}`); else addBubble("user", item.text); }
     else if (item.kind === "assistant") addBubble("assistant", item.text, item.stopReason === "aborted");
     else addTool(item.toolCallId, item.toolName, item.summary, item.isError === undefined ? "running" : item.isError ? "error" : "done");
+  }
+  if (older) {
+    const appended = [...box.children].filter((node) => !existing.includes(node));
+    box.replaceChildren(...appended, ...existing);
+  }
+  state.nextBefore = msg.nextBefore;
+  state.loadingHistory = false;
+  state.historyButton = null;
+  if (msg.nextBefore !== undefined) {
+    const button = element("button", "secondary", "Earlier messages");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      if (state.loadingHistory) return;
+      if (send({ type: "open", sessionId: state.currentId, before: state.nextBefore })) {
+        state.loadingHistory = true;
+        button.disabled = true;
+      }
+    });
+    box.prepend(button);
+    state.historyButton = button;
+  }
+  if (older) {
+    box.scrollTop = previousTop + box.scrollHeight - previousHeight;
+    return;
   }
   if (msg.streaming !== undefined) {
     state.streamText = msg.streaming;

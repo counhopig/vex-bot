@@ -2,7 +2,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { writeFileAtomic } from "../src/store/atomic.js";
-import { appendJsonl, readJsonl } from "../src/store/jsonl.js";
+import { appendJsonl, readJsonl, scanJsonl } from "../src/store/jsonl.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -26,6 +26,28 @@ describe("writeFileAtomic", () => {
 });
 
 describe("jsonl", () => {
+  it("streams a fixed snapshot and closes on early return", async () => {
+    const file = join(dir, "snapshot.jsonl");
+    await writeFile(file, '{"n":1}\n{"n":2}\n{"n":');
+    const iterator = scanJsonl<{ n: number }>(file);
+    expect((await iterator.next()).value).toEqual({ n: 1 });
+    await appendJsonl(file, { n: 3 });
+    expect((await iterator.next()).value).toEqual({ n: 2 });
+    expect((await iterator.next()).done).toBe(true);
+    for await (const record of scanJsonl(file)) { expect(record).toEqual({ n: 1 }); break; }
+    const missing = [];
+    for await (const record of scanJsonl(join(dir, "missing"))) missing.push(record);
+    expect(missing).toEqual([]);
+  });
+
+  it("streams long UTF-8 records across chunk boundaries, including a final record without a newline", async () => {
+    const file = join(dir, "utf8.jsonl");
+    const records = [{ text: "香港".repeat(30_000) }, { n: 2 }];
+    await writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
+    const actual = [];
+    for await (const record of scanJsonl(file)) actual.push(record);
+    expect(actual).toEqual(records);
+  });
   it("returns an empty list for a missing file", async () => {
     expect(await readJsonl(join(dir, "missing.jsonl"))).toEqual([]);
   });

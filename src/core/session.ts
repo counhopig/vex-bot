@@ -12,13 +12,15 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingSetting } from "../config/schema.js";
-import { ContextCompactor, isCompactionRecord, type CompactionOptions } from "../context/compaction.js";
+import { ContextCompactor, isCompactionRecord, type CompactionOptions, type CompactionRecord } from "../context/compaction.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
 import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
-import { appendJsonl, readJsonl } from "../store/jsonl.js";
+import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
+import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
+import { MessageWindow } from "../context/window.js";
 
 export interface SessionOptions {
   key: string;
@@ -37,7 +39,7 @@ export interface SessionOptions {
   emit: (event: SessionEvent) => void;
   onError?: (err: unknown) => void;
   retry?: { attempts: number; baseDelayMs: number };
-  compaction?: Omit<CompactionOptions, "model" | "streamFn" | "getApiKey" | "save">;
+  compaction?: Omit<CompactionOptions, "model" | "streamFn" | "getApiKey" | "save" | "loadHistory">;
   onRunEnd?: () => Promise<void>;
   onOwnerMessage?: () => void;
   onOwnerInteraction?: (count: number) => Promise<void>;
@@ -59,7 +61,10 @@ export class Session {
   private assistantQueue: string[] = [];
   private drainingAssistant = false;
   private assistantDrain: Promise<void> | undefined;
-  private readonly transcript: AgentMessage[];
+  private readonly recentHistory: HistoryWindow;
+  private readonly transcriptHistory: TranscriptHistory;
+  private readonly compactor?: ContextCompactor;
+  private historyOffset: number;
   private pendingOwner = 0;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
@@ -84,26 +89,51 @@ export class Session {
   }
 
   static async open(opts: SessionOptions): Promise<Session> {
-    const records = await readJsonl<unknown>(opts.transcriptPath);
-    return new Session(opts, records);
+    const window = new MessageWindow();
+    const history = new HistoryWindow();
+    let count = 0;
+    let restored: CompactionRecord | undefined;
+    for await (const record of scanJsonl(opts.transcriptPath)) {
+      if (isTranscriptMessage(record)) {
+        count++;
+        window.push(record);
+        history.add(record);
+      } else if (opts.compaction && isCompactionRecord(record) && record.through <= count) {
+        restored = record;
+        window.discardThrough(record.through);
+      }
+    }
+    return new Session(opts, window, history, restored);
   }
 
   private constructor(
     private readonly opts: SessionOptions,
-    records: unknown[],
+    window: MessageWindow,
+    history: HistoryWindow,
+    restored?: CompactionRecord,
   ) {
     this.key = opts.key;
     this.controller = opts.controller?.({
       recordUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
       enqueueAssistant: (text) => this.enqueueAssistant(text),
     });
-    const messages = records.filter(isTranscriptMessage);
-    this.transcript = [...messages];
-    const restored = records.filter(isCompactionRecord).filter((r) => r.through <= messages.length).at(-1);
-    const compactor = opts.compaction ? new ContextCompactor({
+    const messages = window.messages;
+    this.recentHistory = history;
+    this.transcriptHistory = new TranscriptHistory(opts.transcriptPath);
+    this.historyOffset = window.offset;
+    this.compactor = opts.compaction ? new ContextCompactor({
       ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey,
-      save: (record) => appendJsonl(opts.transcriptPath, record),
+      loadHistory: async function* () {
+        for await (const record of scanJsonl(opts.transcriptPath)) {
+          if (isTranscriptMessage(record)) yield record;
+        }
+      },
+      save: async (record) => {
+        this.writes = this.writes.then(() => appendJsonl(opts.transcriptPath, record));
+        await this.writes;
+      },
     }, restored) : undefined;
+    this.compactor?.discardPrefix(this.historyOffset);
     this.agent = new Agent({
       initialState: {
         systemPrompt: "",
@@ -117,14 +147,19 @@ export class Session {
       beforeToolCall: this.controller
         ? (context, signal) => this.controller!.beforeToolCall(context, signal, async (ownerContext, ownerSignal) => opts.beforeToolCall?.(ownerContext, ownerSignal))
         : opts.beforeToolCall,
-      transformContext: compactor ? (messages, signal) => compactor.transform(messages, signal) : undefined,
+      transformContext: this.compactor ? (messages, signal) => this.compactor!.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
-      prepareRequest: async ({ context }) => ({
-        context: { ...context, messages: withSystemPrompt(context.messages, await opts.buildSystemPrompt()) },
-      }),
+      prepareRequest: async ({ context }) => {
+        let prompt = await opts.buildSystemPrompt();
+        if (this.historyOffset > (this.compactor?.summarizedThrough ?? 0)) {
+          prompt += "\n\nOnly the explicit summary and recent messages in this request establish earlier conversation context. Other turns remain on disk; do not assume their contents.";
+        }
+        return { context: { ...context, messages: withSystemPrompt(context.messages, prompt) } };
+      },
       sessionId: opts.key,
     });
     this.agent.subscribe((event) => this.onAgentEvent(event));
+    this.releaseHistory();
   }
 
   /**
@@ -303,9 +338,10 @@ export class Session {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: "stop", timestamp: Date.now() };
     this.agent.state.messages.push(message);
-    this.transcript.push(message);
+    this.recentHistory.add(message);
     this.queueTranscriptWrite(message);
     await this.writes;
+    if (!this.current) this.releaseHistory();
     if (!this.closing) this.opts.emit({ kind: "assistant_message", text, stopReason: "stop", timestamp: message.timestamp, injected: true });
   }
 
@@ -331,34 +367,25 @@ export class Session {
   }
 
   history(): { items: HistoryItem[]; streaming?: string } {
-    const items: HistoryItem[] = [];
-    const toolItems = new Map<string, Extract<HistoryItem, { kind: "tool" }>>();
-    for (const message of this.transcript) {
-      if (message.role === "user") {
-        items.push({ kind: "user", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource });
-      } else if (message.role === "assistant") {
-        const text = assistantText(message);
-        if (text || message.stopReason === "aborted") {
-          items.push({ kind: "assistant", text, stopReason: message.stopReason, timestamp: message.timestamp });
-        }
-        for (const block of message.content) {
-          if (block.type !== "toolCall") continue;
-          const item: Extract<HistoryItem, { kind: "tool" }> = {
-            kind: "tool",
-            toolCallId: block.id,
-            toolName: block.name,
-            summary: summarizeArgs(block.name, block.arguments),
-          };
-          toolItems.set(block.id, item);
-          items.push(item);
-        }
-      } else if (message.role === "toolResult") {
-        const item = toolItems.get(message.toolCallId);
-        if (item) item.isError = message.isError;
-      }
-    }
     const streaming = this.agent.state.streamingMessage;
-    return { items, streaming: streaming?.role === "assistant" ? assistantText(streaming) : undefined };
+    return { items: this.recentHistory.page().items, streaming: streaming?.role === "assistant" ? assistantText(streaming) : undefined };
+  }
+
+  async historyPage(before?: number): Promise<{ items: HistoryItem[]; nextBefore?: number; streaming?: string }> {
+    if (before === undefined) return { ...this.recentHistory.page(), streaming: this.history().streaming };
+    await this.writes;
+    return { ...await this.transcriptHistory.page(before), streaming: this.history().streaming };
+  }
+
+  private releaseHistory(): void {
+    const messages = this.agent.state.messages;
+    const retained = this.compactor?.release(messages) ?? messages;
+    this.historyOffset += messages.length - retained.length;
+    const window = new MessageWindow();
+    for (const message of retained) window.push(message);
+    this.historyOffset += window.offset;
+    this.compactor?.discardPrefix(window.offset);
+    this.agent.state.messages = window.messages;
   }
 
   private async run(first: UserMessage): Promise<void> {
@@ -378,7 +405,10 @@ export class Session {
     } finally {
       this.finishing = true;
       try { await this.writes; await this.flushPendingProviderUsage(); await this.opts.onRunEnd?.(); }
-      finally { this.controller?.runEnded(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : []))); }
+      finally {
+        this.controller?.runEnded(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : [])));
+        this.releaseHistory();
+      }
     }
   }
 
@@ -429,7 +459,7 @@ export class Session {
         // System messages are rebuilt from the current prompt and tools on every start.
         if (message.role === "system") return;
         if (message.role === "assistant" && message.stopReason === "error") return;
-        this.transcript.push(message);
+        this.recentHistory.add(message);
         this.queueTranscriptWrite(message);
         await this.writes;
         if (message.role === "user") {
@@ -466,12 +496,6 @@ export class Session {
         return;
     }
   }
-}
-
-function isTranscriptMessage(value: unknown): value is AgentMessage {
-  if (!value || typeof value !== "object") return false;
-  const role = (value as { role?: unknown }).role;
-  return role === "user" || role === "assistant" || role === "toolResult";
 }
 
 function withSystemPrompt(messages: AgentMessage[], prompt: string): AgentMessage[] {

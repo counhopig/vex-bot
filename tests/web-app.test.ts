@@ -98,6 +98,22 @@ describe("web app", () => {
     expect(socket.send).toHaveBeenLastCalledWith(JSON.stringify({ type: "save_file", name: "SOUL.md", text: "edited", base: "original" }));
   });
 
+  it("prepends earlier history without clearing live streaming or sending duplicate page requests", async () => {
+    const { get, context, socket } = await loadApp();
+    runInContext('handle({ type: "history", sessionId: "one", items: [{ kind: "user", text: "recent", timestamp: 1 }], busy: true, streaming: "live", nextBefore: 100 })', context);
+    const recent = get("messages").children.find((item) => textOf(item) === "recent")!;
+    const streaming = get("messages").children.find((item) => textOf(item) === "live")!;
+    const button = get("messages").children[0]!;
+    button.dispatch("click");
+    button.dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "open", sessionId: "one", before: 100 });
+    expect(socket.send.mock.calls.filter(([raw]) => JSON.parse(raw).before === 100)).toHaveLength(1);
+    runInContext('handle({ type: "history", sessionId: "one", before: 100, items: [{ kind: "assistant", text: "older", timestamp: 1 }], busy: false })', context);
+    expect(get("messages").children).toEqual([expect.objectContaining({ className: "bubble assistant" }), recent, streaming]);
+    expect(textOf(get("messages").children[0]!)).toBe("older");
+    expect(runInContext("state.busy", context)).toBe(true);
+    expect(runInContext("state.streamText", context)).toBe("live");
+  });
   it("keeps a title node attached through both clicks of a rename", async () => {
     const { get, socket, prompt } = await loadApp();
     const row = get("session-list").children[1]!;
