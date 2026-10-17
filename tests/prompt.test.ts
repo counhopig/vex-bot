@@ -98,10 +98,10 @@ describe("wikiSection", () => {
 });
 
 describe("run profiles", () => {
-  it("keeps intent advice, the tool gate and receipt evidence distinct", async () => {
+  it("keeps intent advice, runtime actions and receipt evidence distinct", async () => {
     const text = await profileSection("interactive")(ctx);
     expect(text).toContain("Jev classifies intent and provides advisory suggestions");
-    expect(text).toContain("normal tool gate");
-    expect(text).toContain("Read receipts establish");
+    expect(text).toContain("runtime owns fixed link actions");
+    expect(text).toContain("pending publication");
   });
 });

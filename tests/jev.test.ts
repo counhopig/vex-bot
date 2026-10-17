@@ -52,6 +52,23 @@ it("keeps general tool routing advisory", async () => {
   expect(logged).toHaveBeenCalledWith(expect.objectContaining({ question: "next_tool", tool: "wiki_ingest" }));
 });
 
+it("classifies each bounded owner URL with a typed intent and ignores untrusted returned URLs", async () => {
+  const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ answers: {
+    link_0: { type: "choice", choice: "archive", confidence: 0.95 },
+    link_1: { type: "choice", choice: "read", confidence: 0.9 },
+  } }));
+  const jev = new Jev({ apiKey: "key" }, request);
+  const input = `please check https://one.example and do not save https://two.example ${"x".repeat(5000)}`;
+  expect(await jev.classifyLinks(input, ["https://one.example", "https://two.example"])).toEqual([
+    { url: "https://one.example", intent: "archive", confidence: 0.95 },
+    { url: "https://two.example", intent: "read", confidence: 0.9 },
+  ]);
+  const body = JSON.parse(request.mock.calls[0]![1]!.body as string);
+  expect(body.state.ownerInput).toHaveLength(4000);
+  expect(body.state.urls).toEqual(["https://one.example", "https://two.example"]);
+  expect(JSON.stringify(body)).not.toContain("secret-key");
+});
+
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type TranscriptContext } from "@earendil-works/pi-ai";
 import { withEvidenceBoundary } from "../src/context/evidence.js";
 import { judged, TOOL_EVIDENCE } from "./helpers/evidence.js";

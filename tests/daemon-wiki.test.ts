@@ -140,6 +140,103 @@ describe("daemon Wiki notifications", () => {
     expect(git(remote, ["show", "main:wiki/Recovered.md"])).toContain("# Recovered");
   });
 
+  it("archives WeChat share URLs without a main-model wiki_ingest call", async () => {
+    const sourceUrl = "https://mp.weixin.qq.com/s?__biz=TEST&mid=123&idx=1&sn=TOKEN";
+    const rawPath = `raw/link-${createHash("sha256").update(sourceUrl).digest("hex")}.md`;
+    const mcpStarts = join(dir, "mcp-starts.txt");
+    const mcpServer = `import { appendFileSync } from 'node:fs'; import { Server } from '@modelcontextprotocol/sdk/server/index.js'; import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'; import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'; appendFileSync(${JSON.stringify(mcpStarts)}, 'start\\n'); const server = new Server({ name: 'refresh-test', version: '1' }, { capabilities: { tools: {} } }); server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [{ name: 'probe', inputSchema: { type: 'object', properties: {} } }] })); await server.connect(new StdioServerTransport()); setTimeout(() => process.exit(0), 100);`;
+    let sawReceipt = false;
+    let mainCalledIngest = false;
+    let compilerToolsAfterRefresh: string[] = [];
+    const response: FauxResponseFactory = async (context) => {
+      const tools = getCurrentTools(context.messages).map((tool) => tool.name);
+      if (tools.includes("wiki_write") && !tools.includes("wiki_ingest")) {
+        if (context.messages.some((message) => message.role === "toolResult" && message.toolName === "wiki_write")) {
+          compilerToolsAfterRefresh = tools;
+          return fauxAssistantMessage("The Wiki page was compiled.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1_400));
+        return fauxAssistantMessage(fauxToolCall("wiki_write", { path: "wiki/WeChat.md", content: `# WeChat\n\nAn original article body.\n\nSource: ${rawPath}\n` }, { id: "write" }), { stopReason: "toolUse" });
+      }
+      if (tools.includes("wiki_ingest")) {
+        const receipt = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
+        const text = receipt?.content.map((part) => part.type === "text" ? part.text : "").join("") ?? "";
+        sawReceipt = JSON.parse(text).requestedUrl === sourceUrl;
+        const reply = fauxAssistantMessage("The article was read, archived, compiled, and published.");
+        mainCalledIngest ||= reply.content.some((part) => part.type === "toolCall" && part.name === "wiki_ingest");
+        return reply;
+      }
+      return fauxAssistantMessage("Conversation title");
+    };
+    const { remote } = await startScenario(Array.from({ length: 12 }, () => response), {
+      ownerMessage: `Please read this article: ${sourceUrl}`,
+      mcpServers: { local: { command: process.execPath, args: ["--input-type=module", "-e", mcpServer], cwd: process.cwd() } },
+      decisionJudge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0,
+        classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: "archive", confidence: 0.99 })) },
+    });
+    await vi.waitFor(() => expect(ilink.sentTexts()).toContain("The article was read, archived, compiled, and published."), { timeout: 8000 });
+    expect(sawReceipt).toBe(true);
+    expect(mainCalledIngest).toBe(false);
+    expect((await readFile(mcpStarts, "utf8")).trim().split("\n").length).toBeGreaterThanOrEqual(2);
+    expect(compilerToolsAfterRefresh).not.toContain("mcp__local__probe");
+    expect(git(remote, ["show", `main:${rawPath}`])).toContain("An original article body.");
+    expect(git(remote, ["show", "main:wiki/WeChat.md"])).toContain(rawPath);
+  });
+
+  it("checks assembled opt-out, metadata, read failure, denial, and bootstrap-review outcomes", async () => {
+    const cases = [
+      { name: "explicit read-only", intent: "read" as const, url: "https://example.test/read", body: "<html><head><title>Readable</title></head><body><p>Original readable text.</p></body></html>", status: 200 },
+      { name: "metadata only", intent: "archive" as const, url: "https://example.test/metadata", body: "<html><head><title>Metadata only</title></head><body></body></html>", status: 200 },
+      { name: "unreadable", intent: "archive" as const, url: "https://example.test/unreadable", body: "unavailable", status: 503 },
+      { name: "denied", intent: "archive" as const, url: "https://example.test/denied", body: "<html><body><p>Must not be read.</p></body></html>", status: 200, policy: { wiki_ingest: "deny" as const } },
+      { name: "awaiting bootstrap review", intent: "archive" as const, url: "https://example.test/review", body: "<html><body><p>Must wait for review.</p></body></html>", status: 200, bootstrap: "awaiting-review" as const },
+    ];
+    for (const scenario of cases) {
+      const requestUrls: string[] = [];
+      const receipts: { tool: string; receipt: Record<string, unknown> }[] = [];
+      const request: PageRequest = async (url) => {
+        requestUrls.push(url.href);
+        return { status: scenario.status, headers: { "content-type": "text/html" }, body: scenario.body };
+      };
+      const judge: DecisionJudge = {
+        route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0,
+        classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: scenario.intent, confidence: 0.99 })),
+      };
+      const response: FauxResponseFactory = (context) => {
+        const results = context.messages.filter((message) => message.role === "toolResult");
+        for (const result of results) {
+          if (result.role !== "toolResult" || !result.details || typeof result.details !== "object" || !("receipt" in result.details)) continue;
+          const receipt = result.details.receipt;
+          if (receipt && typeof receipt === "object") receipts.push({ tool: result.toolName, receipt: receipt as Record<string, unknown> });
+        }
+        if (results.length) return fauxAssistantMessage("I checked the operation result and will report its status accurately.");
+        return fauxAssistantMessage("I could not complete the requested operation.");
+      };
+      const { remote, head } = await startScenario(Array.from({ length: 8 }, () => response), {
+        seed: `seed-${scenario.name.replaceAll(" ", "-")}`,
+        ownerMessage: `${scenario.intent === "read" ? "Read this without saving" : "Please save this link"}: ${scenario.url}`,
+        decisionJudge: judge, webPageRequest: request,
+        wikiSourceResolver: (url, signal) => readOriginalSource(url, { signal, request }),
+        ...(scenario.policy ? { toolPolicy: scenario.policy } : {}),
+        ...(scenario.bootstrap ? { bootstrap: scenario.bootstrap } : {}),
+      });
+      await vi.waitFor(() => expect(ilink.sentTexts().some((text) => text.includes("operation result") || text.includes("complete the requested operation"))).toBe(true), { timeout: 8000 });
+      const fileList = git(remote, ["ls-tree", "-r", "--name-only", "main"]).split("\n");
+      expect(fileList).not.toContain(`raw/link-${createHash("sha256").update(scenario.url).digest("hex")}.md`);
+      expect(git(remote, ["rev-parse", "refs/heads/main"])).toBe(head);
+      if (scenario.name === "explicit read-only") expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({ tool: "web_fetch", receipt: expect.objectContaining({ sourceAvailable: true }) })]));
+      if (scenario.name === "metadata only") expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({ tool: "wiki_ingest", receipt: expect.objectContaining({ metadataOnly: true }) })]));
+      if (scenario.name === "unreadable") expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({ tool: "wiki_ingest", receipt: expect.objectContaining({ status: "failed-read" }) })]));
+      if (scenario.name === "awaiting bootstrap review") expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({ tool: "wiki_ingest", receipt: expect.objectContaining({ status: "bootstrap-pending" }) })]));
+      if (scenario.name === "explicit read-only" || scenario.name === "metadata only" || scenario.name === "unreadable") expect(requestUrls).toContain(scenario.url);
+      if (scenario.name === "denied" || scenario.name === "awaiting bootstrap review") expect(requestUrls).not.toContain(scenario.url);
+      await daemon?.stop(); daemon = undefined;
+      await ilink.stop();
+      ilink = new FakeIlink();
+      await ilink.start();
+    }
+  });
+
   it("lets a real WeChat wiki_ingest turn finish before delivering its notification", async () => {
     const rawPath = `raw/link-${createHash("sha256").update("https://example.com/article").digest("hex")}.md`;
     let compilerPrompt = "";

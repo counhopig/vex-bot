@@ -30,7 +30,7 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
 | `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
-| `links/` | Original-source reading for shared links |
+| `links/` | Original-source reading for shared links and `LinkActionController`, the turn controller that runs the owner's link actions |
 | `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
 | `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
@@ -68,7 +68,7 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
-Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. Jev advises on intent and tool routing; tools still run through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
+Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Jev advises on intent and tool routing; fixed link actions are executed by the runtime through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
 
 ### Compaction
 

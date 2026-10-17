@@ -1,12 +1,18 @@
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, type FauxProviderHandle } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, type AssistantMessage, type FauxProviderHandle, type ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEvent } from "../src/core/events.js";
 import { Session, type SessionOptions } from "../src/core/session.js";
+import type { LinkIntent } from "../src/policy/judge.js";
+import { LinkActionController, type LinkActionOptions } from "../src/links/actions.js";
+import type { TurnControllerFactory } from "../src/core/turnController.js";
+import { createRequestActionOutcomeTool } from "../src/tools/requestOutcome.js";
 import { estimateProviderInput } from "../src/context/budget.js";
+import type { Wiki } from "../src/vault/wiki/service.js";
+import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -32,6 +38,14 @@ const echoTool: AgentTool<typeof EchoParams> = {
   parameters: EchoParams,
   execute: async (_id, { text }) => ({ content: [{ type: "text", text: `echo:${text}` }], details: {} }),
 };
+
+/** The daemon's link-action controller with its routes, for sessions under test. */
+function linkActions(options: Omit<LinkActionOptions, "routes" | "fallbackTools">): TurnControllerFactory {
+  return (host) => new LinkActionController({
+    routes: { archive: "wiki_ingest", read: "web_fetch" }, fallbackTools: ["bash", "delegate"],
+    onOutcome: (message) => host.enqueueAssistant(message), onUsage: (usage) => host.recordUsage(usage), ...options,
+  });
+}
 
 function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
   return Session.open({
@@ -169,6 +183,54 @@ describe("Session", () => {
     await session.dispose();
   });
 
+  it("charges actual fallback classification usage once when the owner request is rejected by its budget", async () => {
+    faux = createFaux();
+    const url = "https://example.test/article";
+    let classifierUsage: AssistantMessage["usage"] | undefined;
+    const classifierResponse = (context: Parameters<typeof lastUserText>[0]) => {
+      const input = lastUserText(context);
+      return input.includes("Classify each supplied URL")
+        ? fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "defer", confidence: 0.99 }] }))
+        : fauxAssistantMessage("The link action was deferred.");
+    };
+    faux.setResponses(Array.from({ length: 10 }, () => classifierResponse));
+    const baseModel = faux.getModel();
+    const model = { ...baseModel, contextWindow: 5_000, maxTokens: 1_000 };
+    const requestText = `Please read ${url}`;
+    const outcomeTool = createRequestActionOutcomeTool(() => true);
+    const fixedInput = estimateProviderInput({ messages: [{ role: "user", content: requestText, timestamp: 0 }], tools: [outcomeTool] });
+    const systemPrompt = `SYSTEM ${"汉".repeat(3_850 - fixedInput)}`;
+    const upstream = fauxStreamFn(faux);
+    const provider = vi.fn(async (...args: Parameters<typeof upstream>) => {
+      const stream = await upstream(...args);
+      if (lastUserText(args[1]).includes("Classify each supplied URL")) {
+        void stream.result().then((message) => { classifierUsage = message.usage; });
+      }
+      return stream;
+    });
+    const route = vi.fn(async () => ({ tool: "echo", confidence: 0.99 }));
+    const session = await Session.open({
+      key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [], streamFn: provider,
+      getApiKey: () => undefined, buildSystemPrompt: async () => systemPrompt,
+      controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } }),
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } }),
+      emit: (event) => events.push(event), retry: { attempts: 1, baseDelayMs: 1 },
+    });
+    session.send(requestText);
+    await session.whenIdle();
+    expect(faux.state.callCount).toBe(1);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(route).not.toHaveBeenCalled();
+    expect(session.completionOutcome.failureReason).toContain("VEX_CONTEXT_BUDGET:");
+    const records = await readJsonl<{ type?: string; usage?: AssistantMessage["usage"] }>(join(dir, "classification-budget.jsonl"));
+    const usageRecords = records.filter((record) => record.type === "provider_usage");
+    expect(usageRecords).toHaveLength(1);
+    expect(classifierUsage).toBeDefined();
+    expect(usageRecords[0]?.usage).toEqual(classifierUsage);
+    expect(usageRecords[0]?.usage?.totalTokens).toBe(classifierUsage!.totalTokens);
+    await session.dispose();
+  });
+
   it("queues injected notifications until an active tool turn settles", async () => {
     faux = createFaux();
     let accepted = false;
@@ -244,6 +306,282 @@ describe("Session", () => {
     await s.dispose();
   });
 
+  it("archives a shared link through one normal pi tool call even when the main model only summarizes", async () => {
+    const url = "https://example.com/article";
+    let ingests = 0;
+    const ingest: AgentTool<any> = {
+      name: "wiki_ingest", label: "Ingest", description: "Archive a source", parameters: Type.Object({ url: Type.String() }),
+      execute: async (_id, rawArgs) => { ingests++; expect((rawArgs as { url: string }).url).toBe(url); return { content: [{ type: "text", text: JSON.stringify({ status: "completed" }) }], details: { receipt: { status: "completed", sourceAvailable: true } } }; },
+    };
+    faux = createFaux();
+    faux.setResponses([(context) => {
+      const owner = context.messages.find((message) => message.role === "user");
+      expect(owner && "vexRequestId" in owner && typeof owner.vexRequestId === "string").toBe(true);
+      expect(context.messages.some((message) => message.role === "toolResult" && message.toolName === "wiki_ingest")).toBe(true);
+      return fauxAssistantMessage("A short summary.");
+    }]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    expect(s.successfulReply).toBe("A short summary.");
+    const userRecord = (await readJsonl<Record<string, unknown>>(join(dir, "t.jsonl"))).find((record) => record.role === "user");
+    expect(userRecord?.vexRequestId).toEqual(expect.any(String));
+    await s.dispose();
+  });
+
+  it("treats an actual ingestion policy denial as terminal and blocks a model retry", async () => {
+    let ingests = 0;
+    let shellCalls = 0;
+    const url = "https://example.com/denied";
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    const bash: AgentTool<any> = { name: "bash", label: "Shell", description: "Run commands", parameters: Type.Object({ command: Type.String() }), execute: async () => { shellCalls++; return { content: [], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([
+      (context) => {
+        expect(JSON.stringify(context.messages)).toContain("owner denied the action");
+        return fauxAssistantMessage(fauxToolCall("bash", { command: `echo ${url}` }), { stopReason: "toolUse" });
+      },
+      fauxAssistantMessage("The action was denied."),
+    ]);
+    const s = await open({ tools: [ingest, bash], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
+      controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }),
+      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } }),
+    });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(0);
+    expect(shellCalls).toBe(0);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("was blocked or denied"), injected: true }));
+    await s.dispose();
+  });
+
+  it("blocks a model-selected duplicate ingestion after the runtime action completed", async () => {
+    let ingests = 0;
+    const url = "https://example.com/once";
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true, rawPath: "raw/source.md", publication: "published", compiledPages: ["wiki/page.md"] } } }; } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("Archived once.")]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }) });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    expect(JSON.stringify(await readJsonl(join(dir, "t.jsonl")))).toContain("already attempted archival");
+    await s.dispose();
+  });
+
+  it("does not let an unrelated date result complete a link action", async () => {
+    let ingests = 0;
+    let dates = 0;
+    const dateTool: AgentTool<any> = { name: "date", label: "Date", description: "Get date", parameters: Type.Object({}), execute: async () => { dates++; return { content: [{ type: "text", text: "today" }], details: {} }; } };
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage(fauxToolCall("date", {}), { stopReason: "toolUse" }), fauxAssistantMessage("Done.")]);
+    const s = await open({ tools: [dateTool, ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a");
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    expect(dates).toBe(1);
+    await s.dispose();
+  });
+
+  it("settles two link actions independently and serially", async () => {
+    const order: string[] = [];
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { order.push((rawArgs as { url: string }).url); return { content: [{ type: "text", text: "saved" }], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("Both links were summarized.")]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a and https://example.com/b");
+    await s.whenIdle();
+    expect(order).toEqual(["https://example.com/a", "https://example.com/b"]);
+    await s.dispose();
+  });
+
+  it("reads an explicit no-save link request without archiving", async () => {
+    let ingests = 0;
+    let reads = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    const fetch: AgentTool<any> = { name: "web_fetch", label: "Fetch", description: "Read", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { reads++; expect((rawArgs as { url: string }).url).toBe("https://example.com/a"); return { content: [{ type: "text", text: "source" }], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: "https://example.com/a" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("Read without saving."),
+    ]);
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "read", confidence: 0.99 })) }) });
+    s.send("check https://example.com/a and do not save it");
+    await s.whenIdle();
+    expect(reads).toBe(1);
+    expect(ingests).toBe(0);
+    await s.dispose();
+  });
+
+  it("reads a model fallback classification wrapped in a JSON code fence", async () => {
+    const url = "https://example.com/a";
+    let ingests = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(`\`\`\`json\n${JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] })}\n\`\`\``),
+      fauxAssistantMessage("Summary."),
+    ]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    await s.dispose();
+  });
+
+  it("uses one schema-validated model fallback, and reports uncertain intent as deferred", async () => {
+    const url = "https://example.com/a";
+    let ingests = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] })),
+      fauxAssistantMessage("Summary."),
+    ]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
+    s.send(`summarize ${url}`);
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    await s.dispose();
+
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.4 }] })),
+      fauxAssistantMessage("The link was not archived."),
+    ]);
+    const uncertain = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => [] }) });
+    uncertain.send(`summarize ${url}`);
+    await uncertain.whenIdle();
+    expect(ingests).toBe(1);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("Archival was deferred"), injected: true }));
+    await uncertain.dispose();
+
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] }), { stopReason: "length" }),
+      fauxAssistantMessage("The partial classification was ignored."),
+    ]);
+    const partial = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("Jev unavailable"); } }) });
+    partial.send(`summarize ${url}`);
+    await partial.whenIdle();
+    expect(ingests).toBe(1);
+    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("Archival was deferred"), injected: true }));
+    await partial.dispose();
+  });
+
+  it("does not recreate completed historical link actions when restoring a Session", async () => {
+    const url = "https://example.com/restored";
+    let ingests = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
+    const controller = linkActions({ confidence: 0.8, classify: async (_input: string, urls: string[]) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) });
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("Saved.")]);
+    const first = await open({ tools: [ingest], controller });
+    first.send(`summarize ${url}`);
+    await first.whenIdle();
+    await first.dispose();
+
+    const callsBeforeRestore = faux.state.callCount;
+    const restored = await open({ tools: [ingest], controller });
+    await restored.whenIdle();
+    expect(ingests).toBe(1);
+    expect(faux.state.callCount).toBe(callsBeforeRestore);
+    await restored.dispose();
+  });
+
+  it("retains the first action while steering adds a second owner request", async () => {
+    let ready!: () => void;
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const ingested: string[] = [];
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, rawArgs) => { ingested.push((rawArgs as { url: string }).url); return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
+    faux = createFaux();
+    faux.setResponses([async () => { ready(); await wait; return fauxAssistantMessage("First reply."); }, fauxAssistantMessage("Second reply.")]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a");
+    await started;
+    s.send("also summarize https://example.com/b");
+    release();
+    await s.whenIdle();
+    expect(ingested).toEqual(["https://example.com/a", "https://example.com/b"]);
+    await s.dispose();
+  });
+
+  it("lets explicit no-save steering cancel an earlier pending archive", async () => {
+    let release!: () => void;
+    let classificationStarted!: () => void;
+    const started = new Promise<void>((resolve) => { classificationStarted = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let ingests = 0;
+    let reads = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
+    const fetch: AgentTool<any> = { name: "web_fetch", label: "Fetch", description: "Read", parameters: Type.Object({ url: Type.String() }), execute: async () => { reads++; return { content: [], details: {} }; } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("Read only.")]);
+    const classify = async (input: string, urls: string[]): Promise<LinkIntent[]> => {
+      if (input.startsWith("please summarize")) { classificationStarted(); await gate; return urls.map((url) => ({ url, intent: "archive" as const, confidence: 0.99 })); }
+      return urls.map((url) => ({ url, intent: "read" as const, confidence: 0.99 }));
+    };
+    const s = await open({ tools: [ingest, fetch], controller: linkActions({ confidence: 0.8, classify }) });
+    s.send("please summarize https://example.com/a");
+    await started;
+    s.send("for https://example.com/a, do not save it; just read");
+    release();
+    await s.whenIdle();
+    expect(ingests).toBe(0);
+    expect(reads).toBe(1);
+    await s.dispose();
+  });
+
+  it("aborts active retrieval on stop and does not run later queued writes", async () => {
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => { started = resolve; });
+    let writes = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async (_id, _args, signal) => {
+      started();
+      await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }));
+      signal?.throwIfAborted();
+      writes++;
+      return { content: [], details: {} };
+    } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("unused")]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a");
+    await running;
+    s.stop();
+    await s.whenIdle();
+    expect(writes).toBe(0);
+    await s.dispose();
+  });
+
+  it("does not replay a completed archive after a provider retry", async () => {
+    let ingests = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: { receipt: { status: "completed", sourceAvailable: true } } }; } };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "temporary provider error" }), fauxAssistantMessage("Summary after retry.")]);
+    const s = await open({ tools: [ingest], retry: { attempts: 1, baseDelayMs: 1 }, controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a");
+    await s.whenIdle();
+    expect(ingests).toBe(1);
+    expect(s.successfulReply).toBe("Summary after retry.");
+    await s.dispose();
+  });
+
+  it("reports bootstrap-pending receipts as awaiting review", async () => {
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({ content: [{ type: "text", text: "awaiting review" }], details: { receipt: { status: "bootstrap-pending", sourceAvailable: false } } }) };
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("Summary only.")]);
+    const s = await open({ tools: [ingest], controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((url): LinkIntent => ({ url, intent: "archive", confidence: 0.99 })) }) });
+    s.send("summarize https://example.com/a");
+    await s.whenIdle();
+    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("awaiting bootstrap review"), injected: true }));
+    await s.dispose();
+  });
+
   it("checks claims against actual tool results before releasing a final reply", async () => {
     faux = createFaux();
     let judgments = 0;
@@ -279,6 +617,57 @@ describe("Session", () => {
     expect(s.successfulReply).toBe("I read the page.");
     expect(JSON.stringify(events)).not.toContain("Saved and pushed");
     expect(events).toContainEqual(expect.objectContaining({ kind: "tool_start", toolName: "web_fetch" }));
+    await s.dispose();
+  });
+
+  it("uses pending and raw-only Wiki receipts in the honest fallback", async () => {
+    const url = "https://example.test/wiki";
+    const run = async (receipt: Record<string, unknown>) => {
+      faux = createFaux();
+      faux.setResponses([
+        fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }),
+        fauxAssistantMessage("It was saved and pushed."),
+        fauxAssistantMessage("It was saved and pushed."),
+      ]);
+      const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({ content: [], details: { receipt } }) };
+      const s = await open({ tools: [ingest] });
+      s.send(`Save ${url}`);
+      await s.whenIdle();
+      const reply = s.successfulReply;
+      await s.dispose();
+      return reply;
+    };
+    const pending = await run({ version: 1, status: "bootstrap-pending", requestedUrl: url, sourceAvailable: false, rawPath: null, publication: "not-needed", compiledPages: [] });
+    expect(pending).toContain("awaiting review");
+    expect(pending).not.toContain("pushed");
+    events = [];
+    const rawOnly = await run({ version: 1, status: "completed", requestedUrl: url, sourceAvailable: true, rawPath: "raw/item.md", publication: "not-needed", compiledPages: [] });
+    expect(rawOnly).toContain("source archived");
+    expect(rawOnly).not.toContain("compiled");
+    expect(rawOnly).not.toContain("published");
+  });
+
+  it("does not reuse an older same-URL publication receipt for a pending action", async () => {
+    const url = "https://example.test/repeated";
+    let runs = 0;
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({
+      content: [], details: { receipt: runs++ === 0
+        ? { version: 1, status: "completed", requestedUrl: url, sourceAvailable: true, rawPath: "raw/item.md", compiledPages: ["wiki/page.md"], publication: "published" }
+        : { version: 1, status: "bootstrap-pending", requestedUrl: url, sourceAvailable: false, rawPath: null, compiledPages: [], publication: "not-needed" } },
+    }) };
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("It was pushed."),
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("It was pushed."), fauxAssistantMessage("It was pushed."),
+    ]);
+    const s = await open({ tools: [ingest] });
+    s.send(`Publish ${url}`);
+    await s.whenIdle();
+    s.send(`Publish ${url}`);
+    await s.whenIdle();
+    expect(runs).toBe(2);
+    expect(s.successfulReply).toContain("awaiting review");
+    expect(s.successfulReply).not.toContain("published");
     await s.dispose();
   });
 
@@ -507,6 +896,39 @@ describe("Session", () => {
     second.send("二");
     await second.whenIdle();
     expect(events.at(-2)).toMatchObject({ kind: "assistant_message", text: "看到 3 条消息" });
+  });
+
+  it("keeps a Wiki receipt in tool results across transcript restoration and provider context", async () => {
+    const receipt = { version: 1, requestedUrl: "https://example.com/a", canonicalUrl: "https://example.com/a", sourceAvailable: true, publication: "published" };
+    const wiki = {
+      status: async () => ({ bootstrap: "done", nextAttemptAt: null, lastBatchId: null }),
+      run: async () => ({ batchId: "b1", commit: "c1", pages: ["wiki/a.md"], publication: "published" }),
+    } as unknown as Wiki;
+    const ingest = createWikiInteractiveTools(wiki, { sourceResolver: async (url) => ({ requestedUrl: url, canonicalUrl: url, title: "A", text: "Original", textKind: "article", truncated: false }) });
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: "https://example.com/a" }), { stopReason: "toolUse" }),
+      fauxAssistantMessage("Saved."),
+      (context) => {
+        const result = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
+        expect(result?.content.map((part) => part.type === "text" ? part.text : "").join("")).toContain("https://example.com/a");
+        return fauxAssistantMessage("Restored receipt.");
+      },
+    ]);
+    const first = await open({ tools: ingest });
+    first.send("archive https://example.com/a");
+    await first.whenIdle();
+    await first.dispose();
+    const records = await readJsonl(join(dir, "t.jsonl"));
+    expect(JSON.stringify(records)).toContain('"receipt":{"version":1,"status":"completed"');
+    expect(JSON.stringify(records)).toContain('"rawPath":"raw/link-');
+
+    const restored = await open({ tools: ingest });
+    restored.send("what was archived?");
+    await restored.whenIdle();
+    expect(restored.successfulReply).toBe("Restored receipt.");
+    expect(await readFile(join(dir, "t.jsonl"), "utf8")).toContain('"publication":"published"');
+    await restored.dispose();
   });
 
   it("runs tools and reports them", async () => {

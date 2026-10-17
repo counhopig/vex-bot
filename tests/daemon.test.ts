@@ -118,6 +118,23 @@ describe("startDaemon", () => {
     ]);
   });
 
+  it("answers a shared link without a classification call when the wiki is off", async () => {
+    const prompts: string[] = [];
+    faux.setResponses([
+      (ctx) => {
+        prompts.push(getCurrentSystemPrompt(ctx.messages));
+        return fauxAssistantMessage("看过了");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("看看 https://example.com/a");
+    const replies = client!.messages.flatMap((m) => m.type === "event" && m.event.kind === "assistant_message" ? [m.event.text] : []);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("link-intent classifier");
+    expect(replies).toEqual(["看过了"]);
+  });
+
   it("hides denied tools from the model", async () => {
     let toolNames: string[] = [];
     faux.setResponses([

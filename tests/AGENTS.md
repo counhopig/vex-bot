@@ -20,7 +20,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
 | Notes vault | `vault-parse`, `vault-git`, `vault`, `vault-tools` | Note parsing, git mirror, search, tool output and path safety |
 | LLM wiki | `wiki-*`, `daemon-wiki` | Repo transactions, markers, reconciliation, scheduling gates, shared-clone reads, tools, bootstrap approval and daemon delivery |
-| Agent execution | `claims`, `jev`, `context-budget`, `link-source` | Claim profiles, evidence checks, decision judge, request budgets and original-source reading |
+| Agent execution | `agent-workflow`, `link-actions`, `claims`, `jev`, `context-budget`, `link-source` | Link actions, claim profiles, evidence checks, decision judge, request budgets and original-source reading |
 
 Suite names in the table omit `.test.ts`.
 

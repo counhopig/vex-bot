@@ -23,7 +23,8 @@ import {
   profileSection,
 } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
-import { Session } from "./core/session.js";
+import { Session, type SessionOptions } from "./core/session.js";
+import { LinkActionController } from "./links/actions.js";
 import { SessionManager } from "./core/sessionManager.js";
 import { createTitleGenerator } from "./core/title.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
@@ -39,6 +40,7 @@ import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import { Jev } from "./providers/jev.js";
 import type { DecisionJudge } from "./policy/judge.js";
+import { redactSecrets } from "./config/secrets.js";
 import { maxUserPromptBytes } from "./context/budget.js";
 import type { EvidenceProfiles } from "./context/claims.js";
 import { judgeAdvisor } from "./policy/advice.js";
@@ -76,7 +78,7 @@ export interface DaemonOptions {
   wikiGitRunner?: GitRunner;
   /** Source reader override for isolated Wiki integrations. */
   wikiSourceResolver?: (url: string, signal: AbortSignal) => Promise<OriginalSource>;
-  /** Decision override for isolated integration tests. */
+  /** Decision override for isolated request-action integration tests. */
   decisionJudge?: DecisionJudge;
   /** Public page request override for isolated WebChat and Wiki integration tests. */
   webPageRequest?: PageRequest;
@@ -264,6 +266,22 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         tools: getTools(),
         streamFn: models.streamFn,
         evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err, session: key }, "evidence boundary warning") },
+        ...(!temporary && wiki ? { controller: (host) => new LinkActionController({
+          routes: LINK_ROUTES,
+          fallbackTools: LINK_FALLBACK_TOOLS,
+          onOutcome: (message) => host.enqueueAssistant(message),
+          onUsage: (usage) => host.recordUsage(usage),
+          confidence: judgeConfidence,
+          classify: async (input: string, urls: string[], signal?: AbortSignal) => {
+            if (!decisionJudge) throw new Error("Jev link classification is disabled.");
+            if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
+            const clean = redactSecrets({ input, urls }, evidenceSecrets());
+            const choices = await decisionJudge.classifyLinks(clean.input, clean.urls, signal);
+            // Redaction can rewrite a URL; answers follow the order of the URLs sent.
+            return choices.map((choice, index) => ({ ...choice, url: urls[index] ?? choice.url }));
+          },
+          warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
+        }) } satisfies Partial<SessionOptions> : {}),
         getApiKey,
         buildSystemPrompt: sessionPrompt,
         beforeToolCall,
@@ -499,7 +517,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   }
 }
 
-/** A failed link must not be retried through these general tools. */
+/** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
+const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
 const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
 
 /** What each tool's results prove, declared by the module that owns the tool. */
