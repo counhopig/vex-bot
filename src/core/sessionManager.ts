@@ -20,10 +20,23 @@ export interface SessionManagerOptions {
   openSession: (key: string, transcriptPath: string, windowLabel: () => string) => Promise<Session>;
   generateTitle?: (userText: string, assistantText: string) => Promise<string>;
   onError?: (err: unknown) => void;
+  /** A WebChat session unused this long is disposed and reopened from its transcript on next use; 0 keeps every session. */
+  idleTimeoutMs?: number;
+  /** Keeps a session open for an outside reason, such as an approval it is waiting for. */
+  retain?: (key: string) => boolean;
+  now?: () => number;
 }
+
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 
 export class SessionManager {
   private readonly sessions = new Map<string, Promise<Session>>();
+  // Resolved instances still current in `sessions`, with their last use, for idle eviction.
+  private readonly opened = new Map<string, { opening: Promise<Session>; session: Session }>();
+  private readonly lastUsed = new Map<string, number>();
+  // Evicted sessions still disposing; the next open of that key waits so it reads the flushed transcript.
+  private readonly evicting = new Map<string, Promise<void>>();
+  private sweeper: ReturnType<typeof setInterval> | undefined;
   private readonly deleting = new Set<string>();
   private readonly index: WebSessionIndex;
   private readonly untitledFirstMessage = new Map<string, string>();
@@ -37,11 +50,17 @@ export class SessionManager {
   async init(): Promise<void> {
     await this.index.load();
     this.unsubscribe = this.opts.bus.on((event) => this.onEvent(event));
+    const idle = this.idleTimeoutMs;
+    if (idle > 0) {
+      this.sweeper = setInterval(() => { void this.evictIdle().catch((err: unknown) => this.opts.onError?.(err)); }, Math.min(60_000, idle));
+      this.sweeper.unref();
+    }
   }
 
   get(key: string): Promise<Session> {
     if (this.closing) return Promise.reject(new Error("vexd is shutting down and cannot open a conversation."));
     if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`No such conversation: ${key}`));
+    this.lastUsed.set(key, this.now());
     const existing = this.sessions.get(key);
     if (existing) return this.availableSession(key, existing);
     let transcriptPath: string;
@@ -50,10 +69,41 @@ export class SessionManager {
     } catch (err) {
       return Promise.reject(err);
     }
-    const opening = this.opts.openSession(key, transcriptPath, () => this.windowLabel(key));
+    const evicted = this.evicting.get(key);
+    const opening = evicted
+      ? evicted.then(() => this.opts.openSession(key, this.transcriptPath(key), () => this.windowLabel(key)))
+      : this.opts.openSession(key, transcriptPath, () => this.windowLabel(key));
     this.sessions.set(key, opening);
-    opening.catch(() => this.sessions.delete(key));
+    opening.then((session) => { if (this.sessions.get(key) === opening) this.opened.set(key, { opening, session }); }, () => {
+      if (this.sessions.get(key) === opening) this.sessions.delete(key);
+    });
     return this.availableSession(key, opening);
+  }
+
+  /**
+   * Disposes WebChat sessions unused for the idle timeout. Only a fully idle session with nothing
+   * retaining it is evicted; it leaves the cache before disposal starts, so a new request opens a
+   * fresh instance from the transcript once the old one has flushed. WeChat is never evicted.
+   */
+  async evictIdle(): Promise<string[]> {
+    const idle = this.idleTimeoutMs;
+    if (idle <= 0 || this.closing) return [];
+    const now = this.now();
+    const evicted: string[] = [];
+    for (const [key, { opening, session }] of this.opened) {
+      if (!key.startsWith(WEB_PREFIX) || this.deleting.has(key) || this.sessions.get(key) !== opening) continue;
+      if (now - (this.lastUsed.get(key) ?? 0) < idle || !session.idle || this.opts.retain?.(key)) continue;
+      this.sessions.delete(key);
+      this.opened.delete(key);
+      this.lastUsed.delete(key);
+      const disposal = session.dispose().catch((err: unknown) => this.opts.onError?.(err)).finally(() => {
+        if (this.evicting.get(key) === disposal) this.evicting.delete(key);
+      });
+      this.evicting.set(key, disposal);
+      evicted.push(key);
+    }
+    await Promise.all(evicted.map((key) => this.evicting.get(key)));
+    return evicted;
   }
 
   assertAvailable(key: string): void {
@@ -91,8 +141,12 @@ export class SessionManager {
     this.deleting.add(key);
     const loaded = this.sessions.get(key);
     this.sessions.delete(key);
+    this.opened.delete(key);
+    this.lastUsed.delete(key);
     let restoreLoaded = false;
     try {
+      // An evicted instance may still be writing its transcript; let it finish before removing the file.
+      await this.evicting.get(key);
       const session = await loaded?.catch(() => undefined);
       if (session) {
         try {
@@ -119,7 +173,10 @@ export class SessionManager {
       this.untitledFirstMessage.delete(id);
       this.opts.bus.emit({ type: "sessions_changed" });
     } finally {
-      if (restoreLoaded && loaded && this.index.get(id)) this.sessions.set(key, loaded);
+      if (restoreLoaded && loaded && this.index.get(id)) {
+        this.sessions.set(key, loaded);
+        void loaded.then((session) => { if (this.sessions.get(key) === loaded) this.opened.set(key, { opening: loaded, session }); }, () => undefined);
+      }
       this.deleting.delete(key);
     }
   }
@@ -127,6 +184,8 @@ export class SessionManager {
   async shutdown(): Promise<void> {
     this.closing = true;
     this.unsubscribe?.();
+    if (this.sweeper) clearInterval(this.sweeper);
+    await Promise.allSettled([...this.evicting.values()]);
     const settled = await Promise.allSettled([...this.sessions.values()]);
     const open = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     for (const session of open) session.stop();
@@ -142,15 +201,23 @@ export class SessionManager {
     throw new UnknownSessionError(`No such conversation: ${key}`);
   }
 
+  /** Resolves to the current instance; one evicted or replaced meanwhile is never handed out. */
   private availableSession(key: string, opening: Promise<Session>): Promise<Session> {
     return opening.then((session) => {
       this.assertAvailable(key);
+      if (this.sessions.get(key) !== opening) return this.get(key);
       return session;
     });
   }
 
+  private get idleTimeoutMs(): number { return this.opts.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS; }
+
+  private now(): number { return (this.opts.now ?? Date.now)(); }
+
   private onEvent(event: VexEvent): void {
     if (event.type !== "session" || !event.sessionKey.startsWith(WEB_PREFIX)) return;
+    // Activity, including a scheduled delivery, counts as use.
+    if (this.sessions.has(event.sessionKey)) this.lastUsed.set(event.sessionKey, this.now());
     const id = event.sessionKey.slice(WEB_PREFIX.length);
     if (this.deleting.has(event.sessionKey)) return;
     const meta = this.index.get(id);
