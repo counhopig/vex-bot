@@ -55,6 +55,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.persona ? { persona: raw.persona } : {}),
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),
+    ...(raw.links ? { links: raw.links } : {}),
     ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
     ...(raw.jev ? { jev: raw.jev } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),

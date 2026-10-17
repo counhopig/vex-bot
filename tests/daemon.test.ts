@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { parseConfig } from "../src/config/load.js";
 import type { VexConfig } from "../src/config/schema.js";
 import { startDaemon, type Daemon } from "../src/daemon.js";
 import { createLogger } from "../src/logger.js";
@@ -64,6 +65,20 @@ async function chat(text: string): Promise<string> {
 }
 
 describe("startDaemon", () => {
+  it("preserves concurrent settings patches and rejects a stale full configuration", async () => {
+    const original = `model: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`;
+    await writeFile(paths.config, original);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    client.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
+    client.send({ type: "save_settings", set: { "links.bilibili.sessdata": "cookie" } });
+    await vi.waitFor(() => expect(client!.messages.filter(m => m.type === "settings_saved" && m.ok)).toHaveLength(2));
+    const saved = parseConfig(await readFile(paths.config, "utf8"), paths);
+    expect(saved.stt).toMatchObject({ baseUrl: "https://s/v1", model: "m" });
+    expect(saved.links).toMatchObject({ bilibili: { sessdata: "cookie" } });
+    client.send({ type: "save_config", text: original, base: original });
+    expect(await client.waitFor(m => m.type === "config_saved")).toMatchObject({ ok: false, error: expect.stringContaining("changed after") });
+  });
 
   it("serves a working chat with the workspace in the system prompt", async () => {
     let systemPrompt = "";
@@ -263,9 +278,11 @@ describe("startDaemon", () => {
   });
 
   describe("applying saved settings", () => {
+    let running: VexConfig;
     async function startWithRestart(restart: () => Promise<void>) {
       await writeFile(paths.config, `# mine\nmodel: { provider: ${faux.getModel().provider}, id: ${faux.getModel().id} }\n`, "utf8");
-      daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models(), restart });
+      running = config();
+      daemon = await startDaemon({ paths, config: running, log: createLogger(), models: models(), restart });
       client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
     }
     const saved = () => client!.waitFor((m) => m.type === "settings_saved");
@@ -287,6 +304,13 @@ describe("startDaemon", () => {
       await startWithRestart(restart);
       client!.send({ type: "save_settings", set: { "stt.baseUrl": "https://s/v1", "stt.model": "m" } });
       expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      // The running daemon reads these per call, so the saved values must reach it.
+      expect(running.stt).toEqual({ baseUrl: "https://s/v1", model: "m" });
+      client!.messages.length = 0;
+      client!.send({ type: "save_settings", set: { "links.bilibili.sessdata": "fresh" }, unset: ["stt.baseUrl", "stt.model"] });
+      expect(await saved()).toMatchObject({ ok: true, restartRequired: false });
+      expect(running.links).toEqual({ bilibili: { sessdata: "fresh" } });
+      expect(running.stt).toBeUndefined();
       await new Promise((resolve) => setTimeout(resolve, 900));
       expect(restart).not.toHaveBeenCalled();
     });

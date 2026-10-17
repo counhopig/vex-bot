@@ -7,7 +7,7 @@ import { ConfigError, parseConfig, saveConfigText } from "./config/load.js";
 import { clearReloadError, readReloadError, writePendingReload } from "./config/reload.js";
 import { configuredSecrets } from "./config/secrets.js";
 import { setTimeout as delay } from "node:timers/promises";
-import { applySettings, readSettings } from "./config/settings.js";
+import { applyLiveSettings, applySettings, readSettings } from "./config/settings.js";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { VexConfig } from "./config/schema.js";
 import {
@@ -322,6 +322,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     if (restartRequired && opts.restart) await writePendingReload(paths, before);
     await saveConfigText(paths, text);
     await clearReloadError(paths);
+    if (!restartRequired) applyLiveSettings(config, parseConfig(text, paths));
     const restarting = restartRequired && scheduleRestart();
     log.info({ keys, restartRequired, restarting }, "configuration saved");
     return restarting;
