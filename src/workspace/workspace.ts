@@ -1,5 +1,5 @@
 import { appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { writeFileAtomic } from "../store/atomic.js";
 import { withFileLock } from "../store/fileLock.js";
 import { WORKSPACE_TEMPLATES } from "./templates.js";
@@ -75,4 +75,15 @@ export function residentLimitWarning(name: string, text: string): string | undef
   if (!limit || !content) return undefined;
   const lines = content.split("\n").length;
   return lines > limit ? `${name} has ${lines} lines; only the first ${limit} reach the model. Shorten it to keep everything.` : undefined;
+}
+
+export const MEMORY_BYTE_LIMIT = 32 * 1024;
+
+/** Agent writes keep MEMORY.md within its resident line limit and a total size cap. */
+export function assertMemoryFileLimits(workspace: string, target: string, text: string): void {
+  if (resolve(target) !== join(resolve(workspace), "MEMORY.md")) return;
+  const limit = RESIDENT_LINE_LIMITS["MEMORY.md"]!;
+  const lines = text.trim() ? text.trim().split("\n").length : 0;
+  if (lines > limit) throw new Error(`MEMORY.md would have ${lines} lines, over the ${limit}-line limit; merge or remove older entries first`);
+  if (Buffer.byteLength(text, "utf8") > MEMORY_BYTE_LIMIT) throw new Error("MEMORY.md would exceed 32 KB; merge or remove older entries first");
 }

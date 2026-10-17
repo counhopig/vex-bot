@@ -36,6 +36,11 @@ describe("tool paths", () => {
 });
 
 describe("read", () => {
+  it("refuses an oversized single line before loading its contents", async () => {
+    await writeFile(join(ws, "large.txt"), "x".repeat(1_000_001));
+    await expect(createReadTool(ws).execute("1", { path: "large.txt", limit: 1 })).rejects.toThrow("read limit");
+  });
+
   it("returns numbered lines", async () => {
     await writeFile(join(ws, "a.txt"), "one\ntwo\nthree", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt" });
@@ -45,11 +50,45 @@ describe("read", () => {
   it("supports offset and limit and says how to continue", async () => {
     await writeFile(join(ws, "a.txt"), "1\n2\n3\n4\n5", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt", offset: 2, limit: 2 });
-    expect(textOf(result)).toBe("2\t2\n3\t3\n… (5 lines in total; use offset to continue reading)");
+    expect(textOf(result)).toBe("2\t2\n3\t3\n… (use offset 4 to continue reading)");
+  });
+
+  it("pages through a file larger than the read limit", async () => {
+    await writeFile(join(ws, "app.log"), Array.from({ length: 200_000 }, (_, i) => `entry ${i + 1}`).join("\n"), "utf8");
+    const result = await createReadTool(ws).execute("1", { path: "app.log", offset: 150_000, limit: 2 });
+    expect(textOf(result)).toBe("150000\tentry 150000\n150001\tentry 150001\n… (use offset 150002 to continue reading)");
+  });
+
+  it("stops before the read limit and continues from the next line", async () => {
+    await writeFile(join(ws, "wide.txt"), ["a".repeat(600_000), "b".repeat(600_000), "c"].join("\n"), "utf8");
+    const result = await createReadTool(ws).execute("1", { path: "wide.txt" });
+    expect(textOf(result)).toBe(`1\t${"a".repeat(600_000)}\n… (use offset 2 to continue reading)`);
+  });
+
+  it("returns the trailing empty line and nothing past the end", async () => {
+    await writeFile(join(ws, "a.txt"), "one\n", "utf8");
+    expect(textOf(await createReadTool(ws).execute("1", { path: "a.txt" }))).toBe("1\tone\n2\t");
+    expect(textOf(await createReadTool(ws).execute("1", { path: "a.txt", offset: 5 }))).toBe("");
   });
 
   it("throws for a missing file", async () => {
     await expect(createReadTool(ws).execute("1", { path: "nope.txt" })).rejects.toThrow();
+  });
+});
+
+describe("MEMORY.md limits", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, i) => `- fact ${i}`).join("\n") + "\n";
+
+  it("refuses writes and edits that take MEMORY.md past 100 lines", async () => {
+    await createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(100) });
+    await expect(createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(101) })).rejects.toThrow("101 lines, over the 100-line limit");
+    await expect(createEditTool(ws).execute("1", { path: "MEMORY.md", oldText: "- fact 99\n", newText: "- fact 99\n- fact 100\n" })).rejects.toThrow("over the 100-line limit");
+    expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(100));
+  });
+
+  it("refuses writes that take MEMORY.md past 32 KB and leaves other files alone", async () => {
+    await expect(createWriteTool(ws).execute("1", { path: "./MEMORY.md", content: "x".repeat(32 * 1024 + 1) })).rejects.toThrow("MEMORY.md would exceed 32 KB");
+    await createWriteTool(ws).execute("1", { path: "notes/long.md", content: lines(500) });
   });
 });
 

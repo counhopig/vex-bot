@@ -97,6 +97,8 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
+`read` streams the file line by line and returns at most 1 MB of text per call, ending with the offset to continue from; a single selected line over 1 MB is refused.
+
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
 
 ### Approval
@@ -129,7 +131,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Memory
 
-- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`.
+- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`. The agent's `write` and `edit` calls refuse to take `MEMORY.md` past 100 lines or 32 KB.
 - Indexing: `index.sqlite` holds chunks of `memory/*.md`, `MEMORY.md`, `USER.md` and WeChat/WebChat transcripts (not temporary runs, not scheduled or proactive markers). Runs of Chinese, Japanese or Korean text are indexed as single characters and overlapping pairs. Updates are incremental: only bytes appended to a transcript are read, and a rewritten file is re-indexed. The index is versioned and rebuilt when the version changes or the file is corrupt.
 - Retrieval: `memory_search(query, limit?, scope?)` with scope `memory`, `sessions` or `all`; results are snippets with source and date, ranked by BM25.
 - Consolidation: at `memory.consolidateAt` (03:00) a temporary session reads the last seven daily notes plus `MEMORY.md` and `USER.md`, merges duplicates, removes stale entries and keeps `MEMORY.md` under 100 lines. It sends nothing to the owner.

@@ -1,9 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { writeFileAtomic } from "../store/atomic.js";
 import { withFileLock } from "../store/fileLock.js";
+import { assertMemoryFileLimits } from "../workspace/workspace.js";
 import { displayPath, resolveToolPath } from "./paths.js";
+
+const READ_LIMIT = 1_000_000;
 
 const ReadParams = Type.Object({
   path: Type.String({ description: "File path; relative paths resolve inside the workspace" }),
@@ -17,16 +20,56 @@ export function createReadTool(workspace: string): AgentTool<typeof ReadParams> 
     label: "Read file",
     description: "Reads a text file, with a line number before each line.",
     parameters: ReadParams,
-    async execute(_id, { path, offset = 1, limit = 2000 }) {
+    async execute(_id, { path, offset = 1, limit = 2000 }, signal) {
       const abs = resolveToolPath(workspace, path);
-      const lines = (await readFile(abs, "utf8")).split("\n");
-      const start = offset - 1;
-      const body = lines
-        .slice(start, start + limit)
-        .map((line, i) => `${offset + i}\t${line}`)
-        .join("\n");
-      const more = start + limit < lines.length ? `\n… (${lines.length} lines in total; use offset to continue reading)` : "";
-      return { content: [{ type: "text", text: body + more }], details: { path: abs } };
+      signal?.throwIfAborted();
+      const handle = await open(abs, "r");
+      const lines: string[] = [];
+      let more = false;
+      try {
+        const chunk = Buffer.alloc(65_536);
+        let parts: Buffer[] = [];
+        let lineNumber = 1;
+        let lineBytes = 0;
+        let outputBytes = 0;
+        let position = 0;
+        scan: for (;;) {
+          signal?.throwIfAborted();
+          const { bytesRead } = await handle.read(chunk, 0, chunk.length, position);
+          if (bytesRead === 0) break;
+          position += bytesRead;
+          const data = chunk.subarray(0, bytesRead);
+          let start = 0;
+          while (start < bytesRead) {
+            const newline = data.indexOf(10, start);
+            const end = newline === -1 ? bytesRead : newline;
+            if (lineNumber >= offset) {
+              lineBytes += end - start;
+              if (outputBytes + lineBytes > READ_LIMIT) {
+                if (!lines.length) throw new Error(`Line ${lineNumber} exceeds the read limit of 1 MB; use a targeted search or bounded shell command`);
+                more = true;
+                break scan;
+              }
+              parts.push(Buffer.from(data.subarray(start, end)));
+            }
+            if (newline === -1) break;
+            if (lineNumber >= offset) {
+              lines.push(Buffer.concat(parts).toString("utf8"));
+              outputBytes += lineBytes;
+              parts = [];
+              lineBytes = 0;
+              if (lines.length === limit) { more = true; break scan; }
+            }
+            lineNumber++;
+            start = newline + 1;
+          }
+        }
+        if (!more && lineNumber >= offset) lines.push(Buffer.concat(parts).toString("utf8"));
+      } finally { await handle.close(); }
+      signal?.throwIfAborted();
+      const body = lines.map((line, i) => `${offset + i}\t${line}`).join("\n");
+      const hint = more ? `\n… (use offset ${offset + lines.length} to continue reading)` : "";
+      return { content: [{ type: "text", text: body + hint }], details: { path: abs } };
     },
   };
 }
@@ -44,6 +87,7 @@ export function createWriteTool(workspace: string): AgentTool<typeof WriteParams
     parameters: WriteParams,
     async execute(_id, { path, content }) {
       const abs = resolveToolPath(workspace, path);
+      assertMemoryFileLimits(workspace, abs, content);
       await withFileLock(abs, (target) => writeFileAtomic(target, content));
       const bytes = Buffer.byteLength(content, "utf8");
       return {
@@ -80,6 +124,7 @@ export function createEditTool(workspace: string): AgentTool<typeof EditParams> 
           throw new Error(`oldText occurs ${found} times; add more context to make it unique, or set replaceAll`);
         }
         const updated = replaceAll ? original.split(oldText).join(newText) : original.replace(oldText, () => newText);
+        assertMemoryFileLimits(workspace, abs, updated);
         await writeFileAtomic(target, updated);
         return found;
       });
