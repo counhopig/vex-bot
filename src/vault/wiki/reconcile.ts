@@ -1,4 +1,4 @@
-import { parseTrailers, type WikiRepo } from "./git.js";
+import { parseTrailers, trailerValues, type WikiRepo } from "./git.js";
 import type { InFlightMarker } from "./marker.js";
 import type { WikiRollback, WikiState } from "./state.js";
 
@@ -33,13 +33,8 @@ function parseLog(output: string): CommitRecord[] {
   return records;
 }
 
-/** parseTrailers preserves the first spelling of each key, so lookups are case-insensitive. */
 function trailer(trailers: Record<string, string[]>, name: string): string | undefined {
-  const lower = name.toLowerCase();
-  for (const key of Object.keys(trailers)) {
-    if (key.toLowerCase() === lower) return trailers[key]?.[0];
-  }
-  return undefined;
+  return trailerValues(trailers, name)[0];
 }
 
 function parseKind(value: string | undefined): CompileBatch["kind"] {
@@ -105,8 +100,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
         preview: subject.startsWith(PREVIEW_SUBJECT) || (kind === "bootstrap" && !batchPublished),
       });
     } else if (rollbackId !== undefined || revertOf !== undefined) {
-      const rollbackIds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-rollback")?.[1] ?? [];
-      const revertTargets = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-revert-of")?.[1] ?? [];
+      const rollbackIds = trailerValues(trailers, "vex-rollback");
+      const revertTargets = trailerValues(trailers, "vex-revert-of");
       if (rollbackIds.length !== 1 || !rollbackIds[0] || revertTargets.length !== 1 || !revertTargets[0]) {
         alerts.push(`wiki history has an invalid rollback relationship on ${record.sha}`);
       } else {

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync,
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GitRunner } from "../src/vault/git.js";
-import { parseTrailers, WikiRepo, type WikiRepoOptions } from "../src/vault/wiki/git.js";
+import { parseTrailers, trailerValues, WikiRepo, type WikiRepoOptions } from "../src/vault/wiki/git.js";
 import { commit, git, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -130,6 +130,12 @@ describe("WikiRepo", () => {
 
   it("parses trailer keys case-insensitively and keeps every value", () => {
     expect(parseTrailers("subject\n\nvex-batch: first\nVex-Batch: second\n")).toEqual({ "vex-batch": ["first", "second"] });
+  });
+
+  it("looks up trailer values whatever the key's spelling", () => {
+    const trailers = parseTrailers("subject\n\nvex-batch: first\nVex-Batch: second\n");
+    expect(trailerValues(trailers, "VEX-BATCH")).toEqual(["first", "second"]);
+    expect(trailerValues(trailers, "Vex-Kind")).toEqual([]);
   });
 
   it("reads trailers only from a final paragraph made entirely of trailers", () => {

@@ -407,12 +407,8 @@ export class WikiRepo {
   }
 
   private trailerValue(message: string, name: string): string | null {
-    const trailers = parseTrailers(message);
-    for (const key of Object.keys(trailers)) if (key.toLowerCase() === name.toLowerCase()) {
-      const values = trailers[key] ?? [];
-      return values.length === 1 ? values[0] ?? null : null;
-    }
-    return null;
+    const values = trailerValues(parseTrailers(message), name);
+    return values.length === 1 ? values[0] ?? null : null;
   }
 
   private async indexFingerprint(path: string): Promise<FileFingerprint> {
@@ -535,6 +531,13 @@ const TRAILER_LINE = /^\s*([A-Za-z0-9][A-Za-z0-9-]*):\s?(.*?)\s*$/;
  * paragraph after the subject counts, and only when every line in it is a trailer.
  * A key keeps the spelling of its first occurrence and collects the value of every line it appears on.
  */
+/** Every value of a trailer, matched case-insensitively: `parseTrailers` keeps the first spelling of each key. */
+export function trailerValues(trailers: Record<string, string[]>, name: string): string[] {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(trailers)) if (key.toLowerCase() === lower) return trailers[key] ?? [];
+  return [];
+}
+
 export function parseTrailers(message: string): Record<string, string[]> {
   const trailers: Record<string, string[]> = {};
   const spellings = new Map<string, string>();

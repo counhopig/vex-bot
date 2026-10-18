@@ -1,4 +1,4 @@
-import { parseTrailers, WikiIntegrityError, type WikiRepo } from "./git.js";
+import { parseTrailers, trailerValues, WikiIntegrityError, type WikiRepo } from "./git.js";
 
 export interface WikiIntegrityObservation {
   fetchUrls: string[];
@@ -10,10 +10,6 @@ export interface WikiIntegrityObservation {
   status: Array<{ index: string; worktree: string; path: string; originalPath?: string }>;
 }
 
-const values = (trailers: Record<string, string[]>, name: string): string[] => {
-  for (const key of Object.keys(trailers)) if (key.toLowerCase() === name.toLowerCase()) return trailers[key] ?? [];
-  return [];
-};
 const generated = (path: string): boolean => path.startsWith("wiki/") || path.startsWith("raw/");
 
 function records(log: string): Array<{ sha: string; body: string }> {
@@ -48,9 +44,9 @@ export async function assertRecognizedLocalHistory(repo: WikiRepo, observation?:
   const rollbacks = new Map<string, string[]>();
   for (const record of allRecords) {
     const trailers = parseTrailers(record.body);
-    const ids = values(trailers, "Vex-Batch");
+    const ids = trailerValues(trailers, "Vex-Batch");
     for (const id of ids) if (id) batches.set(id, [...(batches.get(id) ?? []), record.sha]);
-    const rollbackIds = values(trailers, "Vex-Rollback");
+    const rollbackIds = trailerValues(trailers, "Vex-Rollback");
     for (const id of rollbackIds) if (id) rollbacks.set(id, [...(rollbacks.get(id) ?? []), record.sha]);
   }
   for (const [id, commits] of batches) if (commits.length > 1) throw new WikiIntegrityError(`duplicate or ambiguous Vex-Batch identity ${id}`);
@@ -59,16 +55,16 @@ export async function assertRecognizedLocalHistory(repo: WikiRepo, observation?:
   const seen = new Set<string>();
   for (const record of localRecords) {
     const trailers = parseTrailers(record.body);
-    const batch = values(trailers, "Vex-Batch");
-    const rollback = values(trailers, "Vex-Rollback");
-    const revertOf = values(trailers, "Vex-Revert-Of");
+    const batch = trailerValues(trailers, "Vex-Batch");
+    const rollback = trailerValues(trailers, "Vex-Rollback");
+    const revertOf = trailerValues(trailers, "Vex-Revert-Of");
     const paths = await repo.changedPaths(record.sha);
     if (!paths.length || paths.some((path) => !generated(path))) throw new WikiIntegrityError(`unrecognized local commit ${record.sha}: changes outside generated wiki/raw paths`);
     if (batch.length === 1 && batch[0] && rollback.length === 0 && revertOf.length === 0) {
       const id = batch[0];
       if (seen.has(id) || (batches.get(id)?.length ?? 0) !== 1) throw new WikiIntegrityError(`duplicate or ambiguous Vex-Batch identity ${id}`);
-      const kinds = values(trailers, "Vex-Kind");
-      const scanBases = values(trailers, "Vex-Scan-Base");
+      const kinds = trailerValues(trailers, "Vex-Kind");
+      const scanBases = trailerValues(trailers, "Vex-Scan-Base");
       const kind = kinds[0];
       const scanBase = scanBases[0];
       if (kinds.length !== 1 || !["scheduled", "bootstrap", "on-demand"].includes(kind ?? "") || scanBases.length !== 1 || !scanBase) {
@@ -90,7 +86,7 @@ export async function assertRecognizedLocalHistory(repo: WikiRepo, observation?:
     if (batch.length === 0 && rollback.length === 1 && rollback[0] && revertOf.length === 1 && revertOf[0]) {
       const targets = batches.get(revertOf[0]) ?? [];
       if (targets.length !== 1 || rollback.some((id) => !id)) throw new WikiIntegrityError(`invalid rollback relationship for ${record.sha}`);
-      const revertIds = values(trailers, "Vex-Rollback");
+      const revertIds = trailerValues(trailers, "Vex-Rollback");
       if (revertIds.length !== 1 || seen.has(`rollback:${revertIds[0]}`) || !(await repo.isAncestor(targets[0]!, record.sha))) throw new WikiIntegrityError(`invalid rollback identity or ordering ${revertIds[0] ?? ""}`);
       seen.add(`rollback:${revertIds[0]}`);
       continue;

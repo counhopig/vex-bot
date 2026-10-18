@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { VaultConfig } from "../../config/schema.js";
 import { abortBatch, assertBatchOwnership, assertSafeTouchedPath, ingestMessage, ingestPrompt, inspectAndCleanTree } from "./batch.js";
 import { chunk, detectChanges, type Change } from "./changes.js";
-import { parseTrailers, WikiIntegrityError, WikiRepo, type GitRunner } from "./git.js";
+import { parseTrailers, trailerValues, WikiIntegrityError, WikiRepo, type GitRunner } from "./git.js";
 import { assertRecognizedLocalHistory, observeWiki } from "./integrity.js";
 import { fingerprint, MarkerStore } from "./marker.js";
 import { validateSubtreeRoot, validateSubtreeRoots, wikiRawPath } from "./paths.js";
@@ -778,7 +778,7 @@ export class Wiki {
       const sha = (parts[index] ?? "").trim();
       const body = parts[index + 1] ?? "";
       const trailers = parseTrailers(body);
-      const found = Object.keys(trailers).some((key) => key.toLowerCase() === trailer.toLowerCase() && trailers[key]?.includes(value));
+      const found = trailerValues(trailers, trailer).includes(value);
       if (found) matches.push(sha);
     }
     if (matches.length > 1) throw new Error(`ambiguous ${trailer} identity ${value}`);
@@ -795,7 +795,7 @@ export class Wiki {
       if (!stateCommit) throw new WikiIntegrityError("pending rollback reference has no matching rollback commit; preserving state");
       const body = (await this.repo.log(stateCommit)).split("\0")[1] ?? "";
       const trailers = parseTrailers(body);
-      const targetIds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-revert-of")?.[1] ?? [];
+      const targetIds = trailerValues(trailers, "vex-revert-of");
       if (targetIds.length !== 1 || targetIds[0] !== state.rollback.targetBatchId) throw new WikiIntegrityError("pending rollback target does not match its commit; preserving state");
       if (!(await this.repo.isAncestor(stateCommit, await this.repo.originHead()))) throw new WikiIntegrityError("pending rollback is not the reconciled history tip; preserving state");
       await this.clearBatchRef();
@@ -804,7 +804,7 @@ export class Wiki {
     const rollbackCommit = await this.findCommit("Vex-Rollback", pending.revertId);
     if (!rollbackCommit) throw new WikiIntegrityError("pending rollback commit is missing; preserving state");
     const trailers = parseTrailers((await this.repo.log(rollbackCommit)).split("\0")[1] ?? "");
-    const targetIds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-revert-of")?.[1] ?? [];
+    const targetIds = trailerValues(trailers, "vex-revert-of");
     if (targetIds.length !== 1 || targetIds[0] !== pending.targetBatchId) throw new WikiIntegrityError("pending rollback target does not match its commit; preserving state");
     if (await this.repo.isAncestor(rollbackCommit, await this.repo.originHead())) {
       await this.clearBatchRef();
@@ -824,7 +824,7 @@ export class Wiki {
     const fields = (await this.repo.log(commit)).split("\0");
     const body = fields[1] ?? "";
     const trailers = parseTrailers(body);
-    const kinds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-kind")?.[1] ?? [];
+    const kinds = trailerValues(trailers, "vex-kind");
     return kinds.length === 1 && kinds[0] === "bootstrap";
   }
 
@@ -907,15 +907,15 @@ export class Wiki {
       const sha = (fields[index] ?? "").trim();
       const body = fields[index + 1] ?? "";
       const trailers = parseTrailers(body);
-      const ids = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-batch")?.[1] ?? [];
+      const ids = trailerValues(trailers, "vex-batch");
       if (ids.includes(marker.batchId)) matches.push({ sha, body });
     }
     if (matches.length === 0 && marker.phase === "writing") return;
     if (matches.length !== 1) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} has an ambiguous commit; preserving marker`);
     const commit = matches[0]!;
     const trailers = parseTrailers(commit.body);
-    const kind = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-kind")?.[1] ?? [];
-    const scanBase = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-scan-base")?.[1] ?? [];
+    const kind = trailerValues(trailers, "vex-kind");
+    const scanBase = trailerValues(trailers, "vex-scan-base");
     const expectedScanBase = marker.scanBase ?? "none";
     if (kind.length !== 1 || kind[0] !== marker.kind || scanBase.length !== 1 || scanBase[0] !== expectedScanBase) {
       throw new WikiIntegrityError(`in-flight batch ${marker.batchId} metadata does not match its commit`);
