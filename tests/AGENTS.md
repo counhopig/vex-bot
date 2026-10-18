@@ -18,6 +18,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Tools and approvals | `tools-*`, `policy`, `approvals` | Execution, access boundaries, cancellation and approval lifecycle |
 | Background work | `scheduler`, `persona`, `memory-index` | Scheduled delivery, persona state and FTS memory |
 | Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
+| Notes vault | `vault-parse`, `vault-git`, `vault`, `vault-tools` | Note parsing, git mirror, search, tool output and path safety |
 
 Suite names in the table omit `.test.ts`.
 
@@ -27,6 +28,7 @@ Suite names in the table omit `.test.ts`.
 - `helpers/faux.ts`: `createFaux`, `fauxModels` and `fauxStreamFn` provide deterministic model responses without external providers; `lastUserText` extracts the latest user input.
 - `helpers/client.ts`: `TestClient` records typed server messages, sends protocol messages or raw input, and waits for a matching message with a five-second polling deadline. Close each connected client.
 - `helpers/ilink.ts`: `FakeIlink` binds a loopback HTTP server on an ephemeral port, records requests, queues update batches and supplies configurable routes. Await `stop()` after use; `textMessage` builds incoming text fixtures.
+- `helpers/gitRemote.ts`: `makeRemote` creates a bare repository plus a working copy; `commit` writes files, commits at a fixed date and force-pushes. Used with the real `git` binary and local paths, never the network.
 
 ## TEST BOUNDARIES
 
