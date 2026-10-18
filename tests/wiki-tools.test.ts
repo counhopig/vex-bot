@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WikiRepo } from "../src/vault/wiki/git.js";
 import { MarkerStore, type FileFingerprint, type InFlightMarker } from "../src/vault/wiki/marker.js";
 import type { Wiki } from "../src/vault/wiki/service.js";
-import { createWikiInteractiveTools, createWikiWriteTools } from "../src/vault/wiki/tools.js";
+import { createWikiInteractiveTools, createWikiWriteTools, unresolvedWikiWrites } from "../src/vault/wiki/tools.js";
 import { commit, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -36,6 +36,7 @@ interface Setup {
   repo: WikiRepo;
   root: string;
   marker: MarkerStore;
+  context: Parameters<typeof createWikiWriteTools>[0];
   tools: AgentTool<any>[];
 }
 
@@ -49,7 +50,8 @@ async function setup(files: Record<string, string>): Promise<Setup> {
   const roots = { wiki: join(root, "wiki"), raw: join(root, "raw") };
   mkdirSync(roots.wiki, { recursive: true });
   mkdirSync(roots.raw, { recursive: true });
-  return { repo, root, marker, tools: createWikiWriteTools({ repo, marker, roots }) };
+  const context = { repo, marker, roots };
+  return { repo, root, marker, context, tools: createWikiWriteTools(context) };
 }
 
 describe("wiki_write", () => {
@@ -166,6 +168,18 @@ describe("wiki_edit", () => {
     const { root, tools } = await setup({ "wiki/a.md": "alpha beta gamma" });
     await toolNamed(tools, "wiki_edit").execute("1", { path: "wiki/a.md", oldText: "beta", newText: "BETA" });
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("alpha BETA gamma");
+  });
+
+  it("counts a path as failed only while its latest write fails", async () => {
+    const { context, tools } = await setup({ "wiki/a.md": "alpha beta", "wiki/b.md": "one" });
+    const edit = toolNamed(tools, "wiki_edit");
+    await expect(edit.execute("1", { path: "wiki/a.md", oldText: "missing", newText: "x" })).rejects.toThrow("oldText was not found");
+    await expect(edit.execute("2", { path: "wiki/b.md", oldText: "missing", newText: "x" })).rejects.toThrow("oldText was not found");
+    expect(unresolvedWikiWrites(context).sort()).toEqual(["wiki/a.md", "wiki/b.md"]);
+    await edit.execute("3", { path: "wiki/a.md", oldText: "beta", newText: "BETA" });
+    expect(unresolvedWikiWrites(context)).toEqual(["wiki/b.md"]);
+    await toolNamed(createWikiWriteTools(context), "wiki_write").execute("4", { path: "wiki/b.md", content: "two" });
+    expect(unresolvedWikiWrites(context)).toEqual([]);
   });
 });
 

@@ -152,10 +152,22 @@ const WikiEditParams = Type.Object({
 
 export type { WikiWriteContext } from "./write.js";
 
+const failedWrites = new WeakMap<WikiWriteContext, Set<string>>();
+
+/** Paths of a run whose latest wiki_write or wiki_edit call failed. */
+export function unresolvedWikiWrites(ctx: WikiWriteContext): string[] {
+  return [...(failedWrites.get(ctx) ?? [])];
+}
+
 export function createWikiWriteTools(ctx: WikiWriteContext): AgentTool<any>[] {
   let pending: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(action: () => Promise<T>): Promise<T> => {
-    const next = pending.then(action);
+  const failed = failedWrites.get(ctx) ?? new Set<string>();
+  failedWrites.set(ctx, failed);
+  const serialize = <T>(path: string, action: () => Promise<T>): Promise<T> => {
+    const next = pending.then(action).then(
+      (result) => { failed.delete(path); return result; },
+      (error: unknown) => { failed.add(path); throw error; },
+    );
     pending = next.catch(() => {});
     return next;
   };
@@ -166,7 +178,7 @@ export function createWikiWriteTools(ctx: WikiWriteContext): AgentTool<any>[] {
     parameters: WikiWriteParams,
     executionMode: "sequential",
     execute(_id, { path, content }) {
-      return serialize(async () => {
+      return serialize(path, async () => {
         const abs = await writeWikiFile(ctx, path, content);
         return { content: [{ type: "text", text: `Wrote ${path}` }], details: { path: abs } };
       });
@@ -180,7 +192,7 @@ export function createWikiWriteTools(ctx: WikiWriteContext): AgentTool<any>[] {
     parameters: WikiEditParams,
     executionMode: "sequential",
     execute(_id, { path, oldText, newText, replaceAll = false }) {
-      return serialize(async () => {
+      return serialize(path, async () => {
         if (oldText === "") throw new Error("oldText must not be empty");
         const abs = await resolveVaultPath(ctx.roots, path);
         const original = await readFile(abs, "utf8");

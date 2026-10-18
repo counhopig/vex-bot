@@ -53,7 +53,7 @@ import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
 import { Wiki, type WikiRunContext } from "./vault/wiki/service.js";
 import type { GitRunner } from "./vault/wiki/git.js";
-import { createWikiInteractiveTools, createWikiWriteTools } from "./vault/wiki/tools.js";
+import { createWikiInteractiveTools, createWikiWriteTools, unresolvedWikiWrites } from "./vault/wiki/tools.js";
 import { Persona } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -145,7 +145,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     maxNotesPerRun: wikiConfig.maxNotesPerRun,
     notifyEnabled: wikiConfig.notify,
     notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
-    runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, wikiReply, context),
+    runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), context),
     sourceSegmentBudget: async (prefix, context) => {
       const tools = wikiTools(context);
       const systemPrompt = await wikiPrompt(() => tools).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
@@ -531,11 +531,11 @@ const TOOL_EVIDENCE: EvidenceProfiles = { ...CORE_TOOL_EVIDENCE, ...VAULT_TOOL_E
 type TemporaryKind = "heartbeat" | "consolidation" | "wiki";
 const TEMPORARY_WINDOW_LABELS: Record<TemporaryKind, string> = { heartbeat: "heartbeat", consolidation: "memory consolidation", wiki: "wiki" };
 
-/** A wiki compilation run succeeds only with a checked reply and no failed wiki write. */
-function wikiReply(session: Session): string {
+/** A wiki compilation run succeeds only with a checked reply and no path whose latest wiki write failed. */
+function wikiReply(session: Session, context: WikiRunContext): string {
   const outcome = session.completionOutcome;
-  const failedWrites = outcome.failedTools.filter((name) => name === "wiki_write" || name === "wiki_edit");
-  if (failedWrites.length) throw new Error(`Wiki compilation tool failed: ${failedWrites.join(", ")}`);
+  const failedPaths = unresolvedWikiWrites(context);
+  if (failedPaths.length) throw new Error(`Wiki compilation tool failed for ${failedPaths.join(", ")}`);
   const reply = session.successfulReply;
   if (outcome.successful && reply) return reply;
   throw new Error(outcome.failureReason ?? "The wiki run did not finish");
