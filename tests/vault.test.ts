@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { mkdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Vault } from "../src/vault/notes.js";
 import { commit, makeRemote } from "./helpers/gitRemote.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -136,6 +137,22 @@ describe("Vault.read", () => {
       await expect(v.read(path)).rejects.toThrow(/Note paths are relative|Note not found/);
     }
     expect((await v.search({ query: "secret" })).total).toBe(0);
+  });
+});
+
+describe("Vault with a shared copy", () => {
+  it("reads the copy's root and source without cloning a mirror of its own", async () => {
+    const wiki = join(dir, "wiki-root");
+    await mkdir(join(wiki, "wiki"), { recursive: true });
+    await writeFile(join(wiki, "wiki/a.md"), "# A\n");
+    const copy = { readableCopy: vi.fn(async () => ({ root: wiki, source: "git copy synced now" })) };
+    const v = new Vault({ home: join(dir, "home"), config: { url: "https://unused.invalid/x.git" }, copy });
+    const out = await v.search({ folder: "wiki" });
+    expect(paths(out)).toContain("wiki/a.md");
+    expect(out.source).toBe("git copy synced now");
+    expect((await v.read("wiki/a.md")).source).toBe("git copy synced now");
+    expect(copy.readableCopy).toHaveBeenCalledTimes(2);
+    expect(existsSync(join(dir, "home", "vault"))).toBe(false);
   });
 });
 

@@ -1,0 +1,381 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { GitRunner } from "../src/vault/git.js";
+import { parseTrailers, WikiRepo, type WikiRepoOptions } from "../src/vault/wiki/git.js";
+import { commit, git, makeRemote } from "./helpers/gitRemote.js";
+import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+
+let dir: string;
+beforeEach(async () => {
+  dir = await makeTmpDir();
+});
+afterEach(async () => {
+  await removeTmpDir(dir);
+});
+
+function repo(url: string, extra: Partial<WikiRepoOptions> = {}): WikiRepo {
+  return new WikiRepo({ home: join(dir, "home"), url, protocols: "file", ...extra });
+}
+
+function key(url: string, branch?: string): string {
+  return createHash("sha256").update(`${url}\n${branch ?? ""}`).digest("hex").slice(0, 12);
+}
+
+describe("WikiRepo", () => {
+  it("clones once and reopens the same root", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    expect(r.root).toBe(join(dir, "home", "wiki", key(remote)));
+    const first = await r.open();
+    expect(first).toBe(r.root);
+    expect(readFileSync(join(first, "wiki", "a.md"), "utf8")).toBe("v1");
+    writeFileSync(join(first, "local.txt"), "keep");
+    const reopened = await repo(remote).open();
+    expect(reopened).toBe(first);
+    expect(existsSync(join(reopened, "local.txt"))).toBe(true);
+  });
+
+  it("follows the configured branch and keys the root by it", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "a.md": "main" }, "2026-10-01T10:00:00+0000");
+    git(work, ["checkout", "-b", "dev"]);
+    commit(work, { "a.md": "dev" }, "2026-10-02T10:00:00+0000", "dev");
+    const r = repo(remote, { branch: "dev" });
+    expect(r.root).toBe(join(dir, "home", "wiki", key(remote, "dev")));
+    const root = await r.open();
+    expect(readFileSync(join(root, "a.md"), "utf8")).toBe("dev");
+  });
+
+  it("commits only the given paths and pushes them", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1", "notes/n.md": "n" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    writeFileSync(join(root, "notes", "n.md"), "changed");
+    const before = await r.head();
+    const sha = await r.commit(["wiki/a.md"], "update a");
+    expect(sha).not.toBe(before);
+    expect(sha).toBe(await r.head());
+    expect(await r.status()).toContain(" M notes/n.md");
+    expect(await r.isAncestor(sha, before)).toBe(false);
+    expect(await r.isAncestor(before, sha)).toBe(true);
+    await r.push();
+    await r.fetch();
+    const origin = await r.originHead();
+    expect(await r.isAncestor(sha, origin)).toBe(true);
+    expect(await r.isAncestor(origin, sha)).toBe(true);
+  });
+
+  it("keeps unrelated staged paths local when committing selected literal paths", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/备份 [x].md": "v1", "notes/owner.md": "n1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "备份 [x].md"), "v2");
+    writeFileSync(join(root, "notes", "owner.md"), "n2");
+    git(root, ["add", "--", "notes/owner.md"]);
+    const sha = await r.commit(["wiki/备份 [x].md"], "selected");
+    expect(await r.changedPaths(sha)).toEqual(["wiki/备份 [x].md"]);
+    expect(git(root, ["show", `${sha}:wiki/备份 [x].md`])).toBe("v2");
+    expect(git(root, ["show", `${sha}:notes/owner.md`])).toBe("n1");
+    expect(git(root, ["diff", "--cached", "--name-only"])).toBe("notes/owner.md\n");
+    await r.push();
+    const remoteHead = git(remote, ["rev-parse", "HEAD"]).trim();
+    expect(git(remote, ["show", `${remoteHead}:notes/owner.md`])).toBe("n1");
+    expect(readFileSync(join(root, "notes", "owner.md"), "utf8")).toBe("n2");
+  });
+
+  it("reports porcelain status for a dirty tree", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    expect(await r.status()).toEqual([]);
+    mkdirSync(join(root, "wiki"), { recursive: true });
+    writeFileSync(join(root, "wiki", "b.md"), "new");
+    expect(await r.status()).toContain("?? wiki/b.md");
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    expect(await r.status()).toContain(" M wiki/a.md");
+  });
+
+  it("sends the token only through the environment and never reports it", async () => {
+    const basic = Buffer.from("me:s3cr3t").toString("base64");
+    const seen: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
+    const run: GitRunner = async (args, { env }) => {
+      seen.push({ args, env });
+      throw new Error(`fatal: Authentication failed\nAuthorization: Basic ${basic} s3cr3t`);
+    };
+    const r = new WikiRepo({ home: join(dir, "home"), url: "https://git.example/me/vault.git", username: "me", token: "s3cr3t", run });
+    const error = await r.open().catch((e: Error) => e.message);
+    expect(error).toContain("Authentication failed");
+    expect(error).not.toContain("s3cr3t");
+    expect(error).not.toContain(basic);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const { args, env } of seen) {
+      expect(args.join(" ")).not.toContain("s3cr3t");
+      expect(env.GIT_CONFIG_KEY_0).toBe("http.extraHeader");
+      expect(env.GIT_CONFIG_VALUE_0).toBe(`Authorization: Basic ${basic}`);
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+      expect(env.GIT_ALLOW_PROTOCOL).toBe("http:https");
+    }
+  });
+
+  it("parses trailers", () => {
+    expect(parseTrailers("subject\n\nVex-Batch: x\nVex-Kind: scheduled\nVex-Scan-Base: abc")).toEqual({ "Vex-Batch": ["x"], "Vex-Kind": ["scheduled"], "Vex-Scan-Base": ["abc"] });
+  });
+
+  it("parses trailer keys case-insensitively and keeps every value", () => {
+    expect(parseTrailers("subject\n\nvex-batch: first\nVex-Batch: second\n")).toEqual({ "vex-batch": ["first", "second"] });
+  });
+
+  it("reads trailers only from a final paragraph made entirely of trailers", () => {
+    expect(parseTrailers("Vex-Batch: subject")).toEqual({});
+    expect(parseTrailers("notes\n\nVex-Batch: quoted in the body\n\nSigned-off-by: Owner")).toEqual({ "Signed-off-by": ["Owner"] });
+    expect(parseTrailers("notes\n\nVex-Batch: x\nsee the log above")).toEqual({});
+  });
+
+  it("points at the token when git cannot authenticate", async () => {
+    const run: GitRunner = async () => {
+      throw new Error("fatal: could not read Username for 'https://git.example': terminal prompts disabled");
+    };
+    const url = "https://git.example/me/vault.git";
+    const withToken = await new WikiRepo({ home: join(dir, "home"), url, token: "s3cr3t", run }).open().catch((e: Error) => e.message);
+    expect(withToken).toContain("could not read Username");
+    expect(withToken).toContain("check vault.token (the wiki needs write access to the repository) and vault.username");
+    const withoutToken = await new WikiRepo({ home: join(dir, "home"), url, run }).open().catch((e: Error) => e.message);
+    expect(withoutToken).toContain("the repository may be private; set vault.token");
+  });
+
+  it("says so when git is not installed", async () => {
+    const run: GitRunner = async () => {
+      throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" });
+    };
+    const error = await new WikiRepo({ home: join(dir, "home"), url: "https://git.example/me/vault.git", run }).open().catch((e: Error) => e.message);
+    expect(error).toBe("git was not found; install git to use a wiki repository");
+  });
+});
+
+describe("WikiRepo recovery and history", () => {
+  it("aborts a conflicting rebase and leaves the tree clean", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "base" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    commit(work, { "wiki/a.md": "remote" }, "2026-10-02T10:00:00+0000");
+    writeFileSync(join(root, "wiki", "a.md"), "local");
+    await r.commit(["wiki/a.md"], "local change");
+    await r.fetch();
+    await expect(r.rebase()).rejects.toThrow();
+    expect(await r.status()).toEqual([]);
+  });
+
+  it("checkoutPaths restores only the named path", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "a1", "wiki/b.md": "b1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const base = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "a2");
+    writeFileSync(join(root, "wiki", "b.md"), "b2");
+    await r.checkoutPaths(base, ["wiki/a.md"]);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("a1");
+    expect(readFileSync(join(root, "wiki", "b.md"), "utf8")).toBe("b2");
+    expect(await r.status()).toContain(" M wiki/b.md");
+  });
+
+  it("resetHard moves HEAD back and discards worktree edits", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const base = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    await r.commit(["wiki/a.md"], "v2");
+    await r.resetHard(base);
+    expect(await r.head()).toBe(base);
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
+  });
+
+  it("removeUntracked deletes only untracked paths", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "a.md"), "edited");
+    mkdirSync(join(root, "wiki", "new"), { recursive: true });
+    writeFileSync(join(root, "wiki", "new", "b.md"), "b");
+    await r.removeUntracked(["wiki/new"]);
+    expect(existsSync(join(root, "wiki", "new"))).toBe(false);
+    expect(await r.status()).toContain(" M wiki/a.md");
+  });
+
+  it("removeUntracked also deletes a new file that was already staged", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "staged.md"), "new");
+    git(root, ["add", "--", "wiki/staged.md"]);
+    await r.removeUntracked(["wiki/staged.md"]);
+    expect(existsSync(join(root, "wiki", "staged.md"))).toBe(false);
+    expect(await r.status()).toEqual([]);
+  });
+
+  it("leaves no revert in progress when a rollback check fails", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    const change = await r.commit(["wiki/a.md"], "change");
+    writeFileSync(join(root, "wiki", "stray.md"), "outside the rollback");
+    await expect(r.revert(change, "wiki: rollback\n\nVex-Rollback: 00000000-0000-4000-8000-000000000002\nVex-Revert-Of: test-batch")).rejects.toThrow("outside rollback scope");
+    expect(await r.status()).toEqual(["?? wiki/stray.md"]);
+    expect(await r.ref("REVERT_HEAD")).toBeNull();
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
+  });
+
+  it("resolves a data home reached through a symlink", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    mkdirSync(join(dir, "real-home"));
+    symlinkSync(join(dir, "real-home"), join(dir, "home"));
+    const root = await repo(remote).open();
+    expect(root).toBe(join(realpathSync(join(dir, "real-home")), "wiki", key(remote)));
+  });
+
+  it("reverts a commit under the bot identity", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const base = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    const change = await r.commit(["wiki/a.md"], "change");
+    const sha = await r.revert(change, "wiki: rollback\n\nVex-Rollback: 00000000-0000-4000-8000-000000000001\nVex-Revert-Of: test-batch");
+    expect(sha).not.toBe(change);
+    expect(sha).toBe(await r.head());
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
+    expect(await r.isAncestor(base, sha)).toBe(true);
+    expect(await r.isAncestor(change, sha)).toBe(true);
+    expect(git(root, ["log", "-1", "--format=%an <%ae>"])).toBe("vex <vex@localhost>\n");
+  });
+
+  it("checks every durable rollback path even when the commit omits one", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1", "wiki/b.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki/a.md"), "v2");
+    writeFileSync(join(root, "wiki/b.md"), "v2");
+    await r.commit(["wiki/a.md", "wiki/b.md"], "wiki: compile\n\nVex-Batch: batch-id\nVex-Kind: on-demand\nVex-Scan-Base: none");
+    writeFileSync(join(root, "wiki/a.md"), "v1");
+    const id = "00000000-0000-4000-8000-000000000002";
+    await r.commit(["wiki/a.md"], `wiki: rollback\n\nVex-Rollback: ${id}\nVex-Revert-Of: batch-id`);
+    const expectedHash = createHash("sha256").update("v1").digest("hex");
+    const directory = join(root, ".git", "vex-wiki-rollback-expected");
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, `${id}.json`), JSON.stringify({
+      id,
+      targetBatchId: "batch-id",
+      paths: [
+        { path: "wiki/a.md", fingerprint: { type: "file", hash: expectedHash } },
+        { path: "wiki/b.md", fingerprint: { type: "file", hash: expectedHash } },
+      ],
+    }));
+
+    await expect(r.assertRollbackExpectations()).rejects.toThrow(/does not match its durable expectation at wiki\/b.md/i);
+  });
+
+  it("shows a file at a revision", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const base = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    await r.commit(["wiki/a.md"], "v2");
+    expect(await r.show(base, "wiki/a.md")).toBe("v1");
+    expect(await r.show("HEAD", "wiki/a.md")).toBe("v2");
+  });
+
+  it("logs a revision range with messages that parseTrailers understands", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const base = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    const sha = await r.commit(["wiki/a.md"], `wiki: ingest\n\nVex-Batch: b1\nVex-Kind: scheduled\nVex-Scan-Base: ${base}`);
+    const out = await r.log(`${base}..HEAD`);
+    const [logSha, body] = out.split("\0");
+    expect(logSha).toBe(sha);
+    expect(parseTrailers(body ?? "")).toMatchObject({ "Vex-Batch": ["b1"], "Vex-Kind": ["scheduled"], "Vex-Scan-Base": [base] });
+  });
+
+  it("reads and writes a ref outside the branch history", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    await r.open();
+    const sha = await r.head();
+    await r.updateRef("refs/vex/wiki-bootstrap", sha);
+    expect(await r.ref("refs/vex/wiki-bootstrap")).toBe(sha);
+  });
+
+  it("returns null for a missing ref", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    await r.open();
+    expect(await r.ref("refs/vex/does-not-exist")).toBeNull();
+  });
+
+  it("diffNames preserves Chinese filenames and embedded tabs and newlines", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    const modified = "wiki/中文.md";
+    const deleted = "wiki/删除\t笔记.md";
+    const added = "wiki/新增\n笔记.md";
+    commit(work, { [modified]: "before", [deleted]: "deleted content" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const from = await r.head();
+    writeFileSync(join(root, modified), "after");
+    rmSync(join(root, deleted));
+    writeFileSync(join(root, added), "new content");
+    const to = await r.commit(["wiki"], "batch");
+    const changes = await r.diffNames(from, to, "*.md");
+    expect(changes).toHaveLength(3);
+    expect(changes).toEqual(expect.arrayContaining([
+      { path: modified, status: "M" },
+      { path: deleted, status: "D" },
+      { path: added, status: "A" },
+    ]));
+    for (const change of changes) {
+      expect(await r.show(change.status === "D" ? from : to, change.path))
+        .toBe(change.status === "D" ? "deleted content" : change.status === "M" ? "after" : "new content");
+    }
+  });
+
+  it("diffNames reports added, modified and deleted markdown only", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "a", "wiki/b.md": "b", "wiki/keep.txt": "t" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    const from = await r.head();
+    writeFileSync(join(root, "wiki", "a.md"), "a2");
+    writeFileSync(join(root, "wiki", "c.md"), "c");
+    rmSync(join(root, "wiki", "b.md"));
+    writeFileSync(join(root, "wiki", "keep.txt"), "t2");
+    const to = await r.commit(["wiki"], "batch");
+    expect(await r.diffNames(from, to, "*.md")).toEqual([
+      { path: "wiki/a.md", status: "M" },
+      { path: "wiki/b.md", status: "D" },
+      { path: "wiki/c.md", status: "A" },
+    ]);
+  });
+});
