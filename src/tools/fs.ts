@@ -87,8 +87,11 @@ export function createWriteTool(workspace: string): AgentTool<typeof WriteParams
     parameters: WriteParams,
     async execute(_id, { path, content }) {
       const abs = resolveToolPath(workspace, path);
-      assertMemoryFileLimits(workspace, abs, content);
-      await withFileLock(abs, (target) => writeFileAtomic(target, content));
+      await withFileLock(abs, async (target) => {
+        const previous = await readFile(target, "utf8").catch(() => undefined);
+        assertMemoryFileLimits(workspace, abs, content, previous);
+        await writeFileAtomic(target, content);
+      });
       const bytes = Buffer.byteLength(content, "utf8");
       return {
         content: [{ type: "text", text: `Wrote ${displayPath(workspace, abs)} (${bytes} bytes)` }],
@@ -124,7 +127,7 @@ export function createEditTool(workspace: string): AgentTool<typeof EditParams> 
           throw new Error(`oldText occurs ${found} times; add more context to make it unique, or set replaceAll`);
         }
         const updated = replaceAll ? original.split(oldText).join(newText) : original.replace(oldText, () => newText);
-        assertMemoryFileLimits(workspace, abs, updated);
+        assertMemoryFileLimits(workspace, abs, updated, original);
         await writeFileAtomic(target, updated);
         return found;
       });

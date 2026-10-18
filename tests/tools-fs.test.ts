@@ -86,6 +86,14 @@ describe("MEMORY.md limits", () => {
     expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(100));
   });
 
+  it("lets writes and edits shrink a MEMORY.md that is already over the limit", async () => {
+    await writeFile(join(ws, "MEMORY.md"), lines(150));
+    await createEditTool(ws).execute("1", { path: "MEMORY.md", oldText: "- fact 0\n- fact 1\n", newText: "" });
+    await createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(120) });
+    await expect(createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(121) })).rejects.toThrow("over the 100-line limit");
+    expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(120));
+  });
+
   it("refuses writes that take MEMORY.md past 32 KB and leaves other files alone", async () => {
     await expect(createWriteTool(ws).execute("1", { path: "./MEMORY.md", content: "x".repeat(32 * 1024 + 1) })).rejects.toThrow("MEMORY.md would exceed 32 KB");
     await createWriteTool(ws).execute("1", { path: "notes/long.md", content: lines(500) });

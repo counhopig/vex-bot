@@ -79,11 +79,18 @@ export function residentLimitWarning(name: string, text: string): string | undef
 
 export const MEMORY_BYTE_LIMIT = 32 * 1024;
 
-/** Agent writes keep MEMORY.md within its resident line limit and a total size cap. */
-export function assertMemoryFileLimits(workspace: string, target: string, text: string): void {
+/**
+ * Agent writes keep MEMORY.md within its resident line limit and a total size cap. A file already
+ * over a limit may still be shrunk step by step.
+ */
+export function assertMemoryFileLimits(workspace: string, target: string, text: string, previous?: string): void {
   if (resolve(target) !== join(resolve(workspace), "MEMORY.md")) return;
   const limit = RESIDENT_LINE_LIMITS["MEMORY.md"]!;
-  const lines = text.trim() ? text.trim().split("\n").length : 0;
+  const lineCount = (value: string) => value.trim() ? value.trim().split("\n").length : 0;
+  const lines = lineCount(text);
+  const bytes = Buffer.byteLength(text, "utf8");
+  const shrinks = previous !== undefined && lines <= lineCount(previous) && bytes <= Buffer.byteLength(previous, "utf8");
+  if (shrinks) return;
   if (lines > limit) throw new Error(`MEMORY.md would have ${lines} lines, over the ${limit}-line limit; merge or remove older entries first`);
-  if (Buffer.byteLength(text, "utf8") > MEMORY_BYTE_LIMIT) throw new Error("MEMORY.md would exceed 32 KB; merge or remove older entries first");
+  if (bytes > MEMORY_BYTE_LIMIT) throw new Error("MEMORY.md would exceed 32 KB; merge or remove older entries first");
 }
