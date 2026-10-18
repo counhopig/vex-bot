@@ -148,7 +148,7 @@ describe("Wiki service", () => {
 
     await wiki.init();
 
-    expect(await wiki.status()).toEqual({ bootstrap: "pending", nextAttemptAt: null, lastBatchId: null });
+    expect(await wiki.status()).toEqual({ bootstrap: "pending", nextAttemptAt: null, lastBatchId: null, bootstrapDeferred: false });
     await wiki.close();
   });
 
@@ -739,6 +739,10 @@ describe("Wiki service", () => {
     expect(rejected.discarded).toBe(true);
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
     expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrap).toBe("pending");
+    expect(await wiki.dueWork(Date.now(), false)).toBeNull();
+    expect(await wiki.dueWork(Date.now(), true)).toBe("bootstrap");
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrapDeferred).toBeUndefined();
     await wiki.close();
   });
 
@@ -1354,6 +1358,10 @@ describe("dueWikiWork", () => {
     expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 1000, cadenceDue: true })).toBeNull();
     expect(dueWikiWork({ bootstrap: "pending", gate: 2000, now: 2000, cadenceDue: false })).toBe("bootstrap");
     expect(dueWikiWork({ bootstrap: "pending", gate: null, now: 0, cadenceDue: false })).toBe("bootstrap");
+  });
+  it("waits for the cadence before rebuilding a rejected bootstrap preview", () => {
+    expect(dueWikiWork({ bootstrap: "pending", gate: null, now: 0, cadenceDue: false, bootstrapDeferred: true })).toBeNull();
+    expect(dueWikiWork({ bootstrap: "pending", gate: null, now: 0, cadenceDue: true, bootstrapDeferred: true })).toBe("bootstrap");
   });
   it("does nothing while the bootstrap preview awaits review", () => {
     expect(dueWikiWork({ bootstrap: "awaiting-review", gate: null, now: 1000, cadenceDue: true })).toBeNull();

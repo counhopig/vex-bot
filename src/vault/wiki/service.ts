@@ -85,7 +85,7 @@ export interface WikiPreview {
 
 export type WikiBootstrapStatus = "pending" | "awaiting-review" | "done";
 
-export interface WikiStatus { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null }
+export interface WikiStatus { bootstrap: WikiBootstrapStatus; nextAttemptAt: number | null; lastBatchId: string | null; bootstrapDeferred: boolean }
 
 function statusOf(state: WikiState | null, reconciled: ReconcileResult): WikiStatus {
   // `awaiting-review` means an unpublished bootstrap preview specifically; an unpublished
@@ -95,16 +95,17 @@ function statusOf(state: WikiState | null, reconciled: ReconcileResult): WikiSta
     : reconciled.bootstrap === "done"
       ? "done"
       : "pending";
-  return { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId: reconciled.lastBatchId };
+  return { bootstrap, nextAttemptAt: state?.nextAttemptAt ?? null, lastBatchId: reconciled.lastBatchId, bootstrapDeferred: state?.bootstrapDeferred === true };
 }
 
 /**
- * Which wiki work the scheduler may start: a pending bootstrap once the backoff gate opens, or a
- * scheduled run once both the gate and the cadence allow it. Nothing runs while a preview awaits review.
+ * Which wiki work the scheduler may start: a pending bootstrap once the backoff gate opens (and,
+ * after the owner rejected a preview, once the cadence is due), or a scheduled run once both the gate
+ * and the cadence allow it. Nothing runs while a preview awaits review.
  */
-export function dueWikiWork(input: { bootstrap: WikiBootstrapStatus; gate: number | null; now: number; cadenceDue: boolean }): "bootstrap" | "scheduled" | null {
+export function dueWikiWork(input: { bootstrap: WikiBootstrapStatus; gate: number | null; now: number; cadenceDue: boolean; bootstrapDeferred?: boolean }): "bootstrap" | "scheduled" | null {
   if (input.now < (input.gate ?? 0)) return null;
-  if (input.bootstrap === "pending") return "bootstrap";
+  if (input.bootstrap === "pending") return input.bootstrapDeferred && !input.cadenceDue ? null : "bootstrap";
   if (input.bootstrap === "done" && input.cadenceDue) return "scheduled";
   return null;
 }
@@ -226,8 +227,8 @@ export class Wiki {
     if (!this.opened) { this.start(); return null; }
     const gate = this.nextAttemptAt();
     if (gate !== null && now < gate) return null;
-    const { bootstrap } = await this.status();
-    return dueWikiWork({ bootstrap, gate, now, cadenceDue });
+    const { bootstrap, bootstrapDeferred } = await this.status();
+    return dueWikiWork({ bootstrap, gate, now, cadenceDue, bootstrapDeferred });
   }
 
   async status(): Promise<WikiStatus> {
@@ -264,6 +265,10 @@ export class Wiki {
       try {
       await this.repo.fetch();
       const state = await this.stateStore.read();
+      if (kind.kind === "bootstrap" && state?.bootstrapDeferred) {
+        const { bootstrapDeferred: _deferred, ...rest } = state;
+        await this.stateStore.write(rest);
+      }
       const reconciled = await this.runReconcile(state);
       this.reconciled = reconciled;
       const pendingCompile = reconciled.markerResolution === "committed" ? await this.marker.read() : null;
@@ -723,8 +728,8 @@ export class Wiki {
       signal.throwIfAborted();
       await this.repo.resetHard(`${commit}^`);
       await this.marker.remove();
-      await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending" });
-      return { discarded: true, message: "bootstrap preview discarded" };
+      await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending", bootstrapDeferred: true });
+      return { discarded: true, message: "bootstrap preview discarded; a new preview waits for the next scheduled run" };
     }, signal);
   }
 

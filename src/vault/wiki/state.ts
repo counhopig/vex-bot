@@ -14,6 +14,8 @@ export interface WikiState {
   rollback: WikiRollback | null;
   nextAttemptAt: number | null;
   failureStreak: number;
+  /** The owner rejected a bootstrap preview; the next bootstrap waits for the cadence. */
+  bootstrapDeferred?: true;
 }
 
 function isRollback(value: unknown): value is WikiRollback {
@@ -56,7 +58,7 @@ function parseState(text: string): WikiState | null {
   if (typeof failureStreak !== "number") return null;
   if (rollback !== null && !isRollback(rollback)) return null;
 
-  return { lastScanCommit, lastRunAt, lastBatchId, bootstrap, rollback, nextAttemptAt, failureStreak };
+  return { lastScanCommit, lastRunAt, lastBatchId, bootstrap, rollback, nextAttemptAt, failureStreak, ...(candidate.bootstrapDeferred === true ? { bootstrapDeferred: true as const } : {}) };
 }
 
 /**
