@@ -12,11 +12,18 @@ const state = {
   streamText: "",
   streamFrame: false,
   toolEls: new Map(),
+  nextBefore: undefined,
+  loadingHistory: false,
+  historyButton: null,
   statusInfo: null,
   settings: null,
   settingsTab: "model",
   filePage: "soul",
   fileAreas: new Map(),
+  fileBases: new Map(),
+  configBase: undefined,
+  savingConfig: undefined,
+  savingFiles: new Map(),
   notes: null,
   pendingSaves: 0,
   saveWarnings: [],
@@ -106,20 +113,31 @@ function handle(msg) {
       else showSaved(false, "", msg.error);
       break;
     case "config":
-      if (state.settingsTab === "yaml") $("settings-text").value = msg.text;
+      if (state.settingsTab === "yaml" && state.configBase === undefined) {
+        $("settings-text").value = msg.text;
+        $("settings-text").disabled = false;
+        state.configBase = msg.text;
+      }
       break;
     case "file":
-      if (state.fileAreas.has(msg.name)) state.fileAreas.get(msg.name).value = msg.text;
+      if (state.fileAreas.has(msg.name) && !state.fileBases.has(msg.name)) {
+        state.fileAreas.get(msg.name).value = msg.text;
+        state.fileAreas.get(msg.name).disabled = false;
+        state.fileBases.set(msg.name, msg.text);
+      }
       break;
     case "notes":
       renderNotes(msg.names);
       break;
     case "config_saved":
+      if (msg.ok && state.savingConfig !== undefined) state.configBase = state.savingConfig;
+      state.savingConfig = undefined;
       showSaved(msg.ok, savedMessage(msg.restarting, true), msg.error);
       break;
     case "file_saved":
       if (state.fileAreas.has(msg.name)) {
         if (!msg.ok) { state.pendingSaves = 0; showSaved(false, "", msg.error); break; }
+        if (state.savingFiles.has(msg.name)) state.fileBases.set(msg.name, state.savingFiles.get(msg.name));
         if (msg.warning) state.saveWarnings.push(msg.warning);
         if (--state.pendingSaves > 0) break;
         if (state.saveWarnings.length) {
@@ -131,6 +149,8 @@ function handle(msg) {
       }
       break;
     case "error":
+      state.loadingHistory = false;
+      if (state.historyButton) state.historyButton.disabled = false;
       flash(msg.message);
       break;
   }
@@ -441,15 +461,50 @@ function clearMessages() {
   state.streamEl = null;
   state.streamText = "";
   state.toolEls.clear();
+  state.nextBefore = undefined;
+  state.loadingHistory = false;
+  state.historyButton = null;
   setBusy(false);
 }
 
 function renderHistory(msg) {
-  clearMessages();
+  const older = msg.before !== undefined;
+  // Ignore a page superseded by a reconnect or another history request.
+  if (older && msg.before !== state.nextBefore) return;
+  const box = $("messages");
+  const previousHeight = box.scrollHeight;
+  const previousTop = box.scrollTop;
+  const existing = older ? [...box.children].filter((node) => node !== state.historyButton) : [];
+  if (older) { state.historyButton?.remove(); }
+  else clearMessages();
   for (const item of msg.items) {
     if (item.kind === "user") { if (item.source) addNotice(`${item.source}：${item.text}`); else addBubble("user", item.text); }
     else if (item.kind === "assistant") addBubble("assistant", item.text, item.stopReason === "aborted");
     else addTool(item.toolCallId, item.toolName, item.summary, item.isError === undefined ? "running" : item.isError ? "error" : "done");
+  }
+  if (older) {
+    const appended = [...box.children].filter((node) => !existing.includes(node));
+    box.replaceChildren(...appended, ...existing);
+  }
+  state.nextBefore = msg.nextBefore;
+  state.loadingHistory = false;
+  state.historyButton = null;
+  if (msg.nextBefore !== undefined) {
+    const button = element("button", "secondary", "Earlier messages");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      if (state.loadingHistory) return;
+      if (send({ type: "open", sessionId: state.currentId, before: state.nextBefore })) {
+        state.loadingHistory = true;
+        button.disabled = true;
+      }
+    });
+    box.prepend(button);
+    state.historyButton = button;
+  }
+  if (older) {
+    box.scrollTop = previousTop + box.scrollHeight - previousHeight;
+    return;
   }
   if (msg.streaming !== undefined) {
     state.streamText = msg.streaming;
@@ -771,7 +826,6 @@ function renderField(field, draft) {
   const id = `f-${field.path.replace(/[^\w]/g, "-")}`;
   const label = element("label", "", fieldLabel(field, draft));
   label.htmlFor = id;
-  const track = (input, read) => input.addEventListener("input", () => { draft[field.path] = read(input); });
   switch (field.type) {
     case "bool": {
       const row = element("label", "check");
@@ -832,7 +886,8 @@ function renderField(field, draft) {
       input.id = id;
       const key = `providers.${draft[field.of]}.baseUrl`;
       input.value = draft[key] ?? "";
-      track(input, (el) => { draft[key] = el.value.trim(); return el.value.trim(); });
+      // field.path only identifies the control; the draft holds real configuration paths.
+      input.addEventListener("input", () => { draft[key] = input.value.trim(); });
       wrap.append(label, input);
       break;
     }
@@ -1002,6 +1057,7 @@ function renderFileEditors(page) {
   box.replaceChildren();
   box.className = page.files.length > 1 || page.notes ? "multi" : "";
   state.fileAreas = new Map();
+  state.fileBases = new Map();
   state.notes = null;
   for (const file of page.files) {
     const section = element("div", "editor");
@@ -1009,6 +1065,7 @@ function renderFileEditors(page) {
     section.append(element("p", "hint", file.hint));
     const area = element("textarea", "file-text");
     area.spellcheck = false;
+    area.disabled = true;
     section.append(area);
     box.append(section);
     state.fileAreas.set(file.name, area);
@@ -1021,6 +1078,7 @@ function renderFileEditors(page) {
     select.setAttribute("aria-label", "Daily note");
     const area = element("textarea", "file-text");
     area.spellcheck = false;
+    area.disabled = true;
     const empty = element("p", "hint", "No daily notes yet.");
     select.hidden = area.hidden = empty.hidden = true;
     select.addEventListener("change", () => openNote(select.value));
@@ -1047,10 +1105,12 @@ function renderNotes(names) {
 
 function openNote(name) {
   const notes = state.notes;
-  if (notes.name) state.fileAreas.delete(notes.name);
+  if (notes.name) { state.fileAreas.delete(notes.name); state.fileBases.delete(notes.name); }
   notes.name = name;
   notes.select.value = name;
   notes.area.value = "";
+  notes.area.disabled = true;
+  state.fileBases.delete(name);
   state.fileAreas.set(name, notes.area);
   send({ type: "get_file", name });
 }
@@ -1084,6 +1144,8 @@ function openSettingsTab() {
     renderFileEditors(FILE_PAGES.find((page) => page.id === state.filePage));
   } else {
     $("settings-hint").textContent = YAML_HINT;
+    state.configBase = undefined;
+    $("settings-text").disabled = true;
     send({ type: "get_config" });
   }
 }
@@ -1261,11 +1323,22 @@ function saveSettings() {
     if (!Object.keys(patch.set).length && !patch.unset.length) { showSaved(true, "No changes"); return; }
     send({ type: "save_settings", ...patch });
   } else if (tab.pages) {
+    if ([...state.fileAreas.keys()].some((name) => !state.fileBases.has(name))) {
+      showSaved(false, "", "Wait for the files to finish loading");
+      return;
+    }
     state.pendingSaves = state.fileAreas.size;
     state.saveWarnings = [];
-    for (const [name, area] of state.fileAreas) send({ type: "save_file", name, text: area.value });
+    state.savingFiles = new Map();
+    for (const [name, area] of state.fileAreas) {
+      state.savingFiles.set(name, area.value);
+      const base = state.fileBases.get(name);
+      send({ type: "save_file", name, text: area.value, ...(base === undefined ? {} : { base }) });
+    }
   } else {
-    send({ type: "save_config", text: $("settings-text").value });
+    if (state.configBase === undefined) { showSaved(false, "", "Wait for the configuration to finish loading"); return; }
+    state.savingConfig = $("settings-text").value;
+    send({ type: "save_config", text: state.savingConfig, base: state.configBase });
   }
 }
 

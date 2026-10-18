@@ -13,6 +13,27 @@ describe("memory retrieval index", () => {
   beforeEach(async () => { root = await makeTmpDir(); await mkdir(join(root, "workspace/memory"), { recursive: true }); await mkdir(join(root, "sessions/web"), { recursive: true }); });
   afterEach(async () => { index?.close(); index = undefined; await removeTmpDir(root); });
   const open = async () => { index = await MemoryIndex.open({ databasePath: join(root, "index.sqlite"), workspace: join(root, "workspace"), sessions: join(root, "sessions") }); return index; };
+  it("indexes across batch boundaries, skips oversized records and resumes a torn record", async () => {
+    const file = join(root, "sessions/wechat.jsonl");
+    const record = JSON.stringify({ role: "user", content: "批次边界" + "x".repeat(40000) }) + "\n";
+    await writeFile(file, record.repeat(8) + JSON.stringify({ role: "user", content: "忽略超长" + "x".repeat(1_000_001) }) + "\n" + '{"role":"user","content":"尾部恢复"');
+    const db = await open();
+    expect(db.search("批次边界", 20, "sessions")).toHaveLength(8);
+    expect(db.search("忽略超长")).toHaveLength(0);
+    expect(db.search("尾部恢复")).toHaveLength(0);
+    await appendFile(file, '}\n');
+    await db.sync();
+    expect(db.search("批次边界", 20, "sessions")).toHaveLength(8);
+    expect(db.search("尾部恢复")).toHaveLength(1);
+  });
+  it("indexes the first 1 MB of an oversized memory file", async () => {
+    const warnings: string[] = [];
+    await writeFile(join(root, "workspace/MEMORY.md"), "# 开头\n保留前段\n\n" + "填充内容\n".repeat(90_000) + "\n# 结尾\n超出部分\n");
+    index = await MemoryIndex.open({ databasePath: join(root, "index.sqlite"), workspace: join(root, "workspace"), sessions: join(root, "sessions"), onWarning: (message) => warnings.push(message) });
+    expect(index.search("保留前段", 5, "memory")).toHaveLength(1);
+    expect(index.search("超出部分", 5, "memory")).toHaveLength(0);
+    expect(warnings).toEqual([expect.stringContaining("only its first 1 MB is indexed")]);
+  });
   it("tokenizes Chinese bigrams and chunks headings with paragraphs", () => {
     expect(tokenize("喜欢编程 TypeScript")).toEqual(["喜欢", "欢编", "编程", "typescript"]);
     expect(markdownChunks("# 喜好\n喜欢茶\n\n喜欢咖啡\n# 工作\n写程序")).toEqual(["# 喜好\n喜欢茶", "# 喜好\n喜欢咖啡", "# 工作\n写程序"]);

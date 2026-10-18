@@ -17,7 +17,7 @@ const WorkspaceFileName = Type.Union([
 export type WorkspaceFile = Static<typeof WorkspaceFileName>;
 
 export const ClientMessageSchema = Type.Union([
-  Type.Object({ type: Type.Literal("open"), sessionId: SessionId }),
+  Type.Object({ type: Type.Literal("open"), sessionId: SessionId, before: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })) }),
   Type.Object({ type: Type.Literal("send"), sessionId: SessionId, text: Type.String({ minLength: 1, maxLength: 100_000 }) }),
   Type.Object({ type: Type.Literal("stop"), sessionId: SessionId }),
   Type.Object({ type: Type.Literal("create_session") }),
@@ -34,7 +34,8 @@ export const ClientMessageSchema = Type.Union([
   }),
   Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
   Type.Object({ type: Type.Literal("list_notes") }),
-  Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }) }),
+  // base is the text the editor loaded; a save is refused when the file has changed since.
+  Type.Object({ type: Type.Literal("save_file"), name: WorkspaceFileName, text: Type.String({ maxLength: 200_000 }), base: Type.Optional(Type.String({ maxLength: 200_000 })) }),
   Type.Object({ type: Type.Literal("get_status") }),
   Type.Object({ type: Type.Literal("get_settings") }),
   Type.Object({
@@ -58,7 +59,7 @@ export const ClientMessageSchema = Type.Union([
   }),
   Type.Object({ type: Type.Literal("delete_schedule"), id: Type.String({ minLength: 1, maxLength: 100 }) }),
   Type.Object({ type: Type.Literal("get_config") }),
-  Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }) }),
+  Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }), base: Type.Optional(Type.String({ maxLength: 1_000_000 })) }),
 ]);
 
 export type ClientMessage = Static<typeof ClientMessageSchema>;
@@ -73,7 +74,7 @@ export interface StatusInfo {
 export type ServerMessage =
   | { type: "sessions"; sessions: WebSessionMeta[] }
   | { type: "session_created"; session: WebSessionMeta }
-  | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string }
+  | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string; before?: number; nextBefore?: number }
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "file"; name: WorkspaceFile; text: string }

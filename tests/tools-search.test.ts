@@ -1,6 +1,6 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoreTools } from "../src/tools/registry.js";
 import { createFindTool, createGrepTool } from "../src/tools/search.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -23,6 +23,32 @@ function textOf(result: { content: { type: string; text?: string }[] }): string 
 }
 
 describe("grep", () => {
+  it("searches independently of the parent's ESM entry flags", async () => {
+    const previous = process.execArgv;
+    process.execArgv = ["--input-type=module"];
+    try {
+      expect(textOf(await createGrepTool(ws).execute("1", { pattern: "茶", path: "MEMORY.md" }))).toBe("MEMORY.md:2:不喝茶");
+    } finally { process.execArgv = previous; }
+  });
+
+  it("terminates catastrophic backtracking while the main thread remains responsive", async () => {
+    await writeFile(join(ws, "bad.txt"), "a".repeat(30) + "!");
+    const signal = new AbortController();
+    const pending = createGrepTool(ws).execute("1", { pattern: "(a+)+$", path: "bad.txt" }, signal.signal);
+    const timer = setTimeout(() => signal.abort(new Error("cancelled")), 200);
+    try { await expect(pending).rejects.toThrow("cancelled"); }
+    finally { clearTimeout(timer); }
+  });
+
+  it("returns what it found with a note when the scan reaches its time budget", async () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now - 10_000);
+    try {
+      const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
+      expect(out).toBe("No matches\n… (search stopped at its time limit; narrow path or glob to search the rest)");
+    } finally { clock.mockRestore(); }
+  });
+
   it("finds matches with path and line number, skipping vendored and binary files", async () => {
     const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
     expect(out.split("\n").sort()).toEqual(["memory/2026-10-01.md:1:今天喝了 Coffee", "memory/notes.txt:1:coffee beans"]);

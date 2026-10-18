@@ -1,13 +1,16 @@
-import { readdir, readFile, stat } from "node:fs/promises";
-import { dirname, join, matchesGlob, relative } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, matchesGlob, relative } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { displayPath, resolveToolPath } from "./paths.js";
+import { Worker } from "node:worker_threads";
+import { resolveToolPath } from "./paths.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules"]);
-const MAX_FILE_BYTES = 1_000_000;
-const MAX_GREP_MATCHES = 200;
 const MAX_FIND_RESULTS = 500;
+/** The worker stops scanning and returns what it found after this long. */
+const SEARCH_BUDGET_MS = 4_000;
+/** A worker still busy after this long (for example inside one slow regular expression) is terminated. */
+const SEARCH_LIMIT_MS = 5_000;
 
 async function* walkFiles(root: string): AsyncGenerator<string> {
   let entries;
@@ -26,10 +29,6 @@ async function* walkFiles(root: string): AsyncGenerator<string> {
   }
 }
 
-async function* single(file: string): AsyncGenerator<string> {
-  yield file;
-}
-
 const GrepParams = Type.Object({
   pattern: Type.String({ description: "JavaScript regular expression" }),
   path: Type.Optional(Type.String({ description: "File or directory to search; defaults to the workspace" })),
@@ -43,39 +42,30 @@ export function createGrepTool(workspace: string): AgentTool<typeof GrepParams> 
     label: "Search contents",
     description: "Searches file contents with a regular expression and prints path:line:content.",
     parameters: GrepParams,
-    async execute(_id, { pattern, path, glob, ignoreCase = false }) {
-      const regex = new RegExp(pattern, ignoreCase ? "i" : "");
-      const base = resolveToolPath(workspace, path ?? ".");
-      const isFile = (await stat(base)).isFile();
-      const root = isFile ? dirname(base) : base;
-      const matches: string[] = [];
-      let truncated = false;
-      outer: for await (const file of isFile ? single(base) : walkFiles(base)) {
-        if (glob && !matchesGlob(relative(root, file), glob)) continue;
-        let buf: Buffer;
-        try {
-          if ((await stat(file)).size > MAX_FILE_BYTES) continue;
-          buf = await readFile(file);
-        } catch {
-          continue;
-        }
-        if (buf.length > MAX_FILE_BYTES || buf.subarray(0, 8000).includes(0)) continue;
-        const lines = buf.toString("utf8").split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i] ?? "";
-          if (!regex.test(line)) continue;
-          if (matches.length >= MAX_GREP_MATCHES) {
-            truncated = true;
-            break outer;
-          }
-          matches.push(`${displayPath(workspace, file)}:${i + 1}:${line.slice(0, 300)}`);
-        }
-      }
-      const text =
-        matches.length === 0
-          ? "No matches"
-          : matches.join("\n") + (truncated ? `\n… (more than ${MAX_GREP_MATCHES} results; truncated)` : "");
-      return { content: [{ type: "text", text }], details: { count: matches.length } };
+    async execute(_id, { pattern, path, glob, ignoreCase = false }, signal) {
+      signal?.throwIfAborted();
+      const worker = new Worker(`(${grepWorker.toString()})()`, {
+        eval: true,
+        execArgv: [],
+        workerData: { base: resolveToolPath(workspace, path ?? "."), workspace, pattern, glob, ignoreCase, deadline: Date.now() + SEARCH_BUDGET_MS },
+      });
+      try {
+        return await new Promise<{ content: { type: "text"; text: string }[]; details: { count: number } }>((resolve, reject) => {
+          const timer = setTimeout(() => finish(new Error("Search exceeded its 5 second execution limit")), SEARCH_LIMIT_MS);
+          const onAbort = () => finish(signal?.reason ?? new Error("Search cancelled"));
+          const finish = (error?: unknown, result?: { text: string; count: number }) => {
+            clearTimeout(timer);
+            signal?.removeEventListener("abort", onAbort);
+            if (error) reject(error);
+            else if (result) resolve({ content: [{ type: "text", text: result.text }], details: { count: result.count } });
+          };
+          worker.once("message", (result: { text: string; count: number }) => finish(undefined, result));
+          worker.once("error", (error) => finish(error));
+          worker.once("exit", (code) => { if (code !== 0) finish(new Error(`Search worker exited (${code})`)); });
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
+        });
+      } finally { await worker.terminate(); }
     },
   };
 }
@@ -107,4 +97,54 @@ export function createFindTool(workspace: string): AgentTool<typeof FindParams> 
       return { content: [{ type: "text", text }], details: { count: found.length } };
     },
   };
+}
+
+// Self-contained so the same worker runs from compiled JS and source test runners.
+async function grepWorker(): Promise<void> {
+  const { parentPort, workerData } = require("node:worker_threads") as typeof import("node:worker_threads");
+  const { readdir, open, stat } = require("node:fs/promises") as typeof import("node:fs/promises");
+  const { dirname, join, matchesGlob, relative, isAbsolute, sep } = require("node:path") as typeof import("node:path");
+  const { base, workspace, pattern, glob, ignoreCase, deadline } = workerData as { base: string; workspace: string; pattern: string; glob?: string; ignoreCase: boolean; deadline: number };
+  const regex = new RegExp(pattern, ignoreCase ? "i" : "");
+  async function* walk(root: string): AsyncGenerator<string> {
+    let entries;
+    try { entries = await readdir(root, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const full = join(root, entry.name);
+      if (entry.isDirectory() && entry.name !== ".git" && entry.name !== "node_modules") yield* walk(full);
+      else if (entry.isFile()) yield full;
+    }
+  }
+  const isFile = (await stat(base)).isFile();
+  const root = isFile ? dirname(base) : base;
+  const matches: string[] = [];
+  let truncated = false;
+  let timedOut = false;
+  outer: for await (const file of isFile ? [base] : walk(base)) {
+    if (Date.now() >= deadline) { timedOut = true; break; }
+    if (glob && !matchesGlob(relative(root, file), glob)) continue;
+    let buf: Buffer;
+    try {
+      const handle = await open(file, "r");
+      try {
+        const size = (await handle.stat()).size;
+        if (size > 1_000_000) continue;
+        const buffer = Buffer.alloc(size);
+        const { bytesRead } = await handle.read(buffer, 0, size, 0);
+        buf = buffer.subarray(0, bytesRead);
+      } finally { await handle.close(); }
+    } catch { continue; }
+    if (buf.length > 1_000_000 || buf.subarray(0, 8000).includes(0)) continue;
+    const rel = relative(workspace, file);
+    const display = rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel) ? file : rel || ".";
+    const lines = buf.toString("utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? "";
+      if (!regex.test(line)) continue;
+      if (matches.length >= 200) { truncated = true; break outer; }
+      matches.push(`${display}:${i + 1}:${line.slice(0, 300)}`);
+    }
+  }
+  const note = truncated ? "\n… (more than 200 results; truncated)" : timedOut ? "\n… (search stopped at its time limit; narrow path or glob to search the rest)" : "";
+  parentPort!.postMessage({ text: (matches.length === 0 ? "No matches" : matches.join("\n")) + note, count: matches.length });
 }

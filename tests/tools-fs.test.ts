@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { chmod, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -36,6 +36,11 @@ describe("tool paths", () => {
 });
 
 describe("read", () => {
+  it("refuses an oversized single line before loading its contents", async () => {
+    await writeFile(join(ws, "large.txt"), "x".repeat(1_000_001));
+    await expect(createReadTool(ws).execute("1", { path: "large.txt", limit: 1 })).rejects.toThrow("read limit");
+  });
+
   it("returns numbered lines", async () => {
     await writeFile(join(ws, "a.txt"), "one\ntwo\nthree", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt" });
@@ -45,11 +50,53 @@ describe("read", () => {
   it("supports offset and limit and says how to continue", async () => {
     await writeFile(join(ws, "a.txt"), "1\n2\n3\n4\n5", "utf8");
     const result = await createReadTool(ws).execute("1", { path: "a.txt", offset: 2, limit: 2 });
-    expect(textOf(result)).toBe("2\t2\n3\t3\n… (5 lines in total; use offset to continue reading)");
+    expect(textOf(result)).toBe("2\t2\n3\t3\n… (use offset 4 to continue reading)");
+  });
+
+  it("pages through a file larger than the read limit", async () => {
+    await writeFile(join(ws, "app.log"), Array.from({ length: 200_000 }, (_, i) => `entry ${i + 1}`).join("\n"), "utf8");
+    const result = await createReadTool(ws).execute("1", { path: "app.log", offset: 150_000, limit: 2 });
+    expect(textOf(result)).toBe("150000\tentry 150000\n150001\tentry 150001\n… (use offset 150002 to continue reading)");
+  });
+
+  it("stops before the read limit and continues from the next line", async () => {
+    await writeFile(join(ws, "wide.txt"), ["a".repeat(600_000), "b".repeat(600_000), "c"].join("\n"), "utf8");
+    const result = await createReadTool(ws).execute("1", { path: "wide.txt" });
+    expect(textOf(result)).toBe(`1\t${"a".repeat(600_000)}\n… (use offset 2 to continue reading)`);
+  });
+
+  it("returns the trailing empty line and nothing past the end", async () => {
+    await writeFile(join(ws, "a.txt"), "one\n", "utf8");
+    expect(textOf(await createReadTool(ws).execute("1", { path: "a.txt" }))).toBe("1\tone\n2\t");
+    expect(textOf(await createReadTool(ws).execute("1", { path: "a.txt", offset: 5 }))).toBe("");
   });
 
   it("throws for a missing file", async () => {
     await expect(createReadTool(ws).execute("1", { path: "nope.txt" })).rejects.toThrow();
+  });
+});
+
+describe("MEMORY.md limits", () => {
+  const lines = (count: number) => Array.from({ length: count }, (_, i) => `- fact ${i}`).join("\n") + "\n";
+
+  it("refuses writes and edits that take MEMORY.md past 100 lines", async () => {
+    await createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(100) });
+    await expect(createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(101) })).rejects.toThrow("101 lines, over the 100-line limit");
+    await expect(createEditTool(ws).execute("1", { path: "MEMORY.md", oldText: "- fact 99\n", newText: "- fact 99\n- fact 100\n" })).rejects.toThrow("over the 100-line limit");
+    expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(100));
+  });
+
+  it("lets writes and edits shrink a MEMORY.md that is already over the limit", async () => {
+    await writeFile(join(ws, "MEMORY.md"), lines(150));
+    await createEditTool(ws).execute("1", { path: "MEMORY.md", oldText: "- fact 0\n- fact 1\n", newText: "" });
+    await createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(120) });
+    await expect(createWriteTool(ws).execute("1", { path: "MEMORY.md", content: lines(121) })).rejects.toThrow("over the 100-line limit");
+    expect(await readFile(join(ws, "MEMORY.md"), "utf8")).toBe(lines(120));
+  });
+
+  it("refuses writes that take MEMORY.md past 32 KB and leaves other files alone", async () => {
+    await expect(createWriteTool(ws).execute("1", { path: "./MEMORY.md", content: "x".repeat(32 * 1024 + 1) })).rejects.toThrow("MEMORY.md would exceed 32 KB");
+    await createWriteTool(ws).execute("1", { path: "notes/long.md", content: lines(500) });
   });
 });
 
@@ -58,6 +105,16 @@ describe("write", () => {
     const result = await createWriteTool(ws).execute("1", { path: "memory/2026-10-02.md", content: "note" });
     expect(await readFile(join(ws, "memory/2026-10-02.md"), "utf8")).toBe("note");
     expect(textOf(result)).toBe("Wrote memory/2026-10-02.md (4 bytes)");
+  });
+
+  it("replaces the file atomically, keeping its permissions and writing through a symlink", async () => {
+    await writeFile(join(ws, "real.md"), "old", "utf8");
+    await chmod(join(ws, "real.md"), 0o600);
+    await symlink(join(ws, "real.md"), join(ws, "link.md"));
+    await createWriteTool(ws).execute("1", { path: "link.md", content: "new" });
+    expect(await readFile(join(ws, "real.md"), "utf8")).toBe("new");
+    expect((await stat(join(ws, "real.md"))).mode & 0o777).toBe(0o600);
+    expect(await readdir(ws)).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.tmp$/)]));
   });
 });
 
@@ -74,6 +131,21 @@ describe("edit", () => {
     await expect(createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x" })).rejects.toThrow(/occurs 2 times/);
     await createEditTool(ws).execute("1", { path: "f.md", oldText: "a", newText: "x", replaceAll: true });
     expect(await readFile(join(ws, "f.md"), "utf8")).toBe("x b x $1");
+  });
+
+  it("keeps every change when edits to one file run concurrently", async () => {
+    const lines = Array.from({ length: 20 }, (_, i) => `<line ${i}>`);
+    await writeFile(join(ws, "f.md"), lines.join("\n"), "utf8");
+    const edit = createEditTool(ws);
+    await Promise.all(lines.map((line) => edit.execute("1", { path: "f.md", oldText: line, newText: `${line} done` })));
+    // Concurrent edits through a symlink share the same lock as the real path.
+    await symlink(join(ws, "f.md"), join(ws, "alias.md"));
+    await Promise.all([
+      edit.execute("2", { path: "alias.md", oldText: "<line 0> done", newText: "first" }),
+      edit.execute("3", { path: "f.md", oldText: "<line 19> done", newText: "last" }),
+    ]);
+    const text = await readFile(join(ws, "f.md"), "utf8");
+    expect(text.split("\n")).toEqual(["first", ...lines.slice(1, 19).map((line) => `${line} done`), "last"]);
   });
 
   it("fails when the text is absent or empty", async () => {

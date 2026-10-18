@@ -25,7 +25,7 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 
 | Module | Responsibility |
 |---|---|
-| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
+| `core/` | `Session` (one conversation = one pi `Agent`; serialises messages, steering, interruption), `SessionManager` (create, cache, persist, restore, evict idle WebChat sessions, temporary sessions), `EventBus`, the `TurnController` hooks through which runtime behaviour reaches a session |
 | `gateway/` | HTTP and WebSocket server, WebChat static files, token login |
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
@@ -71,12 +71,16 @@ Interactive, consolidation, heartbeat, and delegate runs use separate instructio
 
 ### Compaction
 
-When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation):
+When the projected history exceeds `compaction.threshold` of the context window (hard limit: the smaller of 85% and the window minus the model's output reservation), or the working history reaches 512 messages or 8 MiB of serialized data:
 
 1. Memory rescue: the messages about to be replaced are shown to a background run that appends lasting facts to today's `memory/YYYY-MM-DD.md`. Only messages not already rescued are processed.
 2. Summary: the background model summarises the older messages; the summary replaces them and recent turns stay verbatim.
 
-Compaction changes only what is sent to the model; transcripts keep every message. A failed compaction is not retried within the same run, and `transformContext` never throws: over budget, it trims to the most recent turns.
+The JSONL transcript keeps every message. Completed runs release durably summarized messages and condensed tool payloads from memory. The recent model window is bounded by 512 messages and 8 MiB, with one complete turn retained even if it exceeds these limits; tool calls and results are never separated. Without compaction, the model sees only this recent window. The request budget still checks every assembled provider request.
+
+Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run.
+
+WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory, starting from the nearest indexed byte offset (one every 1,000 items, extended as the transcript grows and rebuilt if it is rewritten).
 
 Messages are rendered to plain text for estimation and summarisation (tool results capped, images counted as a placeholder).
 
@@ -96,6 +100,8 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `schedule` | Create, list, delete scheduled messages |
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
+
+`read` streams the file line by line and returns at most 1 MB of text per call, ending with the offset to continue from; a single selected line over 1 MB is refused. `grep` skips files over 1 MB and executes in a worker with a five-second deadline; cancellation terminates the worker. Memory indexing reads session JSONL in bounded batches, skips records over 1 MB with a warning, and indexes only the first 1 MB of a larger memory file, up to its last complete line, with a warning.
 
 MCP tool names are mapped to `[A-Za-z0-9_-]{1,64}` with the original name kept for calls; collisions get a hash suffix. Server names are limited to letters, digits and hyphens (32 characters). A dropped connection is retried with exponential backoff; an HTTP server that rejects the session triggers a reconnect. Calls fail with an error result while disconnected.
 
@@ -129,7 +135,7 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 ## Memory
 
-- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`.
+- Writing: the agent edits Markdown files directly. Events and conversation notes go to `memory/YYYY-MM-DD.md`, stable facts about the owner to `USER.md`, lasting facts and decisions to `MEMORY.md`, persona changes to `SOUL.md`. The agent's `write` and `edit` calls refuse to take `MEMORY.md` past 100 lines or 32 KB.
 - Indexing: `index.sqlite` holds chunks of `memory/*.md`, `MEMORY.md`, `USER.md` and WeChat/WebChat transcripts (not temporary runs, not scheduled or proactive markers). Runs of Chinese, Japanese or Korean text are indexed as single characters and overlapping pairs. Updates are incremental: only bytes appended to a transcript are read, and a rewritten file is re-indexed. The index is versioned and rebuilt when the version changes or the file is corrupt.
 - Retrieval: `memory_search(query, limit?, scope?)` with scope `memory`, `sessions` or `all`; results are snippets with source and date, ranked by BM25.
 - Consolidation: at `memory.consolidateAt` (03:00) a temporary session reads the last seven daily notes plus `MEMORY.md` and `USER.md`, merges duplicates, removes stale entries and keeps `MEMORY.md` under 100 lines. It sends nothing to the owner.

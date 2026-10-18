@@ -1,11 +1,10 @@
-import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { bilibili } from "./bilibili.mjs";
 import { douyin } from "./douyin.mjs";
-import { firstUrl as sharedFirstUrl, hostMatches } from "./shared.mjs";
+import { firstUrl as sharedFirstUrl, hostMatches, importCompiled } from "./shared.mjs";
 import { summarizeText } from "./summarize.mjs";
 import { transcribeVideo } from "./stt.mjs";
 import { xiaohongshu } from "./xiaohongshu.mjs";
@@ -112,12 +111,6 @@ export async function readLink(text, { fetchPublicPage, request, ask, sessdata, 
   }
   if (content.truncated) lines.push("(Source processing limit reached; this is not the complete original)");
   return lines.join("\n");
-}
-
-async function importCompiled(path) {
-  const built = new URL(`../../../${path}`, import.meta.url);
-  const source = new URL(`../../../dist/${path}`, import.meta.url);
-  return import((existsSync(built) ? built : source).href);
 }
 
 async function main(args) {
