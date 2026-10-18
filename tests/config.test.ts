@@ -40,6 +40,7 @@ describe("parseConfig", () => {
       ['vault: { url: "https://me:pw@g/x.git" }', /must not contain a username or password/],
       ['vault: { url: "ssh://git@g/x.git" }', /vault\/url/],
       ['vault: { url: "git@g:me/notes.git" }', /vault\/url/],
+      ['vault: { url: "https://g/x.git", branch: "--upload-pack=x" }', /branch must not start with -/],
     ];
     for (const [block, message] of bad) expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(message);
   });

@@ -96,15 +96,21 @@ describe("GitMirror", () => {
     expect(restarted.error).toMatch(/fatal/);
   });
 
-  it("reports a failed first clone without throwing, and retries at once", async () => {
+  it("reports a failed first clone without throwing, and retries a minute later", async () => {
     const missing = join(dir, "missing.git");
-    const m = mirror(missing);
+    const run = vi.fn(runGit);
+    const m = mirror(missing, { run });
     const state = await m.refresh();
     expect(state.root).toBeNull();
     expect(state.error).toMatch(/fatal/);
     const { remote, work } = makeRemote(src);
     commit(work, { "a.md": "v1" }, "2026-10-01T10:00:00+0000");
     git(src, ["clone", "--bare", remote, missing]);
+    const calls = run.mock.calls.length;
+    clock.now += 30_000;
+    expect((await m.refresh()).error).toMatch(/fatal/);
+    expect(run.mock.calls.length).toBe(calls);
+    clock.now += 31_000;
     const retry = await m.refresh();
     expect(retry.error).toBeUndefined();
     expect(readFileSync(join(retry.root!, "a.md"), "utf8")).toBe("v1");
@@ -189,6 +195,11 @@ describe("parseLog", () => {
   it("keeps the newest commit time of each file", () => {
     const out = "\u000010\n\nA.md\nB.md\n\u00005\n\nA.md\nC.md\n";
     expect([...parseLog(out)]).toEqual([["A.md", 10_000], ["B.md", 10_000], ["C.md", 5_000]]);
+  });
+
+  it("reads paths git quotes", () => {
+    const out = '\u000010\n\n"He said \\"hi\\".md"\n"tab\\there.md"\n"caf\\303\\251.md"\n';
+    expect([...parseLog(out).keys()]).toEqual(['He said "hi".md', "tab\there.md", "café.md"]);
   });
 });
 

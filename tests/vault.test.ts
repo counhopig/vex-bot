@@ -153,6 +153,20 @@ describe("Vault with a git repository", () => {
     expect((await v.read("New.md")).changed).toBe("2026-10-01T10:00:00.000Z");
   });
 
+  it("dates a note edited after its last commit in a local repository by its file time", async () => {
+    const src = join(dir, "src");
+    await mkdir(src);
+    const { work } = makeRemote(src);
+    commit(work, { "Committed.md": "alpha", "Edited.md": "alpha" }, "2026-09-01T10:00:00+0000");
+    await utimes(join(work, "Committed.md"), new Date("2026-08-01T10:00:00Z"), new Date("2026-08-01T10:00:00Z"));
+    await writeFile(join(work, "Edited.md"), "alpha edited");
+    await utimes(join(work, "Edited.md"), new Date("2026-10-10T10:00:00Z"), new Date("2026-10-10T10:00:00Z"));
+    const v = new Vault({ home: join(dir, "home"), config: { path: work } });
+    const out = await v.search({ since: "2026-10-01" });
+    expect(out.results.map((r) => [r.path, r.changed])).toEqual([["Edited.md", "2026-10-10T10:00:00.000Z"]]);
+    expect((await v.read("Committed.md")).changed).toBe("2026-09-01T10:00:00.000Z");
+  });
+
   it("fails clearly when the repository cannot be fetched", async () => {
     const v = new Vault({ home: join(dir, "home"), config: { url: join(dir, "missing.git") }, protocols: "file" });
     await expect(v.search({ query: "x" })).rejects.toThrow(/The notes vault could not be fetched: .*fatal/);

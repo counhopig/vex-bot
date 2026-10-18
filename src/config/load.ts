@@ -16,6 +16,7 @@ function checkVault(vault: VaultConfig, paths: VexPaths): VaultConfig {
     if (vault.branch || vault.username || vault.token) return fail("branch, username and token apply only to a git url; remove them when using a folder");
     return { path: resolve(paths.home, expandHome(vault.path)) };
   }
+  if (vault.branch?.startsWith("-")) return fail("branch must not start with -");
   let address: URL;
   try { address = new URL(vault.url!); } catch { return fail("url is not a valid address"); }
   if (address.username || address.password) return fail("url must not contain a username or password; use the username and token settings");

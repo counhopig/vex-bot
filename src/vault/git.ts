@@ -89,7 +89,7 @@ export class GitMirror {
 
   refresh(): Promise<MirrorState> {
     if (this.inflight) return this.inflight;
-    if (this.state.root && this.now() - this.lastAttempt < (this.opts.refreshEveryMs ?? 60_000)) return Promise.resolve(this.state);
+    if (this.now() - this.lastAttempt < (this.opts.refreshEveryMs ?? 60_000)) return Promise.resolve(this.state);
     this.inflight = this.sync().finally(() => { this.inflight = undefined; });
     return this.inflight;
   }
@@ -130,7 +130,7 @@ export class GitMirror {
   }
 
   private async update(): Promise<void> {
-    await this.git(["fetch", "--no-tags", "--prune", "origin", this.opts.branch ?? "HEAD"], this.root);
+    await this.git(["fetch", "--no-tags", "--prune", "origin", "--", this.opts.branch ?? "HEAD"], this.root);
     await this.git(["reset", "--hard", "FETCH_HEAD"], this.root);
     await this.git(["clean", "-ffdx"], this.root);
   }
@@ -149,6 +149,25 @@ export class GitMirror {
 const SAFE = ["-c", "safe.directory=*"];
 const LOG_ARGS = [...SAFE, "-c", "core.quotepath=false", "log", "--relative", "--name-only", "--no-renames", "--format=%x00%ct"];
 
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, "\\": 92 };
+
+/** Undoes git's C-style quoting of a path containing quotes, backslashes or control characters. */
+export function unquotePath(path: string): string {
+  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) return path;
+  const bytes: number[] = [];
+  const body = path.slice(1, -1);
+  for (let i = 0; i < body.length; i++) {
+    const char = body[i]!;
+    if (char !== "\\") { bytes.push(...Buffer.from(char, "utf8")); continue; }
+    const next = body[i + 1] ?? "";
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (octal) { bytes.push(parseInt(octal[0], 8)); i += 3; }
+    else if (next in C_ESCAPES) { bytes.push(C_ESCAPES[next]!); i += 1; }
+    else bytes.push(92);
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+
 /** Parses `git log --name-only --format=%x00%ct`; the first (newest) commit that touches a file wins. */
 export function parseLog(output: string): Map<string, number> {
   const times = new Map<string, number>();
@@ -156,7 +175,7 @@ export function parseLog(output: string): Map<string, number> {
     const [stamp, ...files] = chunk.split("\n").filter((line) => line !== "");
     const seconds = Number(stamp);
     if (!stamp || !Number.isFinite(seconds)) continue;
-    for (const file of files) if (!times.has(file)) times.set(file, seconds * 1000);
+    for (const file of files.map(unquotePath)) if (!times.has(file)) times.set(file, seconds * 1000);
   }
   return times;
 }

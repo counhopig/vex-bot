@@ -232,10 +232,19 @@ export class Vault {
     return next;
   }
 
-  /** Commit time when the notes live in a git repository, file time otherwise. */
+  /**
+   * Commit time for a git copy, whose file times are checkout times. In a local folder that is also a
+   * git repository, a file edited after its last commit keeps its newer file time.
+   */
   private async changedAt(root: string, notes: Map<string, CacheEntry>): Promise<(path: string) => number> {
     const useGit = this.mirror !== undefined || (await stat(join(root, ".git")).then(() => true, () => false));
     const commits = useGit ? await this.times.get(root) : null;
-    return (path) => commits?.get(path) ?? notes.get(path)?.mtimeMs ?? 0;
+    const mirrored = this.mirror !== undefined;
+    return (path) => {
+      const committed = commits?.get(path);
+      const modified = notes.get(path)?.mtimeMs;
+      if (committed === undefined) return modified ?? 0;
+      return mirrored || modified === undefined ? committed : Math.max(committed, modified);
+    };
   }
 }
