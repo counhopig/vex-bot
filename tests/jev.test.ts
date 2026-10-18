@@ -248,3 +248,41 @@ it("returns consumed classification usage when routing rejects before the main p
   expect(provider).not.toHaveBeenCalled();
   expect(returned).toMatchObject({ input: 7, output: 2, totalTokens: 9, cost: { total: 9 } });
 });
+
+it("lets a reply without the routed tool stand after one corrective request", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("I think the idea is sound."), fauxAssistantMessage("I think the idea is sound.")]);
+  const judge = { route: async () => ({ tool: "memory_search", confidence: 0.9 }), unsupported: async () => 0 };
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { ...judged({ judge }), tools: () => [] });
+  const context = { messages: [{ role: "user" as const, content: "What do you think of this idea?", timestamp: Date.now() }] } as TranscriptContext;
+  const output = await boundary(faux.getModel(), context, undefined);
+  expect((await output.result()).content).toEqual([expect.objectContaining({ type: "text", text: "I think the idea is sound." })]);
+  expect(faux.getPendingResponseCount()).toBe(0);
+});
+
+it("keeps an early read receipt checkable after many later calls", async () => {
+  const url = "https://example.test/a";
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage(`I read ${url}.`)]);
+  const receipt = { version: 1, requestedUrl: url, sourceAvailable: true };
+  const messages: TranscriptContext["messages"] = [{ role: "user", content: `Read ${url} and check the workspace`, timestamp: 1 }];
+  const add = (id: string, name: string, args: Record<string, string>, details?: { receipt: typeof receipt }) => {
+    messages.push(fauxAssistantMessage(fauxToolCall(name, args, { id }), { stopReason: "toolUse" }));
+    messages.push({ role: "toolResult", toolCallId: id, toolName: name, content: [{ type: "text", text: "ok" }], ...(details ? { details } : {}), isError: false, timestamp: 2 });
+  };
+  add("read-link", "web_fetch", { url }, { receipt });
+  for (let i = 0; i < 14; i++) add(`grep-${i}`, "grep", { pattern: String(i) });
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
+  const output = await boundary(faux.getModel(), { messages } as TranscriptContext, undefined);
+  expect((await output.result()).content).toEqual([expect.objectContaining({ type: "text", text: `I read ${url}.` })]);
+});
+
+it("logs the redacted provider error behind the owner-facing message", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "HTTP 401: invalid key sk-secret" })]);
+  const warn = vi.fn();
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE, warn, secrets: () => ["sk-secret"] });
+  const output = await boundary(faux.getModel(), { messages: [{ role: "user" as const, content: "hello", timestamp: 1 }] } as TranscriptContext, undefined);
+  expect((await output.result()).errorMessage).toBe("Provider generation failed before a checked reply was available.");
+  expect(String(warn.mock.calls[0]?.[0])).toContain("HTTP 401: invalid key [redacted]");
+});

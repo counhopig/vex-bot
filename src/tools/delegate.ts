@@ -82,10 +82,11 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
             result: redactSecrets(result.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), secrets).slice(0, 1000),
             receipt: result.details && typeof result.details === "object" && "receipt" in result.details ? boundedEvidenceReceipt(result.details.receipt, secrets) : undefined }] : [];
         }).slice(-12);
-        const checkedReply = redactSecrets(last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join(""), secrets).slice(0, 4000);
+        const reply = last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+        const checkedReply = redactSecrets(reply, secrets).slice(0, 4000);
         const usage = messages.reduce((total, message) => message.role === "assistant" ? addUsage(total, message.usage) : total, zeroUsage());
         const receipt = { version: 1, evidence, checkedReply, usage };
-        return { content: [{ type: "text", text: JSON.stringify(receipt) }], details: { receipt }, usage };
+        return { content: [{ type: "text", text: reply }], details: { receipt }, usage };
       } finally {
         signal?.removeEventListener("abort", abort);
         unsubscribe();

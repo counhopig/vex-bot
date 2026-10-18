@@ -8,7 +8,10 @@ import { describeOutcomes, mentionsLink, extractUrls, unsupportedClaim, type Evi
 
 export const TOOL_EVIDENCE_ERROR = "The reply could not be verified against tool results. Please retry the request.";
 const MAX_EXCERPT = 1000;
+/** Entries sent to the advisor. */
 const MAX_EVIDENCE = 12;
+/** Calls the local claim check considers; a long run keeps its early receipts. */
+const MAX_CHECKED = 200;
 const MAX_RECEIPT_FIELDS = 30;
 
 function text(message: Message): string {
@@ -16,7 +19,7 @@ function text(message: Message): string {
 }
 
 /** The owner's current request and the bounded, redacted calls and results that answer it. */
-function currentTurn(context: TranscriptContext, profiles: EvidenceProfiles, secrets: string[] = [], activeRun = false): { request: string; evidence: unknown[]; hasResults: boolean; urls: string[]; blockedUrls: string[] } {
+function currentTurn(context: TranscriptContext, profiles: EvidenceProfiles, secrets: string[] = [], activeRun = false): { request: string; evidence: unknown[]; checks: unknown[]; hasResults: boolean; urls: string[]; blockedUrls: string[] } {
   const messages = context.messages.slice(-200).filter((message) => message.role !== "system");
   const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
   const scopedMessages = activeRun ? messages : messages.slice(Math.max(0, latestUserIndex));
@@ -29,7 +32,7 @@ function currentTurn(context: TranscriptContext, profiles: EvidenceProfiles, sec
     return result && result.role === "toolResult" ? [{ call, result }] : [];
   });
   const blockedUrls = urls.filter((url) => paired.some(({ call, result }) => profiles[call.name]?.endsLinkOnFailure && mentionsLink(call.arguments, url) && result.isError));
-  const evidence = paired.slice(-MAX_EVIDENCE).flatMap(({ call, result }) => {
+  const entries = paired.slice(-MAX_CHECKED).flatMap(({ call, result }) => {
     const hasReceipt = Boolean(result.details && typeof result.details === "object" && "receipt" in result.details);
     const receipt = hasReceipt ? receiptSummary((result.details as { receipt: unknown }).receipt, secrets) : undefined;
     const own = {
@@ -41,8 +44,8 @@ function currentTurn(context: TranscriptContext, profiles: EvidenceProfiles, sec
     const nested = profiles[call.name]?.nestedEvidence && Array.isArray(receipt?.evidence)
       ? receipt.evidence.filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object")).map((entry) => ({ ...entry, id: `${call.name}:${call.id}:${String(entry.callId ?? entry.id ?? "unknown")}` })) : [];
     return [own, ...nested];
-  }).slice(-MAX_EVIDENCE);
-  return { request, urls, blockedUrls, hasResults: paired.some(({ call }) => !profiles[call.name]?.bookkeeping), evidence };
+  });
+  return { request, urls, blockedUrls, hasResults: paired.some(({ call }) => !profiles[call.name]?.bookkeeping), evidence: entries.slice(-MAX_EVIDENCE), checks: entries };
 }
 
 export function boundedEvidenceReceipt(value: unknown, secrets: string[] = []): Record<string, unknown> | undefined {
@@ -89,28 +92,33 @@ function assistantOutput(message: AssistantMessage, content: AssistantMessage["c
 
 /** Replaces an unsupported reply with what the recorded receipts establish. */
 function fallback(message: AssistantMessage, state: ReturnType<typeof currentTurn>, profiles: EvidenceProfiles): AssistantMessage {
-  const outcomes = describeOutcomes(state, profiles);
+  const checked = { urls: state.urls, evidence: state.checks };
+  const outcomes = describeOutcomes(checked, profiles);
   let body = "I could not verify that the requested operation was performed, so I cannot report it as complete.";
   if (outcomes.length) body = outcomes.join(" ");
-  else if (state.evidence.some((entry) => Boolean(entry && typeof entry === "object" && (entry as { error?: unknown }).error === true))) body = "The requested operation failed; its matching tool result records the failure.";
+  else if (state.checks.some((entry) => Boolean(entry && typeof entry === "object" && (entry as { error?: unknown }).error === true))) body = "The requested operation failed; its matching tool result records the failure.";
   return assistantOutput(message, [{ type: "text", text: body }]);
 }
 
-function safeTerminal(message: AssistantMessage, usage: AssistantMessage["usage"]): AssistantMessage {
+/** Logs a provider failure, redacted, before the owner-facing message replaces it. */
+type ErrorLog = (message: AssistantMessage) => void;
+
+function safeTerminal(message: AssistantMessage, usage: AssistantMessage["usage"], log?: ErrorLog): AssistantMessage {
+  if (message.stopReason === "error" && message.errorMessage !== CONTEXT_BUDGET_ERROR) log?.(message);
   if (message.stopReason === "error") return assistantOutput({ ...message, errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." }, [], usage);
   if (message.stopReason === "aborted") return assistantOutput({ ...message, errorMessage: "Generation was cancelled before a checked reply was available." }, [], usage);
   return assistantOutput(message, message.content, usage);
 }
 
 /** Forwards a reply that needs no evidence check as it is generated, adding the usage spent before it. */
-function passThrough(upstream: AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> }, priorUsage: AssistantMessage["usage"]) {
+function passThrough(upstream: AsyncIterable<AssistantMessageEvent> & { result(): Promise<AssistantMessage> }, priorUsage: AssistantMessage["usage"], log?: ErrorLog) {
   const output = createAssistantMessageEventStream();
   let partial: AssistantMessage | undefined;
   void (async () => {
     try {
       for await (const event of upstream) {
         if (event.type === "done") output.push({ ...event, message: safeTerminal(event.message, addUsage(priorUsage, event.message.usage)) });
-        else if (event.type === "error") output.push({ ...event, error: safeTerminal(event.error, addUsage(priorUsage, event.error.usage)) });
+        else if (event.type === "error") output.push({ ...event, error: safeTerminal(event.error, addUsage(priorUsage, event.error.usage), log) });
         else {
           if ("partial" in event) partial = event.partial;
           output.push(event);
@@ -120,7 +128,7 @@ function passThrough(upstream: AsyncIterable<AssistantMessageEvent> & { result()
       output.end(safeTerminal(message, addUsage(priorUsage, message.usage)));
     } catch (error) {
       const base = partial ?? ({ role: "assistant", content: [], api: "unknown", provider: "unknown", model: "unknown", usage: zeroUsage(), timestamp: Date.now() } as unknown as AssistantMessage);
-      const failed = safeTerminal({ ...base, stopReason: "error", errorMessage: error instanceof Error ? error.message : String(error) }, priorUsage);
+      const failed = safeTerminal({ ...base, stopReason: "error", errorMessage: error instanceof Error ? error.message : String(error) }, priorUsage, log);
       output.push({ type: "error", reason: "error", error: failed });
       output.end(failed);
     }
@@ -152,6 +160,7 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     const secretValues = options.secrets?.() ?? [];
     const state = currentTurn({ ...context, messages: options.messages?.() ?? context.messages }, options.profiles, secretValues, options.messages !== undefined);
     const advised = { request: state.request, evidence: redactSecrets(state.evidence, secretValues), blockedUrls: state.blockedUrls, hasResults: state.hasResults };
+    const logProviderError: ErrorLog = (message) => options.warn?.(new Error(`Provider generation failed: ${redactSecrets(message.errorMessage ?? "no error message", secretValues)}`));
     let routeRequired = false;
     if (options.advisor && state.request) {
       try {
@@ -168,7 +177,7 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     let accumulatedUsage = addUsage(zeroUsage(), options.takeUsage?.() ?? zeroUsage());
     if (!state.urls.length && !state.hasResults && !routeRequired) {
       try {
-        return passThrough(await stream(model, context, callOptions), accumulatedUsage);
+        return passThrough(await stream(model, context, callOptions), accumulatedUsage, logProviderError);
       } catch (error) {
         options.returnUsage?.(accumulatedUsage);
         throw error;
@@ -208,6 +217,7 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
       accumulatedUsage = addUsage(accumulatedUsage, message.usage);
       lastProviderMessage = message;
       const output = createAssistantMessageEventStream();
+      if (message.stopReason === "error" && message.errorMessage !== CONTEXT_BUDGET_ERROR) logProviderError(message);
       if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "length") {
         const safe = assistantOutput({ ...message, ...(message.stopReason === "error" ? { errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." } : message.stopReason === "aborted" ? { errorMessage: "Generation was cancelled before a checked reply was available." } : {}) }, message.stopReason === "length" ? message.content.filter((part) => part.type === "toolCall") : [], accumulatedUsage);
         if (safe.stopReason === "error" || safe.stopReason === "aborted") output.push({ type: "error", reason: safe.stopReason, error: safe });
@@ -217,7 +227,10 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
       }
 
       const reply = text(message);
-      let unsupported = unsupportedClaim(reply, state, options.profiles) || (routeRequired && !state.hasResults && !message.content.some((part) => part.type === "toolCall"));
+      const claimed = unsupportedClaim(reply, { urls: state.urls, evidence: state.checks }, options.profiles);
+      // A route is advice: after one corrective request, a reply without the routed tool stands on its own claims.
+      const missedRoute = attempt === 0 && routeRequired && !state.hasResults && !message.content.some((part) => part.type === "toolCall");
+      let unsupported = claimed || missedRoute;
       if (options.advisor && reply) {
         try {
           // Always consult the advisor, even when the local check already rejected the reply.

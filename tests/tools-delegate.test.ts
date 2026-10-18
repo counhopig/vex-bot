@@ -41,7 +41,7 @@ describe("delegate", () => {
     }]);
     const result = await tool.execute("id", { task: "task marker" });
     const serialized = result.content[0];
-    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ version: 1, evidence: [], checkedReply: "final reply" });
+    expect(serialized).toEqual({ type: "text", text: "final reply" });
     expect(result.details).toMatchObject({ receipt: { version: 1, checkedReply: "final reply" } });
   });
 
@@ -65,7 +65,7 @@ describe("delegate", () => {
     const update = vi.fn();
     const result = await tool.execute("id", { task: "go" }, undefined, update);
     const serialized = result.content[0];
-    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "final only", evidence: [{ tool: "echo", error: false }] });
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "final only", evidence: [{ tool: "echo", error: false }] });
     expect(gate).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledOnce();
     expect(update.mock.calls.some(([result]) => result.details.type === "tool_execution_update")).toBe(true);
@@ -82,7 +82,7 @@ describe("delegate", () => {
     ]);
     const result = await tool.execute("id", { task: "go" });
     const serialized = result.content[0];
-    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "denied reply", evidence: [{ tool: "echo", error: true }] });
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "denied reply", evidence: [{ tool: "echo", error: true }] });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -105,7 +105,7 @@ describe("delegate", () => {
     ]);
     const result = await tool.execute("id", { task: "go" });
     const serialized = result.content[0];
-    expect(JSON.parse(serialized?.type === "text" ? serialized.text : "{}")).toMatchObject({ checkedReply: "tool failed reply", evidence: [{ tool: "echo", error: true, result: "child tool failed" }] });
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "tool failed reply", evidence: [{ tool: "echo", error: true, result: "child tool failed" }] });
   });
 
   it("uses dynamic tool subsets and strips delegate by default", async () => {
@@ -134,7 +134,8 @@ describe("delegate", () => {
     faux.setResponses([fauxAssistantMessage("I read the page and pushed it."), fauxAssistantMessage("I read the page and pushed it.")]);
     const result = await tool.execute("id", { task: "Read https://example.test/a and publish it." });
     const serialized = result.content[0];
-    const receipt = JSON.parse(serialized?.type === "text" ? serialized.text : "{}");
+    const receipt = (result.details as { receipt: { evidence: unknown[]; checkedReply: string } }).receipt;
+    expect(serialized).toMatchObject({ type: "text", text: receipt.checkedReply });
     expect(receipt.evidence).toEqual([]);
     expect(receipt.checkedReply).toContain("could not verify");
     expect(receipt.checkedReply).not.toContain("pushed");

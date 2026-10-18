@@ -19,6 +19,17 @@ it("checks link claims only against the tools a profile says can support them", 
   expect(unsupportedClaim("I'll compile it now; it was not read.", turn, profiles)).toBe(false);
 });
 
+it("leaves claims a successful general tool could explain to the advisor, except reading a link", () => {
+  const url = "https://github.com/me/repo";
+  const general = { ...profiles, shell: { general: true } };
+  const pushed = { urls: [url], evidence: [call("shell", { command: "git push" }, false)] };
+  expect(unsupportedClaim("Pushed.", pushed, general)).toBe(false);
+  expect(unsupportedClaim("已推送到远程。", pushed, general)).toBe(false);
+  expect(unsupportedClaim(`I read ${url}.`, pushed, general)).toBe(true);
+  const failed = { urls: [url], evidence: [call("shell", { command: "git push" }, true)] };
+  expect(unsupportedClaim("Pushed.", failed, general)).toBe(true);
+});
+
 it("treats wording alone as no evidence either way", () => {
   // Without the owner's links there is no receipt-backed operation to check.
   const plain = { urls: [], evidence: [] };

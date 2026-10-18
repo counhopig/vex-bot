@@ -212,7 +212,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       const getTools = (): AgentTool<any>[] => {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
         const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]);
-        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets: evidenceSecrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence check unavailable") } })]);
+        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets: evidenceSecrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
       };
       const session = await Session.open({
         key,
@@ -221,7 +221,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         thinking: temporary ? config.backgroundModel.thinking : config.model.thinking,
         tools: getTools(),
         streamFn: models.streamFn,
-        evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err }, "tool routing unavailable") },
+        evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err, session: key }, "evidence boundary warning") },
         getApiKey,
         buildSystemPrompt: sessionPrompt,
         beforeToolCall,

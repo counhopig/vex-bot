@@ -8,7 +8,7 @@ const readSource = (receipt: Receipt | undefined): boolean => receipt === undefi
  */
 export const CORE_TOOL_EVIDENCE: EvidenceProfiles = {
   read: { supports: { read: true } },
-  bash: { endsLinkOnFailure: true },
+  bash: { endsLinkOnFailure: true, general: true },
   web_fetch: {
     supports: { read: readSource }, linkArgument: true, endsLinkOnFailure: true,
     describe: (receipt) => {

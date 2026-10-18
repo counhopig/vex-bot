@@ -22,6 +22,11 @@ export interface ToolEvidence {
   linkArgument?: boolean;
   /** A failed call that mentions a shared link ends that link's action. */
   endsLinkOnFailure?: boolean;
+  /**
+   * Runs arbitrary operations, such as a shell. After a successful call, claims other than reading a
+   * link are left to the evidence advisor: the result proves nothing either way.
+   */
+  general?: boolean;
   /** Runtime bookkeeping that proves no operation. */
   bookkeeping?: boolean;
   /** The receipt carries the calls of a child agent in `evidence`. */
@@ -125,6 +130,7 @@ export function unsupportedClaim(reply: string, turn: { urls: string[]; evidence
   return statements(reply).some((statement) => CLAIMS.some(({ kind, pattern }) => {
     if (!pattern.test(statement.text)) return false;
     if (!turn.urls.length && !entries.some((entry) => profiles[entry.tool]?.supports?.[kind])) return false;
+    if (kind !== "read" && entries.some((entry) => profiles[entry.tool]?.general && entry.error === false)) return false;
     // A clause naming some of the owner's links claims only those; one naming none claims them all.
     const described = turn.urls.filter((url) => statement.urls.some((named) => sameLink(named, url)));
     const targets = described.length ? described : turn.urls;
