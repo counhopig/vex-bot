@@ -140,6 +140,19 @@ describe("wiki history reconciliation", () => {
     expect(result.lastScanCommit).toBe(s1);
   });
 
+  it("ignores a published batch whose scan base does not resolve", async () => {
+    const { repo, root } = await seed();
+    const s1 = await writeAndCommit(repo, root, "wiki: notes", "wiki/b.md", "n1");
+    await publish(repo);
+    await writeAndCommit(repo, root, batch("b1", "scheduled", s1));
+    await writeAndCommit(repo, root, batch("b2", "scheduled", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"), "wiki/c.md", "c");
+    await publish(repo);
+    const result = await reconcile({ repo, state: state({ lastScanCommit: s1 }), marker: null, bootstrapRef: null });
+    expect(result.lastScanCommit).toBe(s1);
+    const alone = await reconcile({ repo, state: state(), marker: null, bootstrapRef: null });
+    expect(alone.lastScanCommit).toBe(s1);
+  });
+
   it("falls back to a full scan when an unresolvable state cursor has no published candidate", async () => {
     const { repo } = await seed();
     const result = await reconcile({ repo, state: state({ lastScanCommit: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" }), marker: null, bootstrapRef: null });

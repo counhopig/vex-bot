@@ -193,7 +193,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   }
 
   // Rule 6: newest scan base by ancestor ordering, among the valid state value and published advancing batches.
-  // An unresolvable state value is dropped so it can neither be returned nor make ancestry checks fail.
+  // An unresolvable state value or batch scan base is dropped so it can neither be returned nor make ancestry checks fail.
   const stateCursor = state?.lastScanCommit ?? null;
   const validStateCursor = stateCursor !== null && (await resolvesCommit(repo, stateCursor)) ? stateCursor : null;
   const candidates = new Set<string>();
@@ -203,12 +203,24 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     if (batch.kind === "scheduled" || batch.kind === "bootstrap") candidates.add(batch.scanBase);
   }
 
-  const ordered = [...candidates];
+  let ordered = [...candidates];
+  // Batch scan bases are checked only when they matter: alone, or when comparing them fails.
+  if (ordered.length === 1 && ordered[0] !== validStateCursor && !(await resolvesCommit(repo, ordered[0]!))) ordered = [];
+  let winner: string | null = null;
+  if (ordered.length > 1) {
+    try {
+      winner = await newestCandidate(repo, ordered);
+    } catch {
+      const resolvable: string[] = [];
+      for (const sha of ordered) if (await resolvesCommit(repo, sha)) resolvable.push(sha);
+      ordered = resolvable;
+      winner = ordered.length > 1 ? await newestCandidate(repo, ordered) : null;
+    }
+  }
   let lastScanCommit: string | null = null;
   if (ordered.length === 1) {
     lastScanCommit = ordered[0] ?? null;
   } else if (ordered.length > 1) {
-    const winner = await newestCandidate(repo, ordered);
     if (winner !== null) {
       lastScanCommit = winner;
     } else {
