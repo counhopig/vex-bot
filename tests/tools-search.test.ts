@@ -1,6 +1,6 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createCoreTools } from "../src/tools/registry.js";
 import { createFindTool, createGrepTool } from "../src/tools/search.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -38,6 +38,15 @@ describe("grep", () => {
     const timer = setTimeout(() => signal.abort(new Error("cancelled")), 200);
     try { await expect(pending).rejects.toThrow("cancelled"); }
     finally { clearTimeout(timer); }
+  });
+
+  it("returns what it found with a note when the scan reaches its time budget", async () => {
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now - 10_000);
+    try {
+      const out = textOf(await createGrepTool(ws).execute("1", { pattern: "coffee", ignoreCase: true }));
+      expect(out).toBe("No matches\n… (search stopped at its time limit; narrow path or glob to search the rest)");
+    } finally { clock.mockRestore(); }
   });
 
   it("finds matches with path and line number, skipping vendored and binary files", async () => {

@@ -7,6 +7,10 @@ import { resolveToolPath } from "./paths.js";
 
 const SKIP_DIRS = new Set([".git", "node_modules"]);
 const MAX_FIND_RESULTS = 500;
+/** The worker stops scanning and returns what it found after this long. */
+const SEARCH_BUDGET_MS = 4_000;
+/** A worker still busy after this long (for example inside one slow regular expression) is terminated. */
+const SEARCH_LIMIT_MS = 5_000;
 
 async function* walkFiles(root: string): AsyncGenerator<string> {
   let entries;
@@ -43,11 +47,11 @@ export function createGrepTool(workspace: string): AgentTool<typeof GrepParams> 
       const worker = new Worker(`(${grepWorker.toString()})()`, {
         eval: true,
         execArgv: [],
-        workerData: { base: resolveToolPath(workspace, path ?? "."), workspace, pattern, glob, ignoreCase },
+        workerData: { base: resolveToolPath(workspace, path ?? "."), workspace, pattern, glob, ignoreCase, deadline: Date.now() + SEARCH_BUDGET_MS },
       });
       try {
         return await new Promise<{ content: { type: "text"; text: string }[]; details: { count: number } }>((resolve, reject) => {
-          const timer = setTimeout(() => finish(new Error("Search exceeded its 5 second execution limit")), 5000);
+          const timer = setTimeout(() => finish(new Error("Search exceeded its 5 second execution limit")), SEARCH_LIMIT_MS);
           const onAbort = () => finish(signal?.reason ?? new Error("Search cancelled"));
           const finish = (error?: unknown, result?: { text: string; count: number }) => {
             clearTimeout(timer);
@@ -100,7 +104,7 @@ async function grepWorker(): Promise<void> {
   const { parentPort, workerData } = require("node:worker_threads") as typeof import("node:worker_threads");
   const { readdir, open, stat } = require("node:fs/promises") as typeof import("node:fs/promises");
   const { dirname, join, matchesGlob, relative, isAbsolute, sep } = require("node:path") as typeof import("node:path");
-  const { base, workspace, pattern, glob, ignoreCase } = workerData as { base: string; workspace: string; pattern: string; glob?: string; ignoreCase: boolean };
+  const { base, workspace, pattern, glob, ignoreCase, deadline } = workerData as { base: string; workspace: string; pattern: string; glob?: string; ignoreCase: boolean; deadline: number };
   const regex = new RegExp(pattern, ignoreCase ? "i" : "");
   async function* walk(root: string): AsyncGenerator<string> {
     let entries;
@@ -115,7 +119,9 @@ async function grepWorker(): Promise<void> {
   const root = isFile ? dirname(base) : base;
   const matches: string[] = [];
   let truncated = false;
+  let timedOut = false;
   outer: for await (const file of isFile ? [base] : walk(base)) {
+    if (Date.now() >= deadline) { timedOut = true; break; }
     if (glob && !matchesGlob(relative(root, file), glob)) continue;
     let buf: Buffer;
     try {
@@ -139,5 +145,6 @@ async function grepWorker(): Promise<void> {
       matches.push(`${display}:${i + 1}:${line.slice(0, 300)}`);
     }
   }
-  parentPort!.postMessage({ text: matches.length === 0 ? "No matches" : matches.join("\n") + (truncated ? "\n… (more than 200 results; truncated)" : ""), count: matches.length });
+  const note = truncated ? "\n… (more than 200 results; truncated)" : timedOut ? "\n… (search stopped at its time limit; narrow path or glob to search the rest)" : "";
+  parentPort!.postMessage({ text: (matches.length === 0 ? "No matches" : matches.join("\n")) + note, count: matches.length });
 }
