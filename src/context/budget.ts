@@ -73,12 +73,23 @@ export function outputReserve(model: Model<Api>, requestedOutput?: number): numb
   return output < model.contextWindow ? output : Math.floor(model.contextWindow / 4);
 }
 
+/**
+ * Requests already found to fit. Nested budget checks (session, evidence boundary, provider) pass
+ * the same context object along, so each layer after the first reuses the estimate.
+ */
+const fitted = new WeakMap<Context, Set<string>>();
+
 export function assertRequestFits(model: Model<Api>, context: Context, requestedOutput?: number): void {
   const output = outputReserve(model, requestedOutput);
+  const key = `${model.provider}/${model.id}/${model.contextWindow}/${output}/${context.messages.length}/${context.tools?.length ?? -1}/${context.systemPrompt?.length ?? -1}`;
+  if (fitted.get(context)?.has(key)) return;
   const input = estimateProviderInput(context);
   if (input + output > model.contextWindow) {
     throw new ContextBudgetError(`The final request needs about ${input} input tokens and ${output} output tokens, exceeding the ${model.contextWindow}-token model context.`);
   }
+  const keys = fitted.get(context) ?? new Set<string>();
+  keys.add(key);
+  fitted.set(context, keys);
 }
 
 /** Bytes left for a single user message after the system prompt, tool schemas, a fixed prefix and the output reservation. */
