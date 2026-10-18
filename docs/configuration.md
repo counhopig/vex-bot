@@ -17,7 +17,7 @@ The settings page has seven tabs:
 
 | Tab | What it edits |
 |---|---|
-| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one |
+| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one; optional Jev tool routing |
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search, the notes vault |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
@@ -80,6 +80,11 @@ Saving in WebChat settings applies the change without a manual restart:
 | `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps a read-only copy. The address must not contain credentials |
 | `vault.branch` | default branch | Branch of the repository to follow; only with `vault.url` |
 | `vault.username`, `vault.token` | none | Credentials for a private repository: the account name your host expects and a read-only access token (some hosts accept any username); only with `vault.url` |
+| `jev.enabled` | `false` | Use TypeSafe Jev for tool suggestions and tool-evidence checks in owner conversations |
+| `jev.apiKey` | none | Official TypeSafe API key; `TYPESAFE_API_KEY` also works |
+| `jev.model` | `jev-latest` | TypeSafe decision model |
+| `jev.confidence` | `0.8` | Minimum routing confidence and unsupported-claim probability for intervention (0.5–1) |
+| `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
 Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule` and `delegate` are `allow`; `write` and `edit` are `allow` inside the workspace and `ask` outside; `bash` and MCP tools are `ask`.
@@ -87,6 +92,14 @@ Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_
 ## Models
 
 Built-in providers (DeepSeek, Kimi, MiniMax, Zhipu, Qwen, Xiaomi, OpenRouter and the others in the installed pi-ai registry) are referenced by `provider` and `id`. Any OpenAI- or Anthropic-compatible endpoint is declared under `providers` with `api` and `baseUrl`. A model can see images only when it declares `input: [text, image]`; the built-in image skill requires such a model.
+
+## Jev tool routing
+
+Enable Jev under **Settings → Model → Tool routing (Jev)** and enter your TypeSafe API key. Save to apply the configuration. The key is stored with the other secrets and is never returned in the settings response.
+
+Jev uses the [official TypeSafe evaluation API](https://docs.typesafe.ai/api). It receives the bounded request, available tool names and descriptions, execution evidence, and a proposed reply; configuration secrets are excluded. Jev gives advisory tool suggestions. Local evidence checks remain active regardless of Jev. Receipts establish whether a read succeeded; a model summary or child-agent narration is not execution evidence.
+
+When a run involves shared links, tool results or a required tool, final replies are held until their operation claims are checked against current-turn receipts; other replies stream as they are generated and are not sent to Jev for checking. Low-confidence routes do not force a tool. Jev API errors log a warning. Each check adds an API request, and a corrective model request may also be needed. Background tasks use profile-specific tools and prompts.
 
 ## MCP servers
 
@@ -137,7 +150,7 @@ The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md
 
 ## Skills
 
-A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads the body with `read` and runs scripts with `bash`, which follows the approval policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
+A skill is a directory with `SKILL.md` and optional scripts. Frontmatter requires `name` (lowercase letters, digits and hyphens, up to 64 characters) and `description` (up to 1024 characters). Built-in skills ship with Vex (`weather`, `image`, `link-reader`); a workspace skill with the same name overrides a built-in one. Vex reads skill bodies and runs their scripts according to their runtime interface and the applicable tool policy. Unreadable skills are skipped with a warning. See `docs/samples/skills/daily-brief/SKILL.md`.
 
 The `image` skill uses the primary model unless its script receives `--provider` and `--model`; that model must accept image input. From a source checkout it needs `npm run build` first.
 
@@ -192,13 +205,13 @@ The `link-reader` skill uses it for Bilibili and YouTube videos that have no sub
 
 ## Reading share links
 
-Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`), and it runs the bundled `link-reader` skill. Because skill scripts run through `bash`, each read follows the `bash` approval policy (`/ya` allows it for the rest of a conversation). See the architecture guide for what each platform returns. Limits to know about:
+Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`), Owner-facing reads use the programmatic bundled reader. A manual run of the `link-reader` skill script uses `bash` and follows the `bash` approval policy. See the architecture guide for what each platform returns. Limits to know about:
 
 - A Bilibili or YouTube video without subtitles is transcribed only when `stt` is set (see below); otherwise you get title, author, duration and description only. Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
 - Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.
 - For WeChat articles, copy the article link and send it as text. Reading returns the title, account name and article body; verification pages, deleted articles and articles without a readable body return an error.
-- Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. Because the skill is a script, you can adjust it in a workspace copy (`skills/link-reader/`), which overrides the bundled one.
+- Platforms change their pages and APIs. A failure is reported as an error, and other web pages still work through `web_fetch`. For manual skill-script runs, you can adjust the script in a workspace copy (`skills/link-reader/`), which overrides the bundled one. Automatic owner-facing reads use the bundled programmatic reader.
 
 ## Notes vault
 

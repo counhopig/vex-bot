@@ -56,6 +56,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),
     ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
+    ...(raw.jev ? { jev: raw.jev } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,

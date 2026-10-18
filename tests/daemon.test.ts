@@ -24,6 +24,8 @@ beforeEach(async () => {
   faux = createFaux();
 });
 afterEach(async () => {
+  // A failed fake-timer test must not leave later tests waiting on a frozen clock.
+  vi.useRealTimers();
   client?.close();
   client = undefined;
   await daemon?.stop();
@@ -166,9 +168,9 @@ describe("startDaemon", () => {
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(35, 1);
     await writeFile(join(workspace, "skills", "custom", "SKILL.md"), "---\nname: custom\ndescription: Changed skill\n---\nBody\n");
-    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("updated"); }]);
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); return fauxAssistantMessage("second reply"); }]);
     client!.send({ type: "send", sessionId: id, text: "again" });
-    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "updated");
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "second reply");
     expect(prompt).toContain("Changed skill");
   });
 
@@ -194,7 +196,8 @@ describe("startDaemon", () => {
     await mkdir(workspace, { recursive: true });
     await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
     let calls = 0;
-    faux.setResponses([(ctx) => { calls++; expect(getCurrentSystemPrompt(ctx.messages)).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    let heartbeatPrompt = "";
+    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
     await new Promise(resolve => setTimeout(resolve, 1400));
     await daemon.stop(); daemon = undefined;
@@ -202,8 +205,26 @@ describe("startDaemon", () => {
     expect(history).toContain("检查完成，需要注意");
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
+    expect(heartbeatPrompt).toContain("## Available tools");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
+  });
+
+  it("builds the consolidation profile prompt and workspace-only toolset in the assembled daemon", async () => {
+    vi.useFakeTimers();
+    // Consolidation fires at 03:00 local time, so the clock must be local too.
+    vi.setSystemTime(new Date(2026, 9, 11, 2, 59, 59));
+    let prompt = "";
+    let tools: string[] = [];
+    let task = "";
+    faux.setResponses([(ctx) => { prompt = getCurrentSystemPrompt(ctx.messages); tools = getCurrentTools(ctx.messages).map((tool) => tool.name); task = String(ctx.messages.filter((message) => message.role === "user").at(-1)?.content ?? ""); return fauxAssistantMessage("Consolidation complete."); }]);
+    daemon = await startDaemon({ paths, config: config({ memory: { consolidateAt: "03:00" } }), log: createLogger(), models: models() });
+    await vi.advanceTimersByTimeAsync(1_500);
+    await vi.waitFor(() => expect(prompt).toContain("Window: memory consolidation"));
+    expect(task).toContain("Distil what recurs or is clearly important");
+    expect(tools).toEqual(expect.arrayContaining(["read", "write", "edit", "grep", "find", "memory_search"]));
+    await daemon.stop(); daemon = undefined;
+    vi.useRealTimers();
   });
 
   it("wires feel without approval and persists its temporary emotion", async () => {

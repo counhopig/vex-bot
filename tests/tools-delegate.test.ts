@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDelegateTool, type DelegateOptions } from "../src/tools/delegate.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
+import { evidence } from "./helpers/evidence.js";
 
 let workspace: string;
 beforeEach(async () => { workspace = await makeTmpDir(); });
@@ -20,7 +21,7 @@ describe("delegate", () => {
       return { content: [{ type: "text" as const, text: "tool result" }], details: {} };
     });
     const echo: AgentTool = { name: "echo", label: "echo", description: "echo", parameters: Type.Object({}), execute };
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo], ...overrides });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo], ...overrides });
     return { faux, tool, echo, execute };
   }
 
@@ -38,7 +39,20 @@ describe("delegate", () => {
       expect(prompt).not.toContain("private memory marker");
       return fauxAssistantMessage("final reply");
     }]);
-    expect(await tool.execute("id", { task: "task marker" })).toMatchObject({ content: [{ text: "final reply" }] });
+    const result = await tool.execute("id", { task: "task marker" });
+    const serialized = result.content[0];
+    expect(serialized).toEqual({ type: "text", text: "final reply" });
+    expect(result.details).toMatchObject({ receipt: { version: 1, checkedReply: "final reply" } });
+  });
+
+  it("rejects an oversized delegated request before calling the child provider", async () => {
+    const faux = createFaux();
+    const provider = vi.fn(fauxStreamFn(faux));
+    const model = { ...faux.getModel(), contextWindow: 1000, maxTokens: 900 };
+    const { echo } = setup({ model, streamFn: provider });
+    const tool = createDelegateTool({ evidence, workspace, model, streamFn: provider, getApiKey: () => "test", tools: [echo] });
+    await expect(tool.execute("id", { task: "go" })).rejects.toMatchObject({ code: "VEX_CONTEXT_BUDGET" });
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it("inherits approval and streams child tool progress", async () => {
@@ -49,7 +63,9 @@ describe("delegate", () => {
       fauxAssistantMessage("final only"),
     ]);
     const update = vi.fn();
-    expect(await tool.execute("id", { task: "go" }, undefined, update)).toMatchObject({ content: [{ text: "final only" }] });
+    const result = await tool.execute("id", { task: "go" }, undefined, update);
+    const serialized = result.content[0];
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "final only", evidence: [{ tool: "echo", error: false }] });
     expect(gate).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledOnce();
     expect(update.mock.calls.some(([result]) => result.details.type === "tool_execution_update")).toBe(true);
@@ -64,7 +80,9 @@ describe("delegate", () => {
         return fauxAssistantMessage("denied reply");
       },
     ]);
-    expect(await tool.execute("id", { task: "go" })).toMatchObject({ content: [{ text: "denied reply" }] });
+    const result = await tool.execute("id", { task: "go" });
+    const serialized = result.content[0];
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "denied reply", evidence: [{ tool: "echo", error: true }] });
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -77,7 +95,7 @@ describe("delegate", () => {
   it("surfaces child tool errors to the child model", async () => {
     const { faux, echo } = setup();
     echo.execute = async () => { throw new Error("child tool failed"); };
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall("echo", {}), { stopReason: "toolUse" }),
       (ctx) => {
@@ -85,14 +103,16 @@ describe("delegate", () => {
         return fauxAssistantMessage("tool failed reply");
       },
     ]);
-    expect(await tool.execute("id", { task: "go" })).toMatchObject({ content: [{ text: "tool failed reply" }] });
+    const result = await tool.execute("id", { task: "go" });
+    const serialized = result.content[0];
+    expect((result.details as { receipt: unknown }).receipt).toMatchObject({ checkedReply: "tool failed reply", evidence: [{ tool: "echo", error: true, result: "child tool failed" }] });
   });
 
   it("uses dynamic tool subsets and strips delegate by default", async () => {
     const { faux, echo } = setup();
     const recursive = { ...echo, name: "delegate" };
     const getTools = vi.fn(() => [echo, recursive]);
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", getTools });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", getTools });
     faux.setResponses([(ctx) => {
       const system = ctx.messages.find((message) => message.role === "system");
       expect(JSON.stringify(system)).not.toContain('"name":"delegate"');
@@ -106,7 +126,19 @@ describe("delegate", () => {
   it("surfaces model failures", async () => {
     const { faux, tool } = setup();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "provider failed" })]);
-    await expect(tool.execute("id", { task: "go" })).rejects.toThrow("provider failed");
+    await expect(tool.execute("id", { task: "go" })).rejects.toThrow("Provider generation failed");
+  });
+
+  it("returns a checked fallback when the child claims an operation without using a tool", async () => {
+    const { faux, tool } = setup();
+    faux.setResponses([fauxAssistantMessage("I read the page and pushed it."), fauxAssistantMessage("I read the page and pushed it.")]);
+    const result = await tool.execute("id", { task: "Read https://example.test/a and publish it." });
+    const serialized = result.content[0];
+    const receipt = (result.details as { receipt: { evidence: unknown[]; checkedReply: string } }).receipt;
+    expect(serialized).toMatchObject({ type: "text", text: receipt.checkedReply });
+    expect(receipt.evidence).toEqual([]);
+    expect(receipt.checkedReply).toContain("could not verify");
+    expect(receipt.checkedReply).not.toContain("pushed");
   });
 
   it("propagates abort into a running child tool", async () => {
@@ -119,7 +151,7 @@ describe("delegate", () => {
       signal?.addEventListener("abort", () => { childAborted = true; reject(new Error("aborted")); }, { once: true });
       started();
     });
-    const tool = createDelegateTool({ workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
+    const tool = createDelegateTool({ evidence, workspace, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "test", tools: [echo] });
     faux.setResponses([fauxAssistantMessage(fauxToolCall("echo", {}), { stopReason: "toolUse" })]);
     const run = tool.execute("id", { task: "go" }, controller.signal);
     await ready;
