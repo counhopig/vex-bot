@@ -40,11 +40,16 @@ const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string) => string> = {
   deny: (tool) => `Denied: ${tool}`,
 };
 
+const MAX_INBOUND_ATTEMPTS = 8;
+
 export class WeChatChannel {
   private readonly abort = new AbortController();
   private readonly seen = new Set<string>();
   private readonly pending = new Map<string, InboundMessage>();
   private readonly dispatched = new Set<string>();
+  private readonly failures = new Map<string, { attempts: number; retryAt: number }>();
+  private inboxVersion = 0;
+  private savedInboxVersion = 0;
   private stateWrites: Promise<void> = Promise.resolve();
   private readonly announced = new Set<string>();
   private contextToken: string | undefined;
@@ -100,15 +105,18 @@ export class WeChatChannel {
         await this.dispatchPending();
         const { messages, syncBuf } = await this.opts.client.getUpdates(this.syncBuf ?? "", this.abort.signal);
         backoff = initialBackoff;
+        let added = 0;
         for (const message of messages) {
           if (message.fromUserId === this.opts.ownerId && !this.seen.has(message.messageId) && !this.pending.has(message.messageId)) {
             this.pending.set(message.messageId, message);
+            this.inboxVersion++;
+            added++;
           }
         }
         // The inbox and cursor share one atomic snapshot, before any message is dispatched.
         const previous = this.syncBuf;
         if (syncBuf) this.syncBuf = syncBuf;
-        try { if (messages.length || syncBuf !== undefined) await this.saveState(); }
+        try { if (added || this.syncBuf !== previous) await this.saveState(); }
         catch (error) { this.syncBuf = previous; throw error; }
         await this.dispatchPending();
         if (messages.length === 0) await this.sleep(this.opts.idleDelayMs ?? 1000);
@@ -167,22 +175,41 @@ export class WeChatChannel {
     catch (error) { this.dispatched.delete(message.messageId); throw error; }
   }
 
+  /**
+   * Dispatches the saved inbox in arrival order. A failing message holds back later ones and is
+   * retried with exponential backoff until it succeeds or is dropped after its last attempt.
+   */
   private async dispatchPending(): Promise<void> {
-    if (this.pending.size) await this.saveState();
+    if (this.savedInboxVersion !== this.inboxVersion) await this.saveState();
     for (const message of [...this.pending.values()]) {
       if (this.abort.signal.aborted) return;
       if (this.dispatched.has(message.messageId)) continue;
+      const failure = this.failures.get(message.messageId);
+      if (failure && Date.now() < failure.retryAt) return;
       try {
         await this.handleInbound(message);
+        this.failures.delete(message.messageId);
         if (!this.dispatched.has(message.messageId)) {
           this.acknowledge(message.messageId);
           await this.saveState();
         }
-      } catch (err) { this.opts.log.warn({ err }, "failed to handle wechat message; retained in inbox"); }
+      } catch (err) {
+        const attempts = (failure?.attempts ?? 0) + 1;
+        if (attempts < MAX_INBOUND_ATTEMPTS) {
+          const base = this.opts.initialBackoffMs ?? 1000;
+          this.failures.set(message.messageId, { attempts, retryAt: Date.now() + Math.min(base * 2 ** (attempts - 1), this.opts.maxBackoffMs ?? 60_000) });
+          this.opts.log.warn({ err, attempts }, "failed to handle wechat message; retained in inbox");
+          return;
+        }
+        this.opts.log.error({ err, attempts }, "dropping a wechat message that failed repeatedly");
+        this.acknowledge(message.messageId);
+        await this.saveState().catch(() => {});
+      }
     }
   }
 
   private acknowledge(id: string): void {
+    this.failures.delete(id);
     this.pending.delete(id);
     this.dispatched.delete(id);
     this.seen.add(id);
@@ -190,6 +217,7 @@ export class WeChatChannel {
   }
 
   private async saveState(): Promise<void> {
+    const version = this.inboxVersion;
     const state = {
       ...(this.contextToken ? { contextToken: this.contextToken } : {}),
       ...(this.syncBuf ? { syncBuf: this.syncBuf } : {}),
@@ -199,6 +227,7 @@ export class WeChatChannel {
     const write = this.stateWrites.then(() => this.opts.store.saveState(state));
     this.stateWrites = write.catch((err: unknown) => this.opts.log.warn({ err }, "failed to save wechat state"));
     await write;
+    this.savedInboxVersion = Math.max(this.savedInboxVersion, version);
   }
 
   private answerOldest(answer: ApprovalAnswer): void {

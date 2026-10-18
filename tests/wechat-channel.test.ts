@@ -178,7 +178,7 @@ describe("WeChatChannel inbound", () => {
     expect(session.sent).toEqual([]);
   });
 
-  it("retries a failed message without losing the rest of the batch", async () => {
+  it("retries a failed message before the rest of the batch", async () => {
     let getCallCount = 0;
     await startChannel({
       sessions: {
@@ -194,7 +194,23 @@ describe("WeChatChannel inbound", () => {
       textMessage("owner1", "第一句", { message_id: "f1" }),
       textMessage("owner1", "第二句", { message_id: "f2" }),
     );
-    await vi.waitFor(() => expect(session.sent).toEqual(["第二句", "第一句"]));
+    await vi.waitFor(() => expect(session.sent).toEqual(["第一句", "第二句"]));
+  });
+
+  it("drops a message that keeps failing so later messages are not held back", async () => {
+    await startChannel({
+      sessions: {
+        get: async (key) => {
+          keys.push(key);
+          return { busy: false, stop: () => session.stop(), send: (text: string) => { if (text === "坏消息") throw new Error("always fails"); session.send(text); } };
+        },
+      },
+      initialBackoffMs: 1,
+      maxBackoffMs: 2,
+    });
+    ilink.queueUpdates(textMessage("owner1", "坏消息", { message_id: "bad" }), textMessage("owner1", "好消息", { message_id: "good" }));
+    await vi.waitFor(() => expect(session.sent).toEqual(["好消息"]), { timeout: 3000 });
+    expect((await store.loadState()).seenIds).toContain("bad");
   });
 });
 
