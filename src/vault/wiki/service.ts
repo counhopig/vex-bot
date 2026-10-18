@@ -227,13 +227,15 @@ export class Wiki {
     if (!this.opened) { this.start(); return null; }
     const gate = this.nextAttemptAt();
     if (gate !== null && now < gate) return null;
+    // Only a pending bootstrap can start off-cadence; an idle wiki reads no history between runs.
+    if (!cadenceDue && this.lastStatus && this.lastStatus.bootstrap !== "pending") return null;
     const { bootstrap, bootstrapDeferred } = await this.status();
     return dueWikiWork({ bootstrap, gate, now, cadenceDue, bootstrapDeferred });
   }
 
   async status(): Promise<WikiStatus> {
     // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
-    if (this.statusCache && Date.now() - this.statusCache.at < 10_000) return this.statusCache.value;
+    if (this.statusCache && this.clock() - this.statusCache.at < 10_000) return this.statusCache.value;
     await this.ready();
     // A running operation may be mid-rebase; report the last settled status instead of reading history.
     if (this.lock.busy && this.lastStatus) return this.lastStatus;
@@ -243,7 +245,7 @@ export class Wiki {
     this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     const value = statusOf(state, reconciled);
     this.lastStatus = value;
-    this.statusCache = { at: Date.now(), value };
+    this.statusCache = { at: this.clock(), value };
     return value;
   }
 
@@ -307,7 +309,7 @@ export class Wiki {
             rollback: null,
             failureStreak: 0,
             nextAttemptAt: null,
-            lastRunAt: Date.now(),
+            lastRunAt: this.clock(),
           });
           await this.marker.remove();
           this.cachedNextAttemptAt = null;
@@ -548,7 +550,7 @@ export class Wiki {
           rollback: null,
           failureStreak: 0,
           nextAttemptAt: null,
-          lastRunAt: Date.now(),
+          lastRunAt: this.clock(),
         });
         await this.marker.remove();
       } catch (error) {
@@ -580,7 +582,7 @@ export class Wiki {
     const current = (await this.stateStore.read()) ?? emptyState();
     const failureStreak = current.failureStreak + 1;
     const backoff = Math.min(60 * 60_000, 5 * 60_000 * 2 ** (failureStreak - 1));
-    const nextAttemptAt = Date.now() + backoff;
+    const nextAttemptAt = this.clock() + backoff;
     await this.stateStore.write({ ...current, failureStreak, nextAttemptAt });
     this.cachedNextAttemptAt = nextAttemptAt;
     return failureStreak;
@@ -696,7 +698,7 @@ export class Wiki {
         return { pushed: false, message: `could not publish the preview: ${(error as Error).message}` };
       }
       const current = (await this.stateStore.read()) ?? emptyState();
-      await this.stateStore.write({ ...current, bootstrap: "done", lastRunAt: Date.now() });
+      await this.stateStore.write({ ...current, bootstrap: "done", lastRunAt: this.clock() });
       return { pushed: true, message: "bootstrap preview published" };
     }, signal);
   }

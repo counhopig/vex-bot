@@ -120,6 +120,24 @@ describe("Wiki service", () => {
     } finally { vi.useRealTimers(); await wiki.close(); }
   });
 
+  it("reads no history for an idle bootstrapped wiki until the cadence is due", async () => {
+    const { remote, work } = makeRemote(join(dir, "idle"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const base = git(work, ["rev-parse", "HEAD"]).trim();
+    git(work, ["commit", "--allow-empty", "-m", `wiki: compile\n\nVex-Batch: b0\nVex-Kind: bootstrap\nVex-Scan-Base: ${base}`]);
+    git(work, ["push", "origin", "HEAD:refs/heads/main"]);
+    let now = Date.parse("2026-10-02T10:00:00Z");
+    const calls: string[][] = [];
+    const wiki = makeWiki(join(dir, "home"), remote, { now: () => now, run: (args, options) => { calls.push(args); return fileRun(args, options); } });
+    await wiki.init();
+    calls.length = 0;
+    now += 60_000;
+    expect(await wiki.dueWork(now, false)).toBeNull();
+    expect(calls).toEqual([]);
+    expect(await wiki.dueWork(now, true)).toBe("scheduled");
+    await wiki.close();
+  });
+
   it("reports the last settled status without reading history while a run holds the lock", async () => {
     let entered!: () => void;
     const inRun = new Promise<void>((resolve) => { entered = resolve; });
