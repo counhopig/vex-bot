@@ -113,6 +113,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
 
   const bus = new EventBus((err) => log.error({ err }, "event listener failed"));
   const approvals = new ApprovalManager({
+    everyCall: WIKI_PUBLISHING_TOOLS,
     onChange: () => bus.emit({ type: "approvals_changed" }),
     workspace: config.workspace,
     onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
@@ -520,6 +521,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
 /** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
 const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
 const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
+
+/** Wiki tools that publish to or rewrite the owner's repository; each call is confirmed. */
+const WIKI_PUBLISHING_TOOLS = ["wiki_bootstrap", "wiki_rollback"];
 
 /** What each tool's results prove, declared by the module that owns the tool. */
 const TOOL_EVIDENCE: EvidenceProfiles = { ...CORE_TOOL_EVIDENCE, ...VAULT_TOOL_EVIDENCE, ...WIKI_TOOL_EVIDENCE };

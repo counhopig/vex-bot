@@ -89,10 +89,10 @@ export function formatApprovalPrompt(request: ApprovalRequest, pendingCount: num
     detail = `${detail.slice(0, cut)}\n… (content too long; see the full text in WebChat)`;
   }
   const lines = [
-    request.windowLabel === "Wiki bootstrap" ? "[Approval needed] Wiki bootstrap preview is ready for review" : `[Approval needed] ${request.windowLabel} wants to run ${request.toolName}:`,
+    `[Approval needed] ${request.windowLabel} wants to run ${request.toolName}:`,
     detail,
-    request.windowLabel === "Wiki bootstrap"
-      ? `Reply /y to approve and push, /n to reject and discard the local preview. If there is no answer by ${formatClock(request.expiresAt, timeZone)}, the preview is kept without pushing.`
+    request.everyCall
+      ? `Reply /y to allow or /n to deny; this is asked every time (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`
       : `Reply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
   ];
   if (pendingCount > 1) lines.push(`(${pendingCount} approvals are pending; they are handled in order)`);

@@ -91,7 +91,7 @@ Saving in WebChat settings applies the change without a manual restart:
 | `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` and `wiki_rollback` are `allow`; `wiki_bootstrap`, `bash` and MCP tools are `ask`; `write` and `edit` are `allow` inside the workspace and `ask` outside.
+Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `bash` and MCP tools are `ask`, and `wiki_bootstrap` and `wiki_rollback` are confirmed on every call; `write` and `edit` are `allow` inside the workspace and `ask` outside.
 
 ## Models
 
