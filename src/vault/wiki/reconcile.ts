@@ -1,4 +1,4 @@
-import { parseTrailers, type WikiRepo } from "./git.js";
+import { parseTrailers, trailerValues, type WikiRepo } from "./git.js";
 import type { InFlightMarker } from "./marker.js";
 import type { WikiRollback, WikiState } from "./state.js";
 
@@ -33,13 +33,8 @@ function parseLog(output: string): CommitRecord[] {
   return records;
 }
 
-/** parseTrailers preserves the first spelling of each key, so lookups are case-insensitive. */
 function trailer(trailers: Record<string, string[]>, name: string): string | undefined {
-  const lower = name.toLowerCase();
-  for (const key of Object.keys(trailers)) {
-    if (key.toLowerCase() === lower) return trailers[key]?.[0];
-  }
-  return undefined;
+  return trailerValues(trailers, name)[0];
 }
 
 function parseKind(value: string | undefined): CompileBatch["kind"] {
@@ -105,8 +100,8 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
         preview: subject.startsWith(PREVIEW_SUBJECT) || (kind === "bootstrap" && !batchPublished),
       });
     } else if (rollbackId !== undefined || revertOf !== undefined) {
-      const rollbackIds = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-rollback")?.[1] ?? [];
-      const revertTargets = Object.entries(trailers).find(([key]) => key.toLowerCase() === "vex-revert-of")?.[1] ?? [];
+      const rollbackIds = trailerValues(trailers, "vex-rollback");
+      const revertTargets = trailerValues(trailers, "vex-revert-of");
       if (rollbackIds.length !== 1 || !rollbackIds[0] || revertTargets.length !== 1 || !revertTargets[0]) {
         alerts.push(`wiki history has an invalid rollback relationship on ${record.sha}`);
       } else {
@@ -193,7 +188,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   }
 
   // Rule 6: newest scan base by ancestor ordering, among the valid state value and published advancing batches.
-  // An unresolvable state value is dropped so it can neither be returned nor make ancestry checks fail.
+  // An unresolvable state value or batch scan base is dropped so it can neither be returned nor make ancestry checks fail.
   const stateCursor = state?.lastScanCommit ?? null;
   const validStateCursor = stateCursor !== null && (await resolvesCommit(repo, stateCursor)) ? stateCursor : null;
   const candidates = new Set<string>();
@@ -203,12 +198,24 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     if (batch.kind === "scheduled" || batch.kind === "bootstrap") candidates.add(batch.scanBase);
   }
 
-  const ordered = [...candidates];
+  let ordered = [...candidates];
+  // Batch scan bases are checked only when they matter: alone, or when comparing them fails.
+  if (ordered.length === 1 && ordered[0] !== validStateCursor && !(await resolvesCommit(repo, ordered[0]!))) ordered = [];
+  let winner: string | null = null;
+  if (ordered.length > 1) {
+    try {
+      winner = await newestCandidate(repo, ordered);
+    } catch {
+      const resolvable: string[] = [];
+      for (const sha of ordered) if (await resolvesCommit(repo, sha)) resolvable.push(sha);
+      ordered = resolvable;
+      winner = ordered.length > 1 ? await newestCandidate(repo, ordered) : null;
+    }
+  }
   let lastScanCommit: string | null = null;
   if (ordered.length === 1) {
     lastScanCommit = ordered[0] ?? null;
   } else if (ordered.length > 1) {
-    const winner = await newestCandidate(repo, ordered);
     if (winner !== null) {
       lastScanCommit = winner;
     } else {

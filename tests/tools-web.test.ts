@@ -91,6 +91,15 @@ describe("public webpage access", () => {
     expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ sourceAvailable: false, textKind: null, title: "Video" });
     await expect(tool.execute("2", { url: "https://video.example/watch/1" }, AbortSignal.abort())).rejects.toMatchObject({ name: "AbortError" });
   });
+  it("ends a platform read at its time limit with a failed receipt", async () => {
+    const tool = createWebFetchTool({ sourceTimeoutMs: 30, sourceResolver: (_url, signal) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }) });
+    const result = await tool.execute("1", { url: "https://video.example/watch/long" }, new AbortController().signal);
+    expect(result.isError).toBe(true);
+    expect(result.details.receipt).toMatchObject({ sourceAvailable: false, error: "Read failed: the platform read did not finish within 1 seconds" });
+  });
+
   it("flags failed reads as tool errors and keeps the receipt", async () => {
     const request = vi.fn(async () => ({ status: 404, headers: {}, body: "missing" }));
     const failed = await createWebFetchTool({ request }).execute("1", { url: "https://example.com/missing" });

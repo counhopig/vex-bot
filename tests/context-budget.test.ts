@@ -58,6 +58,25 @@ describe("provider request budget", () => {
     expect(() => assertRequestFits(model, { messages: [{ role: "user", content: "x".repeat(3000), timestamp: 1 }] })).toThrow(ContextBudgetError);
   });
 
+  it("estimates a request once across nested budget checks and again after it grows", async () => {
+    const model = { ...createFaux().getModel(), contextWindow: 100000, maxTokens: 100 };
+    const provider = vi.fn(async () => "sent");
+    const stream = withContextBudget(withContextBudget(withContextBudget(provider as never)));
+    const context = { systemPrompt: "rules", messages: [{ role: "user" as const, content: "hello", timestamp: 1 }] };
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      await stream(model, context as never, {} as never);
+      const once = stringify.mock.calls.length;
+      stringify.mockClear();
+      await stream(model, context as never, {} as never);
+      expect(stringify.mock.calls.length).toBe(0);
+      context.messages.push({ role: "user", content: "x".repeat(400_000), timestamp: 2 });
+      await expect(stream(model, context as never, {} as never)).rejects.toBeInstanceOf(ContextBudgetError);
+      expect(once).toBeGreaterThan(0);
+    } finally { stringify.mockRestore(); }
+    expect(provider).toHaveBeenCalledTimes(2);
+  });
+
   it("makes zero provider calls for an oversized request", async () => {
     const provider = vi.fn();
     const stream = withContextBudget(provider as never);

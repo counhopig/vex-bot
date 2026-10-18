@@ -116,6 +116,27 @@ describe("Vault.read", () => {
     expect(other).toMatchObject({ path: "Ideas.md", backlinks: ["Projects/Vex.md"] });
   });
 
+  it("keeps backlinks current as notes are added, edited and removed on one instance", async () => {
+    await sample();
+    const v = vault();
+    expect((await v.read("Reading list.md")).backlinks).toEqual(["Projects/Vex.md"]);
+    await put("Books.md", "See [[Reading list]].\n");
+    expect((await v.read("Reading list.md")).backlinks).toEqual(["Books.md", "Projects/Vex.md"]);
+    await put("Books.md", "No links any more.\n", day(10, 9));
+    expect((await v.read("Reading list.md")).backlinks).toEqual(["Projects/Vex.md"]);
+    await rm(join(notes, "Projects", "Vex.md"));
+    expect((await v.read("Reading list.md")).backlinks).toEqual([]);
+  });
+
+  it("searches edited text on a reused instance", async () => {
+    await sample();
+    const v = vault();
+    expect((await v.search({ query: "pomodoro" })).total).toBe(0);
+    await put("Ideas.md", "# Ideas\nTry the pomodoro method.\n", day(10, 9));
+    const out = await v.search({ query: "pomodoro" });
+    expect(out.results.map((r) => [r.path, r.snippet])).toEqual([["Ideas.md", "# Ideas Try the pomodoro method."]]);
+  });
+
   it("truncates very long notes", async () => {
     await put("Long.md", "x".repeat(40_000));
     const note = await vault().read("Long.md");

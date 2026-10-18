@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { VaultConfig } from "../config/schema.js";
 import { isInside } from "../tools/paths.js";
 import { CommitTimes, GitMirror, type GitRunner } from "./git.js";
-import { bodyOf, buildBacklinks, buildResolver, parseNote, type NoteMeta } from "./parse.js";
+import { bodyOf, buildBacklinks, buildResolver, parseNote, type LinkResolver, type NoteMeta } from "./parse.js";
 
 /** A git working copy maintained elsewhere (the wiki's clone), read instead of a private mirror. */
 export interface NotesCopy {
@@ -37,13 +37,17 @@ export interface ReadOutput {
 }
 
 const MAX_NOTE_BYTES = 1_000_000;
+const TEXT_CACHE_BYTES = 64 * 1024 * 1024;
 const MAX_NOTES = 20_000;
 const MAX_READ_CHARS = 30_000;
 const SNIPPET_CHARS = 200;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 30;
 
-interface CacheEntry { root: string; size: number; mtimeMs: number; meta: NoteMeta }
+/** `body` is kept while the cached bodies stay under TEXT_CACHE_BYTES; otherwise searches read the file. */
+interface CacheEntry { root: string; size: number; mtimeMs: number; meta: NoteMeta; body?: string }
+/** Link resolution over one scan, rebuilt only when a note was added, changed or removed. */
+interface LinkIndex { resolve: LinkResolver; backlinks: Map<string, string[]>; byLowerPath: Map<string, string> }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -103,6 +107,7 @@ export class Vault {
   private readonly mirror?: GitMirror;
   private readonly times: CommitTimes;
   private cache = new Map<string, CacheEntry>();
+  private links: LinkIndex | undefined;
   private truncated = false;
 
   constructor(private readonly opts: VaultOptions) {
@@ -127,7 +132,7 @@ export class Vault {
     const folder = params.folder?.trim().replace(/^\/+|\/+$/g, "").toLowerCase();
     const limit = Math.min(Math.max(params.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
 
-    const candidates: { path: string; entry: CacheEntry; changed: number; matched: number; weight: number }[] = [];
+    const candidates: { path: string; entry: CacheEntry; changed: number; matched: number; weight: number; body?: string }[] = [];
     for (const [path, entry] of notes) {
       const changed = changedAt(path);
       if (since !== undefined && changed < since) continue;
@@ -141,8 +146,8 @@ export class Vault {
     if (patterns.length) {
       ranked = [];
       for (const candidate of candidates) {
-        const text = await readText(root, candidate.path);
-        const body = bodyOf(text);
+        const body = candidate.entry.body ?? bodyOf(await readText(root, candidate.path));
+        candidate.body = body;
         const headings = body.split("\n").filter((line) => /^#{1,6}\s/.test(line)).join("\n");
         const tags = candidate.entry.meta.tags.join(" ");
         for (const pattern of patterns) {
@@ -161,8 +166,8 @@ export class Vault {
 
     const results: SearchHit[] = [];
     for (const item of ranked.slice(0, limit)) {
-      const text = await readText(root, item.path);
-      results.push({ path: item.path, title: item.entry.meta.title, changed: iso(item.changed), tags: item.entry.meta.tags, snippet: excerpt(bodyOf(text), patterns) });
+      const body = item.body ?? item.entry.body ?? bodyOf(await readText(root, item.path));
+      results.push({ path: item.path, title: item.entry.meta.title, changed: iso(item.changed), tags: item.entry.meta.tags, snippet: excerpt(body, patterns) });
     }
     return { results, total: ranked.length, source: this.describe(source) };
   }
@@ -171,15 +176,16 @@ export class Vault {
     const wanted = normalizeNotePath(path);
     const { root, source } = await this.prepare();
     const notes = await this.scan(root);
-    const key = notes.has(wanted) ? wanted : [...notes.keys()].find((candidate) => candidate.toLowerCase() === wanted.toLowerCase());
+    const links = this.linkIndex(notes);
+    const key = notes.has(wanted) ? wanted : links.byLowerPath.get(wanted.toLowerCase());
     const entry = key ? notes.get(key) : undefined;
     const missing = new Error(`Note not found: ${wanted}. Use vault_search to find the path.`);
     if (!key || !entry) throw missing;
     const abs = join(root, key);
-    if (!isInside(await realpath(root), await realpath(abs).catch(() => ""))) throw missing;
+    const real = await realpath(abs).catch(() => null);
+    if (real === null || !isInside(await realpath(root), real)) throw missing;
     const text = await readFile(abs, "utf8");
-    const metas = metaOf(notes);
-    const resolve = buildResolver(metas);
+    const { resolve } = links;
     const seen = new Set<string>();
     const outLinks: { target: string; path: string | null }[] = [];
     for (const link of entry.meta.links) {
@@ -195,7 +201,7 @@ export class Vault {
       tags: entry.meta.tags,
       text: text.length > MAX_READ_CHARS ? `${text.slice(0, MAX_READ_CHARS)}\n… (truncated; ${text.length} characters in total)` : text,
       outLinks,
-      backlinks: buildBacklinks(metas, resolve).get(key) ?? [],
+      backlinks: links.backlinks.get(key) ?? [],
       source: this.describe(source),
     };
   }
@@ -225,19 +231,44 @@ export class Vault {
     const { files, truncated } = await listNotes(root, this.opts.maxNotes ?? MAX_NOTES);
     this.truncated = truncated;
     const next = new Map<string, CacheEntry>();
+    let cachedBytes = 0;
+    let changed = false;
+    const keepBody = (body: string): string | undefined => {
+      const bytes = body.length * 2;
+      if (cachedBytes + bytes > TEXT_CACHE_BYTES) return undefined;
+      cachedBytes += bytes;
+      return body;
+    };
     for (const rel of files) {
       const abs = join(root, rel);
       let info: Stats;
       try { info = await lstat(abs); } catch { continue; }
       if (!info.isFile() || info.size > MAX_NOTE_BYTES) continue;
       const old = this.cache.get(rel);
-      if (old && old.root === root && old.size === info.size && old.mtimeMs === info.mtimeMs) { next.set(rel, old); continue; }
+      if (old && old.root === root && old.size === info.size && old.mtimeMs === info.mtimeMs) {
+        const body = old.body === undefined ? undefined : keepBody(old.body);
+        next.set(rel, body === old.body ? old : { ...old, body });
+        continue;
+      }
       let text: string;
       try { text = await readFile(abs, "utf8"); } catch { continue; }
-      next.set(rel, { root, size: info.size, mtimeMs: info.mtimeMs, meta: parseNote(rel, text) });
+      changed = true;
+      const body = keepBody(bodyOf(text));
+      next.set(rel, { root, size: info.size, mtimeMs: info.mtimeMs, meta: parseNote(rel, text), ...(body === undefined ? {} : { body }) });
     }
+    if (changed || next.size !== this.cache.size) this.links = undefined;
     this.cache = next;
     return next;
+  }
+
+  private linkIndex(notes: Map<string, CacheEntry>): LinkIndex {
+    if (this.links) return this.links;
+    const metas = metaOf(notes);
+    const resolve = buildResolver(metas);
+    const byLowerPath = new Map<string, string>();
+    for (const path of notes.keys()) if (!byLowerPath.has(path.toLowerCase())) byLowerPath.set(path.toLowerCase(), path);
+    this.links = { resolve, backlinks: buildBacklinks(metas, resolve), byLowerPath };
+    return this.links;
   }
 
   /**

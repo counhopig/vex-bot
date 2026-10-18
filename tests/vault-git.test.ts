@@ -143,6 +143,7 @@ describe("GitMirror", () => {
       expect(args.join(" ")).not.toContain("s3cr3t");
       expect(env.GIT_CONFIG_KEY_0).toBe("http.extraHeader");
       expect(env.GIT_CONFIG_VALUE_0).toBe(`Authorization: Basic ${basic}`);
+      expect([env.GIT_CONFIG_KEY_1, env.GIT_CONFIG_VALUE_1]).toEqual(["http.followRedirects", "false"]);
       expect(env.GIT_TERMINAL_PROMPT).toBe("0");
       expect(env.GIT_ALLOW_PROTOCOL).toBe("http:https");
     }
@@ -160,6 +161,13 @@ describe("GitMirror", () => {
     expect(withToken.error).toContain("check vault.token (needs read access to the repository) and vault.username");
     const withoutToken = await mirror(url, { run }).refresh();
     expect(withoutToken.error).toContain("the repository may be private; set vault.token");
+  });
+
+  it("asks for the final address when a redirect is refused", async () => {
+    const run: GitRunner = async () => { throw new Error("fatal: unable to access 'https://git.example/me/notes.git/': The requested URL returned error: 301"); };
+    const state = await mirror("https://git.example/me/notes.git", { run, token: "s3cr3t" }).refresh();
+    expect(state.error).toContain("the repository address redirects; set vault.url to the address it redirects to");
+    expect(state.error).not.toContain("vault.token");
   });
 
   it("adds no token hint to unrelated failures", async () => {

@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "../../store/atomic.js";
-import { gitEnv, runGit, type GitRunner } from "../git.js";
+import { gitEnv, runGit, withGitHint, type GitRunner } from "../git.js";
 import type { FileFingerprint } from "./marker.js";
 
 export type { GitRunner };
@@ -31,7 +31,6 @@ interface RollbackExpectation {
 
 const CLONE_TIMEOUT_MS = 300_000;
 const GIT_TIMEOUT_MS = 60_000;
-const AUTH_FAILURE = /could not read Username|terminal prompts disabled|Authentication failed|Access denied|returned error: (401|403)|Invalid (username|credentials)/i;
 
 /** gitEnv isolates HOME, so git cannot auto-detect a committer identity; every wiki commit uses this fixed bot identity. */
 const IDENTITY = ["-c", "user.name=vex", "-c", "user.email=vex@localhost"];
@@ -408,12 +407,8 @@ export class WikiRepo {
   }
 
   private trailerValue(message: string, name: string): string | null {
-    const trailers = parseTrailers(message);
-    for (const key of Object.keys(trailers)) if (key.toLowerCase() === name.toLowerCase()) {
-      const values = trailers[key] ?? [];
-      return values.length === 1 ? values[0] ?? null : null;
-    }
-    return null;
+    const values = trailerValues(parseTrailers(message), name);
+    return values.length === 1 ? values[0] ?? null : null;
   }
 
   private async indexFingerprint(path: string): Promise<FileFingerprint> {
@@ -524,7 +519,7 @@ export class WikiRepo {
       const code = (error as { code?: unknown }).code;
       if (code === "ENOENT") throw new Error("git was not found; install git to use a wiki repository");
       const message = tail(scrub(error instanceof Error ? error.message : String(error), this.opts));
-      throw Object.assign(new Error(AUTH_FAILURE.test(message) ? `${message}; ${authHint(Boolean(this.opts.token))}` : message), { code });
+      throw Object.assign(new Error(withGitHint(message, authHint(Boolean(this.opts.token)))), { code });
     }
   }
 }
@@ -536,6 +531,13 @@ const TRAILER_LINE = /^\s*([A-Za-z0-9][A-Za-z0-9-]*):\s?(.*?)\s*$/;
  * paragraph after the subject counts, and only when every line in it is a trailer.
  * A key keeps the spelling of its first occurrence and collects the value of every line it appears on.
  */
+/** Every value of a trailer, matched case-insensitively: `parseTrailers` keeps the first spelling of each key. */
+export function trailerValues(trailers: Record<string, string[]>, name: string): string[] {
+  const lower = name.toLowerCase();
+  for (const key of Object.keys(trailers)) if (key.toLowerCase() === lower) return trailers[key] ?? [];
+  return [];
+}
+
 export function parseTrailers(message: string): Record<string, string[]> {
   const trailers: Record<string, string[]> = {};
   const spellings = new Map<string, string>();

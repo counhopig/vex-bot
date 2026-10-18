@@ -240,6 +240,8 @@ describe("startDaemon", () => {
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
     expect(heartbeatPrompt).toContain("## Available tools");
+    expect(heartbeatPrompt).toContain("## MEMORY.md");
+    expect(heartbeatPrompt).toContain("## Skills");
     expect(heartbeatTools).not.toContain("wiki_ingest");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
