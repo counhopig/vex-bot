@@ -211,6 +211,7 @@ The `link-reader` skill uses it for Bilibili and YouTube videos that have no sub
 
 Send Vex a link, or paste a whole share text, from Bilibili, YouTube, Douyin, Xiaohongshu or a WeChat public account article (`mp.weixin.qq.com`). Owner-facing reads use the programmatic bundled reader; shared links selected for archival are read by the runtime and saved under `raw/` before Wiki compilation. A manual run of the `link-reader` skill script uses `bash` and follows the `bash` approval policy. See the architecture guide for what each platform returns. Limits to know about:
 
+- A read through `web_fetch`, including any transcription, stops after 15 minutes and reports that it did not finish.
 - A Bilibili or YouTube video without subtitles is transcribed only when `stt` is set (see below); otherwise you get title, author, duration and description only. Douyin's work details need a login signature, so for Douyin only the pasted share text (author and caption, possibly cut) and the page's publish date and likes are available.
 - Bilibili shows most subtitles only to logged-in users. Copy the `SESSDATA` cookie value of a logged-in browser session into `links.bilibili.sessdata`. It is sent only to `api.bilibili.com`; keep `config.yaml` private.
 - Xiaohongshu may refuse pages without a login or a valid share token; paste the full share link rather than a bare note address.

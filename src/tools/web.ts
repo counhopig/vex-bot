@@ -163,6 +163,8 @@ export interface WebReadReceipt {
 export function createWebFetchTool(options: {
   request?: PageRequest;
   timeoutMs?: number;
+  /** Time allowed for a platform read, including any transcription; 15 minutes by default. */
+  sourceTimeoutMs?: number;
   sourceResolver?: (url: string, signal: AbortSignal, request?: PageRequest) => Promise<OriginalSource | undefined>;
 } = {}): AgentTool<typeof FetchParams> {
   return {
@@ -170,11 +172,13 @@ export function createWebFetchTool(options: {
     parameters: FetchParams,
     async execute(_id, { url, maxLength = 10_000 }, signal) {
       const operationSignal = signal ?? AbortSignal.timeout(options.timeoutMs ?? 30_000);
+      const sourceTimeoutMs = options.sourceTimeoutMs ?? 15 * 60_000;
+      const sourceDeadline = AbortSignal.timeout(sourceTimeoutMs);
       let original: OriginalSource | undefined;
       let page: (PageResponse & { url: string }) | undefined;
       let type = "";
       try {
-        original = await options.sourceResolver?.(url, operationSignal, options.request);
+        original = await options.sourceResolver?.(url, AbortSignal.any([operationSignal, sourceDeadline]), options.request);
         if (!original) {
           page = await fetchPublicPage(url, { ...options, signal: operationSignal });
           type = page.headers["content-type"] ?? "";
@@ -186,7 +190,9 @@ export function createWebFetchTool(options: {
         }
       } catch (error) {
         operationSignal.throwIfAborted();
-        const reason = error instanceof Error ? error.message.slice(0, 240) : "unknown read error";
+        const reason = sourceDeadline.aborted
+          ? `the platform read did not finish within ${sourceTimeoutMs >= 60_000 ? `${Math.round(sourceTimeoutMs / 60_000)} minutes` : `${Math.ceil(sourceTimeoutMs / 1000)} seconds`}`
+          : error instanceof Error ? error.message.slice(0, 240) : "unknown read error";
         const receipt: WebReadReceipt = { version: 1, requestedUrl: url, canonicalUrl: url, title: "", sourceAvailable: false, textKind: null, truncated: false, excerpt: "", error: `Read failed: ${reason}` };
         return { content: [{ type: "text", text: JSON.stringify({ type: "web_read_receipt", ...receipt }) }], details: { receipt }, isError: true };
       }
