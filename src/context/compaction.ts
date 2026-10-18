@@ -4,7 +4,7 @@ import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@earend
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import type { CompleteFn } from "../providers/models.js";
-import { assertRequestFits, ContextBudgetError, estimateProviderInput, withContextBudget } from "./budget.js";
+import { assertRequestFits, charTokens, estimateProviderInput, outputReserve, tokenEstimate, withContextBudget } from "./budget.js";
 
 export interface CompactionRecord {
   kind: "compaction";
@@ -93,11 +93,8 @@ export class ContextCompactor {
     const starts = history.flatMap((m, i) => m.role === "user" ? [i] : []);
     const previous = this.record?.through ?? 0;
     const through = Math.max(previous, starts.at(-(this.opts.keepTurns ?? 3)) ?? starts.at(-1) ?? 0);
-    const { contextWindow, maxTokens } = this.opts.model;
-    if (!Number.isSafeInteger(contextWindow) || contextWindow <= 0 || !Number.isSafeInteger(maxTokens) || maxTokens <= 0 || maxTokens >= contextWindow) {
-      throw new ContextBudgetError("The configured model has unusable context or output limits.");
-    }
-    const hardBudget = Math.floor(Math.min(contextWindow * 0.85, contextWindow - maxTokens));
+    const { contextWindow } = this.opts.model;
+    const hardBudget = Math.floor(Math.min(contextWindow * 0.85, contextWindow - outputReserve(this.opts.model)));
     const projectedInput = estimateProviderInput({ messages: projected });
     if (projectedInput <= contextWindow * (this.opts.threshold ?? 0.7) && projectedInput <= hardBudget) return projected;
     if (through <= previous && estimateProviderInput({ messages: projected }) <= hardBudget) return projected;
@@ -165,7 +162,7 @@ export class ContextCompactor {
     const instruction = "Compress this conversation material. Keep requests, facts, decisions, unfinished tasks and important tool results. Output only a concise summary and invent nothing.";
     if (!Number.isFinite(model.contextWindow) || model.contextWindow <= 0 || !Number.isFinite(model.maxTokens) || model.maxTokens <= 0) throw new Error("The background model has unusable context or output limits");
     const maxOutput = Math.min(2048, model.maxTokens, Math.floor(model.contextWindow * 0.2));
-    const budget = Math.floor(model.contextWindow - maxOutput) - Buffer.byteLength(instruction, "utf8") - 128;
+    const budget = Math.floor(model.contextWindow - maxOutput) - tokenEstimate(instruction) - 128;
     if (budget < 16) throw new Error("The background model's context window is too small to write a summary");
     const call = async (content: string): Promise<string> => {
       signal?.throwIfAborted();
@@ -240,7 +237,7 @@ function splitText(text: string, budget: number): string[] {
   let chunk = "";
   let tokens = 0;
   for (const char of text) {
-    const cost = Buffer.byteLength(char, "utf8");
+    const cost = charTokens(char);
     if (tokens + cost > budget && chunk) { chunks.push(chunk); chunk = ""; tokens = 0; }
     chunk += char;
     tokens += cost;

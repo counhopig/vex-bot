@@ -70,7 +70,7 @@ describe("Session", () => {
   it("rejects oversized tool declarations before the provider is called", async () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 4000, maxTokens: 100 };
-    const oversized = { ...echoTool, description: "schema declaration ".repeat(500) } as AgentTool<any>;
+    const oversized = { ...echoTool, description: "schema declaration ".repeat(2000) } as AgentTool<any>;
     const session = await Session.open({ evidence,
       key: "web:tool-budget", transcriptPath: join(dir, "tool-budget.jsonl"), model, tools: [oversized], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
