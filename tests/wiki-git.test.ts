@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GitRunner } from "../src/vault/git.js";
@@ -145,7 +145,7 @@ describe("WikiRepo", () => {
     const url = "https://git.example/me/vault.git";
     const withToken = await new WikiRepo({ home: join(dir, "home"), url, token: "s3cr3t", run }).open().catch((e: Error) => e.message);
     expect(withToken).toContain("could not read Username");
-    expect(withToken).toContain("check vault.token (needs read access to the repository) and vault.username");
+    expect(withToken).toContain("check vault.token (the wiki needs write access to the repository) and vault.username");
     const withoutToken = await new WikiRepo({ home: join(dir, "home"), url, run }).open().catch((e: Error) => e.message);
     expect(withoutToken).toContain("the repository may be private; set vault.token");
   });
@@ -211,6 +211,41 @@ describe("WikiRepo recovery and history", () => {
     await r.removeUntracked(["wiki/new"]);
     expect(existsSync(join(root, "wiki", "new"))).toBe(false);
     expect(await r.status()).toContain(" M wiki/a.md");
+  });
+
+  it("removeUntracked also deletes a new file that was already staged", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "staged.md"), "new");
+    git(root, ["add", "--", "wiki/staged.md"]);
+    await r.removeUntracked(["wiki/staged.md"]);
+    expect(existsSync(join(root, "wiki", "staged.md"))).toBe(false);
+    expect(await r.status()).toEqual([]);
+  });
+
+  it("leaves no revert in progress when a rollback check fails", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    const r = repo(remote);
+    const root = await r.open();
+    writeFileSync(join(root, "wiki", "a.md"), "v2");
+    const change = await r.commit(["wiki/a.md"], "change");
+    writeFileSync(join(root, "wiki", "stray.md"), "outside the rollback");
+    await expect(r.revert(change, "wiki: rollback\n\nVex-Rollback: 00000000-0000-4000-8000-000000000002\nVex-Revert-Of: test-batch")).rejects.toThrow("outside rollback scope");
+    expect(await r.status()).toEqual(["?? wiki/stray.md"]);
+    expect(await r.ref("REVERT_HEAD")).toBeNull();
+    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
+  });
+
+  it("resolves a data home reached through a symlink", async () => {
+    const { remote, work } = makeRemote(join(dir, "seed"));
+    commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
+    mkdirSync(join(dir, "real-home"));
+    symlinkSync(join(dir, "real-home"), join(dir, "home"));
+    const root = await repo(remote).open();
+    expect(root).toBe(join(realpathSync(join(dir, "real-home")), "wiki", key(remote)));
   });
 
   it("reverts a commit under the bot identity", async () => {

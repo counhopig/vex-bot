@@ -58,7 +58,7 @@ async function publish(repo: WikiRepo): Promise<void> {
 
 describe("wiki history reconciliation", () => {
   describe("in-flight marker resolution", () => {
-    it("treats a marker whose batch is committed as committed [Review Focus 1]", async () => {
+    it("treats a marker whose batch is committed as committed", async () => {
       const { repo, root, base } = await seed();
       await writeAndCommit(repo, root, batch("b1", "scheduled", base));
       const result = await reconcile({ repo, state: null, marker: marker("b1"), bootstrapRef: null });
@@ -101,7 +101,7 @@ describe("wiki history reconciliation", () => {
     expect(result.bootstrap).toBe("done");
   });
 
-  it("keeps a reverted batch out of scan regeneration [Review Focus 5]", async () => {
+  it("keeps a reverted batch out of scan regeneration", async () => {
     const { repo, root, base } = await seed();
     const s1 = await writeAndCommit(repo, root, "wiki: notes", "wiki/b.md", "n1");
     await publish(repo);
@@ -146,7 +146,7 @@ describe("wiki history reconciliation", () => {
     expect(result.lastScanCommit).toBeNull();
   });
 
-  it("recovers a revert committed before the state write [Review Focus 5]", async () => {
+  it("recovers a revert committed before the state write", async () => {
     const { repo, root, base } = await seed();
     await writeAndCommit(repo, root, batch("b1", "scheduled", base));
     await publish(repo);

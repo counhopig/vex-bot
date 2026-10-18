@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "../../store/atomic.js";
@@ -46,13 +47,17 @@ function scrub(message: string, auth: { username?: string; token?: string }): st
 
 /** Owner-facing hint for the common "git could not authenticate" failures, which git itself reports without mentioning the token. */
 const authHint = (hasToken: boolean): string =>
-  hasToken ? "check vault.token (needs read access to the repository) and vault.username" : "the repository may be private; set vault.token";
+  hasToken ? "check vault.token (the wiki needs write access to the repository) and vault.username" : "the repository may be private; set vault.token";
 
 const tail = (message: string): string => {
   const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
   const important = lines.filter((line) => /^(fatal|error):/i.test(line));
   return (important.length ? important : lines).slice(0, 2).join(" ").slice(0, 300);
 };
+
+function realHome(home: string): string {
+  try { return realpathSync(home); } catch { return home; }
+}
 
 async function exists(path: string): Promise<boolean> {
   try { await stat(path); return true; } catch { return false; }
@@ -68,7 +73,8 @@ export class WikiRepo {
   private readonly run: GitRunner;
 
   constructor(private readonly opts: WikiRepoOptions) {
-    this.dir = join(opts.home, "wiki");
+    // Path checks compare real paths, so a data home reached through a symlink is resolved once here.
+    this.dir = join(realHome(opts.home), "wiki");
     const key = createHash("sha256").update(`${opts.url}\n${opts.branch ?? ""}`).digest("hex").slice(0, 12);
     this.rootPath = join(this.dir, key);
     this.run = opts.run ?? runGit;
@@ -262,7 +268,10 @@ export class WikiRepo {
   /** Deletes the given untracked paths (and untracked content under them); tracked files are never touched. */
   async removeUntracked(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
-    await this.git(["clean", "-fd", "--", ...paths.map((path) => `:(literal)${path}`)]);
+    const literal = paths.map((path) => `:(literal)${path}`);
+    // A new file staged before an interruption is invisible to `git clean` until it leaves the index.
+    await this.git(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--", ...literal]);
+    await this.git(["clean", "-fd", "--", ...literal]);
   }
 
   async resetHard(rev: string): Promise<void> {
@@ -271,7 +280,18 @@ export class WikiRepo {
 
   /** Reverts `sha` without committing, then commits the result under the bot identity; returns the new HEAD. */
   async revert(sha: string, message: string): Promise<string> {
+    // A conflicting revert stays in place so owner edits to the conflicted files are never discarded.
     await this.git(["revert", "--no-commit", sha]);
+    try {
+      return await this.commitRevert(sha, message);
+    } catch (error) {
+      // Drops the clean staged reversal and REVERT_HEAD; `--merge` refuses to touch files edited since.
+      await this.git(["reset", "-q", "--merge"]).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private async commitRevert(sha: string, message: string): Promise<string> {
     const allowed = new Set(await this.changedPaths(sha));
     const entries = await this.statusEntries();
     const outside = entries.find((entry) => !allowed.has(entry.path));

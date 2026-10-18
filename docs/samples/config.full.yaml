@@ -97,7 +97,7 @@ stt:
 #   url: https://git.example.com/me/notes.git
 #   branch: main
 #   username: me
-#   token: "READ_ONLY_TOKEN"
+#   token: "WRITE_TOKEN"
 #   wiki:
 #     enabled: true
 #     every: 6h
