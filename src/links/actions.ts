@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentTool, BeforeToolCallContext, BeforeToolCallResult, StreamFn } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxToolCall, type Api, type AssistantMessage, type Model, type SimpleStreamOptions, type ToolResultMessage, type TranscriptContext } from "@earendil-works/pi-ai";
 import { ContextBudgetError } from "../context/budget.js";
+import { extractUrls } from "../context/claims.js";
 import type { LinkIntent } from "../policy/judge.js";
 import { createRequestActionOutcomeTool } from "../tools/requestOutcome.js";
 import type { TurnController } from "../core/turnController.js";
@@ -43,7 +44,6 @@ export interface LinkActionOptions {
 
 const URLS_PER_CLASSIFICATION = 10;
 const INPUT_LIMIT = 4_000;
-const URL_PATTERN = /https?:\/\/[^\s<>"']+/g;
 const FENCED_JSON = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/i;
 /**
  * Runs the owner's shared links as fixed actions for one live session: classify each URL's intent,
@@ -304,10 +304,6 @@ function validChoices(value: LinkIntent[], urls: string[]): boolean {
     seen.add(choice.url);
   }
   return seen.size === urls.length;
-}
-
-function extractUrls(input: string): string[] {
-  return [...new Set((input.match(URL_PATTERN) ?? []).map((url) => url.replace(/[),.!?。；，]+$/, "")))];
 }
 
 function synthetic(model: Model<Api>, message: AssistantMessage) {

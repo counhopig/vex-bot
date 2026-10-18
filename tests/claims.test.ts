@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { describeOutcomes, mentionsLink, unsupportedClaim, type EvidenceProfiles } from "../src/context/claims.js";
+import { describeOutcomes, extractUrls, mentionsLink, unsupportedClaim, type EvidenceProfiles } from "../src/context/claims.js";
 import { TOOL_EVIDENCE } from "./helpers/evidence.js";
 
 const profiles: EvidenceProfiles = {
@@ -28,6 +28,10 @@ it("leaves claims a successful general tool could explain to the advisor, except
   expect(unsupportedClaim(`I read ${url}.`, pushed, general)).toBe(true);
   const failed = { urls: [url], evidence: [call("shell", { command: "git push" }, true)] };
   expect(unsupportedClaim("Pushed.", failed, general)).toBe(true);
+});
+
+it("extracts links that CJK text follows directly", () => {
+  expect(extractUrls("看看https://a.example/x帮我存一下。再看 https://b.example/y.")).toEqual(["https://a.example/x", "https://b.example/y"]);
 });
 
 it("treats wording alone as no evidence either way", () => {

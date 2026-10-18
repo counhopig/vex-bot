@@ -83,8 +83,14 @@ export function mentionsLink(args: unknown, url: string): boolean {
 /** Claims about obtaining a link's source, which only a call on that link can support. */
 const SOURCE_CLAIMS = new Set<ClaimKind>(["read", "archived"]);
 
+/**
+ * A URL as written in chat. It ends at whitespace, quotes, angle brackets, CJK text or full-width
+ * punctuation, so "https://a.example/x帮我存一下" yields the link alone.
+ */
+export const URL_IN_TEXT = /https?:\/\/[^\s<>"'\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]+/g;
+
 export function extractUrls(text: string): string[] {
-  return [...new Set((text.match(/https?:\/\/[^\s<>"']+/g) ?? []).map((url) => url.replace(/[),.!?。；，]+$/, "")))];
+  return [...new Set((text.match(URL_IN_TEXT) ?? []).map((url) => url.replace(/[),.!?]+$/, "")))];
 }
 
 /** One clause of a reply that claims operations, bound to the links that clause names. */
@@ -105,7 +111,7 @@ const NO_SOURCE_OPERATION = /\bno\s+(?:source|page|article|text|link|content|fil
 function statements(reply: string): Statement[] {
   const urls: string[] = [];
   // URL paths and query strings can contain clause separators and negation words.
-  const protectedReply = reply.replace(/https?:\/\/[^\s<>"'。！？；，、]+/g, (value) => {
+  const protectedReply = reply.replace(URL_IN_TEXT, (value) => {
     const suffix = value.match(/[),.!?]+$/)?.[0] ?? "";
     urls.push(value.slice(0, value.length - suffix.length));
     return `URLTOKEN${urls.length - 1}END${suffix}`;

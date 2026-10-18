@@ -27,6 +27,12 @@ it("deduplicates repeated URLs within one request and keeps later requests disti
   expect(first.actions[0]?.requestId).toBe("request-1");
 });
 
+it("ends a shared link where CJK text or full-width punctuation follows it", () => {
+  const runtime = controller({ classify: async () => [], confidence: 0.8 });
+  const request = runtime.addOwnerRequest("request-1", "https://mp.weixin.qq.com/s/abc帮我存一下，还有https://b.example/x（看看）");
+  expect(request.actions.map((action) => action.url)).toEqual(["https://mp.weixin.qq.com/s/abc", "https://b.example/x"]);
+});
+
 it("does not settle a link action from an unrelated tool result", async () => {
   const url = "https://example.com/a";
   const runtime = controller({
