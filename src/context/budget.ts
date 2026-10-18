@@ -81,6 +81,14 @@ export function assertRequestFits(model: Model<Api>, context: Context, requested
   }
 }
 
+/** Bytes left for a single user message after the system prompt, tool schemas, a fixed prefix and the output reservation. */
+export function maxUserPromptBytes(model: Model<Api>, systemPrompt: string, tools: Context["tools"], prefix: string): number {
+  const baseline = estimateProviderInput({ systemPrompt, messages: [{ role: "user", content: prefix, timestamp: 0 }], tools });
+  const available = model.contextWindow - model.maxTokens - baseline - 512;
+  if (available < 1) throw new ContextBudgetError("The Wiki instructions and tool schemas leave no room for a source segment.");
+  return Math.floor(available);
+}
+
 export function withContextBudget(stream: StreamFn): StreamFn {
   return async (model, context, options) => {
     options?.signal?.throwIfAborted();

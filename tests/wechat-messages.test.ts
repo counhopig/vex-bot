@@ -85,6 +85,12 @@ describe("formatApprovalPrompt", () => {
     );
   });
 
+  it("offers no always-allow answer for a tool confirmed on every call", () => {
+    expect(formatApprovalPrompt({ ...request, toolName: "wiki_bootstrap", detail: "Publish the Wiki bootstrap preview", everyCall: true }, 1, "Asia/Shanghai")).toBe(
+      "[Approval needed] WebChat conversation 'Tidy' wants to run wiki_bootstrap:\nPublish the Wiki bootstrap preview\nReply /y to allow or /n to deny; this is asked every time (denied automatically if there is no answer by 14:10)",
+    );
+  });
+
   it("mentions the queue and truncates long details", () => {
     const text = formatApprovalPrompt({ ...request, detail: "x".repeat(2000) }, 3, "Asia/Shanghai");
     expect(text).toContain(`${"x".repeat(1500)}\n… (content too long; see the full text in WebChat)`);

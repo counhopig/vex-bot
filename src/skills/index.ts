@@ -1,1 +1,1 @@
-export { builtinSkillsDirectory, discoverSkills, skillsSection, type SkillInfo } from "./discovery.js";
+export { builtinSkillsDirectory, discoverSkills, skillBodySection, skillsSection, type SkillInfo } from "./discovery.js";

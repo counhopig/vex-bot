@@ -30,11 +30,12 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings |
 | `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
-| `links/` | Original-source reading for shared links |
+| `links/` | Original-source reading for shared links and `LinkActionController`, the turn controller that runs the owner's link actions |
 | `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
 | `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
-| `vault/` | Read-only notes vault: git mirror, note parsing and link resolution, `vault_search` and `vault_read` |
+| `vault/` | Notes vault: git mirror or folder, note parsing and link resolution, `vault_search` and `vault_read` |
+| `vault/wiki/` | LLM wiki over the vault's writable clone, which the vault then reads instead of a mirror: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
@@ -67,7 +68,7 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
-Interactive, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. Jev advises on intent and tool routing; tools still run through the regular tool gate. Receipts and tool results ground owner-facing operation claims.
+Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Jev advises on intent and tool routing; fixed link actions are executed by the runtime through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
 
 ### Compaction
 
@@ -99,6 +100,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
+| `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
 `read` streams the file line by line and returns at most 1 MB of text per call, ending with the offset to continue from; a single selected line over 1 MB is refused. `grep` skips files over 1 MB and executes in a worker with a five-second deadline; cancellation terminates the worker. Memory indexing reads session JSONL in bounded batches, skips records over 1 MB with a warning, and indexes only the first 1 MB of a larger memory file, up to its last complete line, with a warning.
@@ -111,7 +113,8 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate` | allow |
+| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest`, `wiki_rollback` | allow |
+| `wiki_bootstrap` | ask |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 
@@ -147,6 +150,10 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 `Vault` scans the folder on every call (skipping hidden names, symlinks, non-Markdown files and notes over 1 MB), keeping parsed metadata (title, tags, aliases, links) per file keyed by size and modification time, so only changed notes are parsed again. Bodies are read from disk when a search needs them. Backlinks are computed from the links of all notes when a note is read. A note's date is the last git commit time of its file (one `git log` pass, cached per HEAD), or the file time when there is no repository.
 
 `vault_read` accepts only a relative `.md` path without hidden segments, found in the scan, whose real path is still inside the vault. The session system prompt gains a short `Notes vault` section only when a vault is configured.
+
+## Notes wiki
+
+The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `wiki.notesCopy` (`WikiReadCopy`), which fast-forwards it only while no wiki operation holds or waits for the shared lock, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
 ## Mood and rest hours
 
@@ -217,6 +224,7 @@ The channel talks to the iLink OC API (`getupdates` long polling with a persiste
 |---|---|
 | Model call fails | Up to three retries, then the error goes to the window |
 | MCP server unreachable | Skipped at startup, retried in the background |
+| Wiki clone fails | Startup continues; the clone is retried in the background no sooner than a minute later |
 | WeChat poll fails | Reconnect with backoff |
 | WeChat session expired | QR login in vexd or `vex wechat login` |
 | Approval times out | Denied |

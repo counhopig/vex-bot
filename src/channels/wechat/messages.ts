@@ -91,7 +91,9 @@ export function formatApprovalPrompt(request: ApprovalRequest, pendingCount: num
   const lines = [
     `[Approval needed] ${request.windowLabel} wants to run ${request.toolName}:`,
     detail,
-    `Reply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
+    request.everyCall
+      ? `Reply /y to allow or /n to deny; this is asked every time (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`
+      : `Reply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
   ];
   if (pendingCount > 1) lines.push(`(${pendingCount} approvals are pending; they are handled in order)`);
   return lines.join("\n");

@@ -5,6 +5,7 @@ import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
+export type WikiWork = "bootstrap" | "scheduled";
 export interface ScheduledTask { id: string; name: string; schedule: ScheduleRule; prompt: string; target: string; enabled: boolean; nextAt: number | null }
 export interface SchedulerHooks {
   /** Resolves after the delivered turn has completed, including any steering. */
@@ -14,6 +15,9 @@ export interface SchedulerHooks {
   /** Sends to WeChat and appends an assistant message to its permanent history. */
   deliverHeartbeat(text: string, signal: AbortSignal): Promise<void>;
   checkOutreach(signal: AbortSignal): Promise<void>;
+  /** The wiki work allowed now: a pending bootstrap whatever the cadence, or a scheduled run once `cadenceDue`. */
+  wikiWork(now: number, cadenceDue: boolean): Promise<WikiWork | null>;
+  runWiki(work: WikiWork, signal: AbortSignal): Promise<void>;
   log(error: unknown): void;
 }
 export interface SchedulerOptions {
@@ -21,6 +25,8 @@ export interface SchedulerOptions {
   heartbeat?: { every: string; activeHours: [string, string] };
   memory?: { consolidateAt: string };
   outreach?: { enabled: boolean; checkEvery: string };
+  /** Wiki cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
+  wiki?: { every: string };
 }
 const DURATION = /^(\d+(?:\.\d+)?)(s|m|h|d)$/;
 export function duration(value: string): number {
@@ -67,6 +73,7 @@ export class Scheduler {
   private heartbeatAt: number;
   private outreachAt: number;
   private consolidationAt: number | null;
+  private wikiAt = 0;
   constructor(private readonly options: SchedulerOptions) {
     this.now = options.now ?? Date.now;
     this.heartbeatAt = this.now() + duration(options.heartbeat?.every ?? "30m");
@@ -74,6 +81,7 @@ export class Scheduler {
     const time = options.memory?.consolidateAt ?? "03:00"; minute(time);
     const [h, m] = time.split(":");
     this.consolidationAt = next({ cron: `${m} ${h} * * *` }, this.now());
+    if (options.wiki) this.wikiAt = next(cadenceRule(options.wiki.every), this.now()) ?? this.now();
     activeAt(this.now(), options.heartbeat?.activeHours ?? ["08:00", "22:00"]);
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
@@ -183,6 +191,13 @@ export class Scheduler {
         this.launch("consolidation", () => this.consolidate(now));
       }
       if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? "30m"); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
+      if (this.options.wiki) {
+        try {
+          const work = await this.options.hooks.wikiWork(now, now >= this.wikiAt);
+          if (work === "scheduled") this.wikiAt = next(cadenceRule(this.options.wiki.every), now) ?? now;
+          if (work) this.launch(work === "bootstrap" ? "wiki-bootstrap" : "wiki-run", () => this.options.hooks.runWiki(work, this.abort.signal));
+        } catch (error) { this.options.hooks.log(error); }
+      }
     } finally { this.ticking = false; }
   }
   private async heartbeat(): Promise<void> {

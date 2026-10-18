@@ -40,6 +40,17 @@ describe("ApprovalManager", () => {
     expect(approvals.isSessionAllowed("wechat", "bash")).toBe(false);
   });
 
+  it("confirms every-call tools each time even after an always-allow answer", async () => {
+    const approvals = new ApprovalManager({ everyCall: ["wiki_rollback"] });
+    const outcome = approvals.request({ ...input, toolName: "wiki_rollback", args: {} });
+    expect(approvals.pending()[0]).toMatchObject({ toolName: "wiki_rollback", everyCall: true });
+    approvals.answer(approvals.pending()[0]!.id, "allow_session");
+    await expect(outcome).resolves.toEqual({ allowed: true });
+    expect(approvals.isSessionAllowed("web:1", "wiki_rollback")).toBe(false);
+    void approvals.request(input);
+    expect(approvals.pending().at(-1)?.everyCall).toBeUndefined();
+  });
+
   it("denies after ten minutes without an answer", async () => {
     const approvals = new ApprovalManager();
     const outcome = approvals.request(input);

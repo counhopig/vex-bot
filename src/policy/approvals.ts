@@ -12,6 +12,8 @@ export interface ApprovalRequest {
   detail: string;
   createdAt: number;
   expiresAt: number;
+  /** The tool is confirmed on every call; "always allow" is not offered for it. */
+  everyCall?: true;
 }
 
 export interface ApprovalOutcome {
@@ -36,13 +38,15 @@ export class ApprovalManager {
   private readonly onChange: () => void;
   private readonly workspace: string | undefined;
   private readonly onEvent: (event: ApprovalEvent) => void;
+  private readonly everyCall: ReadonlySet<string>;
 
-  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string; onEvent?: (event: ApprovalEvent) => void } = {}) {
+  constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string; onEvent?: (event: ApprovalEvent) => void; everyCall?: Iterable<string> } = {}) {
     this.timeoutMs = opts.timeoutMs ?? 10 * 60_000;
     this.now = opts.now ?? Date.now;
     this.onChange = opts.onChange ?? (() => {});
     this.workspace = opts.workspace;
     this.onEvent = opts.onEvent ?? (() => {});
+    this.everyCall = new Set(opts.everyCall ?? []);
   }
 
   request(input: {
@@ -63,6 +67,7 @@ export class ApprovalManager {
       detail: approvalDetail(input.toolName, input.args, this.workspace),
       createdAt,
       expiresAt: createdAt + this.timeoutMs,
+      ...(this.everyCall.has(input.toolName) ? { everyCall: true as const } : {}),
     };
     return new Promise((resolve) => {
       const minutes = Math.round(this.timeoutMs / 60_000);
@@ -90,7 +95,7 @@ export class ApprovalManager {
     const pending = this.pendingById.get(id);
     if (!pending) return false;
     const { request } = pending;
-    if (answer === "allow_session") {
+    if (answer === "allow_session" && !request.everyCall) {
       const tools = this.sessionAllowed.get(request.sessionKey) ?? new Set<string>();
       tools.add(request.toolName);
       this.sessionAllowed.set(request.sessionKey, tools);
@@ -106,7 +111,7 @@ export class ApprovalManager {
   }
 
   isSessionAllowed(sessionKey: string, toolName: string): boolean {
-    return this.sessionAllowed.get(sessionKey)?.has(toolName) ?? false;
+    return !this.everyCall.has(toolName) && (this.sessionAllowed.get(sessionKey)?.has(toolName) ?? false);
   }
 
   dispose(): void {

@@ -118,6 +118,23 @@ describe("startDaemon", () => {
     ]);
   });
 
+  it("answers a shared link without a classification call when the wiki is off", async () => {
+    const prompts: string[] = [];
+    faux.setResponses([
+      (ctx) => {
+        prompts.push(getCurrentSystemPrompt(ctx.messages));
+        return fauxAssistantMessage("看过了");
+      },
+      fauxAssistantMessage("标题"),
+    ]);
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    await chat("看看 https://example.com/a");
+    const replies = client!.messages.flatMap((m) => m.type === "event" && m.event.kind === "assistant_message" ? [m.event.text] : []);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).not.toContain("link-intent classifier");
+    expect(replies).toEqual(["看过了"]);
+  });
+
   it("hides denied tools from the model", async () => {
     let toolNames: string[] = [];
     faux.setResponses([
@@ -213,7 +230,8 @@ describe("startDaemon", () => {
     await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
     let calls = 0;
     let heartbeatPrompt = "";
-    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
+    let heartbeatTools: string[] = [];
+    faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); heartbeatTools = getCurrentTools(ctx.messages).map((tool) => tool.name); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
     await new Promise(resolve => setTimeout(resolve, 1400));
     await daemon.stop(); daemon = undefined;
@@ -222,6 +240,7 @@ describe("startDaemon", () => {
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
     expect(heartbeatPrompt).toContain("## Available tools");
+    expect(heartbeatTools).not.toContain("wiki_ingest");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
   });
@@ -239,6 +258,7 @@ describe("startDaemon", () => {
     await vi.waitFor(() => expect(prompt).toContain("Window: memory consolidation"));
     expect(task).toContain("Distil what recurs or is clearly important");
     expect(tools).toEqual(expect.arrayContaining(["read", "write", "edit", "grep", "find", "memory_search"]));
+    expect(tools).not.toContain("wiki_ingest");
     await daemon.stop(); daemon = undefined;
     vi.useRealTimers();
   });
