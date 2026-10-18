@@ -25,13 +25,22 @@ function basicAuth(auth: GitAuth): string | undefined {
   return auth.token ? Buffer.from(`${auth.username || "git"}:${auth.token}`).toString("base64") : undefined;
 }
 
-/** The only environment git runs with. Credentials ride in an http.extraHeader, never in arguments or .git/config. */
+/**
+ * The only environment git runs with. Credentials ride in an http.extraHeader, never in arguments or
+ * .git/config. Git sends that header to wherever a redirect points, so with credentials it follows none.
+ */
 export function gitEnv(home: string, auth: GitAuth = {}, protocols = "http:https"): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { HOME: home, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_ALLOW_PROTOCOL: protocols };
   for (const key of PASSTHROUGH) if (process.env[key] !== undefined) env[key] = process.env[key];
   env.LC_ALL = "C";
   const basic = basicAuth(auth);
-  if (basic) Object.assign(env, { GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}` });
+  if (basic) {
+    Object.assign(env, {
+      GIT_CONFIG_COUNT: "2",
+      GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+      GIT_CONFIG_KEY_1: "http.followRedirects", GIT_CONFIG_VALUE_1: "false",
+    });
+  }
   return env;
 }
 
@@ -39,6 +48,16 @@ function scrub(message: string, auth: GitAuth): string {
   let text = message;
   for (const secret of [basicAuth(auth), auth.token]) if (secret) text = text.split(secret).join("***");
   return text.replace(/authorization:[^\n]*/gi, "Authorization: ***");
+}
+
+const REDIRECTED = /returned error: 30[1278]\b/;
+/** Owner-facing hint for a redirect refused because credentials are configured. */
+export const REDIRECT_HINT = "the repository address redirects; set vault.url to the address it redirects to";
+
+/** Adds the owner-facing hint for a redirect or authentication failure to a scrubbed git error. */
+export function withGitHint(message: string, authHint: string): string {
+  if (REDIRECTED.test(message)) return `${message}; ${REDIRECT_HINT}`;
+  return AUTH_FAILURE.test(message) ? `${message}; ${authHint}` : message;
 }
 
 const AUTH_FAILURE = /could not read Username|terminal prompts disabled|Authentication failed|Access denied|returned error: (401|403)|Invalid (username|credentials)/i;
@@ -141,7 +160,7 @@ export class GitMirror {
     } catch (error) {
       if ((error as { code?: unknown }).code === "ENOENT") throw new Error("git was not found; install git to use a vault url");
       const message = tail(scrub(error instanceof Error ? error.message : String(error), this.opts));
-      throw new Error(AUTH_FAILURE.test(message) ? `${message}; ${authHint(Boolean(this.opts.token))}` : message);
+      throw new Error(withGitHint(message, authHint(Boolean(this.opts.token))));
     }
   }
 }
