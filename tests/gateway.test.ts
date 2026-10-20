@@ -4,7 +4,7 @@ import { request as httpRequest } from "node:http";
 import { fileURLToPath } from "node:url";
 import { fauxAssistantMessage, fauxToolCall, type FauxProviderHandle, type FauxResponseStep } from "@earendil-works/pi-ai";
 import pino from "pino";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { saveConfigText } from "../src/config/load.js";
 import { applySettings, readSettings } from "../src/config/settings.js";
@@ -19,6 +19,7 @@ import { createToolGate } from "../src/policy/gate.js";
 import { ToolPolicy } from "../src/policy/policy.js";
 import type { ServerMessage } from "../src/protocol/messages.js";
 import { createCoreTools } from "../src/tools/registry.js";
+import { TraceStore } from "../src/trace/store.js";
 import { TestClient } from "./helpers/client.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -31,6 +32,7 @@ let paths: VexPaths;
 let faux: FauxProviderHandle;
 let gateway: Gateway | undefined;
 let sessions: SessionManager | undefined;
+let traces: TraceStore;
 let clients: TestClient[];
 
 beforeEach(async () => {
@@ -54,6 +56,8 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
   const approvals = new ApprovalManager({ onChange: () => bus.emit({ type: "approvals_changed" }) });
   const policy = new ToolPolicy({ workspace: dir, overrides: {} });
   const tools = createCoreTools({ workspace: dir, bashEnvPassthrough: [] });
+  traces = new TraceStore({ dir: paths.traces });
+  await traces.open();
   sessions = new SessionManager({
     paths,
     bus,
@@ -68,6 +72,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
         buildSystemPrompt: async () => "SYSTEM",
         beforeToolCall: createToolGate({ policy, approvals, sessionKey: key, windowLabel }),
         emit: (event) => bus.emit({ type: "session", sessionKey: key, event }),
+        trace: traces.scope(key),
       }),
   });
   await sessions.init();
@@ -86,6 +91,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
       save: async (patch) => { const next = applySettings(await readFile(paths.config, "utf8"), patch, paths); await saveConfigText(paths, next.text); return { restartRequired: next.restartRequired }; },
     },
     workspace: { read: (name) => readFile(join(paths.home, name), "utf8").catch(() => ""), notes: async () => [], save: (name, text) => writeFile(join(paths.home, name), text, "utf8") },
+    traces,
     staticDir,
     log: pino({ level: "silent" }),
   });
@@ -254,6 +260,41 @@ describe("Gateway chat", () => {
     const other = await connect(host);
     other.send({ type: "open", sessionId });
     await other.waitFor((m) => m.type === "history" && m.items.map((i) => i.kind).join(",") === "user,assistant");
+  });
+
+  it("lists, reads and streams run traces to watching clients", async () => {
+    const host = await start({ responses: [fauxAssistantMessage("traced reply"), fauxAssistantMessage("second reply")] });
+    const client = await connect(host);
+    await client.waitFor(isType("sessions"));
+    client.send({ type: "watch_traces", on: true });
+    client.send({ type: "create_session" });
+    const created = await client.waitFor(isType("session_created"));
+    if (created.type !== "session_created") throw new Error("unreachable");
+    client.send({ type: "send", sessionId: created.session.id, text: "trace me" });
+    const ended = await client.waitFor((m) => m.type === "trace_event" && m.event.type === "run_end");
+    if (ended.type !== "trace_event") throw new Error("unreachable");
+    expect(ended.summary).toMatchObject({ session: `web:${created.session.id}`, title: "trace me", outcome: "ok", llmCalls: 1 });
+
+    await traces.flush();
+    client.send({ type: "list_traces", query: "TRACED REPLY" });
+    const listed = await client.waitFor(isType("traces"));
+    if (listed.type !== "traces") throw new Error("unreachable");
+    expect(listed).toMatchObject({ query: "TRACED REPLY", runs: [expect.objectContaining({ id: ended.summary.id })] });
+    client.send({ type: "get_trace", id: ended.summary.id });
+    const trace = await client.waitFor(isType("trace"));
+    if (trace.type !== "trace") throw new Error("unreachable");
+    expect(trace.events.map((event) => event.type)).toEqual(["run_start", "llm_start", "llm_end", "run_end"]);
+    client.send({ type: "get_trace", id: "missing" });
+    expect(await client.waitFor(isType("error"))).toMatchObject({ message: "No such run" });
+
+    const other = await connect(host);
+    await other.waitFor(isType("sessions"));
+    client.send({ type: "watch_traces", on: false });
+    client.send({ type: "send", sessionId: created.session.id, text: "again" });
+    const idle = () => client.messages.filter((m) => m.type === "event" && m.event.kind === "busy" && !m.event.busy).length;
+    await vi.waitFor(() => expect(idle()).toBe(2));
+    expect((await traces.list()).runs).toHaveLength(2);
+    expect(client.messages.filter((m) => m.type === "trace_event" && m.event.type === "run_start")).toHaveLength(1);
   });
 
   it("routes approvals through the socket", async () => {

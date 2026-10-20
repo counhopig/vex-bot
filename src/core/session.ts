@@ -18,6 +18,8 @@ import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
+import type { RunTrace, TraceScope } from "../trace/store.js";
+import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
 import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
 import { MessageWindow } from "../context/window.js";
@@ -44,6 +46,8 @@ export interface SessionOptions {
   onOwnerMessage?: () => void;
   onOwnerInteraction?: (count: number) => Promise<void>;
   onDispose?: () => void;
+  /** Where each run's steps are recorded. */
+  trace?: TraceScope;
 }
 
 const DEFAULT_RETRY = { attempts: 3, baseDelayMs: 1000 };
@@ -77,6 +81,7 @@ export class Session {
   private readonly controller?: TurnController;
   private pendingProviderUsage = zeroUsage();
   private activeRunStart = 0;
+  private readonly currentTrace = (): RunTrace | undefined => this.opts.trace?.current;
 
   get successfulReply(): string | undefined {
     return !this.runFailed && !this.stopRequested && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
@@ -132,6 +137,10 @@ export class Session {
         this.writes = this.writes.then(() => appendJsonl(opts.transcriptPath, record));
         await this.writes;
       },
+      onCompact: (info) => {
+        opts.compaction?.onCompact?.(info);
+        this.currentTrace()?.record({ type: "compaction", ...info });
+      },
     }, restored) : undefined;
     this.compactor?.discardPrefix(this.historyOffset);
     this.agent = new Agent({
@@ -144,9 +153,9 @@ export class Session {
       },
       streamFn: this.captureBudgetCause(withContextBudget(this.checkedStream(opts))),
       getApiKey: opts.getApiKey,
-      beforeToolCall: this.controller
+      beforeToolCall: tracedGate(this.controller
         ? (context, signal) => this.controller!.beforeToolCall(context, signal, async (ownerContext, ownerSignal) => opts.beforeToolCall?.(ownerContext, ownerSignal))
-        : opts.beforeToolCall,
+        : opts.beforeToolCall, this.currentTrace),
       transformContext: this.compactor ? (messages, signal) => this.compactor!.transform(messages, signal) : undefined,
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => {
@@ -158,7 +167,8 @@ export class Session {
       },
       sessionId: opts.key,
     });
-    this.agent.subscribe((event) => this.onAgentEvent(event));
+    const traceTools = toolTracer(this.currentTrace);
+    this.agent.subscribe((event) => { traceTools(event); return this.onAgentEvent(event); });
     this.releaseHistory();
   }
 
@@ -167,9 +177,10 @@ export class Session {
    * requests ahead of the checked stream through the unchecked budgeted one.
    */
   private checkedStream(opts: SessionOptions): StreamFn {
-    const budgeted = withContextBudget(opts.streamFn);
+    const budgeted = withContextBudget(tracedStream(opts.streamFn, this.currentTrace));
     const checked = withEvidenceBoundary(budgeted, {
       ...opts.evidence,
+      onCheck: (detail) => this.currentTrace()?.record({ type: "check", kind: "evidence", detail }),
       tools: () => this.agent.state.tools,
       messages: () => this.agent.state.messages.slice(this.activeRunStart),
       takeUsage: () => this.takePendingProviderUsage(),
@@ -204,6 +215,7 @@ export class Session {
     if (!source) { this.pendingOwner++; this.opts.onOwnerMessage?.(); }
     const message: UserMessage & { vexSource?: string; vexRequestId?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}), ...(requestId ? { vexRequestId: requestId } : {}) };
     if (this.current) {
+      this.currentTrace()?.record({ type: "user", text, ...(source ? { source } : {}) });
       this.agent.steer(message);
       return;
     }
@@ -216,15 +228,20 @@ export class Session {
     this.failedTools.clear();
     this.lastResponse = undefined;
     this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}) });
+    this.opts.trace?.begin({ session: this.key, source: source ?? "owner", model: `${this.opts.model.provider}/${this.opts.model.id}`, text });
     this.activeRunStart = this.agent.state.messages.length;
     this.current = this.run(message)
       .catch((err: unknown) => {
         this.runFailed = true;
         this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
+        if (err instanceof ContextBudgetError) this.currentTrace()?.record({ type: "check", kind: "budget", detail: err.reason });
         this.opts.onError?.(err);
         if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
       })
       .finally(async () => {
+        const reply = this.successfulReply;
+        this.opts.trace?.finish(this.stopRequested ? "stopped" : this.runFailed ? "error" : "ok",
+          { ...(this.runFailureReason ? { error: this.runFailureReason } : {}), ...(reply ? { reply } : {}) });
         this.current = undefined;
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
@@ -425,6 +442,8 @@ export class Session {
         this.runFailed = true;
         this.runFailureReason = last.errorMessage === CONTEXT_BUDGET_ERROR
           ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.observedBudgetFailure ?? "request could not be estimated"}` : last.errorMessage;
+        if (last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
+        else if (last.errorMessage === TOOL_EVIDENCE_ERROR) this.currentTrace()?.record({ type: "check", kind: "evidence", detail: last.errorMessage });
         const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
         if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
@@ -432,8 +451,10 @@ export class Session {
       }
       const backoff = new AbortController();
       this.backoff = backoff;
+      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      this.currentTrace()?.record({ type: "retry", attempt, delayMs, error: last.errorMessage ?? "unknown error" });
       try {
-        await delay(baseDelayMs * 2 ** (attempt - 1), undefined, { signal: backoff.signal });
+        await delay(delayMs, undefined, { signal: backoff.signal });
       } catch {
         await this.flushPendingProviderUsage();
         return;

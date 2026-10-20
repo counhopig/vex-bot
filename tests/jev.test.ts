@@ -318,3 +318,21 @@ it("accepts a published claim only from a wiki_bootstrap receipt that reports pu
   const kept = await (await boundary(faux.getModel(), contextFor("preview"), undefined)).result();
   expect(kept.content[0]).toMatchObject({ type: "text", text: expect.not.stringContaining("was published") });
 });
+
+it("tells the trace what the check withheld and replaced", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("I sent the message."), fauxAssistantMessage("I sent the message.")]);
+  const onCheck = vi.fn();
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { ...judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0.99 } }), tools: () => [], onCheck });
+  const call = fauxToolCall("schedule", { action: "list" }, { id: "list-call" });
+  const context = { messages: [
+    { role: "user" as const, content: "Send the reminder", timestamp: 1 },
+    fauxAssistantMessage(call, { stopReason: "toolUse" }),
+    { role: "toolResult" as const, toolCallId: "list-call", toolName: "schedule", content: [{ type: "text" as const, text: "No scheduled tasks" }], isError: false, timestamp: 2 },
+  ] } as TranscriptContext;
+  await (await boundary(faux.getModel(), context, undefined)).result();
+  expect(onCheck.mock.calls.map(([detail]) => detail)).toEqual([
+    expect.stringMatching(/^Reply withheld, corrected reply requested: .*overclaim/),
+    expect.stringMatching(/^Reply replaced with what the receipts establish: /),
+  ]);
+});

@@ -11,6 +11,7 @@ import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { WorkspaceConflictError } from "../workspace/workspace.js";
+import type { TraceStore } from "../trace/store.js";
 import { isLoopback, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
@@ -29,6 +30,7 @@ export interface GatewayOptions {
   };
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
   workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string, base?: string) => Promise<{ warning?: string } | void> };
+  traces: Pick<TraceStore, "list" | "read" | "summary" | "on">;
   staticDir: string;
   log: Logger;
 }
@@ -52,7 +54,9 @@ export class Gateway {
   private server: Server | undefined;
   private wss: WebSocketServer | undefined;
   private readonly clients = new Set<WebSocket>();
+  private readonly traceWatchers = new Set<WebSocket>();
   private unsubscribe: (() => void) | undefined;
+  private unsubscribeTraces: (() => void) | undefined;
   private loginLockedUntil = 0;
 
   constructor(private readonly opts: GatewayOptions) {}
@@ -91,6 +95,9 @@ export class Gateway {
       }
     });
     this.unsubscribe = this.opts.bus.on((event) => this.onBusEvent(event));
+    this.unsubscribeTraces = this.opts.traces.on((summary, event) => {
+      for (const ws of this.traceWatchers) send(ws, { type: "trace_event", summary, event });
+    });
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(this.opts.port, this.opts.host, () => {
@@ -106,6 +113,7 @@ export class Gateway {
 
   async stop(): Promise<void> {
     this.unsubscribe?.();
+    this.unsubscribeTraces?.();
     for (const ws of this.clients) ws.terminate();
     this.wss?.close();
     const server = this.server;
@@ -189,6 +197,7 @@ export class Gateway {
     ws.on("error", (err) => this.opts.log.warn({ err }, "websocket error"));
     ws.on("close", () => {
       this.clients.delete(ws);
+      this.traceWatchers.delete(ws);
       this.opts.log.debug({ clients: this.clients.size }, "webchat disconnected");
     });
     ws.on("message", (data) => {
@@ -295,6 +304,21 @@ export class Gateway {
         return;
       case "get_config":
         send(ws, { type: "config", text: await this.opts.config.read() });
+        return;
+      case "list_traces": {
+        const page = await this.opts.traces.list({ before: message.before, query: message.query });
+        send(ws, { type: "traces", ...page, ...(message.before !== undefined ? { before: message.before } : {}), ...(message.query ? { query: message.query } : {}) });
+        return;
+      }
+      case "get_trace": {
+        const summary = this.opts.traces.summary(message.id);
+        if (!summary) throw new Error("No such run");
+        send(ws, { type: "trace", id: message.id, summary, events: await this.opts.traces.read(message.id) });
+        return;
+      }
+      case "watch_traces":
+        if (message.on) this.traceWatchers.add(ws);
+        else this.traceWatchers.delete(ws);
         return;
       case "save_config":
         try {

@@ -22,6 +22,7 @@ describe("resolvePaths", () => {
       pidFile: "/data/vex/vexd.pid",
       defaultWorkspace: "/data/vex/workspace",
       wechat: "/data/vex/wechat",
+      traces: "/data/vex/traces",
     });
   });
 

@@ -463,6 +463,57 @@ describe("web app", () => {
     expect(get("app").className).toBe("");
   });
 
+  it("shows a run as a waterfall of model calls with their tools and follows it live", async () => {
+    const { get, socket, context } = await loadApp();
+    get("open-traces").dispatch("click");
+    expect(get("traces").hidden).toBe(false);
+    expect(get("chat").hidden).toBe(true);
+    expect(socket.send.mock.calls.slice(-2).map(([raw]) => JSON.parse(raw))).toEqual([{ type: "watch_traces", on: true }, { type: "list_traces" }]);
+    const summary = { id: "r1", session: "web:one", source: "owner", model: "faux/m", title: "查天气", startedAt: 1_000, outcome: "running", llmCalls: 0, toolCalls: 0, toolErrors: 0, input: 0, output: 0 };
+    runInContext(`handle(${JSON.stringify({ type: "traces", runs: [summary, { ...summary, id: "r0", title: "旧的", outcome: "error", startedAt: 500 }] })})`, context);
+    expect(get("trace-list").children.map(textOf)).toEqual([expect.stringContaining("一 · Message"), expect.stringContaining("旧的")]);
+    get("trace-errors").checked = true;
+    get("trace-errors").dispatch("change");
+    expect(get("trace-list").children.map(textOf)).toEqual([expect.stringContaining("旧的")]);
+    get("trace-errors").checked = false;
+    get("trace-errors").dispatch("change");
+
+    get("trace-list").children[0]!.dispatch("click");
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "get_trace", id: "r1" });
+    expect(get("trace-panes").className).toBe("detail");
+    const events = [
+      { t: 1_000, type: "run_start", id: "r1", session: "web:one", source: "owner", model: "faux/m", text: "查天气" },
+      { t: 1_010, type: "llm_start", id: "llm-1", model: "faux/m", context: { system: 100, tools: 50, conversation: 20, messages: 1, total: 170 }, system: "Base\n## Time\nnow" },
+      { t: 1_400, type: "llm_end", id: "llm-1", ms: 390, ttftMs: 90, usage: { input: 170, output: 12, cacheRead: 0, cacheWrite: 0 }, stopReason: "toolUse", toolCalls: [{ id: "c1", name: "web_search" }] },
+      { t: 1_410, type: "tool_start", id: "c1", name: "web_search", args: "{\"query\":\"天气\"}" },
+    ];
+    runInContext(`handle(${JSON.stringify({ type: "trace", id: "r1", summary, events: events.slice(0, 3) })})`, context);
+    runInContext(`applyTraceEvent(${JSON.stringify(summary)}, ${JSON.stringify(events[3])})`, context);
+    runInContext("renderTraceDetail()", context);
+    const waterfall = () => find(get("trace-detail"), (el) => el.className === "trace-waterfall")!;
+    const rows = () => waterfall().children.filter((row) => row.className.startsWith("trace-step "));
+    expect(rows().map((row) => textOf(row.children[0]!))).toEqual([expect.stringContaining("LLM #1"), expect.stringContaining("web_search天气")]);
+    expect(rows()[1]!.children[0]!.style.paddingLeft).toBe("24px");
+    expect(rows()[1]!.children[1]!.children[0]!.className).toContain("live");
+
+    rows()[0]!.dispatch("click");
+    const detail = waterfall().children.find((row) => row.className === "trace-step-detail")!;
+    expect(textOf(detail)).toContain("170 tokens · system 100 · tools 50 · conversation 20 (1 messages)");
+    expect(textOf(detail)).toContain("Time · 11 chars");
+
+    const ended = { ...summary, outcome: "ok", ms: 2_000, llmCalls: 1, toolCalls: 1 };
+    runInContext(`applyTraceEvent(${JSON.stringify(ended)}, ${JSON.stringify({ t: 1_900, type: "tool_end", id: "c1", name: "web_search", ms: 490, isError: false, result: "晴" })})`, context);
+    runInContext(`applyTraceEvent(${JSON.stringify(ended)}, ${JSON.stringify({ t: 3_000, type: "run_end", ms: 2_000, outcome: "ok", reply: "晴天" })})`, context);
+    runInContext("renderTraceDetail(); renderTraceList()", context);
+    expect(textOf(find(get("trace-detail"), (el) => el.className === "trace-stats")!)).toContain("2.0sDuration");
+    expect(rows()[1]!.children[1]!.children[0]!.className).toBe("trace-bar");
+    expect(textOf(get("trace-list").children[0]!)).toContain("2.0s · 1 LLM · 1 tools");
+
+    get("close-traces").dispatch("click");
+    expect(get("traces").hidden).toBe(true);
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "watch_traces", on: false });
+  });
+
   it("clears input after a successful send", async () => {
     const { get, socket, context } = await loadApp();
     get("input").value = "  已发送  ";

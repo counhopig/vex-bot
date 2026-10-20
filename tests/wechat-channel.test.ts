@@ -116,7 +116,8 @@ describe("WeChatChannel inbound", () => {
 
   it("reports successful delivery, failed delivery, and discarded internal output", async () => {
     await store.saveState({ contextToken: "ctx" });
-    await startChannel();
+    const onReplyDelivery = vi.fn();
+    await startChannel({ onReplyDelivery });
     expect(channel!.available).toBe(true);
     emit({ kind: "busy", busy: true });
     emit({ kind: "assistant_message", text: "ok", stopReason: "stop", timestamp: Date.now() });
@@ -133,6 +134,7 @@ describe("WeChatChannel inbound", () => {
     emit({ kind: "busy", busy: false, discardReply: true });
     expect(await channel!.replyDelivered()).toBe(false);
     expect(ilink.requests.length).toBe(requests);
+    expect(onReplyDelivery.mock.calls).toEqual([[true], [false, expect.stringContaining("failed")]]);
   });
   it("passes owner messages to the wechat session and ignores everyone else", async () => {
     ilink.queueUpdates(
