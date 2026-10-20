@@ -11,6 +11,7 @@ export interface VexPaths {
   pidFile: string;
   defaultWorkspace: string;
   wechat: string;
+  traces: string;
 }
 
 export function resolvePaths(home?: string): VexPaths {
@@ -25,6 +26,7 @@ export function resolvePaths(home?: string): VexPaths {
     pidFile: join(root, "vexd.pid"),
     defaultWorkspace: join(root, "workspace"),
     wechat: join(root, "wechat"),
+    traces: join(root, "traces"),
   };
 }
 

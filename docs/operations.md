@@ -84,6 +84,7 @@ WeChat commands: `/stop` interrupts the current reply; `/y`, `/ya` and `/n` answ
 │   ├── wechat.jsonl
 │   ├── web/<id>.jsonl
 │   └── runs/                   transcripts of running temporary sessions
+├── traces/                     run traces, kept seven days; index.jsonl
 ├── index.sqlite                search index; rebuildable
 ├── schedules.json              scheduled messages
 ├── state/mood.json             mood values and outreach counters
@@ -97,6 +98,10 @@ Transcripts, workspace, `config.yaml`, `schedules.json`, `state/` and `wechat/` 
 ## Logs
 
 `vex logs -f` (or `docker-compose logs -f`) follows `logs/vexd.log`, one JSON object per line. At the default level it records: startup with a configuration summary (models, WeChat, MCP servers, search provider, speech to text), each message received (source and length), each run's start and duration, every tool call (name and a shortened summary), replies (length and stop reason), approvals requested and answered, scheduled messages, heartbeat and consolidation runs, context compaction, MCP connections, WeChat traffic (lengths only), saved settings (keys only) and restarts, plus all warnings and errors. Message and reply text, API keys and cookies are never logged. Set `VEX_LOG_LEVEL=debug` for more detail.
+
+## Run traces
+
+WebChat's Traces page (sidebar, next to Settings) shows each run step by step: model calls with context size, first-token time, usage and the generated text, tool calls with arguments and results, approval waits, retries, evidence checks and the outcome. Search finds runs by any text in their trace. Unlike the log, traces contain message, reply and tool text; known secrets are redacted before they are written. They live in `traces/` and are deleted after seven days.
 
 ## Approvals
 

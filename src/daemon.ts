@@ -65,6 +65,7 @@ import { skillBodySection, skillsSection } from "./skills/index.js";
 import { readOriginalSource, readPlatformOriginalSource, type OriginalSource } from "./links/source.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { SessionEvent } from "./core/events.js";
+import { TraceStore } from "./trace/store.js";
 
 export interface DaemonOptions {
   paths: VexPaths;
@@ -110,6 +111,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const model = models.resolve(config.model);
   const backgroundModel = models.resolve(config.backgroundModel);
   const getApiKey = (provider: string) => models.getApiKey(provider);
+  const secrets = () => {
+    const modelKey = getApiKey(model.provider);
+    return modelKey ? [...configuredSecrets(config), modelKey] : configuredSecrets(config);
+  };
 
   const bus = new EventBus((err) => log.error({ err }, "event listener failed"));
   const approvals = new ApprovalManager({
@@ -123,6 +128,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const startupCleanup: (() => Promise<void> | void)[] = [() => approvals.dispose(), () => memoryIndex.close()];
   try {
+  const traces = new TraceStore({ dir: paths.traces, secrets, onWarning: (message) => log.warn(message) });
+  await traces.open();
+  startupCleanup.push(() => traces.flush());
   const persona = await Persona.open({ path: join(paths.home, "state", "mood.json"), sleep: config.persona?.sleep,
     outreach: config.persona?.outreach, warn: (message) => log.warn(message) });
   let scheduler: Scheduler;
@@ -238,10 +246,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       const decisionJudge = config.jev?.enabled || opts.decisionJudge
         ? opts.decisionJudge ?? new Jev(config.jev ?? {}, fetch, (decision) => log.info({ session: key, ...decision }, "jev decision"))
         : undefined;
-      const evidenceSecrets = () => {
-        const modelKey = getApiKey(model.provider);
-        return modelKey ? [...configuredSecrets(config), modelKey] : configuredSecrets(config);
-      };
+      const trace = traces.scope(key);
       const advisor = decisionJudge ? judgeAdvisor(decisionJudge, { confidence: judgeConfidence, fallbackTools: LINK_FALLBACK_TOOLS }) : undefined;
       const gate = createToolGate({ policy, approvals, sessionKey: key, windowLabel });
       const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
@@ -258,7 +263,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
         if (temporary === "wiki") return wikiTools(wikiContext!);
         const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
-        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets: evidenceSecrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
+        return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(scheduler, key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, trace: () => trace.current, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
       };
       const session = await Session.open({
         key,
@@ -267,7 +272,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         thinking: temporary ? config.backgroundModel.thinking : config.model.thinking,
         tools: getTools(),
         streamFn: models.streamFn,
-        evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets: evidenceSecrets, warn: (err: unknown) => log.warn({ err, session: key }, "evidence boundary warning") },
+        evidence: { profiles: TOOL_EVIDENCE, ...(advisor && !temporary ? { advisor } : {}), secrets, warn: (err: unknown) => log.warn({ err, session: key }, "evidence boundary warning") },
         ...(!temporary && wiki ? { controller: (host) => new LinkActionController({
           routes: LINK_ROUTES,
           fallbackTools: LINK_FALLBACK_TOOLS,
@@ -277,7 +282,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           classify: async (input: string, urls: string[], signal?: AbortSignal) => {
             if (!decisionJudge) throw new Error("Jev link classification is disabled.");
             if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
-            const clean = redactSecrets({ input, urls }, evidenceSecrets());
+            const clean = redactSecrets({ input, urls }, secrets());
             const choices = await decisionJudge.classifyLinks(clean.input, clean.urls, signal);
             // Redaction can rewrite a URL; answers follow the order of the URLs sent.
             return choices.map((choice, index) => ({ ...choice, url: urls[index] ?? choice.url }));
@@ -294,6 +299,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         compaction: { backgroundModel, complete: models.completeSimple, workspace: config.workspace, threshold: config.compaction?.threshold, onError: (err) => log.warn({ err, session: key }, "context compaction failed"), onCompact: (info) => log.info({ session: key, ...info }, "context compacted") },
         onRunEnd: () => memoryIndex.sync().catch((err: unknown) => log.warn({ err }, "memory index sync failed")),
         onDispose: () => live.delete(session),
+        trace,
       });
       live.set(session, getTools);
       return session;
@@ -304,7 +310,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
     const session = await openSession(`run:${id}`, transcript, () => TEMPORARY_WINDOW_LABELS[kind], kind, wikiContext);
     try { return await use(session); }
-    finally { await session.dispose(); live.delete(session); await rm(transcript, { force: true }); }
+    finally { await session.dispose(); live.delete(session); traces.release(`run:${id}`); await rm(transcript, { force: true }); }
   };
   /** Runs one background turn to completion; `read` inspects the finished session before it is disposed. */
   const runTemporary = async <T>(kind: TemporaryKind, prompt: string, signal: AbortSignal, read: (session: Session) => T, wikiContext?: WikiRunContext): Promise<T> => {
@@ -464,12 +470,14 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       }),
     },
     workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text, base) => { await saveWorkspaceFile(config.workspace, name, text, base); return { warning: residentLimitWarning(name, text) }; } },
+    traces,
     staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
     log,
   });
   startupCleanup.push(() => gateway.stop());
   const { port } = await gateway.start();
-  wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log });
+  wechatRuntime = await runWeChat({ config, paths, sessions, approvals, bus, log,
+    onReplyDelivery: (ok, error) => traces.note("wechat", { type: "delivery", ok, ...(error ? { error } : {}) }) });
   startupCleanup.push(() => wechatRuntime?.stop());
   startupCleanup.push(() => scheduler.close());
   wiki?.start();
@@ -508,6 +516,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       await step("gateway", () => gateway.stop());
       await step("memory index", () => memoryIndex.close());
       await step("wiki", () => wiki?.close());
+      await step("traces", () => traces.flush());
       log.info("vexd stopped");
     },
   };

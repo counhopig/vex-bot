@@ -17,6 +17,7 @@ export async function startWeChatChannel(opts: {
   approvals: ApprovalManager;
   bus: EventBus;
   log: Logger;
+  onReplyDelivery?: (ok: boolean, error?: string) => void;
 }): Promise<WeChatChannel | undefined> {
   const { config, log } = opts;
   if (!config.wechat.enabled) return undefined;
@@ -39,6 +40,7 @@ export async function startWeChatChannel(opts: {
     approvals: opts.approvals,
     bus: opts.bus,
     log,
+    ...(opts.onReplyDelivery ? { onReplyDelivery: opts.onReplyDelivery } : {}),
   });
   await channel.start();
   log.info({ ownerId }, "wechat channel started");

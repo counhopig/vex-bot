@@ -233,10 +233,10 @@ describe("startDaemon", () => {
     let heartbeatTools: string[] = [];
     faux.setResponses([(ctx) => { calls++; heartbeatPrompt = getCurrentSystemPrompt(ctx.messages); heartbeatTools = getCurrentTools(ctx.messages).map((tool) => tool.name); expect(heartbeatPrompt).toContain("Window: heartbeat"); return fauxAssistantMessage("检查完成，需要注意"); }]);
     daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
-    await new Promise(resolve => setTimeout(resolve, 1400));
+    const transcript = () => readFile(join(paths.sessions, "wechat.jsonl"), "utf8").catch(() => "");
+    await vi.waitFor(async () => expect(await transcript()).toContain("检查完成，需要注意"), { timeout: 10_000, interval: 50 });
     await daemon.stop(); daemon = undefined;
-    const history = await readFile(join(paths.sessions, "wechat.jsonl"), "utf8");
-    expect(history).toContain("检查完成，需要注意");
+    const history = await transcript();
     expect(history).not.toContain("HEARTBEAT.md");
     expect(calls).toBe(1);
     expect(heartbeatPrompt).toContain("## Available tools");

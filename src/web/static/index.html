@@ -33,6 +33,7 @@
       <ul id="session-list"></ul>
       <div class="sidebar-foot">
         <button id="open-settings" type="button" class="link">Settings</button>
+        <button id="open-traces" type="button" class="link">Traces</button>
         <button id="theme" type="button" class="link" aria-label="Switch theme">System</button>
       </div>
     </aside>
@@ -72,6 +73,21 @@
         <div class="settings-actions">
           <button id="save-settings" type="button">Save</button>
           <span id="settings-result" role="status"></span>
+        </div>
+      </section>
+      <section id="traces" hidden>
+        <div class="settings-head">
+          <h2>Traces</h2>
+          <button id="close-traces" type="button" class="link">Back</button>
+        </div>
+        <div class="trace-toolbar">
+          <input id="trace-search" type="search" placeholder="Search runs" aria-label="Search runs">
+          <select id="trace-source" aria-label="Source"></select>
+          <label class="trace-errors"><input id="trace-errors" type="checkbox"> Errors only</label>
+        </div>
+        <div id="trace-panes">
+          <div id="trace-list"></div>
+          <div id="trace-detail"></div>
         </div>
       </section>
     </main>

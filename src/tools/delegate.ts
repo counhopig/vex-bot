@@ -7,6 +7,8 @@ import { addUsage, zeroUsage } from "../providers/usage.js";
 import { profileSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
 import { RESIDENT_LINE_LIMITS } from "../workspace/workspace.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
+import type { RunTrace } from "../trace/store.js";
+import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
 
 const DelegateParams = Type.Object({
   task: Type.String({ minLength: 1, description: "A self-contained task for the sub-agent" }),
@@ -23,6 +25,8 @@ export interface DelegateOptions {
   beforeToolCall?: AgentOptions["beforeToolCall"];
   /** The parent's evidence rules; the sub-agent's claims are checked the same way. */
   evidence: Pick<EvidenceBoundaryOptions, "profiles" | "advisor" | "secrets" | "warn">;
+  /** The parent's run in progress; the sub-agent's steps are recorded under the delegate call. */
+  trace?: () => RunTrace | undefined;
 }
 
 export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof DelegateParams> {
@@ -32,7 +36,7 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
     description: "Hands a self-contained task to a sub-agent that has no conversation history and returns its final reply. The sub-agent cannot delegate further.",
     parameters: DelegateParams,
     executionMode: "parallel",
-    async execute(_id, { task, tools }, signal, onUpdate) {
+    async execute(id, { task, tools }, signal, onUpdate) {
       signal?.throwIfAborted();
       const available = (opts.getTools?.() ?? opts.tools ?? []).filter((tool) => tool.name !== "delegate");
       const names = new Set(available.map((tool) => tool.name));
@@ -48,14 +52,19 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
         () => `## Task\n${task}`,
       ]).build({ now: new Date(), windowLabel: "sub-agent" });
       signal?.throwIfAborted();
+      const run = opts.trace?.()?.child(id);
+      const current = () => run;
       let agent!: Agent;
       agent = new Agent({
         initialState: { model: opts.model, systemPrompt: prompt, tools: selected, messages: [] },
-        streamFn: withContextBudget(withEvidenceBoundary(opts.streamFn, { ...opts.evidence, tools: () => selected, messages: () => agent.state.messages })),
+        streamFn: withContextBudget(withEvidenceBoundary(tracedStream(opts.streamFn, current), { ...opts.evidence, tools: () => selected, messages: () => agent.state.messages,
+          onCheck: (detail) => run?.record({ type: "check", kind: "evidence", detail }) })),
         getApiKey: opts.getApiKey,
-        beforeToolCall: opts.beforeToolCall,
+        beforeToolCall: tracedGate(opts.beforeToolCall, current),
       });
+      const traceTools = toolTracer(current);
       const unsubscribe = agent.subscribe((event) => {
+        traceTools(event);
         if (event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end") {
           onUpdate?.({ content: [], details: event });
         }

@@ -24,6 +24,8 @@ export interface WeChatChannelOptions {
   maxBackoffMs?: number;
   processingNoticeMs?: number;
   timeZone?: string;
+  /** Told whether each turn's reply reached the owner. */
+  onReplyDelivery?: (ok: boolean, error?: string) => void;
 }
 
 interface Turn {
@@ -305,16 +307,18 @@ export class WeChatChannel {
     this.turn = undefined;
     if (discard) return;
     const reply = turn.texts.join("\n\n");
-    if (turn.aborted) this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.");
-    else if (reply) this.lastReply = this.send(reply);
+    const report = this.opts.onReplyDelivery;
+    if (turn.aborted) this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
+    else if (reply) this.lastReply = this.send(reply, report);
   }
 
-  private send(text: string): Promise<boolean> {
+  private send(text: string, report?: (ok: boolean, error?: string) => void): Promise<boolean> {
     const chunks = splitMessage(text);
     const sending = this.outbox.then(async () => {
       const contextToken = this.contextToken;
       if (!contextToken) {
         this.opts.log.warn("no wechat context token yet; the owner has to message the bot first");
+        report?.(false, "No WeChat context token yet; the owner has to message the bot first.");
         return false;
       }
       for (const chunk of chunks) {
@@ -322,10 +326,12 @@ export class WeChatChannel {
           await this.opts.client.sendText(this.opts.ownerId, contextToken, chunk, this.abort.signal);
         } catch (err) {
           this.opts.log.warn({ err }, "failed to send wechat message");
+          report?.(false, err instanceof Error ? err.message : String(err));
           return false;
         }
       }
       this.opts.log.info({ chars: text.length, parts: chunks.length }, "wechat message sent");
+      report?.(true);
       return true;
     });
     this.outbox = sending.then(() => {});

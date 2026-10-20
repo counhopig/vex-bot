@@ -26,6 +26,7 @@ src/
 ├── workspace/             # Owner files, templates and daily notes
 ├── skills/                # Skill discovery and prompt integration
 ├── store/                 # Atomic writes and append-only JSONL
+├── trace/                 # Run traces: recording, store, retention
 ├── providers/             # Model registration and streaming
 └── web/static/            # Browser handlers and presentation
 ```
@@ -45,6 +46,7 @@ src/
 | Change what a tool's result proves | the owning module's `evidence.ts` (`tools/`, `vault/`, `vault/wiki/`), `daemon.ts` (`TOOL_EVIDENCE`) |
 | Change the evidence check or judge advice | `context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `policy/judge.ts`, `providers/jev.ts`, `config/secrets.ts` |
 | Change the LLM wiki | `vault/wiki/service.ts`, `vault/wiki/tools.ts`, `vault/wiki/write.ts`, `vault/notes.ts`, `config/schema.ts` (`vault.wiki`), `config/settings.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts`, `web/static/app.js` |
+| Change what a run trace records | `trace/types.ts`, `trace/observe.ts`, `trace/store.ts`, `core/session.ts`, `tools/delegate.ts`, `web/static/app.js` |
 | Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 
 ## LOCAL CONVENTIONS
@@ -81,4 +83,5 @@ src/
 - Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`vault/wiki/write.ts`, `policy/policy.ts`).
 - `Session` knows no tool or business rule. Runtime behaviour reaches it only through a `TurnController` (tools, stream wrapper, a gate in front of the owner's gate, lifecycle hooks); link actions are one such controller, with their tools injected by the daemon (`core/turnController.ts`, `links/actions.ts`).
 - Every model request passes the budget check, then the evidence boundary, which withholds operation claims without a matching tool result. `context/` names no tool: each module declares what its tools prove as `ToolEvidence` profiles, and the daemon combines them. Text sent to an external judge is redacted with `redactSecrets`; the judge is an optional advisor, and link actions and their outcomes still go through the normal tool gate (`context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `config/secrets.ts`).
+- Run traces observe without steering: `trace/observe.ts` wraps the provider stream beneath the budget and evidence layers, the tool gate and agent events; a trace failure is a warning, never a turn failure. Every payload is redacted with the configured secrets and bounded before it is written or sent to a watching WebChat client (`trace/store.ts`).
 - A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt that its evidence profile checks (`vault/wiki/tools.ts`, `vault/wiki/evidence.ts`).

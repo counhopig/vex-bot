@@ -146,6 +146,8 @@ export interface EvidenceBoundaryOptions {
   messages?: () => TranscriptContext["messages"];
   takeUsage?: () => AssistantMessage["usage"] | undefined;
   returnUsage?: (usage: AssistantMessage["usage"]) => void;
+  /** Told what the check did to a generation: an advisor instruction, a withheld claim, a corrective retry or a replacement. */
+  onCheck?: (detail: string) => void;
 }
 
 /**
@@ -167,7 +169,10 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
         const tools = (options.tools?.() ?? []).map(({ name, description }) => ({ name, description: redactSecrets(description, secretValues).slice(0, 500) })).slice(0, 254);
         const advice = await options.advisor.advise(advised, tools, callOptions?.signal);
         routeRequired = advice.requireTool;
-        if (advice.instruction) context = instruction(context, advice.instruction);
+        if (advice.instruction) {
+          context = instruction(context, advice.instruction);
+          options.onCheck?.(`Advisor instruction added: ${advice.instruction}`);
+        }
       } catch (error) {
         callOptions?.signal?.throwIfAborted();
         options.warn?.(error);
@@ -231,11 +236,13 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
       // A route is advice: after one corrective request, a reply without the routed tool stands on its own claims.
       const missedRoute = attempt === 0 && routeRequired && !state.hasResults && !message.content.some((part) => part.type === "toolCall");
       let unsupported = claimed || missedRoute;
+      const reasons = [...(claimed ? ["claims lack matching tool results"] : []), ...(missedRoute ? ["the routed tool was not used"] : [])];
       if (options.advisor && reply) {
         try {
           // Always consult the advisor, even when the local check already rejected the reply.
           const overclaims = await options.advisor.unsupported({ ...advised, reply: redactSecrets(reply, secretValues).slice(0, 4000) }, callOptions?.signal);
           unsupported ||= overclaims;
+          if (overclaims) reasons.push("the advisor found an overclaim");
         } catch (error) {
           callOptions?.signal?.throwIfAborted();
           options.warn?.(error);
@@ -243,6 +250,7 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
       }
       const toolCalls = message.content.filter((part) => part.type === "toolCall");
       if (unsupported && toolCalls.length) {
+        options.onCheck?.(`Reply text withheld, tool calls kept: ${reasons.join("; ")}`);
         const safe = assistantOutput(message, toolCalls, accumulatedUsage);
         output.push({ type: "start", partial: safe });
         output.push({ type: "done", reason: safe.stopReason === "toolUse" ? "toolUse" : safe.stopReason === "deferred" ? "deferred" : "stop", message: safe });
@@ -256,9 +264,11 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
         return output;
       }
       if (attempt === 0) {
+        options.onCheck?.(`Reply withheld, corrected reply requested: ${reasons.join("; ")}`);
         context = instruction(context, "Your previous operation claims were withheld because they lacked matching tool results. Give an honest answer from the recorded receipts, or use an available tool through its normal gate. Do not repeat the rejected claim or repeat a completed side effect.");
         continue;
       }
+      options.onCheck?.(`Reply replaced with what the receipts establish: ${reasons.join("; ")}`);
       const safe = fallback(assistantOutput(message, message.content, accumulatedUsage), state, options.profiles);
       output.push({ type: "start", partial: safe });
       safe.content.forEach((part, index) => { if (part.type === "text") { output.push({ type: "text_start", contentIndex: index, partial: safe }); output.push({ type: "text_delta", contentIndex: index, delta: part.text, partial: safe }); output.push({ type: "text_end", contentIndex: index, content: part.text, partial: safe }); } });

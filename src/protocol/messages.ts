@@ -4,6 +4,7 @@ import type { HistoryItem, SessionEvent } from "../core/events.js";
 import type { WebSessionMeta } from "../core/webSessions.js";
 import type { ApprovalRequest } from "../policy/approvals.js";
 import type { ScheduledTask } from "../scheduler/index.js";
+import type { TraceEvent, TraceSummary } from "../trace/types.js";
 
 const SessionId = Type.String({ minLength: 1, maxLength: 100 });
 
@@ -60,6 +61,14 @@ export const ClientMessageSchema = Type.Union([
   Type.Object({ type: Type.Literal("delete_schedule"), id: Type.String({ minLength: 1, maxLength: 100 }) }),
   Type.Object({ type: Type.Literal("get_config") }),
   Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }), base: Type.Optional(Type.String({ maxLength: 1_000_000 })) }),
+  Type.Object({
+    type: Type.Literal("list_traces"),
+    before: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+    query: Type.Optional(Type.String({ maxLength: 200 })),
+  }),
+  Type.Object({ type: Type.Literal("get_trace"), id: Type.String({ minLength: 1, maxLength: 40 }) }),
+  // A watching client receives every recorded trace event as it happens.
+  Type.Object({ type: Type.Literal("watch_traces"), on: Type.Boolean() }),
 ]);
 
 export type ClientMessage = Static<typeof ClientMessageSchema>;
@@ -87,6 +96,9 @@ export type ServerMessage =
   | { type: "schedule_saved"; ok: boolean; error?: string }
   | { type: "config"; text: string }
   | { type: "config_saved"; ok: boolean; error?: string; restarting?: boolean }
+  | { type: "traces"; runs: TraceSummary[]; nextBefore?: number; before?: number; query?: string }
+  | { type: "trace"; id: string; summary: TraceSummary; events: TraceEvent[] }
+  | { type: "trace_event"; summary: TraceSummary; event: TraceEvent }
   | { type: "error"; message: string };
 
 export function parseClientMessage(raw: string): ClientMessage | undefined {
