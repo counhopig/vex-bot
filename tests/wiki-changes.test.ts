@@ -48,11 +48,12 @@ describe("detectChanges", () => {
     await removeTmpDir(dir);
   });
 
-  it("reports every markdown file as added on the first run, skipping wiki/raw/hidden paths", async () => {
+  it("reports every note and archived raw source as added on the first run, skipping wiki/ and hidden paths", async () => {
     const changes = await detectChanges(repo, null);
     expect(changes).toEqual([
       { path: "notes/one.md", status: "A" },
       { path: "notes/two.md", status: "A" },
+      { path: "raw/blob.md", status: "A" },
     ]);
   });
 

@@ -1,4 +1,5 @@
 import { parseTrailers, trailerValues, WikiIntegrityError, type WikiRepo } from "./git.js";
+import { RESET_TRAILER } from "./reconcile.js";
 
 export interface WikiIntegrityObservation {
   fetchUrls: string[];
@@ -58,7 +59,13 @@ export async function assertRecognizedLocalHistory(repo: WikiRepo, observation?:
     const batch = trailerValues(trailers, "Vex-Batch");
     const rollback = trailerValues(trailers, "Vex-Rollback");
     const revertOf = trailerValues(trailers, "Vex-Revert-Of");
+    const resets = trailerValues(trailers, RESET_TRAILER);
     const paths = await repo.changedPaths(record.sha);
+    // A rebuild's reset commit only removes wiki/ pages, and is empty when there were none.
+    if (resets.length === 1 && resets[0] && batch.length === 0 && rollback.length === 0 && revertOf.length === 0) {
+      if (paths.some((path) => !path.startsWith("wiki/"))) throw new WikiIntegrityError(`unrecognized local commit ${record.sha}: a wiki reset changes paths outside wiki/`);
+      continue;
+    }
     if (!paths.length || paths.some((path) => !generated(path))) throw new WikiIntegrityError(`unrecognized local commit ${record.sha}: changes outside generated wiki/raw paths`);
     if (batch.length === 1 && batch[0] && rollback.length === 0 && revertOf.length === 0) {
       const id = batch[0];

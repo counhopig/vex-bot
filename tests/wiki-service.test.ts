@@ -1468,3 +1468,95 @@ describe("Wiki notes copy", () => {
     await expect(wiki.notesCopy.readableCopy()).rejects.toThrow(/still opening/);
   });
 });
+
+describe("Wiki rebuild", () => {
+  /** A repository whose history already holds a published bootstrap and a scheduled batch. */
+  async function compiledHistory(home: string, overrides: Partial<WikiOptions> = {}) {
+    const { remote, work } = makeRemote(join(dir, "rebuild"));
+    commit(work, { "notes/one.md": "one", "notes/two.md": "two", "raw/link-1.md": "archived", "wiki/old.md": "old page" }, "2026-10-01T10:00:00+0000");
+    const base = git(work, ["rev-parse", "HEAD"]).trim();
+    git(work, ["commit", "--allow-empty", "-m", `wiki: bootstrap\n\nVex-Batch: boot\nVex-Kind: bootstrap\nVex-Scan-Base: ${base}`]);
+    const boot = git(work, ["rev-parse", "HEAD"]).trim();
+    git(work, ["commit", "--allow-empty", "-m", `wiki: compile\n\nVex-Batch: s1\nVex-Kind: scheduled\nVex-Scan-Base: ${boot}`]);
+    git(work, ["push", "origin", "HEAD:refs/heads/main"]);
+    const prompts: string[] = [];
+    const wiki = makeWiki(home, remote, {
+      runAgent: async (prompt, context) => {
+        prompts.push(prompt);
+        const abs = join(context.repo.root, "wiki/_index.md");
+        mkdirSync(join(context.repo.root, "wiki"), { recursive: true });
+        await context.marker.recordIntent("wiki/_index.md", await fingerprint(abs));
+        writeFileSync(abs, "# Index\n");
+        await context.marker.recordAfter("wiki/_index.md", await fingerprint(abs));
+        return "ok";
+      },
+      ...overrides,
+    });
+    await wiki.init();
+    return { wiki, remote, work, prompts, root: join(home, "wiki", key(remote)) };
+  }
+
+  it("publishes a reset, compiles every note and raw source into a new preview, and publishes it on approval", async () => {
+    const home = join(dir, "home");
+    const { wiki, remote, prompts, root } = await compiledHistory(home);
+    expect(await wiki.status()).toMatchObject({ bootstrap: "done", lastBatchId: "s1" });
+
+    const result = await wiki.rebuild(new AbortController().signal);
+
+    expect(result).toMatchObject({ reset: true, removed: 1, publication: "published" });
+    expect(git(remote, ["log", "-1", "--format=%B", "main"])).toMatch(/^wiki: rebuild\n\nVex-Wiki-Reset: [0-9a-f-]{36}/);
+    expect(git(remote, ["ls-tree", "-r", "--name-only", "main"]).split("\n").filter(Boolean)).toEqual(["notes/one.md", "notes/two.md", "raw/link-1.md"]);
+    expect(await wiki.status()).toMatchObject({ bootstrap: "pending", lastBatchId: null });
+    expect(await wiki.dueWork(Date.now(), false)).toBe("bootstrap");
+
+    const run = await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(run).toMatchObject({ publication: "preview", pages: ["wiki/_index.md"] });
+    expect(prompts.join("\n")).toEqual(expect.stringContaining("A notes/one.md\nA notes/two.md\nA raw/link-1.md"));
+    expect(await wiki.status()).toMatchObject({ bootstrap: "awaiting-review" });
+    expect(git(remote, ["log", "-1", "--format=%s", "main"]).trim()).toBe("wiki: rebuild");
+
+    expect(await wiki.approveBootstrap(new AbortController().signal)).toMatchObject({ pushed: true });
+    expect(await wiki.status()).toMatchObject({ bootstrap: "done" });
+    expect(git(remote, ["show", "main:wiki/_index.md"])).toBe("# Index\n");
+
+    const reopened = makeWiki(join(dir, "other-home"), git(root, ["remote", "get-url", "origin"]).trim());
+    await reopened.init();
+    expect(await reopened.status()).toMatchObject({ bootstrap: "done", lastBatchId: run.batchId });
+    await reopened.close();
+    await wiki.close();
+  });
+
+  it("refuses while a preview awaits review or the tree is dirty", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await compiledHistory(home);
+    await wiki.rebuild(new AbortController().signal);
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(await wiki.rebuild(new AbortController().signal)).toMatchObject({ reset: false, message: expect.stringMatching(/preview awaits review/) });
+    await wiki.approveBootstrap(new AbortController().signal);
+    writeFileSync(join(root, "owner.md"), "owner bytes");
+    const head = git(root, ["rev-parse", "HEAD"]).trim();
+    expect(await wiki.rebuild(new AbortController().signal)).toMatchObject({ reset: false, message: expect.stringMatching(/not clean/) });
+    expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(head);
+    await wiki.close();
+  });
+
+  it("keeps a reset whose push failed and publishes it before the next compile", async () => {
+    const home = join(dir, "home");
+    let offline = false;
+    const { wiki, remote } = await compiledHistory(home, {
+      run: (args, options) => offline && args[0] === "push" ? Promise.reject(new Error("network unreachable")) : fileRun(args, options),
+    });
+    offline = true;
+    const result = await wiki.rebuild(new AbortController().signal);
+    expect(result).toMatchObject({ reset: true, publication: "pending", message: expect.stringContaining("network unreachable") });
+    expect(git(remote, ["log", "-1", "--format=%s", "main"]).trim()).toBe("wiki: compile");
+    expect(await wiki.status()).toMatchObject({ bootstrap: "pending" });
+
+    offline = false;
+    await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
+    expect(git(remote, ["log", "-1", "--format=%s", "main"]).trim()).toBe("wiki: rebuild");
+    expect(await wiki.status()).toMatchObject({ bootstrap: "awaiting-review" });
+    await wiki.close();
+  });
+});
+

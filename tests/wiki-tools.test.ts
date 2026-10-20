@@ -194,6 +194,7 @@ interface FakeWiki {
   approveBootstrap: ReturnType<typeof vi.fn>;
   rejectBootstrap: ReturnType<typeof vi.fn>;
   rollback: ReturnType<typeof vi.fn>;
+  rebuild: ReturnType<typeof vi.fn>;
 }
 
 function fakeWiki(bootstrap: "pending" | "awaiting-review" | "done", overrides: Partial<FakeWiki> = {}): FakeWiki {
@@ -203,6 +204,7 @@ function fakeWiki(bootstrap: "pending" | "awaiting-review" | "done", overrides: 
     approveBootstrap: vi.fn(async () => ({ pushed: true, message: "bootstrap preview published" })),
     rejectBootstrap: vi.fn(async () => ({ discarded: true, message: "bootstrap preview discarded" })),
     rollback: vi.fn(async () => ({ reverted: true, commit: "abc", message: "reverted the last batch" })),
+    rebuild: vi.fn(async () => ({ reset: true, commit: "abc", removed: 3, publication: "published", message: "removed 3 wiki pages; every note will be compiled into a new bootstrap preview for review" })),
     ...overrides,
   } as FakeWiki;
   fake.wiki = fake as unknown as Wiki;
@@ -310,5 +312,16 @@ describe("wiki_rollback", () => {
     const result = await rollback.execute("1", {});
     expect(fake.rollback).toHaveBeenCalledTimes(1);
     expect(textOf(result)).toBe("reverted the last batch");
+  });
+});
+
+describe("wiki_rebuild", () => {
+  it("delegates to the service and returns its publication as the receipt", async () => {
+    const fake = fakeWiki("done");
+    const rebuild = toolNamed(createWikiInteractiveTools(fake.wiki), "wiki_rebuild");
+    const result = await rebuild.execute("1", {});
+    expect(fake.rebuild).toHaveBeenCalledTimes(1);
+    expect(textOf(result)).toContain("removed 3 wiki pages");
+    expect(result.details).toMatchObject({ receipt: { publication: "published", removed: 3 } });
   });
 });

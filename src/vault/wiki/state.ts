@@ -16,6 +16,8 @@ export interface WikiState {
   failureStreak: number;
   /** The owner rejected a bootstrap preview; the next bootstrap waits for the cadence. */
   bootstrapDeferred?: true;
+  /** The rebuild epoch this state belongs to; state from an older epoch is ignored. */
+  resetId?: string;
 }
 
 function isRollback(value: unknown): value is WikiRollback {
@@ -58,7 +60,8 @@ function parseState(text: string): WikiState | null {
   if (typeof failureStreak !== "number") return null;
   if (rollback !== null && !isRollback(rollback)) return null;
 
-  return { lastScanCommit, lastRunAt, lastBatchId, bootstrap, rollback, nextAttemptAt, failureStreak, ...(candidate.bootstrapDeferred === true ? { bootstrapDeferred: true as const } : {}) };
+  return { lastScanCommit, lastRunAt, lastBatchId, bootstrap, rollback, nextAttemptAt, failureStreak, ...(candidate.bootstrapDeferred === true ? { bootstrapDeferred: true as const } : {}),
+    ...(typeof candidate.resetId === "string" && candidate.resetId ? { resetId: candidate.resetId } : {}) };
 }
 
 /**

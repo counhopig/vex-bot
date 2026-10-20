@@ -40,6 +40,17 @@ describe("Wiki repository integrity", () => {
     await expect(assertRecognizedLocalHistory(repo, observation)).rejects.toThrow(/unrecognized local commit/i);
   });
 
+  it("accepts an unpublished reset that only removes wiki pages, and rejects one that touches notes", async () => {
+    const { repo, root } = await seed();
+    await repo.commitWikiRemoval("wiki: rebuild\n\nVex-Wiki-Reset: r1");
+    await expect(assertRecognizedLocalHistory(repo)).resolves.toBeUndefined();
+    git(root, ["reset", "--hard", "origin/main"]);
+    writeFileSync(join(root, "owner.md"), "owner");
+    git(root, ["add", "owner.md"]);
+    git(root, ["commit", "-m", "wiki: rebuild\n\nVex-Wiki-Reset: r2"]);
+    await expect(assertRecognizedLocalHistory(repo)).rejects.toThrow(/reset changes paths outside wiki/);
+  });
+
   it("rejects duplicate batch identities in repository history", async () => {
     const { repo, root } = await seed();
     const first = await repo.head();

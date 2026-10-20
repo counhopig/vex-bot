@@ -26,6 +26,8 @@ export function approvalDetail(toolName: string, args: unknown, workspace?: stri
     text = pick("action") === "approve"
       ? "Publish the Wiki bootstrap preview: push its commit to the notes repository."
       : "Reject the Wiki bootstrap preview: discard it locally without pushing.";
+  } else if (toolName === "wiki_rebuild") {
+    text = "Rebuild the Wiki: remove every generated wiki/ page in one commit pushed to the notes repository, then compile all notes into a new preview for review.";
   } else if (toolName === "bash" && pick("command") !== undefined) {
     text = pick("command")!;
   } else if ((toolName === "write" || toolName === "edit") && path !== undefined) {

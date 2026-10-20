@@ -18,6 +18,8 @@ const WikiBootstrapParams = Type.Object({
 
 const WikiRollbackParams = Type.Object({});
 
+const WikiRebuildParams = Type.Object({});
+
 /** The interactive wiki tools: on-demand ingestion and bootstrap review, driven by a conversation. */
 export interface WikiReceipt {
   version: 1;
@@ -116,7 +118,18 @@ export function createWikiInteractiveTools(wiki: Wiki, options: { sourceResolver
     },
   };
 
-  return [ingestTool, bootstrapTool, rollbackTool];
+  const rebuildTool: AgentTool<typeof WikiRebuildParams> = {
+    name: "wiki_rebuild",
+    label: "Rebuild wiki",
+    description: "Starts the wiki over: removes every generated wiki/ page in one commit pushed to the notes repository, then compiles all notes and archived raw/ sources into a new bootstrap preview for the owner to review. Call it only when the owner asks; the owner confirms the call in an approval prompt.",
+    parameters: WikiRebuildParams,
+    async execute(_id, _params, signal) {
+      const result = await wiki.rebuild(fallbackSignal(signal));
+      return { content: [{ type: "text", text: result.message }], details: { message: result.message, receipt: { publication: result.publication, removed: result.removed } } };
+    },
+  };
+
+  return [ingestTool, bootstrapTool, rollbackTool, rebuildTool];
 }
 
 function failedReceipt(url: string | null, error: string): WikiReceipt {
