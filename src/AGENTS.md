@@ -66,6 +66,7 @@ src/
 - Idle WebChat sessions are evicted after 30 minutes without use: only a fully idle session (`Session.idle`) that no pending approval retains. It leaves the cache before `dispose()` starts; the next `get()` waits for that disposal and reopens from the flushed JSONL, and a lookup that raced the eviction is re-resolved rather than handed the disposing instance. WeChat is never evicted (`core/sessionManager.ts`, `daemon.ts`).
 - Stop must abort retry backoff and the agent, clear steering queues and retain messages received while stopping for a subsequent turn; disposal waits for queued transcript writes (`core/session.ts:105`, `core/session.ts:135`).
 - Explicit policy denial precedes session approval reuse; denied tools are also filtered from model visibility (`policy/gate.ts:14`, `policy/policy.ts:33`).
+- A run the runtime starts (`Session.unattended`: a source and no joined owner message) never raises an approval: the gate refuses an `ask` tool at once (`policy/gate.ts`, `core/session.ts`, `daemon.ts`).
 - Non-loopback binding requires a web token (`daemon.ts:75`).
 - Workspace write/edit permissions use real paths, including the nearest existing ancestor for new files. Never allow a dangling symlink as a new path segment (`policy/policy.ts:46`, `policy/policy.ts:60`).
 - Shell children inherit only the environment allowlist, configured passthrough and locale keys; preserve process-group cancellation and bounded output collection (`tools/bash.ts:15`, `tools/bash.ts:68`, `tools/bash.ts:90`).

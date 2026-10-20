@@ -16,6 +16,7 @@ import { ContextCompactor, isCompactionRecord, type CompactionOptions, type Comp
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
 import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
+import { PROVIDER_OVERLOADED } from "../providers/errors.js";
 import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { RunTrace, TraceScope } from "../trace/store.js";
@@ -51,6 +52,7 @@ export interface SessionOptions {
 }
 
 const DEFAULT_RETRY = { attempts: 3, baseDelayMs: 1000 };
+const OVERLOAD_BACKOFF = 10;
 
 export class Session {
   readonly key: string;
@@ -163,7 +165,7 @@ export class Session {
         if (this.historyOffset > (this.compactor?.summarizedThrough ?? 0)) {
           prompt += "\n\nOnly the explicit summary and recent messages in this request establish earlier conversation context. Other turns remain on disk; do not assume their contents.";
         }
-        return { context: { ...context, messages: withSystemPrompt(context.messages, prompt) } };
+        return { context: { ...context, messages: withSystemPrompt(context.messages.map(markNotice), prompt) } };
       },
       sessionId: opts.key,
     });
@@ -191,6 +193,11 @@ export class Session {
 
   get busy(): boolean {
     return this.current !== undefined;
+  }
+
+  /** A run the runtime started (a source is set) that no owner message has joined. */
+  get unattended(): boolean {
+    return this.current !== undefined && this.runSource !== undefined && this.pendingOwner === 0;
   }
 
   /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
@@ -350,10 +357,10 @@ export class Session {
 
   private async deliverAssistant(text: string): Promise<void> {
     if (this.closing) return;
-    const message: AssistantMessage = { role: "assistant", content: [{ type: "text", text }],
+    const message: AssistantMessage & { vexNotice: true } = { role: "assistant", content: [{ type: "text", text }],
       api: this.opts.model.api, provider: this.opts.model.provider, model: this.opts.model.id,
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      stopReason: "stop", timestamp: Date.now() };
+      stopReason: "stop", timestamp: Date.now(), vexNotice: true };
     this.agent.state.messages.push(message);
     this.recentHistory.add(message);
     this.queueTranscriptWrite(message);
@@ -451,7 +458,8 @@ export class Session {
       }
       const backoff = new AbortController();
       this.backoff = backoff;
-      const delayMs = baseDelayMs * 2 ** (attempt - 1);
+      // An overloaded provider recovers in minutes, not seconds.
+      const delayMs = baseDelayMs * (last.errorMessage?.includes(PROVIDER_OVERLOADED) ? OVERLOAD_BACKOFF : 1) * 2 ** (attempt - 1);
       this.currentTrace()?.record({ type: "retry", attempt, delayMs, error: last.errorMessage ?? "unknown error" });
       try {
         await delay(delayMs, undefined, { signal: backoff.signal });
@@ -517,6 +525,14 @@ export class Session {
         return;
     }
   }
+}
+
+const NOTICE_LABEL = "[Runtime notification, already delivered to the owner; do not repeat or restate it]";
+
+/** Notifications and heartbeat reports the runtime delivered stay in the transcript, labelled for the model so it does not echo them. */
+function markNotice(message: AgentMessage): AgentMessage {
+  if (message.role !== "assistant" || !(message as AssistantMessage & { vexNotice?: boolean }).vexNotice) return message;
+  return { ...message, content: [{ type: "text", text: `${NOTICE_LABEL}\n${assistantText(message)}` }] };
 }
 
 function withSystemPrompt(messages: AgentMessage[], prompt: string): AgentMessage[] {

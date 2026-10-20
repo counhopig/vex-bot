@@ -64,13 +64,15 @@ describe("context compaction", () => {
     const complete = vi.fn(async () => complete.mock.calls.length === 2
       ? fauxAssistantMessage("", { stopReason: "error", errorMessage: "summary unavailable" }) : fauxAssistantMessage("prefix summary"));
     const saved: CompactionRecord[] = [];
+    let now = Date.UTC(2026, 9, 20, 10);
     const model = { ...faux.getModel(), contextWindow: 50_000, maxTokens: 512 };
-    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: async (record) => { saved.push(record); }, loadHistory: async function* () { yield* history; } });
+    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: async (record) => { saved.push(record); }, loadHistory: async function* () { yield* history; }, now: () => new Date(now) });
     compactor.discardPrefix(1024);
     await compactor.transform([user("current")]);
     expect(saved.map((record) => record.through)).toEqual([512]);
     await compactor.transform([user("current")]);
     expect(complete).toHaveBeenCalledTimes(2);
+    now += 5 * 60_000;
     await compactor.transform([user("current")], new AbortController().signal);
     expect(saved.map((record) => record.through)).toEqual([512, 1024]);
   });
@@ -247,12 +249,13 @@ describe("context compaction", () => {
     expect(prompts).toEqual([]);
   });
 
-  it("does not re-run rescue or summary after a failure within the same run", async () => {
+  it("does not re-run rescue or summary after a failure in the same run or within five minutes", async () => {
     const { faux, prompts, streamFn } = rescueSetup();
     const onError = vi.fn();
     const complete = vi.fn(async () => fauxAssistantMessage("", { stopReason: "error", errorMessage: "failed" }));
     const messages = [user("x".repeat(1000)), fauxAssistantMessage("a"), user("new")];
-    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 2000, maxTokens: 32 }, threshold: 0.1, backgroundModel: faux.getModel(), workspace: dir, streamFn, getApiKey: () => undefined, complete, save: vi.fn(), keepTurns: 1, onError });
+    let now = Date.UTC(2026, 9, 20, 10);
+    const compactor = new ContextCompactor({ model: { ...faux.getModel(), contextWindow: 2000, maxTokens: 32 }, threshold: 0.1, backgroundModel: faux.getModel(), workspace: dir, streamFn, getApiKey: () => undefined, complete, save: vi.fn(), keepTurns: 1, onError, now: () => new Date(now) });
     const signal = new AbortController().signal;
     await compactor.transform(messages, signal);
     const rescues = prompts.length;
@@ -261,6 +264,10 @@ describe("context compaction", () => {
     expect(prompts).toHaveLength(rescues);
     expect(complete).toHaveBeenCalledOnce();
     expect(onError).toHaveBeenCalledOnce();
+    now += 4 * 60_000;
+    await compactor.transform(messages, new AbortController().signal);
+    expect(complete).toHaveBeenCalledOnce();
+    now += 60_000;
     await compactor.transform(messages, new AbortController().signal);
     expect(complete).toHaveBeenCalledTimes(2);
     expect(prompts).toHaveLength(rescues);

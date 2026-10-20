@@ -300,7 +300,7 @@ it("logs the redacted provider error behind the owner-facing message", async () 
   const warn = vi.fn();
   const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE, warn, secrets: () => ["sk-secret"] });
   const output = await boundary(faux.getModel(), { messages: [{ role: "user" as const, content: "hello", timestamp: 1 }] } as TranscriptContext, undefined);
-  expect((await output.result()).errorMessage).toBe("Provider generation failed before a checked reply was available.");
+  expect((await output.result()).errorMessage).toBe("Provider generation failed before a checked reply was available: the model service rejected the API key.");
   expect(String(warn.mock.calls[0]?.[0])).toContain("HTTP 401: invalid key [redacted]");
 });
 

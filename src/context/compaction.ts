@@ -78,11 +78,14 @@ export function estimateTokens(messages: AgentMessage[]): number {
   return messages.reduce((sum, m) => sum + textTokens(renderMessages([m])) + 4, 0);
 }
 
+/** How long compaction rests after a failed attempt. */
+const COMPACTION_RETRY_MS = 5 * 60_000;
+
 export class ContextCompactor {
   private record: CompactionRecord | undefined;
-  // History prefix already rescued into daily notes, and the run in which compaction last failed.
+  // History prefix already rescued into daily notes, and the run and time in which compaction last failed.
   private rescued: number;
-  private failure: { signal: AbortSignal | undefined } | undefined;
+  private failure: { signal: AbortSignal | undefined; at: number } | undefined;
   constructor(private readonly opts: CompactionOptions, restored?: CompactionRecord) {
     this.record = restored;
     this.rescued = restored?.through ?? 0;
@@ -107,11 +110,21 @@ export class ContextCompactor {
     return retained;
   }
 
+  private clock(): number { return (this.opts.now?.() ?? new Date()).getTime(); }
+
+  /**
+   * After a failure, compaction waits for the next run and a quiet period: a failing summary model
+   * (an overloaded provider, say) would otherwise be called again before every retried request.
+   */
+  private failedRecently(signal: AbortSignal | undefined): boolean {
+    return !!this.failure && (this.failure.signal === signal || this.clock() - this.failure.at < COMPACTION_RETRY_MS);
+  }
+
   async transform(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
-    if (this.opts.loadHistory && this.offset > (this.record?.through ?? 0) && (!this.failure || this.failure.signal !== signal)) {
+    if (this.opts.loadHistory && this.offset > (this.record?.through ?? 0) && !this.failedRecently(signal)) {
       try { await this.recoverPrefix(signal); }
       catch (err) {
-        if (!signal?.aborted) { this.failure = { signal }; this.opts.onError?.(err); }
+        if (!signal?.aborted) { this.failure = { signal, at: this.clock() }; this.opts.onError?.(err); }
       }
     }
     const system = messages.filter((m) => m.role === "system");
@@ -128,7 +141,7 @@ export class ContextCompactor {
     const projectedInput = estimateProviderInput({ messages: projected });
     if (history.length < MAX_CONTEXT_MESSAGES && Buffer.byteLength(JSON.stringify(history), "utf8") < MAX_CONTEXT_BYTES && projectedInput <= contextWindow * (this.opts.threshold ?? 0.7) && projectedInput <= hardBudget) return projected;
     if (through <= previous && estimateProviderInput({ messages: projected }) <= hardBudget) return projected;
-    if (this.failure && this.failure.signal === signal) return this.fit(projected, hardBudget, history.length);
+    if (this.failedRecently(signal)) return this.fit(projected, hardBudget, history.length);
     const older = history.slice(previous, through);
     try {
       const fresh = history.slice(Math.max(this.rescued - this.offset, previous), through);
@@ -159,7 +172,7 @@ export class ContextCompactor {
     } catch (err) {
       if (signal?.aborted) return projected;
       this.opts.onError?.(err);
-      this.failure = { signal };
+      this.failure = { signal, at: this.clock() };
       return this.fit(projected, hardBudget, history.length);
     }
   }

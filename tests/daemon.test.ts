@@ -247,6 +247,25 @@ describe("startDaemon", () => {
     expect(mood.social).toBeCloseTo(50, 1);
   });
 
+  it("keeps a background run from asking the absent owner for approval", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "HEARTBEAT.md"), "Check the disk");
+    let toolResult = "";
+    faux.setResponses([
+      () => fauxAssistantMessage(fauxToolCall("bash", { command: "df -h" }, { id: "disk" }), { stopReason: "toolUse" }),
+      (ctx) => {
+        const result = ctx.messages.find((message) => message.role === "toolResult");
+        toolResult = result?.role === "toolResult" ? result.content.map((part) => part.type === "text" ? part.text : "").join("") : "";
+        return fauxAssistantMessage("Disk check skipped.");
+      },
+    ]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    await vi.waitFor(() => expect(toolResult).toContain("The owner is not present for this run"), { timeout: 10_000, interval: 50 });
+    expect(client.messages.filter((message) => message.type === "approvals" && message.pending.length > 0)).toEqual([]);
+  });
+
   it("builds the consolidation profile prompt and workspace-only toolset in the assembled daemon", async () => {
     vi.useFakeTimers();
     // Consolidation fires at 03:00 local time, so the clock must be local too.

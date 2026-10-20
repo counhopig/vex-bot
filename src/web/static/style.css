@@ -347,6 +347,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 #trace-panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; }
 #trace-list { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding-right: 4px; }
 #trace-detail { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+#trace-list > *, #trace-detail > * { flex-shrink: 0; }
 .trace-run { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .trace-run.active { background: var(--user); box-shadow: inset 2px 0 var(--brass); }
 .trace-run-head { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }

@@ -2,6 +2,7 @@ import type { AgentTool, StreamFn } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEvent, type Message, type TranscriptContext } from "@earendil-works/pi-ai";
 import { redactSecrets } from "../config/secrets.js";
 import type { TurnAdvisor } from "../policy/advice.js";
+import { providerFailureMessage } from "../providers/errors.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError } from "./budget.js";
 import { describeOutcomes, mentionsLink, extractUrls, unsupportedClaim, type EvidenceProfiles, type Receipt } from "./claims.js";
@@ -105,7 +106,7 @@ type ErrorLog = (message: AssistantMessage) => void;
 
 function safeTerminal(message: AssistantMessage, usage: AssistantMessage["usage"], log?: ErrorLog): AssistantMessage {
   if (message.stopReason === "error" && message.errorMessage !== CONTEXT_BUDGET_ERROR) log?.(message);
-  if (message.stopReason === "error") return assistantOutput({ ...message, errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." }, [], usage);
+  if (message.stopReason === "error") return assistantOutput({ ...message, errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : providerFailureMessage(message.errorMessage) }, [], usage);
   if (message.stopReason === "aborted") return assistantOutput({ ...message, errorMessage: "Generation was cancelled before a checked reply was available." }, [], usage);
   return assistantOutput(message, message.content, usage);
 }
@@ -224,7 +225,7 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
       const output = createAssistantMessageEventStream();
       if (message.stopReason === "error" && message.errorMessage !== CONTEXT_BUDGET_ERROR) logProviderError(message);
       if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "length") {
-        const safe = assistantOutput({ ...message, ...(message.stopReason === "error" ? { errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : "Provider generation failed before a checked reply was available." } : message.stopReason === "aborted" ? { errorMessage: "Generation was cancelled before a checked reply was available." } : {}) }, message.stopReason === "length" ? message.content.filter((part) => part.type === "toolCall") : [], accumulatedUsage);
+        const safe = assistantOutput({ ...message, ...(message.stopReason === "error" ? { errorMessage: message.errorMessage === CONTEXT_BUDGET_ERROR ? CONTEXT_BUDGET_ERROR : providerFailureMessage(message.errorMessage) } : message.stopReason === "aborted" ? { errorMessage: "Generation was cancelled before a checked reply was available." } : {}) }, message.stopReason === "length" ? message.content.filter((part) => part.type === "toolCall") : [], accumulatedUsage);
         if (safe.stopReason === "error" || safe.stopReason === "aborted") output.push({ type: "error", reason: safe.stopReason, error: safe });
         else { output.push({ type: "done", reason: safe.stopReason === "length" ? "length" : safe.stopReason === "toolUse" ? "toolUse" : safe.stopReason === "deferred" ? "deferred" : "stop", message: safe }); }
         output.end(safe);
