@@ -21,24 +21,26 @@ function excluded(path: string): boolean {
   return path.startsWith("wiki/") || path.startsWith("raw/") || path.split("/").some((segment) => segment.startsWith("."));
 }
 
-async function walk(root: string, prefix: string, out: string[]): Promise<void> {
+async function walk(root: string, prefix: string, out: string[], skip: (path: string) => boolean = excluded): Promise<void> {
   const entries = await readdir(prefix === "" ? root : join(root, prefix), { withFileTypes: true });
   for (const entry of entries) {
     const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-    if (entry.name.startsWith(".") || excluded(path)) continue;
-    if (entry.isDirectory()) await walk(root, path, out);
+    if (entry.name.startsWith(".") || skip(path)) continue;
+    if (entry.isDirectory()) await walk(root, path, out, skip);
     else if (entry.isFile() && entry.name.endsWith(".md")) out.push(path);
   }
 }
 
 /**
  * Markdown files a vault consumer has not seen yet.
- * `from === null` means first run, so every markdown file is new; otherwise the diff between `from` and HEAD is used.
+ * `from === null` means first run, so every markdown file is new, archived raw/ sources included so a
+ * rebuilt wiki covers them again; otherwise the diff between `from` and HEAD is used.
  */
 export async function detectChanges(repo: WikiRepo, from: string | null): Promise<Change[]> {
   if (from === null) {
     const paths: string[] = [];
     await walk(repo.root, "", paths);
+    await walk(repo.root, "raw", paths, () => false).catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; });
     paths.sort();
     return paths.map((path) => ({ path, status: "A" as const }));
   }

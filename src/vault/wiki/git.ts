@@ -167,6 +167,23 @@ export class WikiRepo {
     await this.git(["update-ref", name, sha]);
   }
 
+  async deleteRef(name: string): Promise<void> {
+    await this.git(["update-ref", "-d", name]);
+  }
+
+  /**
+   * Removes every tracked `wiki/` page and commits that alone (an empty commit when there is none)
+   * under the bot identity; returns the commit and how many pages it removed.
+   */
+  async commitWikiRemoval(message: string): Promise<{ commit: string; removed: number }> {
+    const tracked = (await this.git(["ls-files", "-z", "--", ":(literal)wiki"])).split("\0").filter(Boolean);
+    if (tracked.length) await this.git(["rm", "-r", "-q", "--", ":(literal)wiki"]);
+    const staged = (await this.git(["diff", "--cached", "--name-only", "--no-renames", "-z"])).split("\0").filter(Boolean);
+    if (staged.some((path) => !path.startsWith("wiki/"))) throw new WikiIntegrityError("wiki index holds changes outside wiki/; reset refused");
+    await this.git([...IDENTITY, "commit", "--allow-empty", "-q", "-m", message]);
+    return { commit: await this.head(), removed: tracked.length };
+  }
+
   async isAncestor(a: string, b: string): Promise<boolean> {
     try {
       await this.git(["merge-base", "--is-ancestor", a, b]);

@@ -61,8 +61,8 @@ describe("ToolPolicy", () => {
   });
 
   it("asks before wiki bootstrap and rollback while allowing the other wiki tools", () => {
-    for (const tool of ["wiki_write", "wiki_edit", "wiki_ingest", "wiki_bootstrap", "wiki_rollback"]) {
-      expect(policy.decide(tool, {})).toBe(tool === "wiki_bootstrap" || tool === "wiki_rollback" ? "ask" : "allow");
+    for (const tool of ["wiki_write", "wiki_edit", "wiki_ingest", "wiki_bootstrap", "wiki_rollback", "wiki_rebuild"]) {
+      expect(policy.decide(tool, {})).toBe(["wiki_bootstrap", "wiki_rollback", "wiki_rebuild"].includes(tool) ? "ask" : "allow");
     }
   });
 

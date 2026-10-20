@@ -35,4 +35,5 @@ export const WIKI_TOOL_EVIDENCE: EvidenceProfiles = {
   wiki_write: { supports: { compiled: true } },
   wiki_edit: { supports: { compiled: true } },
   wiki_bootstrap: { supports: { published } },
+  wiki_rebuild: { supports: { published } },
 };

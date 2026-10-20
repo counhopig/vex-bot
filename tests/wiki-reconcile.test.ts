@@ -1,5 +1,5 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { WikiRepo } from "../src/vault/wiki/git.js";
 import type { InFlightMarker } from "../src/vault/wiki/marker.js";
@@ -31,6 +31,7 @@ async function seed(): Promise<Seeded> {
 }
 
 async function writeAndCommit(repo: WikiRepo, root: string, message: string, file = "wiki/a.md", text = "v2"): Promise<string> {
+  mkdirSync(dirname(join(root, file)), { recursive: true });
   writeFileSync(join(root, file), text);
   return repo.commit([file], message);
 }
@@ -169,4 +170,39 @@ describe("wiki history reconciliation", () => {
     const partial = await reconcile({ repo, state: state({ lastBatchId: "b1" }), marker: null, bootstrapRef: null });
     expect(partial.rollback).toEqual({ targetBatchId: "b1", revertId: "rb1" });
   });
+
+  describe("rebuild epochs", () => {
+    it("ignores batches, the published bootstrap and older state behind the newest reset", async () => {
+      const { repo, root, base } = await seed();
+      const bootstrapSha = await writeAndCommit(repo, root, batch("boot", "bootstrap", base));
+      await writeAndCommit(repo, root, batch("s1", "scheduled", bootstrapSha), "wiki/b.md", "b");
+      await publish(repo);
+      const before = await reconcile({ repo, state: state({ bootstrap: "done", lastScanCommit: bootstrapSha }), marker: null, bootstrapRef: bootstrapSha });
+      expect(before).toMatchObject({ bootstrap: "done", lastBatchId: "s1", reset: null });
+
+      const { commit: resetSha } = await repo.commitWikiRemoval("wiki: rebuild\n\nVex-Wiki-Reset: r1");
+      await publish(repo);
+      const stale = state({ bootstrap: "done", lastScanCommit: bootstrapSha, lastBatchId: "s1" });
+      expect(await reconcile({ repo, state: stale, marker: null, bootstrapRef: bootstrapSha })).toMatchObject({
+        bootstrap: "pending", lastBatchId: null, lastScanCommit: null, preview: false, reset: { id: "r1", sha: resetSha },
+      });
+      expect(await reconcile({ repo, state: { ...stale, resetId: "r1" }, marker: null, bootstrapRef: null })).toMatchObject({ bootstrap: "done", lastScanCommit: bootstrapSha });
+
+      const preview = await writeAndCommit(repo, root, batch("boot2", "bootstrap", resetSha, "wiki: bootstrap preview"), "wiki/c.md", "c");
+      expect(await reconcile({ repo, state: state({ resetId: "r1" }), marker: null, bootstrapRef: null })).toMatchObject({ bootstrap: "pending", lastBatchId: "boot2", preview: true });
+      await publish(repo);
+      expect(await reconcile({ repo, state: null, marker: null, bootstrapRef: null })).toMatchObject({ bootstrap: "done", lastBatchId: "boot2", lastScanCommit: resetSha });
+      expect(await repo.isAncestor(resetSha, preview)).toBe(true);
+    });
+
+    it("keeps a bootstrap ref written after the reset", async () => {
+      const { repo, root, base } = await seed();
+      await writeAndCommit(repo, root, batch("boot", "bootstrap", base));
+      const { commit: resetSha } = await repo.commitWikiRemoval("wiki: rebuild\n\nVex-Wiki-Reset: r1");
+      await publish(repo);
+      expect((await reconcile({ repo, state: null, marker: null, bootstrapRef: base })).bootstrap).toBe("pending");
+      expect((await reconcile({ repo, state: null, marker: null, bootstrapRef: resetSha })).bootstrap).toBe("done");
+    });
+  });
 });
+

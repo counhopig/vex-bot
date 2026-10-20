@@ -14,10 +14,13 @@ export interface ReconcileResult {
   alerts: string[];
   /** True only when the newest compile batch is an unpublished bootstrap preview awaiting review. */
   preview: boolean;
+  /** The newest `Vex-Wiki-Reset` in history; batches, cursors and bootstrap evidence before it are ignored. */
+  reset: { id: string; sha: string } | null;
 }
 
 const PREVIEW_SUBJECT = "wiki: bootstrap preview";
 const SCAN_NONE = "none";
+export const RESET_TRAILER = "Vex-Wiki-Reset";
 
 interface CommitRecord { sha: string; body: string }
 
@@ -67,7 +70,8 @@ async function resolvesCommit(repo: WikiRepo, sha: string): Promise<boolean> {
  * The service's settle step performs any push the result calls for.
  */
 export async function reconcile(input: ReconcileInput): Promise<ReconcileResult> {
-  const { repo, state, marker, bootstrapRef } = input;
+  const { repo, marker } = input;
+  let { state, bootstrapRef } = input;
   const origin = await repo.originHead();
 
   const batches: CompileBatch[] = [];
@@ -80,8 +84,15 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   // Every commit in the scanned history is published unless it is local-only.
   const unpublished = new Set(historyRef === origin ? [] : await repo.commitsBetween(origin, "HEAD"));
   const isPublished = (sha: string): boolean => !unpublished.has(sha);
+  let reset: ReconcileResult["reset"] = null;
   for (const record of parseLog(await repo.log(historyRef))) {
     const trailers = parseTrailers(record.body);
+    // A rebuild starts a new epoch: everything older than its reset commit no longer describes the wiki.
+    const resetId = trailer(trailers, RESET_TRAILER);
+    if (resetId !== undefined) {
+      reset = { id: resetId, sha: record.sha };
+      break;
+    }
     const batchId = trailer(trailers, "Vex-Batch");
     const rollbackId = trailer(trailers, "Vex-Rollback");
     const revertOf = trailer(trailers, "Vex-Revert-Of");
@@ -108,6 +119,12 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
         rollbacks.push({ sha: record.sha, id: rollbackIds[0], revertOf: revertTargets[0], published: isPublished(record.sha) });
       }
     }
+  }
+
+  if (reset) {
+    // State and the bootstrap ref count only when they were written in this epoch.
+    if ((state?.resetId ?? null) !== reset.id) state = null;
+    if (bootstrapRef !== null && !(await repo.isAncestor(reset.sha, bootstrapRef).catch(() => false))) bootstrapRef = null;
   }
 
   const batchCounts = new Map<string, number>();
@@ -224,5 +241,5 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     }
   }
 
-  return { lastBatchId, bootstrap, rollback, lastScanCommit, markerResolution, alerts, preview: previewPending };
+  return { lastBatchId, bootstrap, rollback, lastScanCommit, markerResolution, alerts, preview: previewPending, reset };
 }

@@ -535,7 +535,7 @@ const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
 const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
 
 /** Wiki tools that publish to or rewrite the owner's repository; each call is confirmed. */
-const WIKI_PUBLISHING_TOOLS = ["wiki_bootstrap", "wiki_rollback"];
+const WIKI_PUBLISHING_TOOLS = ["wiki_bootstrap", "wiki_rollback", "wiki_rebuild"];
 
 /** What each tool's results prove, declared by the module that owns the tool. */
 const TOOL_EVIDENCE: EvidenceProfiles = { ...CORE_TOOL_EVIDENCE, ...VAULT_TOOL_EVIDENCE, ...WIKI_TOOL_EVIDENCE };

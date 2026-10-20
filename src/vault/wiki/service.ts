@@ -7,7 +7,7 @@ import { parseTrailers, trailerValues, WikiIntegrityError, WikiRepo, type GitRun
 import { assertRecognizedLocalHistory, observeWiki } from "./integrity.js";
 import { fingerprint, MarkerStore } from "./marker.js";
 import { validateSubtreeRoot, validateSubtreeRoots, wikiRawPath } from "./paths.js";
-import { reconcile, type ReconcileResult } from "./reconcile.js";
+import { reconcile, RESET_TRAILER, type ReconcileResult } from "./reconcile.js";
 import { emptyState, StateStore, type WikiState } from "./state.js";
 import { writeWikiFile } from "./write.js";
 import { WikiLock } from "./lock.js";
@@ -21,7 +21,16 @@ export interface WikiRunResult {
   publication: "not-needed" | "preview" | "published" | "pending";
 }
 
+export interface WikiRebuildResult {
+  reset: boolean;
+  commit: string | null;
+  removed: number;
+  publication: "not-needed" | "published" | "pending";
+  message: string;
+}
+
 const OPEN_RETRY_MS = 60_000;
+const BOOTSTRAP_REF = "refs/vex/wiki-bootstrap";
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -346,7 +355,7 @@ export class Wiki {
         if (changes.length === 0) {
           const current = (await this.stateStore.read()) ?? emptyState();
           await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind.kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
-          if (kind.kind === "bootstrap") await this.repo.updateRef("refs/vex/wiki-bootstrap", baseHead);
+          if (kind.kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, baseHead);
           this.cachedNextAttemptAt = null;
           this.statusCache = null;
           return { batchId: null, commit: null, pages: [], publication: "not-needed" };
@@ -427,7 +436,7 @@ export class Wiki {
         }
         const current = (await this.stateStore.read()) ?? emptyState();
         await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind.kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
-        if (kind.kind === "bootstrap") await this.repo.updateRef("refs/vex/wiki-bootstrap", baseHead);
+        if (kind.kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, baseHead);
         this.cachedNextAttemptAt = null;
         this.statusCache = null;
         await this.marker.remove();
@@ -466,7 +475,7 @@ export class Wiki {
             nextAttemptAt: null,
             ...(kind.kind === "bootstrap" ? { bootstrap: "done" as const } : {}),
           });
-          if (kind.kind === "bootstrap") await this.repo.updateRef("refs/vex/wiki-bootstrap", baseHead);
+          if (kind.kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, baseHead);
           this.cachedNextAttemptAt = null;
           this.statusCache = null;
           await this.marker.remove();
@@ -735,6 +744,45 @@ export class Wiki {
     }, signal);
   }
 
+  /**
+   * Starts the wiki over: one reset commit removes the generated wiki/ pages and opens a new epoch in
+   * which earlier batches, cursors and the old bootstrap no longer count, so the scheduler compiles
+   * every note and archived raw source into a new bootstrap preview for the owner to review.
+   */
+  async rebuild(signal: AbortSignal): Promise<WikiRebuildResult> {
+    signal.throwIfAborted();
+    await this.ready();
+    return this.lock.run(async () => {
+      const refused = (message: string): WikiRebuildResult => ({ reset: false, commit: null, removed: 0, publication: "not-needed", message });
+      this.statusCache = null;
+      await this.repo.fetch();
+      const state = await this.stateStore.read();
+      const reconciled = await this.runReconcile(state);
+      if (await this.marker.read()) return refused("a wiki batch is still being settled; try again after the next run");
+      if (reconciled.preview) return refused("a bootstrap preview awaits review; approve or reject it first");
+      if (reconciled.rollback || state?.rollback) return refused("a rollback is still being published; try again after the next run");
+      if (!(await this.cleanTree())) return refused("working tree or index is not clean");
+      await this.checkIntegrity();
+      await this.repo.fastForward();
+      if ((await this.repo.head()) !== (await this.repo.originHead())) return refused("unpublished wiki commits exist; the next run publishes them first");
+      signal.throwIfAborted();
+      const resetId = randomUUID();
+      const { commit, removed } = await this.repo.commitWikiRemoval(`wiki: rebuild\n\n${RESET_TRAILER}: ${resetId}`);
+      await this.stateStore.write({ ...emptyState(), resetId });
+      if (await this.repo.ref(BOOTSTRAP_REF)) await this.repo.deleteRef(BOOTSTRAP_REF);
+      this.roots = await validateSubtreeRoots(this.repo.root);
+      this.lastStatus = null;
+      this.cachedNextAttemptAt = null;
+      try {
+        signal.throwIfAborted();
+        await this.pushWithRetry(true, signal);
+      } catch (error) {
+        return { reset: true, commit, removed, publication: "pending", message: `the reset was committed locally but not pushed (${errorText(error)}); the next run publishes it before compiling` };
+      }
+      return { reset: true, commit: await this.repo.head(), removed, publication: "published", message: `removed ${removed} wiki pages; every note will be compiled into a new bootstrap preview for review` };
+    }, signal);
+  }
+
   private sourcePath(url: string): string {
     return wikiRawPath(url);
   }
@@ -870,7 +918,7 @@ export class Wiki {
   /** Reconciles history; the result is reused while the refs, state and marker it was built from are unchanged. */
   private async runReconcile(state: WikiState | null): Promise<ReconcileResult> {
     const marker = await this.marker.read();
-    const bootstrapRef = await this.repo.ref("refs/vex/wiki-bootstrap");
+    const bootstrapRef = await this.repo.ref(BOOTSTRAP_REF);
     const key = JSON.stringify([await this.repo.head(), await this.repo.originHead(), bootstrapRef, state, marker]);
     let result = this.reconcileMemo?.key === key ? this.reconcileMemo.result : undefined;
     if (!result) {
