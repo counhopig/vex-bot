@@ -105,7 +105,7 @@ WebChat's Traces page (sidebar, next to Settings) shows each run step by step: m
 
 ## Approvals
 
-When a tool needs approval, the request appears in WeChat and in every open WebChat window. Answer in either; the first answer wins and the other prompts clear. Unanswered requests are denied after ten minutes. Adjust defaults with `tools.policy`.
+When a tool needs approval, the request appears in WeChat and in every open WebChat window. Answer in either; the first answer wins and the other prompts clear. Unanswered requests are denied after ten minutes. Runs Vex starts on its own (proactive chat, scheduled tasks, heartbeat, wiki) never ask: a tool that needs approval is refused there, so allow it in `tools.policy` if such a task depends on it. Adjust defaults with `tools.policy`.
 
 ## Security checklist
 

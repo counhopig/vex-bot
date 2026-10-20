@@ -279,7 +279,8 @@ export class WeChatChannel {
           if (event.text) this.send(event.text);
           return;
         }
-        if (event.text) this.turn.texts.push(event.text);
+        // Text written alongside tool calls narrates the work; the owner gets the reply that ends the turn.
+        if (event.text && event.stopReason !== "toolUse") this.turn.texts.push(event.text);
         if (event.stopReason === "aborted") this.turn.aborted = true;
         return;
       case "error":

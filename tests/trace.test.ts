@@ -180,7 +180,7 @@ describe("run traces from sessions", () => {
     ], [broken]);
     expect(types(events)).toEqual(["run_start", "llm_start", "llm_end", "retry", "llm_start", "llm_end", "tool_start", "tool_end", "llm_start", "llm_end", "run_end"]);
     expect(events[2]).toMatchObject({ stopReason: "error", error: "529 overloaded" });
-    expect(events[3]).toMatchObject({ attempt: 1, delayMs: 1 });
+    expect(events[3]).toMatchObject({ attempt: 1, delayMs: 10 });
     expect(events[7]).toMatchObject({ isError: true, result: expect.stringContaining("tool exploded") });
     expect(summary).toMatchObject({ outcome: "ok", toolErrors: 1, llmCalls: 3 });
   });
@@ -188,7 +188,7 @@ describe("run traces from sessions", () => {
   it("records a run that fails after its retries as an error", async () => {
     const failure = fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" });
     const { summary, events } = await runSession([failure, failure, failure, failure]);
-    expect(types(events).filter((type) => type === "retry")).toHaveLength(3);
+    expect(events.flatMap((event) => event.type === "retry" ? [event.delayMs] : [])).toEqual([1, 2, 4]);
     expect(summary).toMatchObject({ outcome: "error", error: expect.any(String) });
     expect(events.at(-1)).toMatchObject({ type: "run_end", outcome: "error" });
   });

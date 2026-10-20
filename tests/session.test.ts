@@ -1050,4 +1050,39 @@ describe("Session", () => {
     expect(Date.now() - started).toBeLessThan(1000);
     expect(faux.getPendingResponseCount()).toBe(1);
   });
+
+  it("counts a runtime-started run as unattended until an owner message joins it", async () => {
+    faux = createFaux();
+    const seen: boolean[] = [];
+    const call = () => fauxAssistantMessage(fauxToolCall("echo", { text: "x" }), { stopReason: "toolUse" });
+    faux.setResponses([call(), fauxAssistantMessage("done"), call(), fauxAssistantMessage("done")]);
+    let session!: Session;
+    session = await open({ beforeToolCall: async () => { seen.push(session.unattended); return undefined; } });
+    session.send("check the feed", "scheduled task");
+    await session.whenIdle();
+    session.send("hello");
+    await session.whenIdle();
+    expect(seen).toEqual([true, false]);
+    expect(session.unattended).toBe(false);
+    await session.dispose();
+  });
+
+  it("labels delivered notifications for the model without changing the transcript", async () => {
+    faux = createFaux();
+    let seen = "";
+    faux.setResponses([(ctx) => {
+      seen = ctx.messages.filter((message) => message.role === "assistant").map((message) => message.content.map((part) => part.type === "text" ? part.text : "").join("")).join("|");
+      return fauxAssistantMessage("ok");
+    }]);
+    const session = await open();
+    await session.enqueueAssistant("Wiki run: compiled wiki/a.md");
+    await session.whenIdle();
+    session.send("what happened?");
+    await session.whenIdle();
+    expect(seen).toBe("[Runtime notification, already delivered to the owner; do not repeat or restate it]\nWiki run: compiled wiki/a.md");
+    const saved = await readJsonl<{ role?: string; content?: { text?: string }[] }>(join(dir, "t.jsonl"));
+    expect(saved.find((record) => record.role === "assistant")?.content?.[0]?.text).toBe("Wiki run: compiled wiki/a.md");
+    expect(session.history().items[0]).toMatchObject({ kind: "assistant", text: "Wiki run: compiled wiki/a.md" });
+    await session.dispose();
+  });
 });

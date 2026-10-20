@@ -217,14 +217,14 @@ describe("WeChatChannel inbound", () => {
 });
 
 describe("WeChatChannel outbound", () => {
-  it("sends one reply per turn using the saved context token", async () => {
+  it("sends one reply per turn, without the narration written alongside tool calls, using the saved context token", async () => {
     await store.saveState({ contextToken: "ctx-saved" });
     await startChannel({ processingNoticeMs: 60_000 });
     emit({ kind: "busy", busy: true });
     emit({ kind: "assistant_message", text: "第一段", stopReason: "toolUse", timestamp: 1 });
     emit({ kind: "assistant_message", text: "第二段", stopReason: "stop", timestamp: 2 });
     emit({ kind: "busy", busy: false });
-    expect(await sentTexts()).toEqual(["第一段\n\n第二段"]);
+    expect(await sentTexts()).toEqual(["第二段"]);
     const body = ilink.requests.find((r) => r.path === "/ilink/bot/sendmessage")?.body as { msg: Record<string, unknown> };
     expect(body.msg).toMatchObject({ to_user_id: "owner1", context_token: "ctx-saved" });
   });

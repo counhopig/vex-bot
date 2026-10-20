@@ -60,7 +60,7 @@ Conversation history is per session; workspace, tools and configuration are glob
 
 - An idle session starts a run with `agent.prompt()`. A message arriving during a run is injected before the next model call (steering). A message arriving while a run is finishing starts the next run.
 - `/stop` on WeChat or the stop button in WebChat aborts the run.
-- WebChat streams text, tool status and sub-agent progress. WeChat receives the complete reply when the run ends, plus a "processing" notice when a run exceeds 15 seconds (not for proactive turns).
+- WebChat streams text, tool status and sub-agent progress. WeChat receives the reply that ends the turn when the run ends (text the model writes alongside tool calls is not sent), plus a "processing" notice when a run exceeds 15 seconds (not for proactive turns).
 - Model failures are retried up to three times with backoff, then reported to the originating window. Tool failures are returned to the model as error results.
 
 ### System prompt
@@ -80,7 +80,7 @@ When the projected history exceeds `compaction.threshold` of the context window 
 
 The JSONL transcript keeps every message. Completed runs release durably summarized messages and condensed tool payloads from memory. The recent model window is bounded by 512 messages and 8 MiB, with one complete turn retained even if it exceeds these limits; tool calls and results are never separated. Without compaction, the model sees only this recent window. The request budget still checks every assembled provider request.
 
-Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run.
+Session restoration streams the transcript into a bounded window. An older prefix without a saved summary is rescued and summarized from disk in batches on the next model request. Checkpoints use absolute transcript message indices, so recovery resumes after the last saved batch. A failed recovery does not mark the missing prefix as summarized; a failed compaction or recovery is not retried within the same run or for five minutes after it failed.
 
 WebChat opens the latest history page and loads older pages through “Earlier messages”. Each page contains at most 100 rendered items and approximately 1 MiB, retaining at least one complete item. The optional `before` cursor on `open` refers to a rendered-item index, so new messages do not shift existing cursors. Historical pages scan a fixed transcript snapshot with bounded memory, starting from the nearest indexed byte offset (one every 1,000 items, extended as the transcript grows and rebuilt if it is rewritten).
 
@@ -119,7 +119,9 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 
-`ask` publishes a request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y` (allow), `/ya` (always allow for that tool in the session), `/n` (deny) on WeChat, which answer the oldest pending request. Requests unanswered after ten minutes are denied. Scheduled turns, heartbeat, consolidation and sub-agents use the same flow; consolidation may only touch workspace files.
+`ask` publishes a request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y` (allow), `/ya` (always allow for that tool in the session), `/n` (deny) on WeChat, which answer the oldest pending request. Requests unanswered after ten minutes are denied. A run the runtime starts (proactive chat, scheduled turns, heartbeat, wiki compilation) has no owner to answer, so until an owner message joins it a tool that needs approval is refused at once, with a reason telling the model to continue without it; tools allowed by policy, or always allowed earlier in the session, still run. Sub-agents use their parent's gate; consolidation may only touch workspace files.
+
+Notifications the runtime delivers (wiki results, link-action outcomes, heartbeat reports) are kept in the transcript as assistant messages and labelled in model requests as already delivered, so the model does not restate them.
 
 ### Link reading
 
@@ -231,7 +233,7 @@ Every run of every session, temporary ones included, is recorded as a trace: wha
 
 | Situation | Handling |
 |---|---|
-| Model call fails | Up to three retries, then the error goes to the window |
+| Model call fails | Up to three retries (1, 2 and 4 seconds apart; 10, 20 and 40 seconds when the provider is overloaded), then the error goes to the window with its recognised cause (overloaded, rate limited, key rejected, server error, unreachable) |
 | MCP server unreachable | Skipped at startup, retried in the background |
 | Wiki clone fails | Startup continues; the clone is retried in the background no sooner than a minute later |
 | WeChat poll fails | Reconnect with backoff |
