@@ -7,6 +7,7 @@ import {
   formatNow,
   residentFileSection,
   profileSection,
+  scheduleSection,
   SystemPromptBuilder,
   timeSection,
   vaultSection,
@@ -103,5 +104,23 @@ describe("run profiles", () => {
     expect(text).toContain("Jev classifies intent and provides advisory suggestions");
     expect(text).toContain("runtime owns fixed link actions");
     expect(text).toContain("pending publication");
+  });
+});
+
+describe("scheduled tasks section", () => {
+  it("lists every task with its live state", async () => {
+    const text = await scheduleSection(() => [
+      { id: "a", name: "Daily AI Briefing", schedule: { cron: "0 9 * * *" }, prompt: "p", target: "wechat", enabled: false, nextAt: 1 },
+      { id: "b", name: "Water", schedule: { every: "2h" }, prompt: "p", target: "wechat", enabled: true, nextAt: Date.parse("2026-10-02T08:00:00Z") },
+      { id: "c", name: "Call", schedule: { once: "2026-10-01T10:00:00+08:00" }, prompt: "p", target: "abc", enabled: true, nextAt: null },
+    ], "Asia/Shanghai")(ctx);
+    expect(text).toContain("overrides anything memory, notes or earlier messages say");
+    expect(text).toContain("- Daily AI Briefing (cron 0 9 * * *, to wechat): paused");
+    expect(text).toContain("- Water (every 2h, to wechat): next run 2026-10-02 16:00 Friday");
+    expect(text).toContain("- Call (once at 2026-10-01T10:00:00+08:00, to abc): finished");
+  });
+
+  it("says so when there are no tasks", async () => {
+    expect(await scheduleSection(() => [], "Asia/Shanghai")(ctx)).toContain("None.");
   });
 });

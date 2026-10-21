@@ -213,6 +213,7 @@ export class Scheduler {
     const prompt = [
       `Read the daily notes of the last seven days (${dates.map(date => `memory/${date}.md`).join(", ")}; skip files that do not exist), plus MEMORY.md and USER.md.`,
       "Distil what recurs or is clearly important into MEMORY.md and USER.md, merge duplicate entries, remove stale ones, and keep MEMORY.md under 100 lines.",
+      "Leave scheduled tasks out of both files and remove any entries about them: the scheduler's live list is supplied separately.",
       "Edit only files inside the workspace and send no message to the owner.",
     ].join("\n");
     await this.options.hooks.runTemporary(prompt, "consolidation", this.abort.signal);

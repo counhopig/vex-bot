@@ -17,6 +17,7 @@ import {
   residentFileSection,
   SystemPromptBuilder,
   timeSection,
+  scheduleSection,
   vaultSection,
   wikiCompilerSection,
   wikiSection,
@@ -185,6 +186,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
     skillsSection(config.workspace, undefined, (message) => log.warn(message)),
     ...(vault ? [vaultSection()] : []),
+    scheduleSection(() => scheduler.list()),
     timeSection(),
   ];
 
@@ -238,6 +240,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         residentFileSection({ workspace: config.workspace, file: "MEMORY.md", maxLines: RESIDENT_LINE_LIMITS["MEMORY.md"]! }),
         ...(temporary === "heartbeat" ? [skillsSection(config.workspace, undefined, (message) => log.warn(message))] : []),
         profileSection(temporary),
+        scheduleSection(() => scheduler.list()),
         () => `## Workspace\n${config.workspace}`,
         toolsSection,
         timeSection(),
