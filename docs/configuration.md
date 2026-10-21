@@ -66,8 +66,8 @@ Saving in WebChat settings applies the change without a manual restart:
 | `persona.outreach.socialThreshold` | `70` | 0–100 |
 | `persona.outreach.quietHours` | `3` | Hours without an owner message, and since the last proactive chat |
 | `persona.outreach.dailyLimit` | `3` | Proactive conversations per day |
-| `webSearch.provider` | none | `tavily`, `searxng` or `brave`; without it `web_search` reports that no service is configured |
-| `webSearch.apiKey` | none | Key for `tavily` or `brave`; may come from `TAVILY_API_KEY` / `BRAVE_API_KEY` |
+| `webSearch.provider` | none | `tavily`, `searxng`, `brave` or `deepseek`; without it `web_search` reports that no service is configured |
+| `webSearch.apiKey` | none | Key for `tavily`, `brave` or `deepseek`; may come from `TAVILY_API_KEY` / `BRAVE_API_KEY` / `DEEPSEEK_API_KEY` |
 | `webSearch.baseUrl` | none | Address of your SearXNG, required for `searxng` |
 | `stt.provider` | `openai` | `openai` for any service with the OpenAI transcription API, `mimo` for Xiaomi MiMo speech recognition |
 | `stt.baseUrl`, `stt.model` | none | Speech-to-text service: the API root (for example `https://api.openai.com/v1`) and a model name. Both are required to enable it |
@@ -130,7 +130,7 @@ Tools appear as `mcp__<server>__<tool>`, sanitised to `[A-Za-z0-9_-]` and at mos
 | `VEX_WEB_TOKEN` | Overrides `web.token` |
 | `VEX_LOG_LEVEL` | `trace`, `debug`, `info` (default), `warn`, `error`. `debug` adds ignored WeChat traffic, finished tool calls and disconnects |
 | `VEX_LOG_STDOUT` | `1` also writes logs to standard output (set in the Docker image) |
-| `TAVILY_API_KEY`, `BRAVE_API_KEY` | Search key when `webSearch.apiKey` is absent |
+| `TAVILY_API_KEY`, `BRAVE_API_KEY`, `DEEPSEEK_API_KEY` | Search key when `webSearch.apiKey` is absent (`DEEPSEEK_API_KEY` is also the DeepSeek model key) |
 | Provider variables such as `DEEPSEEK_API_KEY` | API key when `providers.<name>.apiKey` is absent |
 
 Vex does not load `.env` files. Inside the shell tool, `VEX_CONFIG_PATH` points to the active configuration for skill scripts.
@@ -160,13 +160,14 @@ The `image` skill uses the primary model unless its script receives `--provider`
 
 ## Web search
 
-`web_search` supports three services; pick one with `webSearch.provider` (or in the settings page, Voice & links tab):
+`web_search` supports four services; pick one with `webSearch.provider` (or in the settings page, Voice & links tab):
 
 | Service | Cost | Needs |
 |---|---|---|
 | `tavily` | 1000 searches a month free, no card | An account key from tavily.com |
 | `searxng` | Free, no limit | A SearXNG you run yourself |
 | `brave` | Paid since February 2026 ($5 of credit a month, card required) | An API key |
+| `deepseek` | ¥5 per 1000 searches with results; failed or empty searches are free | A DeepSeek platform API key |
 
 ```yaml
 webSearch:

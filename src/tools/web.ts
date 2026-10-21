@@ -213,7 +213,7 @@ export function createWebFetchTool(options: {
   };
 }
 
-export interface WebSearchConfig { provider: "brave" | "tavily" | "searxng"; apiKey?: string; baseUrl?: string }
+export interface WebSearchConfig { provider: "brave" | "tavily" | "searxng" | "deepseek"; apiKey?: string; baseUrl?: string }
 
 const SearchParams = Type.Object({
   query: Type.String({ minLength: 1 }),
@@ -273,19 +273,36 @@ async function searchSearxng(config: WebSearchConfig, { query, count, country, s
     .map((entry) => ({ title: text(entry.title), url: text(entry.url), description: text(entry.content), published: entry.publishedDate ?? undefined }));
 }
 
-const SEARCH_PROVIDERS = { brave: searchBrave, tavily: searchTavily, searxng: searchSearxng };
+async function searchDeepseek(config: WebSearchConfig, { query, count, signal, fetch: fetchFn }: SearchRequest): Promise<SearchResult[]> {
+  const apiKey = config.apiKey?.trim() || process.env.DEEPSEEK_API_KEY?.trim();
+  if (!apiKey) throw new Error("DeepSeek Search needs webSearch.apiKey or DEEPSEEK_API_KEY");
+  const response = await fetchFn("https://api.deepseek.com/v1/tools/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ query: [...query].slice(0, 128).join(""), count, need_content: false }),
+    redirect: "error",
+    signal,
+  });
+  if (response.status === 402) throw new Error("DeepSeek Search returned HTTP 402: the DeepSeek account balance is insufficient");
+  if (!response.ok) throw new Error(`DeepSeek Search returned HTTP ${response.status}`);
+  const data = await response.json() as { results?: { title?: string; url?: string; summary?: string; snippet?: string; date?: string | null }[] };
+  return (Array.isArray(data.results) ? data.results : []).slice(0, count)
+    .map((entry) => ({ title: text(entry.title), url: text(entry.url), description: text(entry.summary) || text(entry.snippet), published: entry.date ?? undefined }));
+}
+
+const SEARCH_PROVIDERS = { brave: searchBrave, tavily: searchTavily, searxng: searchSearxng, deepseek: searchDeepseek };
 
 export function createWebSearchTool(
   config?: WebSearchConfig,
   options: { fetch?: typeof fetch; timeoutMs?: number } = {},
 ): AgentTool<typeof SearchParams> {
   return {
-    name: "web_search", label: "Web search", description: "Searches the public web through the configured service (Brave Search, Tavily or SearXNG) and returns titles, links and snippets.",
+    name: "web_search", label: "Web search", description: "Searches the public web through the configured service (Brave Search, Tavily, SearXNG or DeepSeek Search) and returns titles, links and snippets.",
     parameters: SearchParams,
     async execute(_id, { query, count = 5, country }, signal) {
       if (!config) throw new Error("Configure a search service under webSearch");
       const search = SEARCH_PROVIDERS[config.provider];
-      if (!search) throw new Error("Unsupported search provider; supported: brave, tavily, searxng");
+      if (!search) throw new Error("Unsupported search provider; supported: brave, tavily, searxng, deepseek");
       const results = await search(config, {
         query,
         count: Math.max(1, Math.min(10, count)),

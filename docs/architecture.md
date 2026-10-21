@@ -95,7 +95,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
 | `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
 | `web_fetch` | Reads public pages and returns a JSON receipt with an excerpt (see Security) |
-| `web_search` | Tavily, SearXNG or Brave Search, as configured |
+| `web_search` | Tavily, SearXNG, Brave Search or DeepSeek Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |
 | `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
