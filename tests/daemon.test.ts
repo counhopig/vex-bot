@@ -96,6 +96,7 @@ describe("startDaemon", () => {
     expect((await stat(join(dir, "workspace", "SOUL.md"))).isFile()).toBe(true);
     expect(systemPrompt).toContain(join(dir, "workspace"));
     expect(systemPrompt).toContain("## SOUL.md");
+    expect(systemPrompt).toContain("## Scheduled tasks");
     expect(systemPrompt).toContain('Window: WebChat conversation "New chat"');
     expect(client!.messages.some((m) => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "在的")).toBe(true);
   });
@@ -278,6 +279,8 @@ describe("startDaemon", () => {
     await vi.advanceTimersByTimeAsync(1_500);
     await vi.waitFor(() => expect(prompt).toContain("Window: memory consolidation"));
     expect(task).toContain("Distil what recurs or is clearly important");
+    expect(task).toContain("Leave scheduled tasks out of both files");
+    expect(prompt).toContain("## Scheduled tasks\nThis is the scheduler's live state.");
     expect(tools).toEqual(expect.arrayContaining(["read", "write", "edit", "grep", "find", "memory_search"]));
     expect(tools).not.toContain("wiki_ingest");
     await daemon.stop(); daemon = undefined;

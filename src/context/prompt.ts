@@ -1,3 +1,4 @@
+import type { ScheduledTask } from "../scheduler/index.js";
 import { readWorkspaceFile } from "../workspace/workspace.js";
 
 export interface PromptContext {
@@ -66,6 +67,22 @@ export function timeSection(timeZone: string = Intl.DateTimeFormat().resolvedOpt
   return ({ now, windowLabel }) => `## Now\nTime: ${formatNow(now, timeZone)}\nWindow: ${windowLabel}`;
 }
 
+/** The scheduler's current tasks; it outranks anything memory or history says about them. */
+export function scheduleSection(tasks: () => ScheduledTask[], timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone): PromptSection {
+  return () => {
+    const lines = tasks().map((task) => {
+      const rule = "cron" in task.schedule ? `cron ${task.schedule.cron}` : "every" in task.schedule ? `every ${task.schedule.every}` : `once at ${task.schedule.once}`;
+      const state = !task.enabled ? "paused" : task.nextAt === null ? "finished" : `next run ${formatNow(new Date(task.nextAt), timeZone)}`;
+      return `- ${task.name} (${rule}, to ${task.target}): ${state}`;
+    });
+    return [
+      "## Scheduled tasks",
+      "This is the scheduler's live state. It overrides anything memory, notes or earlier messages say about scheduled tasks; paused and finished tasks do not run.",
+      ...(lines.length ? lines : ["None."]),
+    ].join("\n");
+  };
+}
+
 export function vaultSection(): PromptSection {
   return () => [
     "## Notes vault",
@@ -101,7 +118,7 @@ export function profileSection(profile: "interactive" | "wiki" | "consolidation"
   const text: Record<typeof profile, string> = {
     interactive: "Use the tools declared for this conversation. Jev classifies intent and provides advisory suggestions; the runtime owns fixed link actions and executes them through the normal tool gate. For a shared URL, do not copy source text into tool arguments or use bash to reproduce a retrieval workflow. Read receipts establish whether source content was available; Wiki receipts separately establish archival, compilation, publication, pending publication, or bootstrap review. Report each state from its receipt.",
     wiki: "Use only vault_search, vault_read, wiki_write, and wiki_edit. The runtime provides the Wiki skill and orchestrates shared-link retrieval, raw archival, and publication. A source read does not prove compilation; successful wiki_write/wiki_edit results establish compilation.",
-    consolidation: "Consolidate durable owner facts with the available workspace and memory search tools. Write only permitted workspace files and keep MEMORY.md under its documented limit. Do not access the notes vault or perform external actions.",
+    consolidation: "Consolidate durable owner facts with the available workspace and memory search tools. Write only permitted workspace files and keep MEMORY.md under its documented limit. Scheduled tasks are runtime state supplied live in every prompt, so keep them out of MEMORY.md and USER.md. Do not access the notes vault or perform external actions.",
     heartbeat: "Review the supplied heartbeat context using the available tools. Report only a concrete owner-relevant update or no update; do not claim an action unless its tool result confirms it.",
     delegate: "Complete only the assigned self-contained task with the tools listed below. You have no conversation history. Tool results are execution evidence; report unsupported claims as uncertain.",
   };
