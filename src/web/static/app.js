@@ -768,8 +768,8 @@ const SETTINGS_TABS = [
       { path: "links.bilibili.sessdata", label: "Bilibili SESSDATA", type: "secret", help: "After signing in to bilibili.com, copy SESSDATA from the browser developer tools under Application → Cookies. Most subtitles need a login to read; it is as good as your login credential, so keep it safe. Takes effect as soon as it is saved." },
     ] },
     { title: "Web search", fields: [
-      { path: "webSearch.provider", label: "Search service", type: "select", options: ["", "tavily", "searxng", "brave"], rerender: true, labels: { "": "Off", tavily: "Tavily (1000 free searches a month)", searxng: "SearXNG (self-hosted, free)", brave: "Brave Search (paid)" } },
-      { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave"].includes(draft["webSearch.provider"]), help: "The key for the chosen service; the environment variable TAVILY_API_KEY or BRAVE_API_KEY also works." },
+      { path: "webSearch.provider", label: "Search service", type: "select", options: ["", "tavily", "searxng", "brave", "deepseek"], rerender: true, labels: { "": "Off", tavily: "Tavily (1000 free searches a month)", searxng: "SearXNG (self-hosted, free)", brave: "Brave Search (paid)", deepseek: "DeepSeek Search (paid)" } },
+      { path: "webSearch.apiKey", label: "API Key", type: "secret", when: (draft) => ["tavily", "brave", "deepseek"].includes(draft["webSearch.provider"]), help: "The key for the chosen service; the environment variable TAVILY_API_KEY, BRAVE_API_KEY or DEEPSEEK_API_KEY also works." },
       { path: "webSearch.baseUrl", label: "SearXNG address", type: "text", placeholder: "http://searxng:8080", when: (draft) => draft["webSearch.provider"] === "searxng", help: "SearXNG must have the json format enabled in settings.yml; see the documentation for how to deploy it." },
     ] },
     { title: "Notes vault", fields: [

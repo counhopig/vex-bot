@@ -117,6 +117,38 @@ describe("public webpage access", () => {
   });
 });
 
+describe("configured DeepSeek search", () => {
+  it("posts the query to DeepSeek with a bearer key and uses the model summary", async () => {
+    const fetchFn = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ results: [
+      { rerank_score: 2.1, title: "D", url: "https://d.example", snippet: "短", summary: "较长的摘要", content: "", site_name: null, site_icon: null, date: "2026-10-20T08:00:00Z", authority: 3 },
+      { title: "E", url: "https://e.example", snippet: "只有片段", date: null },
+    ] })));
+    const result = await createWebSearchTool({ provider: "deepseek", apiKey: "sk-test" }, { fetch: fetchFn as never }).execute("1", { query: "深度求索", count: 3 });
+    const [url, init] = fetchFn.mock.calls[0]!;
+    expect(String(url)).toBe("https://api.deepseek.com/v1/tools/search");
+    expect(init!.method).toBe("POST");
+    expect(init!.headers).toMatchObject({ Authorization: "Bearer sk-test" });
+    expect(JSON.parse(init!.body as string)).toEqual({ query: "深度求索", count: 3, need_content: false });
+    expect(JSON.parse((result.content[0] as { text: string }).text).results).toEqual([
+      { title: "D", url: "https://d.example", description: "较长的摘要", published: "2026-10-20T08:00:00Z" },
+      { title: "E", url: "https://e.example", description: "只有片段" },
+    ]);
+  });
+
+  it("keeps the query within the service limit and explains key and balance errors", async () => {
+    const fetchFn = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ results: [] })));
+    await createWebSearchTool({ provider: "deepseek", apiKey: "k" }, { fetch: fetchFn as never }).execute("1", { query: "字".repeat(200) });
+    expect([...JSON.parse(fetchFn.mock.calls[0]![1]!.body as string).query]).toHaveLength(128);
+    const saved = process.env.DEEPSEEK_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    try {
+      await expect(createWebSearchTool({ provider: "deepseek" }, { fetch: fetchFn as never }).execute("1", { query: "q" })).rejects.toThrow("DEEPSEEK_API_KEY");
+    } finally { if (saved !== undefined) process.env.DEEPSEEK_API_KEY = saved; }
+    await expect(createWebSearchTool({ provider: "deepseek", apiKey: "k" }, { fetch: async () => new Response("", { status: 402 }) }).execute("1", { query: "q" })).rejects.toThrow("balance");
+    await expect(createWebSearchTool({ provider: "deepseek", apiKey: "k" }, { fetch: async () => new Response("", { status: 401 }) }).execute("1", { query: "q" })).rejects.toThrow("HTTP 401");
+  });
+});
+
 describe("configured Tavily and SearXNG search", () => {
   it("posts the query to Tavily with a bearer key and normalizes the results", async () => {
     const fetchFn = vi.fn(async (_url: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ results: [{ title: "T", url: "https://t.example", content: "内容摘要", published_date: "2026-10-01" }] })));
