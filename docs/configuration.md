@@ -38,6 +38,8 @@ Saving in WebChat settings applies the change without a manual restart:
 
 ## Settings
 
+Only the keys below are accepted; an unknown or misspelt key at any level fails validation with its path.
+
 | Key | Default | Description |
 |---|---|---|
 | `model.provider`, `model.id` | required | Primary model. IDs are case-sensitive; an unknown ID fails and lists the valid ones |
