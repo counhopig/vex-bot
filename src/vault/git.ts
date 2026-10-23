@@ -72,6 +72,11 @@ const tail = (message: string): string => {
   return (important.length ? important : lines).slice(0, 2).join(" ").slice(0, 300);
 };
 
+/** The first meaningful lines of a git failure, with credentials removed. */
+export function gitFailureMessage(error: unknown, auth: GitAuth): string {
+  return tail(scrub(error instanceof Error ? error.message : String(error), auth));
+}
+
 async function exists(path: string): Promise<boolean> {
   try { await stat(path); return true; } catch { return false; }
 }
@@ -159,7 +164,7 @@ export class GitMirror {
       return await this.run(args, { cwd, env: gitEnv(this.vaultDir, this.opts, this.opts.protocols), timeoutMs });
     } catch (error) {
       if ((error as { code?: unknown }).code === "ENOENT") throw new Error("git was not found; install git to use a vault url");
-      const message = tail(scrub(error instanceof Error ? error.message : String(error), this.opts));
+      const message = gitFailureMessage(error, this.opts);
       throw new Error(withGitHint(message, authHint(Boolean(this.opts.token))));
     }
   }

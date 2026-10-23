@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs";
 import { lstat, mkdir, readFile, readlink, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "../../store/atomic.js";
-import { gitEnv, runGit, withGitHint, type GitRunner } from "../git.js";
+import { gitEnv, gitFailureMessage, runGit, withGitHint, type GitRunner } from "../git.js";
 import type { FileFingerprint } from "./marker.js";
 
 export type { GitRunner };
@@ -35,24 +35,9 @@ const GIT_TIMEOUT_MS = 60_000;
 /** gitEnv isolates HOME, so git cannot auto-detect a committer identity; every wiki commit uses this fixed bot identity. */
 const IDENTITY = ["-c", "user.name=vex", "-c", "user.email=vex@localhost"];
 
-const basicAuth = (auth: { username?: string; token?: string }): string | undefined =>
-  auth.token ? Buffer.from(`${auth.username || "git"}:${auth.token}`).toString("base64") : undefined;
-
-function scrub(message: string, auth: { username?: string; token?: string }): string {
-  let text = message;
-  for (const secret of [basicAuth(auth), auth.token]) if (secret) text = text.split(secret).join("***");
-  return text.replace(/authorization:[^\n]*/gi, "Authorization: ***");
-}
-
 /** Owner-facing hint for the common "git could not authenticate" failures, which git itself reports without mentioning the token. */
 const authHint = (hasToken: boolean): string =>
   hasToken ? "check vault.token (the wiki needs write access to the repository) and vault.username" : "the repository may be private; set vault.token";
-
-const tail = (message: string): string => {
-  const lines = message.split("\n").map((line) => line.trim()).filter(Boolean);
-  const important = lines.filter((line) => /^(fatal|error):/i.test(line));
-  return (important.length ? important : lines).slice(0, 2).join(" ").slice(0, 300);
-};
 
 function realHome(home: string): string {
   try { return realpathSync(home); } catch { return home; }
@@ -535,7 +520,7 @@ export class WikiRepo {
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       if (code === "ENOENT") throw new Error("git was not found; install git to use a wiki repository");
-      const message = tail(scrub(error instanceof Error ? error.message : String(error), this.opts));
+      const message = gitFailureMessage(error, this.opts);
       throw Object.assign(new Error(withGitHint(message, authHint(Boolean(this.opts.token)))), { code });
     }
   }

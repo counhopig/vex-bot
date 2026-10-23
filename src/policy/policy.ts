@@ -1,7 +1,5 @@
-import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import type { Decision } from "../config/schema.js";
-import { isInside, resolveToolPath } from "../tools/paths.js";
+import { isInside, resolveRealPath, resolveToolPath } from "../tools/paths.js";
 
 export const DEFAULT_DECISIONS: Record<string, Decision> = {
   web_fetch: "allow", web_search: "allow", memory_search: "allow", vault_search: "allow", vault_read: "allow", feel: "allow", schedule: "allow", delegate: "allow",
@@ -73,30 +71,5 @@ export class ToolPolicy {
         return isInside(lexicalRoot, target);
       }
     });
-  }
-}
-
-function resolveRealPath(path: string): string {
-  const remaining: string[] = [];
-  let ancestor = path;
-  for (;;) {
-    try {
-      return join(realpathSync(ancestor), ...remaining);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      // An existing, dangling symlink cannot be treated as a new path segment.
-      let exists = false;
-      try {
-        lstatSync(ancestor);
-        exists = true;
-      } catch (statErr) {
-        if ((statErr as NodeJS.ErrnoException).code !== "ENOENT") throw statErr;
-      }
-      if (exists) throw err;
-      const parent = dirname(ancestor);
-      if (parent === ancestor) throw err;
-      remaining.unshift(basename(ancestor));
-      ancestor = parent;
-    }
   }
 }

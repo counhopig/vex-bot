@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstatSync, realpathSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { isInside } from "../../tools/paths.js";
+import { basename, dirname, isAbsolute, resolve } from "node:path";
+import { isInside, resolveRealPath } from "../../tools/paths.js";
 
 export async function validateSubtreeRoots(vaultRoot: string): Promise<{ wiki: string; raw: string }> {
   try {
@@ -65,30 +65,6 @@ export async function resolveInSubtree(root: string, path: string): Promise<stri
   return realTarget;
 }
 
-/** Realpath of the nearest existing ancestor with the missing tail reattached; a dangling symlink is an error, not a new path. */
-function resolveRealPath(path: string): string {
-  const remaining: string[] = [];
-  let ancestor = path;
-  for (;;) {
-    try {
-      return join(realpathSync(ancestor), ...remaining);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-      let exists = false;
-      try {
-        lstatSync(ancestor);
-        exists = true;
-      } catch (statErr) {
-        if ((statErr as NodeJS.ErrnoException).code !== "ENOENT") throw statErr;
-      }
-      if (exists) throw err;
-      const parent = dirname(ancestor);
-      if (parent === ancestor) throw err;
-      remaining.unshift(basename(ancestor));
-      ancestor = parent;
-    }
-  }
-}
 
 /** Where an archived shared-link original lives, keyed by the requested URL. */
 export function wikiRawPath(url: string): string {

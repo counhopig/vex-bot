@@ -68,7 +68,7 @@ src/
 - Explicit policy denial precedes session approval reuse; denied tools are also filtered from model visibility (`policy/gate.ts:14`, `policy/policy.ts:33`).
 - A run the runtime starts (`Session.unattended`: a source and no joined owner message) never raises an approval: the gate refuses an `ask` tool at once (`policy/gate.ts`, `core/session.ts`, `daemon.ts`).
 - Non-loopback binding requires a web token (`daemon.ts:75`).
-- Workspace write/edit permissions use real paths, including the nearest existing ancestor for new files. Never allow a dangling symlink as a new path segment (`policy/policy.ts:46`, `policy/policy.ts:60`).
+- Read/grep/find and write/edit permissions use real paths, including the nearest existing ancestor for new files; reads are free inside the workspace and the bundled skills directory, writes only inside the workspace. Never allow a dangling symlink as a new path segment (`tools/paths.ts:19`, `policy/policy.ts:43`, `policy/policy.ts:61`).
 - Shell children inherit only the environment allowlist, configured passthrough and locale keys; preserve process-group cancellation and bounded output collection (`tools/bash.ts:15`, `tools/bash.ts:68`, `tools/bash.ts:90`).
 - Web requests validate public URLs and every resolved address at connection lookup; preserve redirect validation and response limits (`tools/web.ts:44`, `tools/web.ts:58`, `tools/web.ts:82`).
 - Delegates have no conversation history and cannot receive the `delegate` tool; reuse the parent's execution gate (`tools/delegate.ts:26`, `tools/delegate.ts:31`, `daemon.ts:165`).
