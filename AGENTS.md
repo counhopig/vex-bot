@@ -28,7 +28,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner, MCP SDK; Node.js ≥24.
 
 | Task | Location | Notes |
 |------|----------|-------|
-| Bootstrap and shutdown | `src/cli/index.ts`, `src/daemon.ts` | CLI dispatch and shared service assembly |
+| Bootstrap and shutdown | `src/cli/index.ts`, `src/daemon.ts`, `src/sessionFactory.ts`, `src/shutdown.ts` | CLI dispatch, shared service assembly, per-session assembly, shutdown order |
 | Sessions and context | `src/core/`, `src/context/` | Turns, persistence, prompts, compaction |
 | Browser interface | `src/gateway/`, `src/protocol/`, `src/web/static/` | HTTP, WebSocket, handwritten browser handlers |
 | WeChat | `src/channels/wechat/` | iLink polling, QR login, credential reload |
