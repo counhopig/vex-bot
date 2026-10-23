@@ -114,8 +114,9 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
+| `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
 | `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild` | ask, confirmed on every call |
+| `read`, `grep`, `find` | allow inside the workspace and the bundled skills directory (real paths), ask elsewhere |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 

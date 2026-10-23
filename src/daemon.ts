@@ -62,7 +62,7 @@ import { createScheduleTool } from "./tools/schedule.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
 import { createDelegateTool } from "./tools/delegate.js";
-import { skillBodySection, skillsSection } from "./skills/index.js";
+import { builtinSkillsDirectory, skillBodySection, skillsSection } from "./skills/index.js";
 import { readOriginalSource, readPlatformOriginalSource, type OriginalSource } from "./links/source.js";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { SessionEvent } from "./core/events.js";
@@ -125,7 +125,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
   });
   const protectedRoots: string[] = [];
-  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots });
+  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots, readableRoots: [builtinSkillsDirectory()] });
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const startupCleanup: (() => Promise<void> | void)[] = [() => approvals.dispose(), () => memoryIndex.close()];
   try {
