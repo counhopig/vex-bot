@@ -23,6 +23,7 @@ import type { RunTrace, TraceScope } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
 import type { HistoryItem, SessionEvent } from "./events.js";
 import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
+import { TranscriptCursor } from "../context/cursor.js";
 import { MessageWindow } from "../context/window.js";
 
 export interface SessionOptions {
@@ -42,7 +43,7 @@ export interface SessionOptions {
   emit: (event: SessionEvent) => void;
   onError?: (err: unknown) => void;
   retry?: { attempts: number; baseDelayMs: number };
-  compaction?: Omit<CompactionOptions, "model" | "streamFn" | "getApiKey" | "save" | "loadHistory">;
+  compaction?: Omit<CompactionOptions, "model" | "streamFn" | "getApiKey" | "save" | "loadHistory" | "cursor">;
   onRunEnd?: () => Promise<void>;
   onOwnerMessage?: () => void;
   onOwnerInteraction?: (count: number) => Promise<void>;
@@ -70,7 +71,7 @@ export class Session {
   private readonly recentHistory: HistoryWindow;
   private readonly transcriptHistory: TranscriptHistory;
   private readonly compactor?: ContextCompactor;
-  private historyOffset: number;
+  private readonly cursor = new TranscriptCursor();
   private pendingOwner = 0;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
@@ -127,9 +128,9 @@ export class Session {
     const messages = window.messages;
     this.recentHistory = history;
     this.transcriptHistory = new TranscriptHistory(opts.transcriptPath);
-    this.historyOffset = window.offset;
+    this.cursor.advance(window.offset);
     this.compactor = opts.compaction ? new ContextCompactor({
-      ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey,
+      ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey, cursor: this.cursor,
       loadHistory: async function* () {
         for await (const record of scanJsonl(opts.transcriptPath)) {
           if (isTranscriptMessage(record)) yield record;
@@ -144,7 +145,6 @@ export class Session {
         this.currentTrace()?.record({ type: "compaction", ...info });
       },
     }, restored) : undefined;
-    this.compactor?.discardPrefix(this.historyOffset);
     this.agent = new Agent({
       initialState: {
         systemPrompt: "",
@@ -162,7 +162,7 @@ export class Session {
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => {
         let prompt = await opts.buildSystemPrompt();
-        if (this.historyOffset > (this.compactor?.summarizedThrough ?? 0)) {
+        if (this.cursor.offset > (this.compactor?.summarizedThrough ?? 0)) {
           prompt += "\n\nOnly the explicit summary and recent messages in this request establish earlier conversation context. Other turns remain on disk; do not assume their contents.";
         }
         return { context: { ...context, messages: withSystemPrompt(context.messages.map(markNotice), prompt) } };
@@ -404,11 +404,9 @@ export class Session {
   private releaseHistory(): void {
     const messages = this.agent.state.messages;
     const retained = this.compactor?.release(messages) ?? messages;
-    this.historyOffset += messages.length - retained.length;
     const window = new MessageWindow();
     for (const message of retained) window.push(message);
-    this.historyOffset += window.offset;
-    this.compactor?.discardPrefix(window.offset);
+    this.cursor.advance(messages.length - retained.length + window.offset);
     this.agent.state.messages = window.messages;
   }
 

@@ -1,8 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContextCompactor, estimateTokens, renderMessages, type CompactionRecord } from "../src/context/compaction.js";
+import { TranscriptCursor } from "../src/context/cursor.js";
 import { Session } from "../src/core/session.js";
 import { appendJsonl, readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
@@ -66,8 +68,9 @@ describe("context compaction", () => {
     const saved: CompactionRecord[] = [];
     let now = Date.UTC(2026, 9, 20, 10);
     const model = { ...faux.getModel(), contextWindow: 50_000, maxTokens: 512 };
-    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: async (record) => { saved.push(record); }, loadHistory: async function* () { yield* history; }, now: () => new Date(now) });
-    compactor.discardPrefix(1024);
+    const cursor = new TranscriptCursor();
+    cursor.advance(1024);
+    const compactor = new ContextCompactor({ model, backgroundModel: model, workspace: dir, streamFn: fauxStreamFn(faux), getApiKey: () => undefined, complete, save: async (record) => { saved.push(record); }, loadHistory: async function* () { yield* history; }, cursor, now: () => new Date(now) });
     await compactor.transform([user("current")]);
     expect(saved.map((record) => record.through)).toEqual([512]);
     await compactor.transform([user("current")]);
@@ -124,6 +127,51 @@ describe("context compaction", () => {
     restored.send("继续");
     await restored.whenIdle();
     expect(complete).toHaveBeenCalledTimes(summaryCalls);
+  });
+
+  it("maps condensed tool results to absolute transcript positions after a released prefix and a restart", async () => {
+    const path = join(dir, "condensed.jsonl");
+    await appendJsonl(path, user("older question"));
+    await appendJsonl(path, fauxAssistantMessage("older answer"));
+    const raw = "y".repeat(8000);
+    const faux = createFaux();
+    const rescue = createFaux();
+    rescue.setResponses(Array.from({ length: 20 }, () => fauxAssistantMessage("No additional memory.")));
+    const contexts: string[] = [];
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall("fetch", {}, { id: "big" }), { stopReason: "toolUse" }),
+      (context) => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("fetched"); },
+      (context) => { contexts.push(JSON.stringify(context.messages)); return fauxAssistantMessage("restored"); },
+    ]);
+    const fetch = {
+      name: "fetch", label: "Fetch", description: "Fetch", parameters: Type.Object({}),
+      execute: async () => ({ content: [{ type: "text" as const, text: raw }], details: {} }),
+    };
+    const complete = vi.fn(async () => fauxAssistantMessage("condensed"));
+    const model = { ...faux.getModel(), contextWindow: 2000, maxTokens: 32 };
+    const opts = {
+      evidence, key: "wechat", transcriptPath: path, model, tools: [fetch], getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: () => {},
+      streamFn: ((m, context, options) => getCurrentSystemPrompt(context.messages).includes("silently rescuing") ? fauxStreamFn(rescue)(m, context, options) : fauxStreamFn(faux)(m, context, options)) satisfies import("@earendil-works/pi-agent-core").StreamFn,
+      compaction: { backgroundModel: model, complete, workspace: dir, keepTurns: 1, threshold: 0.1 },
+    };
+    const session = await Session.open(opts);
+    session.send("fetch it");
+    await session.whenIdle();
+    await session.dispose();
+    const records = await readJsonl<{ kind?: string }>(path);
+    const checkpoint = records.find((record): record is CompactionRecord => record.kind === "compaction");
+    expect(checkpoint?.through).toBe(2);
+    expect(checkpoint?.replacements).toEqual([{ index: 4, content: "condensed" }]);
+    const restored = await Session.open({ ...opts, compaction: { ...opts.compaction, threshold: 1 } });
+    restored.send("again");
+    await restored.whenIdle();
+    await restored.dispose();
+    expect(contexts).toHaveLength(2);
+    for (const context of contexts) {
+      expect(context).toContain("Tool result summary: condensed");
+      expect(context).not.toContain(raw);
+      expect(context).not.toContain("older question");
+    }
   });
 
   it("does not summarize or rescue below threshold", async () => {
