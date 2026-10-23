@@ -55,18 +55,23 @@ export interface SessionOptions {
 const DEFAULT_RETRY = { attempts: 3, baseDelayMs: 1000 };
 const OVERLOAD_BACKOFF = 10;
 
+/**
+ * Where the current run is. Messages that arrive while it is stopping, or finishing (the agent loop has
+ * ended and only settlement hooks remain, so steering would strand them), start the next run instead.
+ */
+type RunPhase = "idle" | "running" | "finishing" | "stopping";
+
 export class Session {
   readonly key: string;
   private readonly agent: Agent;
   private current: Promise<void> | undefined;
-  private stopRequested = false;
-  // True once the agent loop has ended and only settlement hooks remain; steering would strand the message.
-  private finishing = false;
+  private phase: RunPhase = "idle";
+  // Whether the latest run was stopped; read after it ends.
+  private stopped = false;
   private backoff: AbortController | undefined;
   // Messages sent while a stopped or finishing run winds down; they start a fresh run afterwards.
   private afterStop: { text: string; source?: string; requestId?: string }[] = [];
   private assistantQueue: string[] = [];
-  private drainingAssistant = false;
   private assistantDrain: Promise<void> | undefined;
   private readonly recentHistory: HistoryWindow;
   private readonly transcriptHistory: TranscriptHistory;
@@ -87,7 +92,7 @@ export class Session {
   private readonly currentTrace = (): RunTrace | undefined => this.opts.trace?.current;
 
   get successfulReply(): string | undefined {
-    return !this.runFailed && !this.stopRequested && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
+    return !this.runFailed && !this.stopped && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
   }
 
   /** How the last run ended; callers decide which failed tools make it unusable. */
@@ -202,7 +207,7 @@ export class Session {
 
   /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
   get idle(): boolean {
-    return !this.current && !this.closing && !this.drainingAssistant && !this.assistantDrain
+    return !this.current && !this.closing && !this.assistantDrain
       && this.assistantQueue.length === 0 && this.afterStop.length === 0;
   }
 
@@ -214,7 +219,7 @@ export class Session {
     if (this.closing) return;
     const requestId = !source ? existingRequestId ?? randomUUID() : undefined;
     if (!source && registerOwner) this.controller?.ownerMessage(requestId!, text);
-    if (this.drainingAssistant || (this.current && (this.stopRequested || this.finishing))) {
+    if (this.assistantDrain || this.phase === "stopping" || this.phase === "finishing") {
       this.afterStop.push({ text, source, ...(requestId ? { requestId } : {}) });
       return;
     }
@@ -226,8 +231,8 @@ export class Session {
       this.agent.steer(message);
       return;
     }
-    this.stopRequested = false;
-    this.finishing = false;
+    this.phase = "running";
+    this.stopped = false;
     this.runSource = source;
     this.runFailed = false;
     this.runFailureReason = undefined;
@@ -247,9 +252,10 @@ export class Session {
       })
       .finally(async () => {
         const reply = this.successfulReply;
-        this.opts.trace?.finish(this.stopRequested ? "stopped" : this.runFailed ? "error" : "ok",
+        this.opts.trace?.finish(this.stopped ? "stopped" : this.runFailed ? "error" : "ok",
           { ...(this.runFailureReason ? { error: this.runFailureReason } : {}), ...(reply ? { reply } : {}) });
         this.current = undefined;
+        this.phase = "idle";
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
         this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "proactive chat" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
@@ -262,8 +268,9 @@ export class Session {
     this.assistantQueue = [];
     this.afterStop = [];
     this.controller?.stopped();
-    if (!this.current) return;
-    this.stopRequested = true;
+    if (this.phase === "idle") return;
+    this.phase = "stopping";
+    this.stopped = true;
     this.backoff?.abort();
     this.agent.clearAllQueues();
     this.agent.abort();
@@ -274,7 +281,7 @@ export class Session {
       const pending = this.current ?? this.assistantDrain;
       if (pending) await pending;
       await Promise.resolve();
-      if (!this.current && !this.assistantDrain && !this.drainingAssistant && this.afterStop.length === 0) return;
+      if (!this.current && !this.assistantDrain && this.afterStop.length === 0) return;
     }
   }
 
@@ -329,15 +336,14 @@ export class Session {
 
   private async finishQueuedOwnerMessages(): Promise<void> {
     await this.drainAssistantQueue();
-    if (!this.closing && !this.current && !this.drainingAssistant) {
+    if (!this.closing && !this.current && !this.assistantDrain) {
       for (const queued of this.afterStop.splice(0)) this.sendMessage(queued.text, queued.source, queued.requestId, false);
     }
   }
 
   private async drainAssistantQueue(): Promise<void> {
-    if (this.drainingAssistant) { await this.assistantDrain; return; }
+    if (this.assistantDrain) { await this.assistantDrain; return; }
     if (this.current || this.closing) return;
-    this.drainingAssistant = true;
     this.assistantDrain = Promise.resolve().then(async () => { try {
       while (this.assistantQueue.length && !this.closing) {
         const text = this.assistantQueue.shift();
@@ -349,7 +355,6 @@ export class Session {
         }
       }
     } finally {
-      this.drainingAssistant = false;
       this.assistantDrain = undefined;
     } });
     await this.assistantDrain;
@@ -415,23 +420,30 @@ export class Session {
     await this.agent.prompt(first);
     await this.settle();
     // A message steered in just as the loop finished is still queued; run it now.
-    while (!this.stopRequested && this.agent.hasQueuedMessages()) {
+    while (!this.stopping && this.agent.hasQueuedMessages()) {
       await this.agent.continue();
       await this.settle();
     }
-    this.finishing = true;
+    this.beginFinishing();
     await this.writes;
     if (this.pendingOwner && this.successfulReply) {
       await this.opts.onOwnerInteraction?.(this.pendingOwner);
     }
     } finally {
-      this.finishing = true;
+      this.beginFinishing();
       try { await this.writes; await this.flushPendingProviderUsage(); await this.opts.onRunEnd?.(); }
       finally {
         this.controller?.runEnded(new Set(this.afterStop.flatMap((queued) => queued.requestId ? [queued.requestId] : [])));
         this.releaseHistory();
       }
     }
+  }
+
+  // A getter, so the phase is reread after every await instead of narrowed.
+  private get stopping(): boolean { return this.phase === "stopping"; }
+
+  private beginFinishing(): void {
+    if (this.phase === "running") this.phase = "finishing";
   }
 
   private async settle(): Promise<void> {
@@ -441,7 +453,7 @@ export class Session {
       if (last?.role !== "assistant" || last.stopReason !== "error") return;
       this.pendingProviderUsage = addUsage(this.pendingProviderUsage, last.usage);
       this.agent.state.messages = this.agent.state.messages.slice(0, -1);
-      if (this.stopRequested) { await this.flushPendingProviderUsage(); return; }
+      if (this.stopping) { await this.flushPendingProviderUsage(); return; }
       if (attempt > attempts || last.errorMessage === TOOL_EVIDENCE_ERROR || last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) {
         await this.flushPendingProviderUsage();
         this.runFailed = true;
@@ -467,7 +479,7 @@ export class Session {
       } finally {
         this.backoff = undefined;
       }
-      if (this.stopRequested) return;
+      if (this.stopping) return;
       await this.agent.continue();
     }
   }
