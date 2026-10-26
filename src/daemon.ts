@@ -12,7 +12,8 @@ import type { VaultConfig, VexConfig } from "./config/schema.js";
 import { formatNow } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
 import type { Session } from "./core/session.js";
-import { SessionManager } from "./core/sessionManager.js";
+import { DEVICE_SESSION_KEY, SessionManager, WECHAT_SESSION_KEY } from "./core/sessionManager.js";
+import { DeviceChannel } from "./channels/device/channel.js";
 import { createTitleGenerator } from "./core/title.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
 import { Gateway } from "./gateway/server.js";
@@ -84,6 +85,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     throw new ConfigError("web.token is required when web.host is not a loopback address");
   }
   await ensureWorkspace(config.workspace);
+  const deviceToken = config.device?.token;
 
   const models = opts.models ?? createModelRegistry(config.providers);
   const model = models.resolve(config.model);
@@ -171,9 +173,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       onError: (err) => log.warn({ err }, "session manager task failed"),
       // A WebChat session waiting for the owner's approval stays open until the answer arrives.
       retain: (key) => approvals.pending().some((request) => request.sessionKey === key),
+      ...(deviceToken ? { deviceLabel: config.device!.label } : {}),
     });
     await sessions.init();
     shutdown.add("sessions", () => sessions.shutdown());
+    const device = deviceToken ? new DeviceChannel({ sessions, approvals, bus, log }) : undefined;
+    if (device) {
+      device.start();
+      shutdown.add("device", () => device.stop());
+    }
 
     if (wiki) {
       protectedRoots.push(wiki.root);
@@ -181,7 +189,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     }
     const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
       signal.throwIfAborted();
-      const key = target === "wechat" ? target : target.startsWith("web:") ? target : `web:${target}`;
+      const key = target === WECHAT_SESSION_KEY || target === DEVICE_SESSION_KEY ? target : target.startsWith("web:") ? target : `web:${target}`;
       const session = await sessions.get(key);
       signal.throwIfAborted();
       const abort = () => session.stop();
@@ -195,7 +203,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...(wikiConfig ? { wiki: { every: wikiConfig.every } } : {}),
       hooks: {
         log: (err) => log.warn({ err }, "scheduled task failed"),
-        targetExists: (target) => sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
+        targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
         deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "missed scheduled task" : "scheduled task", signal); },
         runTemporary: async (text, kind, signal) => {
           signal.throwIfAborted();
@@ -278,7 +286,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       schedules: {
         list: () => ({
           tasks: scheduler.list(),
-          targets: [{ id: "wechat", label: "WeChat" }, ...sessions.listWeb().map((meta) => ({ id: meta.id, label: meta.title }))],
+          targets: [{ id: "wechat", label: "WeChat" }, ...(device ? [{ id: DEVICE_SESSION_KEY, label: config.device!.label }] : []),
+            ...sessions.listWeb().map((meta) => ({ id: meta.id, label: meta.title }))],
         }),
         save: async ({ id, ...input }) => {
           const saved = id ? await scheduler.update(id, input) : await scheduler.create(input);
@@ -311,6 +320,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       },
       workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text, base) => { await saveWorkspaceFile(config.workspace, name, text, base); return { warning: residentLimitWarning(name, text) }; } },
       traces,
+      ...(device && deviceToken ? { device: { token: deviceToken, channel: device } } : {}),
       staticDir: opts.staticDir ?? DEFAULT_STATIC_DIR,
       log,
     });
@@ -328,6 +338,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       model: `${model.provider}/${model.id}`,
       backgroundModel: `${backgroundModel.provider}/${backgroundModel.id}`,
       wechat: config.wechat.enabled,
+      device: !!device,
       mcpServers: Object.keys(config.mcpServers ?? {}).length,
       webSearch: config.webSearch?.provider,
       speechToText: !!config.stt,

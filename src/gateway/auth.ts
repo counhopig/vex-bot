@@ -67,6 +67,12 @@ export class WebAuth {
   }
 }
 
+/** True when an `Authorization: Bearer <token>` header carries exactly `token`. */
+export function matchesBearer(header: string | undefined, token: string): boolean {
+  const match = /^Bearer (.+)$/.exec(header ?? "");
+  return match !== null && safeEqual(match[1]!, token);
+}
+
 function safeEqual(a: string, b: string): boolean {
   const left = createHash("sha256").update(a).digest();
   const right = createHash("sha256").update(b).digest();

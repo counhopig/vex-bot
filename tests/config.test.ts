@@ -196,6 +196,19 @@ describe("loadConfig / saveConfigText", () => {
     expect((await loadConfig(paths)).config.web).toEqual({ host: "127.0.0.1", port: 7000, token: "file-token" });
   });
 
+  it("enables the device connection only with a token, which VEX_DEVICE_TOKEN can supply", async () => {
+    expect(parseConfig(minimal, paths).device).toBeUndefined();
+    expect(parseConfig(`${minimal}device: { token: "" }\n`, paths).device).toEqual({ label: "Desk device" });
+    expect(parseConfig(`${minimal}device: { token: t1 }\n`, paths).device).toEqual({ token: "t1", label: "Desk device" });
+    expect(parseConfig(`${minimal}device: { token: t1, label: RLCD }\n`, paths).device).toEqual({ token: "t1", label: "RLCD" });
+    expect(() => parseConfig(`${minimal}device: { token: t1, port: 1 }\n`, paths)).toThrow(ConfigError);
+    await writeFile(paths.config, `${minimal}device: { label: RLCD }\n`, "utf8");
+    vi.stubEnv("VEX_DEVICE_TOKEN", "env-device");
+    try {
+      expect((await loadConfig(paths)).config.device).toEqual({ token: "env-device", label: "RLCD" });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it("saves valid text and refuses invalid text without touching the file", async () => {
     await saveConfigText(paths, minimal);
     expect(await readFile(paths.config, "utf8")).toBe(minimal);

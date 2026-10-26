@@ -130,6 +130,7 @@ Tools appear as `mcp__<server>__<tool>`, sanitised to `[A-Za-z0-9_-]` and at mos
 | `VEX_HOME` | Data directory (default `~/.vex`). Use the same value for every command that addresses an instance |
 | `VEX_WEB_HOST` | Overrides `web.host`; when it is not a loopback address, `vex onboard` skips the port question and generates an access token |
 | `VEX_WEB_TOKEN` | Overrides `web.token` |
+| `VEX_DEVICE_TOKEN` | Overrides `device.token`, turning the device connection on |
 | `VEX_LOG_LEVEL` | `trace`, `debug`, `info` (default), `warn`, `error`. `debug` adds ignored WeChat traffic, finished tool calls and disconnects |
 | `VEX_LOG_STDOUT` | `1` also writes logs to standard output (set in the Docker image) |
 | `TAVILY_API_KEY`, `BRAVE_API_KEY`, `DEEPSEEK_API_KEY` | Search key when `webSearch.apiKey` is absent (`DEEPSEEK_API_KEY` is also the DeepSeek model key) |
@@ -280,6 +281,16 @@ vault:
 The first ingest is a preview: Vex commits it locally, tells you which pages it generated and withholds the push. Say "approve the Wiki preview" or "reject the Wiki preview"; Vex then calls `wiki_bootstrap`, and you confirm that call in the ordinary approval prompt (`/y` publishes, `/n` keeps the preview). A rejected preview is discarded, and the next preview is built at the next scheduled run. After a restart Vex reminds you of a preview that is still waiting. The cadence stays paused until review. Afterwards, each batch is one commit. Ask Vex to roll back the last batch, and it reverts that commit (or discards it locally when it was never pushed). Ask Vex to rebuild the Wiki to start over: after you confirm `wiki_rebuild`, one pushed commit removes every page under `wiki/` (archived `raw/` sources stay), earlier batches no longer count, and every note and raw source is compiled into a new bootstrap preview for review. A rebuild waits while a preview awaits review, a batch or rollback is unsettled, or the clone has uncommitted changes. Completion messages list archived raw paths and compiled Wiki pages separately, then state whether publication completed or remains pending. A raw-only commit does not count as a compiled Wiki page.
 
 With Wiki enabled, Vex writes only inside `wiki/` and `raw/`; every other note stays read-only, and general file writes are kept out of the whole vault. Its `vault.token` must have write access to the repository. With the wiki disabled, the mirror remains read-only and can use a read-only token. Owner-approved shell and MCP commands are outside this boundary, so treat note text as untrusted input.
+
+## Desk device
+
+```yaml
+device:
+  token: "a long random string"   # required; without it /device/ws does not exist
+  label: "RLCD desk"              # optional window name, default "Desk device"
+```
+
+A device service connects to `ws://<web.host>:<web.port>/device/ws` with `Authorization: Bearer <token>` and gets one permanent conversation whose replies are written to be read aloud. The token allows only sending and stopping in that conversation. Generate it with `openssl rand -hex 32` and keep it out of the web token. The gateway has no TLS of its own, so keep the device service on the same host or behind a TLS reverse proxy. The message protocol is described in `docs/architecture.md` (Device channel). The device is also a schedule target: a schedule created from it is delivered back to it.
 
 ## Scheduled messages
 

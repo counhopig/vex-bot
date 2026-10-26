@@ -9,6 +9,8 @@ import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig
 
 export class ConfigError extends Error {}
 
+const DEFAULT_DEVICE_LABEL = "Desk device";
+
 type RawVault = Omit<VaultConfig, "wiki"> & { wiki?: { enabled?: boolean; every?: string; notify?: boolean; maxNotesPerRun?: number } };
 
 function checkVault(vault: RawVault, paths: VexPaths): VaultConfig {
@@ -70,6 +72,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
     ...(raw.jev ? { jev: raw.jev } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
+    ...(raw.device ? { device: { ...(raw.device.token ? { token: raw.device.token } : {}), label: raw.device.label ?? DEFAULT_DEVICE_LABEL } } : {}),
     wechat: {
       enabled: raw.wechat?.enabled ?? true,
       ownerId: raw.wechat?.ownerId,
@@ -93,6 +96,8 @@ export async function loadConfig(paths: VexPaths): Promise<{ config: VexConfig; 
   const token = process.env.VEX_WEB_TOKEN?.trim();
   if (host) config.web.host = host;
   if (token) config.web.token = token;
+  const deviceToken = process.env.VEX_DEVICE_TOKEN?.trim();
+  if (deviceToken) config.device = { token: deviceToken, label: config.device?.label ?? DEFAULT_DEVICE_LABEL };
   return { config, text };
 }
 

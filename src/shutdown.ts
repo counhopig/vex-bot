@@ -1,7 +1,7 @@
 import type { Logger } from "./logger.js";
 
 /** The order vexd releases its resources in, both when stopping and after a failed start. */
-const ORDER = ["scheduler", "wechat", "sessions", "approvals", "MCP", "persona", "gateway", "memory index", "wiki", "traces"] as const;
+const ORDER = ["scheduler", "wechat", "device", "sessions", "approvals", "MCP", "persona", "gateway", "memory index", "wiki", "traces"] as const;
 export type ShutdownStep = typeof ORDER[number];
 
 /** Resources register as they come up; run releases the registered ones in ORDER, each step isolated from the others' failures. */

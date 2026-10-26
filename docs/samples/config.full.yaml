@@ -41,6 +41,11 @@ wechat:
   # ownerId: "xxx@im.wechat"       # defaults to the account that scanned the QR code
   baseUrl: https://ilinkai.weixin.qq.com
 
+# A desk device on /device/ws; off without a token (VEX_DEVICE_TOKEN also sets it).
+device:
+  token: ""
+  label: "Desk device"
+
 # allow | ask | deny, by tool name. An MCP server name (mcp__<server>) covers all of its tools.
 tools:
   policy:

@@ -12,7 +12,9 @@ import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { WorkspaceConflictError } from "../workspace/workspace.js";
 import type { TraceStore } from "../trace/store.js";
-import { isLoopback, type WebAuth } from "./auth.js";
+import type { DeviceChannel } from "../channels/device/channel.js";
+import { parseDeviceMessage, type DeviceServerMessage } from "../protocol/device.js";
+import { isLoopback, matchesBearer, type WebAuth } from "./auth.js";
 
 export interface GatewayOptions {
   host: string;
@@ -31,6 +33,8 @@ export interface GatewayOptions {
   settings: { read: () => Promise<SettingsView & { catalog: { providers: string[]; models: Record<string, string[]> } }>; save: (patch: SettingsPatch) => Promise<{ restartRequired: boolean; restarting?: boolean }> };
   workspace: { read: (name: WorkspaceFile) => Promise<string>; notes: () => Promise<string[]>; save: (name: WorkspaceFile, text: string, base?: string) => Promise<{ warning?: string } | void> };
   traces: Pick<TraceStore, "list" | "read" | "summary" | "on">;
+  /** The device endpoint, `/device/ws`, exists only when configured. */
+  device?: { token: string; channel: DeviceChannel };
   staticDir: string;
   log: Logger;
 }
@@ -49,6 +53,7 @@ const STATIC_FILES: Record<string, StaticEntry> = {
 };
 
 const WEB_PREFIX = "web:";
+const DEVICE_PATH = "/device/ws";
 
 export class Gateway {
   private server: Server | undefined;
@@ -58,6 +63,7 @@ export class Gateway {
   private unsubscribe: (() => void) | undefined;
   private unsubscribeTraces: (() => void) | undefined;
   private loginLockedUntil = 0;
+  private deviceLockedUntil = 0;
 
   constructor(private readonly opts: GatewayOptions) {}
 
@@ -79,6 +85,16 @@ export class Gateway {
         } catch {
           socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
           socket.destroy();
+          return;
+        }
+        if (path === DEVICE_PATH) {
+          const refusal = this.deviceRefusal(req);
+          if (refusal) {
+            socket.write(`HTTP/1.1 ${refusal}\r\nConnection: close\r\n\r\n`);
+            socket.destroy();
+            return;
+          }
+          wss.handleUpgrade(req, socket, head, (ws) => this.onDeviceConnection(ws, this.opts.device!.channel));
           return;
         }
         const localHostRequired = !this.opts.auth.required && !isLoopback(req.headers.host ?? "");
@@ -189,6 +205,44 @@ export class Gateway {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * The device authenticates with its own bearer token, independent of the web token. A browser
+   * always sends Origin on a WebSocket upgrade, so a request with one is never the device.
+   */
+  private deviceRefusal(req: IncomingMessage): string | undefined {
+    const device = this.opts.device;
+    if (!device) return "404 Not Found";
+    if (req.headers.origin !== undefined) return "403 Forbidden";
+    if (Date.now() < this.deviceLockedUntil) return "429 Too Many Requests";
+    if (!matchesBearer(req.headers.authorization, device.token)) {
+      this.deviceLockedUntil = Date.now() + 1000;
+      return "401 Unauthorized";
+    }
+    return undefined;
+  }
+
+  private onDeviceConnection(ws: WebSocket, channel: DeviceChannel): void {
+    ws.on("error", (err) => this.opts.log.warn({ err }, "device websocket error"));
+    const sendDevice = (message: DeviceServerMessage): boolean => {
+      if (ws.readyState !== WebSocket.OPEN) return false;
+      ws.send(JSON.stringify(message));
+      return true;
+    };
+    const detach = channel.connect({ send: sendDevice, close: (code, reason) => ws.close(code, reason) });
+    ws.on("close", detach);
+    ws.on("message", (data) => {
+      const message = parseDeviceMessage(data.toString());
+      if (!message) {
+        sendDevice({ type: "error", message: "Unrecognized request" });
+        return;
+      }
+      channel.receive(message).catch((err: unknown) => {
+        this.opts.log.warn({ err }, "device message failed");
+        sendDevice({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      });
+    });
   }
 
   private onConnection(ws: WebSocket): void {

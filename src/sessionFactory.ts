@@ -20,6 +20,7 @@ import {
 } from "./context/prompt.js";
 import type { EventBus, SessionEvent } from "./core/events.js";
 import { Session, type SessionOptions } from "./core/session.js";
+import { DEVICE_SESSION_KEY } from "./core/sessionManager.js";
 import type { MemoryIndex } from "./index/memory.js";
 import { LinkActionController } from "./links/actions.js";
 import type { Logger } from "./logger.js";
@@ -146,7 +147,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
       toolsSection,
       timeSection(),
     ] : [...interactiveSections, toolsSection]);
-    const sessionPrompt = () => promptBuilder.build({ windowLabel: windowLabel(), now: new Date() });
+    const sessionPrompt = () => promptBuilder.build({ windowLabel: key === DEVICE_SESSION_KEY ? `${windowLabel()}${SPOKEN_REPLY_HINT}` : windowLabel(), now: new Date() });
     const decisionJudge = config.jev?.enabled || deps.decisionJudge
       ? deps.decisionJudge ?? new Jev(config.jev ?? {}, fetch, (decision) => log.info({ session: key, ...decision }, "jev decision"))
       : undefined;
@@ -167,8 +168,8 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     const getTools = (): AgentTool<any>[] => {
       if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
       if (temporary === "wiki") return wikiTools(wikiContext!);
-      const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), key.startsWith("web:") ? key.slice(4) : "wechat"), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
-      return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), key.startsWith("web:") ? key.slice(4) : "wechat")]), beforeToolCall, trace: () => trace.current, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
+      const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTarget(key)), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
+      return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTarget(key))]), beforeToolCall, trace: () => trace.current, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
     };
     const session = await Session.open({
       key,
@@ -235,6 +236,15 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
 }
 
 /** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
+/** Device replies are synthesized to speech on a small speaker. */
+const SPOKEN_REPLY_HINT = " (replies are read aloud: answer in a few short plain sentences, without Markdown, lists, tables, code or links)";
+
+/** Where a schedule created in this conversation delivers by default. */
+function scheduleTarget(key: string): string {
+  if (key === DEVICE_SESSION_KEY) return DEVICE_SESSION_KEY;
+  return key.startsWith("web:") ? key.slice(4) : "wechat";
+}
+
 const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
 const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
 
