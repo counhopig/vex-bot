@@ -38,6 +38,8 @@ Saving in WebChat settings applies the change without a manual restart:
 
 ## Settings
 
+Only the keys below are accepted; an unknown or misspelt key at any level fails validation with its path.
+
 | Key | Default | Description |
 |---|---|---|
 | `model.provider`, `model.id` | required | Primary model. IDs are case-sensitive; an unknown ID fails and lists the valid ones |
@@ -91,7 +93,7 @@ Saving in WebChat settings applies the change without a manual restart:
 | `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `read`, `grep`, `find`, `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild`, `bash` and MCP tools are `ask`, and `wiki_bootstrap`, `wiki_rollback` and `wiki_rebuild` are confirmed on every call; `write` and `edit` are `allow` inside the workspace and `ask` outside.
+Default tool policy: `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild`, `bash` and MCP tools are `ask`, and `wiki_bootstrap`, `wiki_rollback` and `wiki_rebuild` are confirmed on every call; `read`, `grep` and `find` are `allow` inside the workspace and the bundled skills directory and `ask` elsewhere; `write` and `edit` are `allow` inside the workspace and `ask` outside.
 
 ## Models
 

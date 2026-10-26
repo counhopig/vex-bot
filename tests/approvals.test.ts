@@ -116,7 +116,7 @@ describe("createToolGate", () => {
   it("lets allowed tools through without asking", async () => {
     const approvals = new ApprovalManager();
     const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => "WebChat" });
-    await expect(gate(ctx("read", { path: "/etc/hosts" }))).resolves.toBeUndefined();
+    await expect(gate(ctx("read", { path: "notes.md" }))).resolves.toBeUndefined();
     expect(approvals.pending()).toEqual([]);
   });
 
@@ -130,7 +130,7 @@ describe("createToolGate", () => {
     let unattended = true;
     const gate = createToolGate({ policy, approvals, sessionKey: "web:1", windowLabel: () => "WebChat", unattended: () => unattended });
     await expect(gate(ctx("bash", { command: "ls" }))).resolves.toEqual({ block: true, reason: expect.stringContaining("The owner is not present for this run, so bash") });
-    await expect(gate(ctx("read", { path: "/etc/hosts" }))).resolves.toBeUndefined();
+    await expect(gate(ctx("read", { path: "notes.md" }))).resolves.toBeUndefined();
     expect(approvals.pending()).toEqual([]);
     unattended = false;
     const asked = gate(ctx("bash", { command: "ls" }));

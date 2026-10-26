@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import type { CompleteFn } from "../providers/models.js";
 import { appendWorkspaceFile } from "../workspace/workspace.js";
 import { MAX_CONTEXT_BYTES, MAX_CONTEXT_MESSAGES, startsContextSegment } from "./window.js";
+import { TranscriptCursor } from "./cursor.js";
 import { assertRequestFits, charTokens, estimateProviderInput, outputReserve, tokenEstimate, withContextBudget } from "./budget.js";
 
 export interface CompactionRecord {
@@ -35,6 +36,8 @@ export interface CompactionOptions {
   save: (record: CompactionRecord) => Promise<void>;
   /** Disk-backed recovery of turns outside the bounded session window. */
   loadHistory?: () => AsyncIterable<AgentMessage>;
+  /** Where the in-memory history starts in the transcript; shared with the owning session. */
+  cursor?: TranscriptCursor;
   onError?: (err: unknown) => void;
   onCompact?: (info: { replaced: number; summaryChars: number }) => void;
   now?: () => Date;
@@ -86,28 +89,32 @@ export class ContextCompactor {
   // History prefix already rescued into daily notes, and the run and time in which compaction last failed.
   private rescued: number;
   private failure: { signal: AbortSignal | undefined; at: number } | undefined;
+  private readonly cursor: TranscriptCursor;
   constructor(private readonly opts: CompactionOptions, restored?: CompactionRecord) {
     this.record = restored;
     this.rescued = restored?.through ?? 0;
+    this.cursor = opts.cursor ?? new TranscriptCursor();
   }
 
-  private offset = 0;
-  /** JSONL indices stay absolute even after the session releases an in-memory prefix. */
-  discardPrefix(count: number): void { this.offset += count; }
   get summarizedThrough(): number { return this.record?.through ?? 0; }
 
-  /** Releases only a durably summarized prefix and replaces condensed tool payloads in memory. */
+  /**
+   * The messages after a durably summarized prefix, with condensed tool payloads replaced; the caller
+   * advances the cursor past the dropped prefix.
+   */
   release(messages: AgentMessage[]): AgentMessage[] {
-    const record = this.record;
-    if (!record || record.through > this.offset + messages.length) return messages;
-    const start = Math.max(0, record.through - this.offset);
-    const retained = messages.slice(start).map((message, index) => {
-      const replacement = record.replacements?.find((item) => item.index === this.offset + start + index);
+    return this.unsummarized(messages, this.record) ?? messages;
+  }
+
+  /** History after the record's summarized prefix, or undefined when the record reaches past it. */
+  private unsummarized(history: AgentMessage[], record: CompactionRecord | undefined): AgentMessage[] | undefined {
+    if (!record || this.cursor.relative(record.through) > history.length) return undefined;
+    const start = Math.max(0, this.cursor.relative(record.through));
+    return history.slice(start).map((message, index) => {
+      const replacement = record.replacements?.find((item) => item.index === this.cursor.absolute(start + index));
       return message.role === "toolResult" && replacement
         ? { ...message, content: [{ type: "text" as const, text: `Tool result summary: ${replacement.content}` }] } : message;
     });
-    this.offset += start;
-    return retained;
   }
 
   private clock(): number { return (this.opts.now?.() ?? new Date()).getTime(); }
@@ -121,7 +128,7 @@ export class ContextCompactor {
   }
 
   async transform(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
-    if (this.opts.loadHistory && this.offset > (this.record?.through ?? 0) && !this.failedRecently(signal)) {
+    if (this.opts.loadHistory && this.cursor.offset > (this.record?.through ?? 0) && !this.failedRecently(signal)) {
       try { await this.recoverPrefix(signal); }
       catch (err) {
         if (!signal?.aborted) { this.failure = { signal, at: this.clock() }; this.opts.onError?.(err); }
@@ -132,34 +139,34 @@ export class ContextCompactor {
     const projected = this.project(system, history);
     if (signal?.aborted) return projected;
     const starts = history.flatMap((m, i) => m.role === "user" ? [i] : []);
-    const previous = Math.max(0, (this.record?.through ?? 0) - this.offset);
+    const previous = Math.max(0, this.cursor.relative(this.record?.through ?? 0));
     const through = Math.max(previous, starts.at(-(this.opts.keepTurns ?? 3)) ?? starts.at(-1) ?? 0);
     const { contextWindow } = this.opts.model;
     const hardBudget = Math.floor(Math.min(contextWindow * 0.85, contextWindow - outputReserve(this.opts.model)));
     // A failed recovery must not write a checkpoint claiming to cover the missing disk prefix.
-    if (this.opts.loadHistory && this.offset > (this.record?.through ?? 0)) return this.fit(projected, hardBudget, history.length);
+    if (this.opts.loadHistory && this.cursor.offset > (this.record?.through ?? 0)) return this.fit(projected, hardBudget, history.length);
     const projectedInput = estimateProviderInput({ messages: projected });
     if (history.length < MAX_CONTEXT_MESSAGES && Buffer.byteLength(JSON.stringify(history), "utf8") < MAX_CONTEXT_BYTES && projectedInput <= contextWindow * (this.opts.threshold ?? 0.7) && projectedInput <= hardBudget) return projected;
     if (through <= previous && estimateProviderInput({ messages: projected }) <= hardBudget) return projected;
     if (this.failedRecently(signal)) return this.fit(projected, hardBudget, history.length);
     const older = history.slice(previous, through);
     try {
-      const fresh = history.slice(Math.max(this.rescued - this.offset, previous), through);
+      const fresh = history.slice(Math.max(this.cursor.relative(this.rescued), previous), through);
       if (fresh.length) {
         await this.rescue(fresh, signal);
-        this.rescued = this.offset + through;
+        this.rescued = this.cursor.absolute(through);
       }
       signal?.throwIfAborted();
       const summary = older.length ? await this.summarize(`${this.record ? `Existing summary: ${this.record.summary}\n` : ""}${renderMessages(older, RESULT_LIMIT)}`, signal) : this.record?.summary ?? "The current conversation context";
-      const record: CompactionRecord = { kind: "compaction", through: this.offset + through, summary, timestamp: Date.now(), replacements: [...(this.record?.replacements ?? []).filter((r) => r.index >= this.offset + through)] };
+      const record: CompactionRecord = { kind: "compaction", through: this.cursor.absolute(through), summary, timestamp: Date.now(), replacements: [...(this.record?.replacements ?? []).filter((r) => r.index >= this.cursor.absolute(through))] };
       let candidate = this.project(system, history, record);
       // Preserve message roles and tool-call IDs while condensing an oversized retained result.
       for (const [index, message] of history.entries()) {
         if (estimateProviderInput({ messages: candidate }) <= hardBudget) break;
         if (index < through || message.role !== "toolResult") continue;
         const content = await this.summarize(partsText(message.content), signal);
-        record.replacements = record.replacements!.filter((r) => r.index !== this.offset + index);
-        record.replacements.push({ index: this.offset + index, content });
+        record.replacements = record.replacements!.filter((r) => r.index !== this.cursor.absolute(index));
+        record.replacements.push({ index: this.cursor.absolute(index), content });
         candidate = this.project(system, history, record);
       }
       if (estimateProviderInput({ messages: candidate }) > hardBudget) throw new Error("The context still exceeds the model budget after compaction; the oversized request was not sent");
@@ -197,7 +204,7 @@ export class ContextCompactor {
     };
     for await (const message of this.opts.loadHistory!()) {
       signal?.throwIfAborted();
-      if (index >= this.offset) break;
+      if (index >= this.cursor.offset) break;
       const position = index++;
       if (position < (this.record?.through ?? 0)) continue;
       if (startsContextSegment(message, batch.at(-1)) && (batch.length >= MAX_CONTEXT_MESSAGES || bytes >= MAX_CONTEXT_BYTES)) await flush(position);
@@ -213,7 +220,7 @@ export class ContextCompactor {
     if (estimateProviderInput({ messages: projected }) <= budget) return projected;
     const system = projected.filter((m) => m.role === "system");
     const rest = projected.filter((m) => m.role !== "system");
-    const summary = this.record?.through && this.record.through <= this.offset + historyLength ? rest.slice(0, 1) : [];
+    const summary = this.record?.through && this.record.through <= this.cursor.absolute(historyLength) ? rest.slice(0, 1) : [];
     const retained = rest.slice(summary.length);
     let start = 0;
     while (start < retained.length - 1 && estimateProviderInput({ messages: [...system, ...summary, ...retained.slice(start)] }) > budget) start++;
@@ -223,12 +230,8 @@ export class ContextCompactor {
   }
 
   private project(system: AgentMessage[], history: AgentMessage[], record = this.record): AgentMessage[] {
-    if (!record || record.through > this.offset + history.length) return [...system, ...history];
-    const start = Math.max(0, record.through - this.offset);
-    const retained = history.slice(start).map((message, index) => {
-      const replacement = record.replacements?.find((r) => r.index === this.offset + start + index);
-      return message.role === "toolResult" && replacement ? { ...message, content: [{ type: "text" as const, text: `Tool result summary: ${replacement.content}` }] } : message;
-    });
+    const retained = this.unsummarized(history, record);
+    if (!record || !retained) return [...system, ...history];
     return [...system, ...(record.through ? [{ role: "user" as const, content: `Below is a summary of the earlier history of this conversation (context only):\n${record.summary}`, timestamp: record.timestamp }] : []), ...retained];
   }
 

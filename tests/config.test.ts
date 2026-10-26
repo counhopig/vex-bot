@@ -123,6 +123,13 @@ describe("parseConfig", () => {
     expect(() => parseConfig(`${minimal}wechat: { enabled: true }\nmcpServers: {}\n`, paths)).not.toThrow();
   });
 
+  it("rejects unknown keys at every level", () => {
+    expect(() => parseConfig(`${minimal}compactionn: { threshold: 0.5 }\n`, paths)).toThrow(ConfigError);
+    expect(() => parseConfig(`${minimal}compaction: { thresholdd: 0.5 }\n`, paths)).toThrow(/\/compaction/);
+    expect(() => parseConfig(`${minimal}providers: { p: { apikey: x } }\n`, paths)).toThrow(/\/providers\/p/);
+    expect(() => parseConfig(`${minimal}persona: { outreach: { dailylimit: 1 } }\n`, paths)).toThrow(/\/persona\/outreach/);
+  });
+
   it("rejects invalid YAML", () => {
     expect(() => parseConfig("model: [", paths)).toThrow(ConfigError);
   });

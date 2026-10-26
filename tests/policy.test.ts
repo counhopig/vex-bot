@@ -23,9 +23,6 @@ describe("ToolPolicy", () => {
   const policy = new ToolPolicy({ workspace: "/ws", overrides: {} });
 
   it("applies the default decisions", () => {
-    expect(policy.decide("read", { path: "/etc/passwd" })).toBe("allow");
-    expect(policy.decide("grep", {})).toBe("allow");
-    expect(policy.decide("find", {})).toBe("allow");
     expect(policy.decide("bash", { command: "ls" })).toBe("ask");
     expect(policy.decide("mystery", {})).toBe("ask");
     for (const tool of ["web_fetch", "web_search", "memory_search", "feel", "schedule", "delegate"]) expect(policy.decide(tool, {})).toBe("allow");
@@ -36,6 +33,23 @@ describe("ToolPolicy", () => {
     expect(policy.decide("vault_read", { path: "a.md" })).toBe("allow");
     const denying = new ToolPolicy({ workspace: "/ws", overrides: { vault_read: "deny" } });
     expect(denying.filter([{ name: "vault_search" }, { name: "vault_read" }])).toEqual([{ name: "vault_search" }]);
+  });
+
+  it("allows reads and searches inside the workspace and readable roots only", () => {
+    expect(policy.decide("read", { path: "memory/a.md" })).toBe("allow");
+    expect(policy.decide("read", { path: "/ws/SOUL.md" })).toBe("allow");
+    expect(policy.decide("read", { path: "/etc/passwd" })).toBe("ask");
+    expect(policy.decide("read", { path: "~/.ssh/id_rsa" })).toBe("ask");
+    expect(policy.decide("read", {})).toBe("ask");
+    expect(policy.decide("grep", { pattern: "x" })).toBe("allow");
+    expect(policy.decide("grep", { pattern: "x", path: "/" })).toBe("ask");
+    expect(policy.decide("find", { pattern: "*" })).toBe("allow");
+    expect(policy.decide("find", { pattern: "*", path: "../" })).toBe("ask");
+    const skills = new ToolPolicy({ workspace: "/ws", overrides: {}, readableRoots: ["/app/skills"] });
+    expect(skills.decide("read", { path: "/app/skills/weather/SKILL.md" })).toBe("allow");
+    expect(skills.decide("grep", { pattern: "x", path: "/app/skills" })).toBe("allow");
+    expect(skills.decide("write", { path: "/app/skills/weather/SKILL.md" })).toBe("ask");
+    expect(skills.decide("read", { path: "/app/other" })).toBe("ask");
   });
 
   it("allows writes inside the workspace only", () => {
@@ -96,6 +110,8 @@ describe("ToolPolicy", () => {
       expect(scoped.decide("write", { path: "linked-dir/file" })).toBe("ask");
       expect(scoped.decide("write", { path: "linked-dir/new/deeper/file" })).toBe("ask");
       expect(scoped.decide("write", { path: "dangling" })).toBe("ask");
+      expect(scoped.decide("read", { path: "linked-file" })).toBe("ask");
+      expect(scoped.decide("grep", { pattern: "x", path: "linked-dir" })).toBe("ask");
       expect(scoped.decide("write", { path: "new/deeper/file" })).toBe("allow");
       const aliased = new ToolPolicy({ workspace: join(dir, "workspace-alias"), overrides: {} });
       expect(aliased.decide("write", { path: "new/file" })).toBe("allow");
