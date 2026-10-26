@@ -66,6 +66,9 @@ export class DeviceChannel {
     this.opts.log.info("device connected");
     connection.send({ type: "hello", busy: this.busy });
     while (this.outbox.length && connection.send(this.outbox[0]!)) this.outbox.shift();
+    // Announcements are per connection: a new one hears every approval still waiting.
+    this.announced.clear();
+    this.announceApprovals();
     return () => {
       if (this.connection !== connection) return;
       this.connection = undefined;
@@ -76,6 +79,8 @@ export class DeviceChannel {
   async receive(message: DeviceClientMessage): Promise<void> {
     const session = await this.opts.sessions.get(DEVICE_SESSION_KEY);
     if (message.type === "stop") {
+      // A stop during retry backoff ends the run without an aborted message, so mark the turn here.
+      if (this.turn) this.turn.status = "interrupted";
       session.stop();
       // Stopping discards queued messages the transcript has not taken; answer them so the device stops waiting.
       const dropped = [...this.waiting];

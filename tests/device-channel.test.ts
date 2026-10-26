@@ -170,6 +170,36 @@ describe("DeviceChannel", () => {
     expect(device.of("reply")).toEqual([{ type: "reply", ids: ["a2"], text: "", status: "interrupted" }]);
   });
 
+  it("reports a stopped turn as interrupted even without an aborted model message", async () => {
+    const device = new FakeConnection();
+    channel.connect(device);
+    await channel.receive({ type: "send", id: "a1", text: "q" });
+    emit({ kind: "busy", busy: true });
+    emit({ kind: "user_message", text: "q", timestamp: 1, requestId: "a1" });
+    // A stop during retry backoff: the run ends with no assistant message at all.
+    await channel.receive({ type: "stop" });
+    emit({ kind: "busy", busy: false });
+    expect(device.of("reply")).toEqual([{ type: "reply", ids: ["a1"], text: "", status: "interrupted" }]);
+  });
+
+  it("tells a reconnecting device about approvals created while it was away", async () => {
+    const first = new FakeConnection();
+    const detach = channel.connect(first);
+    void approvals.request({ sessionKey: "device", windowLabel: "Desk device", toolName: "bash", args: { command: "date" } });
+    bus.emit({ type: "approvals_changed" });
+    expect(first.of("needs_approval")).toHaveLength(1);
+    first.open = false;
+    detach();
+    void approvals.request({ sessionKey: "device", windowLabel: "Desk device", toolName: "write", args: { path: "a" } });
+    bus.emit({ type: "approvals_changed" });
+    const second = new FakeConnection();
+    channel.connect(second);
+    expect(second.of("needs_approval").map((m) => m.tool)).toEqual(["bash", "write"]);
+    bus.emit({ type: "approvals_changed" });
+    expect(second.of("needs_approval")).toHaveLength(2);
+    for (const request of approvals.pending()) approvals.answer(request.id, "deny");
+  });
+
   it("tells the device about approvals its own session waits for, once each", async () => {
     const device = new FakeConnection();
     channel.connect(device);
