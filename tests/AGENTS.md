@@ -14,6 +14,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Onboarding and CLI | `onboard`, `cli-process`, `daemon`, `logging` | Initial files, process identity, service lifecycle and secret-free logs |
 | Link-reader and skills | `link-skill`, `skill-scripts`, `skills` | Platform responses, redirects, subtitles, script inputs and discovery |
 | WebChat | `gateway`, `protocol`, `auth`, `web-app` | HTTP/WS contracts, authentication and browser event handlers |
+| Desk device | `device-channel`, `daemon-device` | Turn replies, resend deduplication, outbox, bearer/Origin refusal and schedule delivery to the device |
 | WeChat | `wechat-client`, `wechat-login`, `wechat-channel`, `wechat-messages`, `wechat-store`, `daemon-wechat` | iLink requests, QR state, polling, delivery and credentials |
 | Tools and approvals | `tools-*`, `policy`, `approvals` | Execution, access boundaries, cancellation and approval lifecycle |
 | Background work | `scheduler`, `persona`, `memory-index` | Scheduled delivery, persona state and FTS memory |

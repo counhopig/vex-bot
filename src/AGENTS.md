@@ -14,6 +14,7 @@ src/
 ├── gateway/               # Authentication, HTTP and WebSocket dispatch
 ├── protocol/              # Validated client messages and server contracts
 ├── channels/wechat/       # Polling, credentials and channel reconciliation
+├── channels/device/       # Desk device: one session, send/stop only, turn replies and outbox
 ├── links/                 # Shared links: original-source reading and runtime-owned link actions
 ├── tools/                 # Agent tool factories, their evidence profiles and MCP connections
 ├── policy/                # Decisions, approval lifecycle and execution gate
@@ -41,6 +42,7 @@ src/
 | Change editable settings | `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
+| Change the device protocol | `protocol/device.ts`, `channels/device/channel.ts`, `gateway/server.ts` (`/device/ws`), `docs/architecture.md` (Device channel) |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
 | Change link actions | `links/actions.ts`, `core/turnController.ts`, `tools/requestOutcome.ts`, `sessionFactory.ts` (`LINK_ROUTES`) |
 | Change what a tool's result proves | the owning module's `evidence.ts` (`tools/`, `vault/`, `vault/wiki/`), `sessionFactory.ts` (`TOOL_EVIDENCE`) |
@@ -68,6 +70,7 @@ src/
 - Explicit policy denial precedes session approval reuse; denied tools are also filtered from model visibility (`policy/gate.ts:14`, `policy/policy.ts:33`).
 - A run the runtime starts (`Session.unattended`: a source and no joined owner message) never raises an approval: the gate refuses an `ask` tool at once (`policy/gate.ts`, `core/session.ts`, `sessionFactory.ts`).
 - Non-loopback binding requires a web token (`daemon.ts:83`).
+- The device token is separate from the web token and reaches only `device` session send/stop; `/device/ws` refuses requests with an `Origin` header and does not exist without `device.token` (`gateway/server.ts`, `channels/device/channel.ts`).
 - Read/grep/find and write/edit permissions use real paths, including the nearest existing ancestor for new files; reads are free inside the workspace and the bundled skills directory, writes only inside the workspace. Never allow a dangling symlink as a new path segment (`tools/paths.ts:19`, `policy/policy.ts:43`, `policy/policy.ts:61`).
 - Shell children inherit only the environment allowlist, configured passthrough and locale keys; preserve process-group cancellation and bounded output collection (`tools/bash.ts:15`, `tools/bash.ts:68`, `tools/bash.ts:90`).
 - Web requests validate public URLs and every resolved address at connection lookup; preserve redirect validation and response limits (`tools/web.ts:44`, `tools/web.ts:58`, `tools/web.ts:82`).

@@ -12,7 +12,7 @@ export function configuredSecrets(config: VexConfig, env: NodeJS.ProcessEnv = pr
     ...Object.values(config.providers ?? {}).flatMap((provider) => provider.apiKey ? [provider.apiKey] : []),
     config.jev?.apiKey, env.TYPESAFE_API_KEY,
     config.links?.bilibili?.sessdata, env.BILIBILI_SESSDATA,
-    config.web.token, config.webSearch?.apiKey, config.stt?.apiKey, ...urlCredentialValues(config.stt?.baseUrl),
+    config.web.token, config.device?.token, config.webSearch?.apiKey, config.stt?.apiKey, ...urlCredentialValues(config.stt?.baseUrl),
     config.vault?.token, ...urlCredentialValues(config.vault?.url),
     ...Object.values(config.mcpServers ?? {}).flatMap((server) => "env" in server ? Object.values(server.env ?? {}) : "headers" in server ? Object.values(server.headers ?? {}) : []),
     ...Object.values(config.mcpServers ?? {}).flatMap((server) => urlCredentialValues("url" in server ? server.url : undefined)),

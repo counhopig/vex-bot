@@ -6,6 +6,7 @@ import type { Session } from "./session.js";
 import { WebSessionIndex, type WebSessionMeta } from "./webSessions.js";
 
 export const WECHAT_SESSION_KEY = "wechat";
+export const DEVICE_SESSION_KEY = "device";
 const WEB_PREFIX = "web:";
 
 export function webSessionKey(id: string): string {
@@ -24,6 +25,8 @@ export interface SessionManagerOptions {
   idleTimeoutMs?: number;
   /** Keeps a session open for an outside reason, such as an approval it is waiting for. */
   retain?: (key: string) => boolean;
+  /** The device session's window label; without it the device session does not exist. */
+  deviceLabel?: string;
   now?: () => number;
 }
 
@@ -113,6 +116,7 @@ export class SessionManager {
 
   windowLabel(key: string): string {
     if (key === WECHAT_SESSION_KEY) return "WeChat";
+    if (key === DEVICE_SESSION_KEY && this.opts.deviceLabel) return this.opts.deviceLabel;
     const meta = this.index.get(key.slice(WEB_PREFIX.length));
     return `WebChat conversation "${meta?.title ?? "untitled"}"`;
   }
@@ -194,6 +198,7 @@ export class SessionManager {
 
   private transcriptPath(key: string): string {
     if (key === WECHAT_SESSION_KEY) return join(this.opts.paths.sessions, "wechat.jsonl");
+    if (key === DEVICE_SESSION_KEY && this.opts.deviceLabel) return join(this.opts.paths.sessions, "device.jsonl");
     if (key.startsWith(WEB_PREFIX)) {
       const id = key.slice(WEB_PREFIX.length);
       if (this.index.get(id)) return join(this.opts.paths.webSessions, `${id}.jsonl`);

@@ -7,12 +7,13 @@ describe("configuredSecrets", () => {
     const config = {
       providers: { openai: { apiKey: "provider-key" } },
       web: { token: "web-token" },
+      device: { token: "device-token", label: "Desk device" },
       stt: { baseUrl: "https://user:pass@stt.example/v1?api_key=query-key&model=x", model: "m" },
       vault: { url: "https://git.example/notes.git", username: "git-user", token: "git-token" },
       mcpServers: { local: { command: "node", env: { API_TOKEN: "mcp-env" } }, remote: { url: "https://mcp.example/?token=mcp-query", headers: { Authorization: "Bearer mcp-header" } } },
     } as unknown as VexConfig;
     const secrets = configuredSecrets(config, { MY_SERVICE_TOKEN: "env-token", PATH: "/usr/bin" });
-    expect(secrets).toEqual(expect.arrayContaining(["provider-key", "web-token", "user", "pass", "query-key", "git-token", "mcp-env", "mcp-query", "Bearer mcp-header", "env-token"]));
+    expect(secrets).toEqual(expect.arrayContaining(["provider-key", "web-token", "device-token", "user", "pass", "query-key", "git-token", "mcp-env", "mcp-query", "Bearer mcp-header", "env-token"]));
     expect(secrets).not.toContain("/usr/bin");
     expect(secrets).not.toContain("x");
     expect(secrets).not.toContain("git-user");

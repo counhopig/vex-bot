@@ -112,6 +112,12 @@ export const ConfigSchema = StrictObject({
       baseUrl: Type.Optional(Type.String({ minLength: 1 })),
     }),
   ),
+  device: Type.Optional(
+    StrictObject({
+      token: Type.Optional(Type.String()),
+      label: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
+    }),
+  ),
 });
 
 export type Decision = Static<typeof DecisionSchema>;
@@ -134,6 +140,8 @@ export interface VexConfig {
   toolPolicy: Record<string, Decision>;
   bashEnvPassthrough: string[];
   wechat: { enabled: boolean; ownerId?: string; baseUrl: string };
+  /** The device connection is on only with a token, which `VEX_DEVICE_TOKEN` can also supply. */
+  device?: { token?: string; label: string };
   compaction?: { threshold: number };
   memory?: { consolidateAt?: string };
   heartbeat?: { every?: string; activeHours?: [string, string] };
