@@ -124,7 +124,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       maxNotesPerRun: wikiConfig.maxNotesPerRun,
       notifyEnabled: wikiConfig.notify,
       notify: async (text) => { await (await sessions.get(WECHAT_SESSION_KEY)).enqueueAssistant(text); },
-      runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), context),
+      runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), { wikiContext: context }),
       sourceSegmentBudget: async (prefix, context) => {
         const tools = wikiTools(context);
         const systemPrompt = await wikiPrompt(() => tools.map((tool) => tool.name)).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
@@ -149,7 +149,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),
       }), createWebSearchTool(config.webSearch),
       ...(vault ? createVaultTools(vault) : [])];
-    const { openSession, runTemporary, wikiTools, wikiPrompt } = createSessionFactory({
+    const { openSession, runTemporary, runHeartbeat, wikiTools, wikiPrompt } = createSessionFactory({
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
       scheduler: () => scheduler, live,
       ...(opts.linkClassifier ? { linkClassifier: opts.linkClassifier } : {}),
@@ -198,6 +198,12 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           });
           log.info({ kind, ms: Date.now() - startedAt, chars: reply.length }, "background run finished");
           return reply;
+        },
+        runHeartbeat: async (prompt, signal) => {
+          log.info({ kind: "heartbeat" }, "background run started");
+          const message = await runHeartbeat(prompt, signal);
+          log.info({ kind: "heartbeat", notify: message !== null }, "background run finished");
+          return message;
         },
         deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
         checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound }),

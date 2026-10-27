@@ -244,8 +244,29 @@ describe("startDaemon", () => {
     expect(heartbeatPrompt).toContain("## MEMORY.md");
     expect(heartbeatPrompt).toContain("## Skills");
     expect(heartbeatTools).not.toContain("wiki_ingest");
+    expect(heartbeatTools).toContain("heartbeat_report");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
+  });
+
+  it("keeps a heartbeat silent when it reports nothing, however chatty its reply", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
+    let reported = "";
+    faux.setResponses([
+      () => fauxAssistantMessage(fauxToolCall("heartbeat_report", { notify: false }, { id: "report" }), { stopReason: "toolUse" }),
+      (ctx) => {
+        const result = ctx.messages.find((message) => message.role === "toolResult");
+        reported = result?.role === "toolResult" ? result.content.map((part) => part.type === "text" ? part.text : "").join("") : "";
+        return fauxAssistantMessage("All checked, nothing urgent today. Have a nice evening!");
+      },
+    ]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] } }), log: createLogger(), models: models() });
+    await vi.waitFor(() => expect(reported).toBe("Nothing will be sent to the owner."), { timeout: 10_000, interval: 50 });
+    await vi.waitFor(() => expect(faux.getPendingResponseCount()).toBe(0));
+    await daemon.stop(); daemon = undefined;
+    expect(await readFile(join(paths.sessions, "wechat.jsonl"), "utf8").catch(() => "")).not.toContain("nothing urgent");
   });
 
   it("keeps a background run from asking the absent owner for approval", async () => {

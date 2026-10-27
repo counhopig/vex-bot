@@ -36,6 +36,7 @@ import { skillBodySection, skillsSection } from "./skills/index.js";
 import { createDelegateTool } from "./tools/delegate.js";
 import type { McpBridge } from "./tools/mcp.js";
 import { createScheduleTool } from "./tools/schedule.js";
+import { createHeartbeatReportTool, heartbeatMessage, type HeartbeatOutcome } from "./tools/heartbeat.js";
 import type { TraceScope, TraceStore } from "./trace/store.js";
 import type { Vault } from "./vault/notes.js";
 import type { Wiki, WikiRunContext } from "./vault/wiki/service.js";
@@ -161,13 +162,14 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
   /** How each kind of run is assembled. Only `interactive` runs belong to the owner's conversations. */
   const profiles: Record<RunKind, RunProfile> = {
     interactive: { owner: true, background: false, prompt: (toolNames) => new SystemPromptBuilder([...interactiveSections, availableToolsSection(toolNames)]), tools: conversationTools },
-    heartbeat: { owner: false, background: true, prompt: (toolNames) => backgroundPrompt("heartbeat", toolNames), tools: conversationTools },
+    heartbeat: { owner: false, background: true, prompt: (toolNames) => backgroundPrompt("heartbeat", toolNames),
+      tools: (run) => [...conversationTools(run), ...(run.heartbeat ? [createHeartbeatReportTool(run.heartbeat)] : [])] },
     consolidation: { owner: false, background: true, prompt: (toolNames) => backgroundPrompt("consolidation", toolNames), gate: workspaceOnlyGate,
       tools: () => policy.filter(commonTools.filter((tool) => CONSOLIDATION_TOOLS.includes(tool.name))) },
     wiki: { owner: false, background: true, prompt: (toolNames) => wikiPrompt(toolNames), tools: (run) => wikiTools(run.wikiContext!) },
   };
 
-  const openSession = async (key: string, transcriptPath: string, windowLabel: () => string, kind: RunKind = "interactive", wikiContext?: WikiRunContext): Promise<Session> => {
+  const openSession = async (key: string, transcriptPath: string, windowLabel: () => string, kind: RunKind = "interactive", extras: RunExtras = {}): Promise<Session> => {
     const profile = profiles[kind];
     const runModel = profile.background ? backgroundModel : model;
     const toolNames = () => getTools().map((tool) => tool.name);
@@ -177,7 +179,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     let opened: Session | undefined;
     const beforeToolCall: ToolGate = profile.gate
       ?? createToolGate({ policy, approvals, sessionKey: key, windowLabel, unattended: () => opened?.unattended ?? false });
-    const run: RunContext = { key, model: runModel, beforeToolCall, trace, ...(wikiContext ? { wikiContext } : {}) };
+    const run: RunContext = { key, model: runModel, beforeToolCall, trace, ...extras };
     const getTools = (): AgentTool<any>[] => profile.tools(run);
     const owner: Partial<SessionOptions> = profile.owner ? {
       ...(wiki ? { controller: (host) => new LinkActionController({
@@ -222,24 +224,34 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     return session;
   };
   /** Opens a throwaway `run:` session for background work, then disposes it and removes its transcript. */
-  const withTemporarySession = async <T>(kind: TemporaryKind, use: (session: Session) => Promise<T>, wikiContext?: WikiRunContext): Promise<T> => {
+  const withTemporarySession = async <T>(kind: TemporaryKind, use: (session: Session) => Promise<T>, extras: RunExtras = {}): Promise<T> => {
     const id = randomUUID();
     const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
-    const session = await openSession(runSessionKey(id), transcript, () => TEMPORARY_WINDOW_LABELS[kind], kind, wikiContext);
+    const session = await openSession(runSessionKey(id), transcript, () => TEMPORARY_WINDOW_LABELS[kind], kind, extras);
     try { return await use(session); }
     finally { await session.dispose(); live.delete(session); traces.release(runSessionKey(id)); await rm(transcript, { force: true }); }
   };
   /** Runs one background turn to completion; `read` inspects the finished session before it is disposed. */
-  const runTemporary = async <T>(kind: TemporaryKind, prompt: string, signal: AbortSignal, read: (session: Session) => T, wikiContext?: WikiRunContext): Promise<T> => {
+  const runTemporary = async <T>(kind: TemporaryKind, prompt: string, signal: AbortSignal, read: (session: Session) => T, extras: RunExtras = {}): Promise<T> => {
     signal.throwIfAborted();
     return withTemporarySession(kind, async (session) => {
       await session.runToIdle(prompt, kind, signal);
       signal.throwIfAborted();
       return read(session);
-    }, wikiContext);
+    }, extras);
   };
 
-  return { openSession, runTemporary, wikiTools, wikiPrompt };
+  /** Runs a heartbeat check; resolves to the message for the owner, or null when there is nothing to tell. */
+  const runHeartbeat = (prompt: string, signal: AbortSignal): Promise<string | null> => {
+    const outcome: HeartbeatOutcome = {};
+    return runTemporary("heartbeat", prompt, signal, (session) => {
+      const reply = session.successfulReply;
+      if (reply === undefined && outcome.notify === undefined) throw new Error("The background task did not finish");
+      return heartbeatMessage(outcome, reply ?? "");
+    }, { heartbeat: outcome });
+  };
+
+  return { openSession, runTemporary, runHeartbeat, wikiTools, wikiPrompt };
 }
 
 /** Device replies are synthesized to speech on a small speaker. */
@@ -259,7 +271,11 @@ interface RunContext {
   beforeToolCall: ToolGate;
   trace: TraceScope;
   wikiContext?: WikiRunContext;
+  heartbeat?: HeartbeatOutcome;
 }
+
+/** What one kind of temporary run carries beside its prompt. */
+type RunExtras = Pick<RunContext, "wikiContext" | "heartbeat">;
 
 interface RunProfile {
   /** An owner conversation: events reach the bus, owner messages move the persona, links run as actions. */

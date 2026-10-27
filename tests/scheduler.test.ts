@@ -12,7 +12,7 @@ async function fixture(extra: Partial<SchedulerOptions> = {}, hookOverrides: Par
   const dataDir = await mkdtemp(join(tmpdir(), "vex-scheduler-")); dirs.push(dataDir);
   const workspace = join(dataDir, "workspace"); await mkdir(workspace);
   let now = new Date(2026, 9, 3, 12).getTime();
-  const hooks: SchedulerHooks = { deliver: vi.fn(async () => {}), targetExists: vi.fn(() => true), runTemporary: vi.fn(async () => "HEARTBEAT_OK"), deliverHeartbeat: vi.fn(async () => {}), checkOutreach: vi.fn(async () => {}), wikiWork: vi.fn(async () => null), runWiki: vi.fn(async () => {}), log: vi.fn(), ...hookOverrides };
+  const hooks: SchedulerHooks = { deliver: vi.fn(async () => {}), targetExists: vi.fn(() => true), runTemporary: vi.fn(async () => "done"), runHeartbeat: vi.fn(async () => null), deliverHeartbeat: vi.fn(async () => {}), checkOutreach: vi.fn(async () => {}), wikiWork: vi.fn(async () => null), runWiki: vi.fn(async () => {}), log: vi.fn(), ...hookOverrides };
   const scheduler = new Scheduler({ dataDir, workspace, hooks, now: () => now, heartbeat: { every: "30m", activeHours: ["08:00", "22:00"] }, ...extra }); schedulers.push(scheduler);
   return { scheduler, dataDir, workspace, hooks, time: () => now, advance: (ms: number) => { now += ms; }, flush: async () => { await new Promise(resolve => setImmediate(resolve)); } };
 }
@@ -101,16 +101,17 @@ describe("scheduler", () => {
     f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
     finish(); await f.flush(); f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.deliver).toHaveBeenCalledTimes(2);
   });
-  it("skips blank heartbeats, silences OK and delivers useful results", async () => {
+  it("skips blank heartbeats, stays silent without a message and delivers one when reported", async () => {
     const f = await fixture(); await f.scheduler.start();
     const settle = () => Promise.allSettled([...(f.scheduler as any).running.values()]);
     const beat = async () => { f.advance(30 * 60_000); await f.scheduler.tick(); await settle(); };
-    await writeFile(join(f.workspace, "HEARTBEAT.md"), " \n"); await beat(); expect(f.hooks.runTemporary).not.toHaveBeenCalled();
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), " \n"); await beat(); expect(f.hooks.runHeartbeat).not.toHaveBeenCalled();
     await writeFile(join(f.workspace, "HEARTBEAT.md"), "检查今天日程"); await beat();
-    expect(f.hooks.runTemporary).toHaveBeenCalledTimes(1); expect(f.hooks.deliverHeartbeat).not.toHaveBeenCalled();
-    vi.mocked(f.hooks.runTemporary).mockResolvedValue("今天有预约"); await beat();
+    expect(f.hooks.runHeartbeat).toHaveBeenCalledTimes(1); expect(f.hooks.deliverHeartbeat).not.toHaveBeenCalled();
+    expect(vi.mocked(f.hooks.runHeartbeat).mock.calls[0]?.[0]).toContain("heartbeat_report");
+    vi.mocked(f.hooks.runHeartbeat).mockResolvedValue("今天有预约"); await beat();
     expect(f.hooks.deliverHeartbeat).toHaveBeenCalledWith("今天有预约", expect.any(AbortSignal));
-    f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runTemporary).toHaveBeenCalledTimes(2);
+    f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runHeartbeat).toHaveBeenCalledTimes(2);
   });
 
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {

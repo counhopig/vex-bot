@@ -12,7 +12,9 @@ export interface SchedulerHooks {
   /** Resolves after the delivered turn has completed, including any steering. */
   deliver(target: string, prompt: string, kind: "scheduled" | "missed", signal: AbortSignal): Promise<void>;
   targetExists(target: string): boolean | Promise<boolean>;
-  runTemporary(prompt: string, kind: "heartbeat" | "consolidation", signal: AbortSignal): Promise<string>;
+  runTemporary(prompt: string, kind: "consolidation", signal: AbortSignal): Promise<string>;
+  /** Runs a heartbeat check; resolves to the message for the owner, or null when there is nothing to tell. */
+  runHeartbeat(prompt: string, signal: AbortSignal): Promise<string | null>;
   /** Sends to WeChat and appends an assistant message to its permanent history. */
   deliverHeartbeat(text: string, signal: AbortSignal): Promise<void>;
   checkOutreach(signal: AbortSignal): Promise<void>;
@@ -251,8 +253,8 @@ export class Scheduler {
     let text: string;
     try { text = await readFile(join(this.options.workspace, "HEARTBEAT.md"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
     if (!text.trim() || this.stopped) return;
-    const result = await this.options.hooks.runTemporary("Read HEARTBEAT.md in the workspace and check each item. Reply with only HEARTBEAT_OK when there is nothing to tell the owner.", "heartbeat", this.abort.signal);
-    if (!this.stopped && result.trim() && result.trim() !== "HEARTBEAT_OK") await this.options.hooks.deliverHeartbeat(result, this.abort.signal);
+    const message = await this.options.hooks.runHeartbeat("Read HEARTBEAT.md in the workspace and check each item. Then call heartbeat_report exactly once: notify=false when there is nothing to tell the owner, or notify=true with the message to send them.", this.abort.signal);
+    if (!this.stopped && message) await this.options.hooks.deliverHeartbeat(message, this.abort.signal);
   }
   private async consolidate(now: number): Promise<void> {
     const dates: string[] = [];

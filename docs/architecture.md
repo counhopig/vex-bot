@@ -203,7 +203,7 @@ Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when al
 |---|---|
 | Scheduled message | Fields: name (unique), rule (`cron`, `every`, or `once`), prompt, target (`wechat` or a WebChat session), enabled. Stored in `schedules.json`. Delivered as a marked user message into the target session. A deleted WebChat target falls back to WeChat. A run still in progress skips the next trigger. |
 | Missed tasks | At startup, a missed one-time task is delivered once as a "missed" message and disabled. Recurring tasks move to their next time without delivery. |
-| Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. `HEARTBEAT_OK` is silent; anything else is sent to WeChat and appended to the WeChat history. |
+| Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. The run reports through its `heartbeat_report` tool: `notify: false` is silent, `notify: true` sends its message to WeChat and appends it to the WeChat history. A run that never calls the tool falls back to its reply, where `HEARTBEAT_OK` anywhere means there is nothing to tell. |
 | Consolidation | See Memory. |
 | Outreach check | See Mood. |
 | Wiki | At `vault.wiki.every`, and once a minute for work the wiki may start at any time (a pending bootstrap). |
