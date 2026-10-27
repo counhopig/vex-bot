@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WeChatChannel, type WeChatChannelOptions } from "../src/channels/wechat/channel.js";
 import { WeChatClient } from "../src/channels/wechat/client.js";
 import { WeChatStore } from "../src/channels/wechat/store.js";
-import { EventBus, type SessionEvent } from "../src/core/events.js";
+import { EventBus, type SessionEvent, type TurnStatus } from "../src/core/events.js";
 import { ApprovalManager } from "../src/policy/approvals.js";
 import { FakeIlink, textMessage } from "./helpers/ilink.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
@@ -77,6 +77,13 @@ function emit(event: SessionEvent): void {
   bus.emit({ type: "session", sessionKey: "wechat", event });
 }
 
+/** One complete turn as the session reports it. */
+function turn(reply: string, status: TurnStatus = "ok") {
+  emit({ kind: "busy", busy: true });
+  emit({ kind: "turn_end", reply, status });
+  emit({ kind: "busy", busy: false });
+}
+
 async function sentTexts(): Promise<string[]> {
   await channel?.drained();
   return ilink.sentTexts();
@@ -119,19 +126,15 @@ describe("WeChatChannel inbound", () => {
     const onReplyDelivery = vi.fn();
     await startChannel({ onReplyDelivery });
     expect(channel!.available).toBe(true);
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "ok", stopReason: "stop", timestamp: Date.now() });
-    emit({ kind: "busy", busy: false });
+    turn("ok");
     expect(await channel!.replyDelivered()).toBe(true);
     ilink.on("/ilink/bot/sendmessage", () => ({ errcode: 1, errmsg: "failed" }));
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "failed", stopReason: "stop", timestamp: Date.now() });
-    emit({ kind: "busy", busy: false });
+    turn("failed");
     expect(await channel!.replyDelivered()).toBe(false);
     const requests = ilink.requests.length;
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "partial internal", stopReason: "stop", timestamp: Date.now() });
-    emit({ kind: "busy", busy: false, discardReply: true });
+    // A quiet run without a reply ends with no turn_end.
+    emit({ kind: "busy", busy: true, quiet: true });
+    emit({ kind: "busy", busy: false });
     expect(await channel!.replyDelivered()).toBe(false);
     expect(ilink.requests.length).toBe(requests);
     expect(onReplyDelivery.mock.calls).toEqual([[true], [false, expect.stringContaining("failed")]]);
@@ -217,12 +220,13 @@ describe("WeChatChannel inbound", () => {
 });
 
 describe("WeChatChannel outbound", () => {
-  it("sends one reply per turn, without the narration written alongside tool calls, using the saved context token", async () => {
+  it("sends one reply per turn, from turn_end, using the saved context token", async () => {
     await store.saveState({ contextToken: "ctx-saved" });
     await startChannel({ processingNoticeMs: 60_000 });
     emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "第一段", stopReason: "toolUse", timestamp: 1 });
+    // The turn's own messages are delivered with turn_end, not one by one.
     emit({ kind: "assistant_message", text: "第二段", stopReason: "stop", timestamp: 2 });
+    emit({ kind: "turn_end", reply: "第二段", status: "ok" });
     emit({ kind: "busy", busy: false });
     expect(await sentTexts()).toEqual(["第二段"]);
     const body = ilink.requests.find((r) => r.path === "/ilink/bot/sendmessage")?.body as { msg: Record<string, unknown> };
@@ -234,7 +238,7 @@ describe("WeChatChannel outbound", () => {
     await startChannel({ processingNoticeMs: 30 });
     emit({ kind: "busy", busy: true });
     await vi.waitFor(async () => expect(await sentTexts()).toEqual(["Working on it…"]));
-    emit({ kind: "assistant_message", text: "好了", stopReason: "stop", timestamp: 1 });
+    emit({ kind: "turn_end", reply: "好了", status: "ok" });
     emit({ kind: "busy", busy: false });
     expect(await sentTexts()).toEqual(["Working on it…", "好了"]);
   });
@@ -242,9 +246,9 @@ describe("WeChatChannel outbound", () => {
   it("does not announce processing during a proactive turn", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 30 });
-    emit({ kind: "busy", busy: true, source: "proactive chat" });
+    emit({ kind: "busy", busy: true, source: "proactive chat", quiet: true });
     await new Promise((resolve) => setTimeout(resolve, 100));
-    emit({ kind: "assistant_message", text: "在吗", stopReason: "stop", timestamp: 1 });
+    emit({ kind: "turn_end", reply: "在吗", status: "ok" });
     emit({ kind: "busy", busy: false });
     expect(await sentTexts()).toEqual(["在吗"]);
   });
@@ -252,24 +256,16 @@ describe("WeChatChannel outbound", () => {
   it("marks interrupted turns and reports errors", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 60_000 });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "写到一半", stopReason: "aborted", timestamp: 1 });
-    emit({ kind: "busy", busy: false });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "", stopReason: "aborted", timestamp: 2 });
-    emit({ kind: "busy", busy: false });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "error", message: "模型调用失败：boom" });
-    emit({ kind: "busy", busy: false });
+    turn("写到一半", "interrupted");
+    turn("", "interrupted");
+    turn("模型调用失败：boom", "error");
     expect(await sentTexts()).toEqual(["写到一半\n(interrupted)", "Interrupted.", "模型调用失败：boom"]);
   });
 
   it("splits long replies", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel({ processingNoticeMs: 60_000 });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "字".repeat(4500), stopReason: "stop", timestamp: 1 });
-    emit({ kind: "busy", busy: false });
+    turn("字".repeat(4500));
     expect((await sentTexts()).map((t) => t.length)).toEqual([2000, 2000, 500]);
   });
 
@@ -277,9 +273,7 @@ describe("WeChatChannel outbound", () => {
     await store.saveState({ contextToken: "ctx" });
     ilink.on("/ilink/bot/sendmessage", () => new Promise(() => {}));
     await startChannel({ processingNoticeMs: 60_000 });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "卡住", stopReason: "stop", timestamp: 1 });
-    emit({ kind: "busy", busy: false });
+    turn("卡住");
     await vi.waitFor(() => expect(ilink.requests.some((r) => r.path === "/ilink/bot/sendmessage")).toBe(true));
     const started = Date.now();
     await channel?.stop();
@@ -289,9 +283,7 @@ describe("WeChatChannel outbound", () => {
 
   it("drops outgoing messages until the owner has written once", async () => {
     await startChannel({ processingNoticeMs: 60_000 });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "没人收", stopReason: "stop", timestamp: 1 });
-    emit({ kind: "busy", busy: false });
+    turn("没人收");
     expect(await sentTexts()).toEqual([]);
   });
 });
@@ -322,8 +314,9 @@ describe("WeChatChannel approvals", () => {
     const pending = approvals.request({ sessionKey: "wechat", windowLabel: "WeChat", toolName: "bash", args: { command: "pwd" } });
     ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "b1" }));
     await expect(pending).resolves.toEqual({ allowed: true });
-    expect(approvals.isSessionAllowed("wechat", "bash")).toBe(true);
-    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash will not be asked about again in this conversation"));
+    expect(approvals.isSessionAllowed("wechat", "bash", { command: "pwd -P" })).toBe(true);
+    expect(approvals.isSessionAllowed("wechat", "bash", { command: "rm -rf x" })).toBe(false);
+    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash pwd will not be asked about again in this conversation"));
   });
 });
 

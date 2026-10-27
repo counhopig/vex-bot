@@ -17,7 +17,7 @@ export function createToolGate(deps: {
     const decision = deps.policy.decide(toolCall.name, args);
     if (decision === "allow") return undefined;
     if (decision === "deny") return { block: true, reason: `The tool ${toolCall.name} is disabled.` };
-    if (deps.approvals.isSessionAllowed(deps.sessionKey, toolCall.name)) return undefined;
+    if (deps.approvals.isSessionAllowed(deps.sessionKey, toolCall.name, args)) return undefined;
     if (deps.unattended?.()) return { block: true, reason: UNATTENDED_REASON(toolCall.name) };
     const outcome = await deps.approvals.request({
       sessionKey: deps.sessionKey,

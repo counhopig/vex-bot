@@ -1,31 +1,26 @@
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWeChat, type WeChatRuntime } from "./channels/wechat/setup.js";
-import { ConfigError, parseConfig, saveConfigText } from "./config/load.js";
-import { clearReloadError, readReloadError, writePendingReload } from "./config/reload.js";
+import { ConfigError } from "./config/load.js";
+import { readReloadError } from "./config/reload.js";
 import { configuredSecrets } from "./config/secrets.js";
-import { setTimeout as delay } from "node:timers/promises";
-import { applyLiveSettings, applySettings, readSettings } from "./config/settings.js";
-import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { VaultConfig, VexConfig } from "./config/schema.js";
-import { formatNow } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
 import type { Session } from "./core/session.js";
-import { DEVICE_SESSION_KEY, SessionManager, WECHAT_SESSION_KEY } from "./core/sessionManager.js";
+import { SessionManager } from "./core/sessionManager.js";
+import { DEVICE_SESSION_KEY, scheduleTargetKey, WECHAT_SESSION_KEY, webSessionKey } from "./core/sessionKey.js";
 import { DeviceChannel } from "./channels/device/channel.js";
 import { createTitleGenerator } from "./core/title.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
 import { Gateway } from "./gateway/server.js";
 import type { Logger } from "./logger.js";
 import type { VexPaths } from "./paths.js";
-import { withFileLock } from "./store/fileLock.js";
 import { MemoryIndex } from "./index/memory.js";
 import { createMemorySearchTool } from "./index/tool.js";
 import { ApprovalManager } from "./policy/approvals.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
-import type { DecisionJudge } from "./policy/judge.js";
+import type { LinkClassifier } from "./links/intent.js";
 import { maxUserPromptBytes } from "./context/budget.js";
 import { createCoreTools } from "./tools/registry.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile } from "./workspace/workspace.js";
@@ -35,7 +30,9 @@ import { Wiki, type WikiRunContext } from "./vault/wiki/service.js";
 import type { GitRunner } from "./vault/wiki/git.js";
 import { unresolvedWikiWrites } from "./vault/wiki/tools.js";
 import { Persona } from "./persona/index.js";
-import { Scheduler } from "./scheduler/index.js";
+import { createOutreachCheck } from "./persona/outreach.js";
+import { createConfigEditor } from "./config/editor.js";
+import { Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
@@ -58,8 +55,8 @@ export interface DaemonOptions {
   wikiGitRunner?: GitRunner;
   /** Source reader override for isolated Wiki integrations. */
   wikiSourceResolver?: (url: string, signal: AbortSignal) => Promise<OriginalSource>;
-  /** Decision override for isolated request-action integration tests. */
-  decisionJudge?: DecisionJudge;
+  /** Link classifier override for isolated link-action integration tests. */
+  linkClassifier?: LinkClassifier;
   /** Public page request override for isolated WebChat and Wiki integration tests. */
   webPageRequest?: PageRequest;
 }
@@ -68,13 +65,6 @@ export interface Daemon {
   url: string;
   port: number;
   stop(): Promise<void>;
-}
-
-let cachedCatalog: { providers: string[]; models: Record<string, string[]> } | undefined;
-function catalog() {
-  const providers: string[] = getBuiltinProviders();
-  cachedCatalog ??= { providers, models: Object.fromEntries(providers.map((name) => [name, getBuiltinModels(name as never).map((entry) => entry.id)])) };
-  return cachedCatalog;
 }
 
 const DEFAULT_STATIC_DIR = fileURLToPath(new URL("./web/static/", import.meta.url));
@@ -103,8 +93,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     workspace: config.workspace,
     onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
   });
-  const protectedRoots: string[] = [];
-  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots, readableRoots: [builtinSkillsDirectory()] });
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const shutdown = new ShutdownPlan(log);
   shutdown.add("approvals", () => approvals.dispose());
@@ -135,16 +123,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       branch: config.vault?.branch,
       maxNotesPerRun: wikiConfig.maxNotesPerRun,
       notifyEnabled: wikiConfig.notify,
-      notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
+      notify: async (text) => { await (await sessions.get(WECHAT_SESSION_KEY)).enqueueAssistant(text); },
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), context),
       sourceSegmentBudget: async (prefix, context) => {
         const tools = wikiTools(context);
-        const systemPrompt = await wikiPrompt(() => tools).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
+        const systemPrompt = await wikiPrompt(() => tools.map((tool) => tool.name)).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
         return maxUserPromptBytes(backgroundModel, systemPrompt, tools, prefix);
       },
       ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
       onWarning: (message) => log.warn(message),
     }) : undefined;
+    // The wiki's clone is written only through the wiki's own tools, never by general file tools.
+    const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots: wiki ? [wiki.root] : [], readableRoots: [builtinSkillsDirectory()] });
     const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, ...(wiki ? { copy: wiki.notesCopy } : {}), onWarning: (message) => log.warn(message) }) : undefined;
     const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
       signal,
@@ -162,8 +152,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const { openSession, runTemporary, wikiTools, wikiPrompt } = createSessionFactory({
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
       scheduler: () => scheduler, live,
-      ...(opts.decisionJudge ? { decisionJudge: opts.decisionJudge } : {}),
-      onOwnerMessage: (key) => { if (key === "wechat") wechatInbound++; },
+      ...(opts.linkClassifier ? { linkClassifier: opts.linkClassifier } : {}),
+      onOwnerMessage: (key) => { if (key === WECHAT_SESSION_KEY) wechatInbound++; },
     });
     const sessions = new SessionManager({
       paths,
@@ -173,6 +163,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       onError: (err) => log.warn({ err }, "session manager task failed"),
       // A WebChat session waiting for the owner's approval stays open until the answer arrives.
       retain: (key) => approvals.pending().some((request) => request.sessionKey === key),
+      onDeleted: (key) => approvals.forgetSession(key),
       ...(deviceToken ? { deviceLabel: config.device!.label } : {}),
     });
     await sessions.init();
@@ -183,28 +174,20 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       shutdown.add("device", () => device.stop());
     }
 
-    if (wiki) {
-      protectedRoots.push(wiki.root);
-      shutdown.add("wiki", () => wiki.close());
-    }
-    const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
-      signal.throwIfAborted();
-      const key = target === WECHAT_SESSION_KEY || target === DEVICE_SESSION_KEY ? target : target.startsWith("web:") ? target : `web:${target}`;
-      const session = await sessions.get(key);
-      signal.throwIfAborted();
-      const abort = () => session.stop();
-      signal.addEventListener("abort", abort, { once: true });
-      try { session.send(text, source); await session.whenIdle(); } finally { signal.removeEventListener("abort", abort); }
-    };
+    if (wiki) shutdown.add("wiki", () => wiki.close());
     scheduler = new Scheduler({ dataDir: paths.home, workspace: config.workspace,
-      heartbeat: { every: config.heartbeat?.every ?? "30m", activeHours: config.heartbeat?.activeHours ?? ["08:00", "22:00"] },
-      memory: { consolidateAt: config.memory?.consolidateAt ?? "03:00" },
-      outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? "30m" },
+      heartbeat: { every: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery, activeHours: config.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours },
+      memory: { consolidateAt: config.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt },
+      outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery },
       ...(wikiConfig ? { wiki: { every: wikiConfig.every } } : {}),
       hooks: {
         log: (err) => log.warn({ err }, "scheduled task failed"),
-        targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
-        deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "missed scheduled task" : "scheduled task", signal); },
+        targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => webSessionKey(meta.id) === scheduleTargetKey(target)),
+        deliver: async (target, text, kind, signal) => {
+          log.info({ target, kind }, "scheduled message");
+          signal.throwIfAborted();
+          await (await sessions.get(scheduleTargetKey(target))).runToIdle(text, kind === "missed" ? "missed scheduled task" : "scheduled task", signal);
+        },
         runTemporary: async (text, kind, signal) => {
           signal.throwIfAborted();
           const startedAt = Date.now();
@@ -216,57 +199,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           log.info({ kind, ms: Date.now() - startedAt, chars: reply.length }, "background run finished");
           return reply;
         },
-        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get("wechat")).injectAssistant(text, signal); },
-        checkOutreach: async (signal) => {
-          const wechat = wechatRuntime?.channel;
-          if (!wechat?.available) return;
-          const session = await sessions.get("wechat");
-          if (!wechat.available || !persona.shouldOutreach(!session.busy)) { await persona.save(); return; }
-          const inboundBefore = wechatInbound;
-          signal.throwIfAborted();
-          const abort = () => session.stop();
-          signal.addEventListener("abort", abort, { once: true });
-          log.info("proactive chat started");
-          try { session.send(persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)), "proactive chat"); await session.whenIdle(); }
-          finally { signal.removeEventListener("abort", abort); }
-          if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
-        },
+        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
+        checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound }),
         wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
         runWiki: async (work, signal) => { await wiki?.run({ kind: work }, signal); },
       },
     });
     shutdown.add("scheduler", () => scheduler.close());
 
-    let restarting = false;
-    const scheduleRestart = (): boolean => {
-      if (!opts.restart) return false;
-      if (restarting) return true;
-      restarting = true;
-      void (async () => {
-        await delay(400);
-        if ([...live.keys()].some((session) => session.busy)) log.info("waiting for running turns to finish before restarting");
-        const deadline = Date.now() + 30_000;
-        while (Date.now() < deadline && [...live.keys()].some((session) => session.busy)) await delay(500);
-        await opts.restart!();
-      })().catch((err: unknown) => { restarting = false; log.error({ err }, "applying settings by restart failed"); });
-      return true;
-    };
-    const ensureStartable = (text: string) => {
-      const next = parseConfig(text, paths);
-      const registry = opts.models ?? createModelRegistry(next.providers);
-      try { registry.resolve(next.model); registry.resolve(next.backgroundModel); }
-      catch (err) { throw new ConfigError(`The model cannot be used: ${err instanceof Error ? err.message : String(err)}`); }
-    };
-    const commitConfig = async (before: string, text: string, restartRequired: boolean, keys?: string[]): Promise<boolean> => {
-      ensureStartable(text);
-      if (restartRequired && opts.restart) await writePendingReload(paths, before);
-      await saveConfigText(paths, text);
-      await clearReloadError(paths);
-      if (!restartRequired) applyLiveSettings(config, parseConfig(text, paths));
-      const restarting = restartRequired && scheduleRestart();
-      log.info({ keys, restartRequired, restarting }, "configuration saved");
-      return restarting;
-    };
+    const editor = createConfigEditor({ paths, config, log, ...(opts.models ? { models: opts.models } : {}), ...(opts.restart ? { restart: opts.restart } : {}),
+      busy: () => [...live.keys()].some((session) => session.busy) });
 
     const gateway = new Gateway({
       host: config.web.host,
@@ -275,18 +217,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       sessions,
       approvals,
       bus,
-      config: {
-        read: () => readFile(paths.config, "utf8"),
-        save: (text, base) => withFileLock(paths.config, async () => {
-          const before = await readFile(paths.config, "utf8");
-          if (base !== undefined && base !== before) throw new ConfigError("Configuration changed after it was opened; reload it before saving");
-          return { restarting: await commitConfig(before, text, text !== before) };
-        }),
-      },
+      config: editor.config,
       schedules: {
         list: () => ({
           tasks: scheduler.list(),
-          targets: [{ id: "wechat", label: "WeChat" }, ...(device ? [{ id: DEVICE_SESSION_KEY, label: config.device!.label }] : []),
+          targets: [{ id: WECHAT_SESSION_KEY, label: "WeChat" }, ...(device ? [{ id: DEVICE_SESSION_KEY, label: config.device!.label }] : []),
             ...sessions.listWeb().map((meta) => ({ id: meta.id, label: meta.title }))],
         }),
         save: async ({ id, ...input }) => {
@@ -309,15 +244,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           reloadError: await readReloadError(paths),
         };
       },
-      settings: {
-        read: async () => ({ ...readSettings(await readFile(paths.config, "utf8")), catalog: catalog() }),
-        save: (patch) => withFileLock(paths.config, async () => {
-          const before = await readFile(paths.config, "utf8");
-          const next = applySettings(before, patch, paths);
-          const restarting = await commitConfig(before, next.text, next.restartRequired, [...Object.keys(patch.set ?? {}), ...(patch.unset ?? [])]);
-          return { restartRequired: next.restartRequired, restarting };
-        }),
-      },
+      settings: editor.settings,
       workspace: { read: (name) => readWorkspaceFile(config.workspace, name), notes: () => listDailyNotes(config.workspace), save: async (name, text, base) => { await saveWorkspaceFile(config.workspace, name, text, base); return { warning: residentLimitWarning(name, text) }; } },
       traces,
       ...(device && deviceToken ? { device: { token: deviceToken, channel: device } } : {}),
@@ -342,7 +269,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       mcpServers: Object.keys(config.mcpServers ?? {}).length,
       webSearch: config.webSearch?.provider,
       speechToText: !!config.stt,
-      heartbeat: config.heartbeat?.every ?? "30m",
+      heartbeat: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery,
     }, "vexd started");
 
     return {

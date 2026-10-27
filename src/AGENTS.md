@@ -2,7 +2,7 @@
 
 ## OVERVIEW
 
-`daemon.ts` assembles shared services and `shutdown.ts` releases them in one order; `sessionFactory.ts` builds each session's prompt, tools, gate and evidence; SessionManager connects browser and WeChat turns to tools and approvals.
+`daemon.ts` assembles shared services and `shutdown.ts` releases them in one order; `sessionFactory.ts` builds each session's prompt, tools, gate and link actions; SessionManager connects browser and WeChat turns to tools and approvals.
 
 ## STRUCTURE
 
@@ -16,7 +16,7 @@ src/
 ├── channels/wechat/       # Polling, credentials and channel reconciliation
 ├── channels/device/       # Desk device: one session, send/stop only, turn replies and outbox
 ├── links/                 # Shared links: original-source reading and runtime-owned link actions
-├── tools/                 # Agent tool factories, their evidence profiles and MCP connections
+├── tools/                 # Agent tool factories and MCP connections
 ├── policy/                # Decisions, approval lifecycle and execution gate
 ├── config/                # Schema, editable settings and restart recovery
 ├── scheduler/             # Persistent schedules and temporary background turns
@@ -37,16 +37,18 @@ src/
 | Change | Coordinated files |
 |--------|-------------------|
 | Add an agent tool | `tools/<name>.ts`, `tools/registry.ts`, `daemon.ts`, `sessionFactory.ts`, `policy/policy.ts`, `tools/summary.ts` |
-| Change a streamed event | `core/events.ts`, `core/session.ts`, `channels/wechat/channel.ts`, `web/static/app.js` |
+| Change a streamed event | `core/events.ts`, `core/session.ts` (`turn_end` carries the reply that ends a run), `channels/wechat/channel.ts`, `channels/device/channel.ts`, `web/static/app.js` |
+| Change session keys or schedule targets | `core/sessionKey.ts` (the only place `web:`/`run:` keys are built or parsed) |
+| Add or change a kind of run | `sessionFactory.ts` (`profiles`: owner or background, model, prompt, tools, gate) |
 | Add a browser command | `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
-| Change editable settings | `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
+| Change editable settings | `config/schema.ts`, `config/settings.ts`, `config/editor.ts` (save, validate, restart), `web/static/app.js` |
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change the device protocol | `protocol/device.ts`, `channels/device/channel.ts`, `gateway/server.ts` (`/device/ws`), `docs/architecture.md` (Device channel) |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
 | Change link actions | `links/actions.ts`, `core/turnController.ts`, `tools/requestOutcome.ts`, `sessionFactory.ts` (`LINK_ROUTES`) |
-| Change what a tool's result proves | the owning module's `evidence.ts` (`tools/`, `vault/`, `vault/wiki/`), `sessionFactory.ts` (`TOOL_EVIDENCE`) |
-| Change the evidence check or judge advice | `context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `policy/judge.ts`, `providers/jev.ts`, `config/secrets.ts` |
+| Change link intent classification | `links/intent.ts`, `links/actions.ts`, `providers/jev.ts`, `sessionFactory.ts` (`linkClassifier`) |
+| Change how provider failures reach the owner | `providers/errors.ts` (`withProviderFailures`), `core/session.ts`, `tools/delegate.ts` |
 | Change the LLM wiki | `vault/wiki/service.ts`, `vault/wiki/tools.ts`, `vault/wiki/write.ts`, `vault/notes.ts`, `config/schema.ts` (`vault.wiki`), `config/settings.ts`, `scheduler/index.ts`, `context/prompt.ts`, `policy/policy.ts`, `tools/summary.ts`, `daemon.ts`, `sessionFactory.ts`, `web/static/app.js` |
 | Change what a run trace records | `trace/types.ts`, `trace/observe.ts`, `trace/store.ts`, `core/session.ts`, `tools/delegate.ts`, `web/static/app.js` |
 | Change the notes vault | `vault/git.ts`, `vault/parse.ts`, `vault/notes.ts`, `vault/tools.ts`, `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
@@ -85,7 +87,8 @@ src/
 - The vault tools are read-only and have no write path. Git credentials travel only in `GIT_CONFIG_*` environment variables and are scrubbed from errors (`vault/git.ts`); `vault_read` accepts only relative `.md` paths found by the scan and re-checks the real path against the vault root; symlinks and dot-names are skipped (`vault/notes.ts`).
 - The wiki plugs in through the existing seams: the scheduler owns only its cadence and asks `hooks.wikiWork`/`hooks.runWiki`; `Wiki.dueWork` decides bootstrap, backoff and review gating (`scheduler/index.ts`, `vault/wiki/service.ts`). Compiler runs are ordinary temporary `run:` sessions built by the session factory's temporary-session helper, with a `SystemPromptBuilder` prompt and the `llm-wiki` skill resolved through skill discovery (`sessionFactory.ts`, `skills/discovery.ts`).
 - Wiki writes go only through `writeWikiFile` under an in-flight marker, inside `wiki/` and `raw/`; the clone is a policy protected root, so general `write`/`edit` cannot reach it. `wiki/tools.ts` depends on the service for types only; the service never builds agent tools (`vault/wiki/write.ts`, `policy/policy.ts`).
-- `Session` knows no tool or business rule. Runtime behaviour reaches it only through a `TurnController` (tools, stream wrapper, a gate in front of the owner's gate, lifecycle hooks); link actions are one such controller, with their tools injected by the daemon (`core/turnController.ts`, `links/actions.ts`).
-- Every model request passes the budget check, then the evidence boundary, which withholds operation claims without a matching tool result. `context/` names no tool: each module declares what its tools prove as `ToolEvidence` profiles, and the daemon combines them. Text sent to an external judge is redacted with `redactSecrets`; the judge is an optional advisor, and link actions and their outcomes still go through the normal tool gate (`context/evidence.ts`, `context/claims.ts`, `policy/advice.ts`, `config/secrets.ts`).
-- Run traces observe without steering: `trace/observe.ts` wraps the provider stream beneath the budget and evidence layers, the tool gate and agent events; a trace failure is a warning, never a turn failure. Every payload is redacted with the configured secrets and bounded before it is written or sent to a watching WebChat client (`trace/store.ts`).
-- A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt that its evidence profile checks (`vault/wiki/tools.ts`, `vault/wiki/evidence.ts`).
+- `Session` knows no tool or business rule; runtime sources that stay silent until the owner joins (proactive chat) are passed in as `quietSources`. Runtime behaviour reaches it only through a `TurnController` (tools, stream wrapper, a gate in front of the owner's gate, lifecycle hooks); link actions are one such controller (`core/turnController.ts`, `links/actions.ts`).
+- Decide at intake, never inspect replies: a shared link's intent is classified once (Jev, else the main model), the routed tool runs through the owner's gate before the model answers, and the owner hears refusals and unarchived outcomes from the runtime. Text sent to Jev is redacted with `redactSecrets` (`links/actions.ts`, `sessionFactory.ts`).
+- Every model request passes the budget check; a provider's raw error goes to the log and the owner sees only its cause (`context/budget.ts`, `providers/errors.ts`).
+- Run traces observe without steering: `trace/observe.ts` wraps the provider stream beneath the budget layer, the tool gate and agent events; a trace failure is a warning, never a turn failure. Every payload is redacted with the configured secrets and bounded before it is written or sent to a watching WebChat client (`trace/store.ts`).
+- A bootstrap preview has one publishing entry: `wiki_bootstrap` behind its `ask` policy. The runtime only notifies the owner and never raises approvals for non-tool events; the tool returns a `publication` receipt (`vault/wiki/tools.ts`).

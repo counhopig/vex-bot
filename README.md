@@ -115,7 +115,7 @@ See the [configuration reference](docs/configuration.md) for providers, custom m
 
 WebChat listens on port `7860` by default. In Docker, use the host port configured in `compose.yaml`.
 
-On WeChat, Vex answers only its owner. Send `/stop` to interrupt a reply, or `/y`, `/ya` and `/n` to approve once, approve for the session, or deny the oldest pending approval.
+On WeChat, Vex answers only its owner. Send `/stop` to interrupt a reply, or `/y`, `/ya` and `/n` to approve once, approve for the session (for shell commands, only simple read-only ones such as `ls`, `cat` or `grep`), or deny the oldest pending approval.
 
 Ask Vex to create scheduled tasks or write new Skills. Use WebChat to manage conversations, inspect tool activity, follow each run step by step on the Traces page and edit the workspace.
 

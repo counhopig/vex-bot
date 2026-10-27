@@ -9,8 +9,6 @@ export interface WikiReadCopyOptions {
   lock: WikiLock;
   /** The opened clone and its batch marker; undefined until the wiki has opened the clone. */
   open: () => { repo: WikiRepo; marker: MarkerStore } | undefined;
-  /** Called after HEAD moved, so cached wiki status is recomputed. */
-  onAdvanced: () => void;
   now?: () => number;
   onWarning?: (message: string) => void;
 }
@@ -49,6 +47,6 @@ export class WikiReadCopy implements NotesCopy {
   private async fastForward(repo: WikiRepo, marker: MarkerStore): Promise<void> {
     await repo.fetch();
     if (await marker.read() || (await repo.statusEntries()).length > 0) return;
-    if (await repo.fastForward()) this.opts.onAdvanced();
+    await repo.fastForward();
   }
 }

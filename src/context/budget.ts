@@ -74,7 +74,7 @@ export function outputReserve(model: Model<Api>, requestedOutput?: number): numb
 }
 
 /**
- * Requests already found to fit. Nested budget checks (session, evidence boundary, provider) pass
+ * Requests already found to fit. Nested budget checks (session, link actions, provider) pass
  * the same context object along, so each layer after the first reuses the estimate.
  */
 const fitted = new WeakMap<Context, Set<string>>();

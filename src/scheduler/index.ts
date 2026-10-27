@@ -3,6 +3,7 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
+import { WECHAT_SESSION_KEY } from "../core/sessionKey.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
 export type WikiWork = "bootstrap" | "scheduled";
@@ -28,6 +29,13 @@ export interface SchedulerOptions {
   /** Wiki cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
   wiki?: { every: string };
 }
+/** Built-in cadences used when the configuration leaves them out. */
+export const SCHEDULER_DEFAULTS = {
+  heartbeatEvery: "30m",
+  activeHours: ["08:00", "22:00"] as [string, string],
+  consolidateAt: "03:00",
+  outreachEvery: "30m",
+} as const;
 const DURATION = /^(\d+(?:\.\d+)?)(s|m|h|d)$/;
 export function duration(value: string): number {
   const match = DURATION.exec(value);
@@ -61,28 +69,80 @@ function cadenceRule(every: string): ScheduleRule { return DURATION.test(every) 
 /** Throws when `every` is neither a valid duration nor a valid cron expression. */
 export function checkCadence(every: string): void { next(cadenceRule(every), Date.now()); }
 
+/**
+ * Built-in work in the same timetable as the owner's tasks: `at` is when it is next due (null: never),
+ * and `due` starts the work and sets the next `at`.
+ */
+interface SystemJob { at: number | null; due(now: number): Promise<void> | void }
+
+/** Longest sleep between timetable checks, so a changed clock or a suspended machine is noticed. */
+const MAX_SLEEP_MS = 60_000;
+/** Shortest sleep, so a deadline that cannot advance (a failing save) is not retried in a busy loop. */
+const MIN_SLEEP_MS = 1_000;
+/** How often the wiki is asked for off-cadence work, such as a pending bootstrap. */
+const WIKI_CHECK_MS = 60_000;
+
 export class Scheduler {
   private tasks: ScheduledTask[] = [];
   private readonly now: () => number;
   private readonly abort = new AbortController();
   private readonly running = new Map<string, Promise<void>>();
   private mutations: Promise<unknown> = Promise.resolve();
-  private timer?: ReturnType<typeof setInterval>;
+  private timer?: ReturnType<typeof setTimeout>;
+  private started = false;
   private stopped = false;
   private ticking = false;
-  private heartbeatAt: number;
-  private outreachAt: number;
-  private consolidationAt: number | null;
-  private wikiAt = 0;
+  private readonly jobs: SystemJob[];
   constructor(private readonly options: SchedulerOptions) {
     this.now = options.now ?? Date.now;
-    this.heartbeatAt = this.now() + duration(options.heartbeat?.every ?? "30m");
-    this.outreachAt = this.now() + duration(options.outreach?.checkEvery ?? "30m");
-    const time = options.memory?.consolidateAt ?? "03:00"; minute(time);
+    const now = this.now();
+    const heartbeatEvery = duration(options.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery);
+    const activeHours = options.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours;
+    activeAt(now, activeHours);
+    const outreachEvery = duration(options.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery);
+    const time = options.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt; minute(time);
     const [h, m] = time.split(":");
-    this.consolidationAt = next({ cron: `${m} ${h} * * *` }, this.now());
-    if (options.wiki) this.wikiAt = next(cadenceRule(options.wiki.every), this.now()) ?? this.now();
-    activeAt(this.now(), options.heartbeat?.activeHours ?? ["08:00", "22:00"]);
+    const consolidation: ScheduleRule = { cron: `${m} ${h} * * *` };
+    const heartbeat: SystemJob = { at: now + heartbeatEvery, due: (at) => {
+      heartbeat.at = at + heartbeatEvery;
+      if (activeAt(at, activeHours)) this.launch("heartbeat", () => this.heartbeat());
+    } };
+    const consolidate: SystemJob = { at: next(consolidation, now), due: (at) => {
+      consolidate.at = next(consolidation, at);
+      this.launch("consolidation", () => this.consolidate(at));
+    } };
+    const outreach: SystemJob = { at: options.outreach?.enabled === false ? null : now + outreachEvery, due: (at) => {
+      outreach.at = at + outreachEvery;
+      this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal));
+    } };
+    this.jobs = [heartbeat, consolidate, outreach, ...(options.wiki ? [this.wikiJob(options.wiki.every, now)] : [])];
+  }
+  /**
+   * The wiki is asked at its cadence for scheduled work, and in between, every WIKI_CHECK_MS, for
+   * work it may start at any time (a pending bootstrap). The cadence advances only when a scheduled
+   * run starts.
+   */
+  private wikiJob(every: string, now: number): SystemJob {
+    const rule = cadenceRule(every);
+    let cadenceAt = next(rule, now) ?? now;
+    const job: SystemJob = { at: now, due: async (at) => {
+      job.at = at + WIKI_CHECK_MS;
+      const work = await this.options.hooks.wikiWork(at, at >= cadenceAt);
+      if (work === "scheduled") cadenceAt = next(rule, at) ?? at;
+      // A cadence the wiki declined (a backoff) is asked about again at the next check, not sooner.
+      if (cadenceAt > at) job.at = Math.min(job.at, cadenceAt);
+      if (work) this.launch(work === "bootstrap" ? "wiki-bootstrap" : "wiki-run", () => this.options.hooks.runWiki(work, this.abort.signal));
+    } };
+    return job;
+  }
+  /** Sleeps until the earliest due task or job, within MIN_SLEEP_MS and MAX_SLEEP_MS. */
+  private arm(): void {
+    if (!this.started || this.stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    const due = [...this.tasks.flatMap((task) => task.enabled && task.nextAt !== null ? [task.nextAt] : []), ...this.jobs.flatMap((job) => job.at === null ? [] : [job.at])];
+    const delay = Math.min(MAX_SLEEP_MS, Math.max(MIN_SLEEP_MS, Math.min(...due) - this.now()));
+    this.timer = setTimeout(() => { void this.tick().catch(this.options.hooks.log); }, delay);
+    this.timer.unref();
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
     const pending = this.mutations.then(action); this.mutations = pending.catch(() => {}); return pending;
@@ -90,7 +150,7 @@ export class Scheduler {
   private save(): Promise<void> { return writeFileAtomic(join(this.options.dataDir, "schedules.json"), JSON.stringify(this.tasks, null, 2), 0o600); }
   async start(): Promise<void> {
     if (this.stopped) throw new Error("The scheduler is closed");
-    if (this.timer) return;
+    if (this.started) return;
     const file = join(this.options.dataDir, "schedules.json");
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
@@ -113,9 +173,8 @@ export class Scheduler {
     for (const task of this.tasks) {
       if (task.enabled && task.nextAt !== null && task.nextAt <= now && !("once" in task.schedule)) task.nextAt = next(task.schedule, now);
     }
+    this.started = true;
     await this.tick(true);
-    if (this.stopped) return;
-    this.timer = setInterval(() => { void this.tick().catch(this.options.hooks.log); }, 1000); this.timer.unref();
   }
   list(): ScheduledTask[] { return structuredClone(this.tasks); }
   create(input: { name: string; schedule: ScheduleRule; prompt: string; target: string; enabled?: boolean }): Promise<ScheduledTask> {
@@ -126,7 +185,8 @@ export class Scheduler {
       if (Object.keys(input.schedule).length !== 1) throw new Error("Specify exactly one schedule rule");
       if ("once" in input.schedule && Date.parse(input.schedule.once) <= this.now()) throw new Error("That one-time schedule is already in the past");
       const task: ScheduledTask = { ...structuredClone(input), id: randomUUID(), enabled: input.enabled ?? true, nextAt: next(input.schedule, this.now()) };
-      this.tasks.push(task); try { await this.save(); } catch (error) { this.tasks.pop(); throw error; } return structuredClone(task);
+      this.tasks.push(task); try { await this.save(); } catch (error) { this.tasks.pop(); throw error; }
+      this.arm(); return structuredClone(task);
     });
   }
   update(id: string, changes: { name?: string; schedule?: ScheduleRule; prompt?: string; target?: string; enabled?: boolean }): Promise<ScheduledTask> {
@@ -146,11 +206,11 @@ export class Scheduler {
       }
       this.tasks[index] = task;
       try { await this.save(); } catch (error) { this.tasks[index] = old; throw error; }
-      return structuredClone(task);
+      this.arm(); return structuredClone(task);
     });
   }
   delete(idOrName: string): Promise<boolean> {
-    return this.mutate(async () => { const old = this.tasks; this.tasks = old.filter(t => t.id !== idOrName && t.name !== idOrName); if (old.length === this.tasks.length) return false; try { await this.save(); } catch (error) { this.tasks = old; throw error; } return true; });
+    return this.mutate(async () => { const old = this.tasks; this.tasks = old.filter(t => t.id !== idOrName && t.name !== idOrName); if (old.length === this.tasks.length) return false; try { await this.save(); } catch (error) { this.tasks = old; throw error; } this.arm(); return true; });
   }
   private launch(key: string, action: () => Promise<void>): void {
     if (this.stopped || this.running.has(key)) return;
@@ -174,31 +234,18 @@ export class Scheduler {
           try { await this.save(); } catch (error) { Object.assign(task, previous); throw error; }
           if (busy) continue;
           this.launch(task.id, async () => {
-            const target = task.target === "wechat" || await this.options.hooks.targetExists(task.target) ? task.target : "wechat";
+            const target = task.target === WECHAT_SESSION_KEY || await this.options.hooks.targetExists(task.target) ? task.target : WECHAT_SESSION_KEY;
             const missed = startup && once;
             const label = missed ? `[Missed scheduled task "${task.name}", originally due ${stamp(dueAt)}] ` : `[Scheduled task "${task.name}"] `;
             if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);
           });
         }
       });
-      if (now >= this.heartbeatAt) {
-        this.heartbeatAt = now + duration(this.options.heartbeat?.every ?? "30m");
-        if (activeAt(now, this.options.heartbeat?.activeHours ?? ["08:00", "22:00"])) this.launch("heartbeat", () => this.heartbeat());
+      for (const job of this.jobs) {
+        if (job.at === null || now < job.at) continue;
+        try { await job.due(now); } catch (error) { this.options.hooks.log(error); }
       }
-      if (this.consolidationAt !== null && now >= this.consolidationAt) {
-        const [h, m] = (this.options.memory?.consolidateAt ?? "03:00").split(":");
-        this.consolidationAt = next({ cron: `${m} ${h} * * *` }, now);
-        this.launch("consolidation", () => this.consolidate(now));
-      }
-      if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? "30m"); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
-      if (this.options.wiki) {
-        try {
-          const work = await this.options.hooks.wikiWork(now, now >= this.wikiAt);
-          if (work === "scheduled") this.wikiAt = next(cadenceRule(this.options.wiki.every), now) ?? now;
-          if (work) this.launch(work === "bootstrap" ? "wiki-bootstrap" : "wiki-run", () => this.options.hooks.runWiki(work, this.abort.signal));
-        } catch (error) { this.options.hooks.log(error); }
-      }
-    } finally { this.ticking = false; }
+    } finally { this.ticking = false; this.arm(); }
   }
   private async heartbeat(): Promise<void> {
     let text: string;
@@ -218,5 +265,5 @@ export class Scheduler {
     ].join("\n");
     await this.options.hooks.runTemporary(prompt, "consolidation", this.abort.signal);
   }
-  async close(): Promise<void> { this.stopped = true; if (this.timer) clearInterval(this.timer); this.abort.abort(); await this.mutations; await Promise.allSettled([...this.running.values()]); }
+  async close(): Promise<void> { this.stopped = true; if (this.timer) clearTimeout(this.timer); this.abort.abort(); await this.mutations; await Promise.allSettled([...this.running.values()]); }
 }

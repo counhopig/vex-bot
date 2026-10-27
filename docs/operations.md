@@ -101,7 +101,7 @@ Transcripts, workspace, `config.yaml`, `schedules.json`, `state/` and `wechat/` 
 
 ## Run traces
 
-WebChat's Traces page (sidebar, next to Settings) shows each run step by step: model calls with context size, first-token time, usage and the generated text, tool calls with arguments and results, approval waits, retries, evidence checks and the outcome. Search finds runs by any text in their trace. Unlike the log, traces contain message, reply and tool text; known secrets are redacted before they are written. They live in `traces/` and are deleted after seven days.
+WebChat's Traces page (sidebar, next to Settings) shows each run step by step: model calls with context size, first-token time, usage and the generated text, tool calls with arguments and results, approval waits, retries, budget checks and the outcome. Search finds runs by any text in their trace. Unlike the log, traces contain message, reply and tool text; known secrets are redacted before they are written. They live in `traces/` and are deleted after seven days.
 
 ## Approvals
 

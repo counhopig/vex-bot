@@ -12,8 +12,10 @@ export interface ApprovalRequest {
   detail: string;
   createdAt: number;
   expiresAt: number;
-  /** The tool is confirmed on every call; "always allow" is not offered for it. */
+  /** The call is confirmed every time; "always allow" is not offered for it. */
   everyCall?: true;
+  /** What "always allow" would cover, such as `bash git`; absent when it is not offered. */
+  allowScope?: string;
 }
 
 export interface ApprovalOutcome {
@@ -29,6 +31,27 @@ interface Pending {
 export interface ApprovalEvent { type: "requested" | "allowed" | "denied"; toolName: string; windowLabel: string; reason?: string }
 
 const ABORTED: ApprovalOutcome = { allowed: false, reason: "This turn was interrupted." };
+
+/**
+ * Programs whose "always allow" can be scoped per program: they only read and print, and have no
+ * option that runs another program or writes a file. Anything else, such as git (config hooks),
+ * sed (`e`), find (`-exec`), sort (`--compress-program`) or tar (`--checkpoint-action`), can be made to
+ * run arbitrary commands with ordinary arguments, so it is confirmed every time.
+ */
+const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "grep", "du", "df", "stat", "which", "whoami", "uname", "basename", "dirname", "realpath", "nl", "cut"]);
+
+/**
+ * What answering "always allow" to a call covers: the tool, or for `bash` the read-only program a
+ * simple command runs. Any other bash call (a compound or substituted command, a path, another
+ * program) has no such scope and is confirmed every time.
+ */
+export function sessionScope(toolName: string, args: unknown): string | undefined {
+  if (toolName !== "bash") return toolName;
+  const command = args && typeof args === "object" ? (args as { command?: unknown }).command : undefined;
+  if (typeof command !== "string" || /[;&|`$<>(){}\\\n]/.test(command)) return undefined;
+  const program = command.trim().split(/\s+/)[0] ?? "";
+  return READ_ONLY_PROGRAMS.has(program) ? `bash ${program}` : undefined;
+}
 
 export class ApprovalManager {
   private readonly pendingById = new Map<string, Pending>();
@@ -58,6 +81,7 @@ export class ApprovalManager {
   }): Promise<ApprovalOutcome> {
     if (input.signal?.aborted) return Promise.resolve(ABORTED);
     const createdAt = this.now();
+    const scope = this.scope(input.toolName, input.args);
     const request: ApprovalRequest = {
       id: randomUUID(),
       sessionKey: input.sessionKey,
@@ -67,7 +91,7 @@ export class ApprovalManager {
       detail: approvalDetail(input.toolName, input.args, this.workspace),
       createdAt,
       expiresAt: createdAt + this.timeoutMs,
-      ...(this.everyCall.has(input.toolName) ? { everyCall: true as const } : {}),
+      ...(scope === undefined ? { everyCall: true as const } : { allowScope: scope }),
     };
     return new Promise((resolve) => {
       const minutes = Math.round(this.timeoutMs / 60_000);
@@ -95,10 +119,10 @@ export class ApprovalManager {
     const pending = this.pendingById.get(id);
     if (!pending) return false;
     const { request } = pending;
-    if (answer === "allow_session" && !request.everyCall) {
-      const tools = this.sessionAllowed.get(request.sessionKey) ?? new Set<string>();
-      tools.add(request.toolName);
-      this.sessionAllowed.set(request.sessionKey, tools);
+    if (answer === "allow_session" && request.allowScope !== undefined) {
+      const scopes = this.sessionAllowed.get(request.sessionKey) ?? new Set<string>();
+      scopes.add(request.allowScope);
+      this.sessionAllowed.set(request.sessionKey, scopes);
     }
     pending.settle(
       answer === "deny" ? { allowed: false, reason: `The owner denied this ${request.toolName} call.` } : { allowed: true },
@@ -110,8 +134,19 @@ export class ApprovalManager {
     return [...this.pendingById.values()].map((p) => ({ ...p.request }));
   }
 
-  isSessionAllowed(sessionKey: string, toolName: string): boolean {
-    return !this.everyCall.has(toolName) && (this.sessionAllowed.get(sessionKey)?.has(toolName) ?? false);
+  /** Whether an earlier "always allow" in this session covers the call. */
+  isSessionAllowed(sessionKey: string, toolName: string, args?: unknown): boolean {
+    const scope = this.scope(toolName, args);
+    return scope !== undefined && (this.sessionAllowed.get(sessionKey)?.has(scope) ?? false);
+  }
+
+  private scope(toolName: string, args: unknown): string | undefined {
+    return this.everyCall.has(toolName) ? undefined : sessionScope(toolName, args);
+  }
+
+  /** Drops the "always allow" answers of a conversation that no longer exists. */
+  forgetSession(sessionKey: string): void {
+    this.sessionAllowed.delete(sessionKey);
   }
 
   dispose(): void {

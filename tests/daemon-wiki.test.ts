@@ -12,7 +12,7 @@ import { createModelRegistry } from "../src/providers/models.js";
 import { runGit } from "../src/vault/git.js";
 import { readOriginalSource } from "../src/links/source.js";
 import type { PageRequest } from "../src/tools/web.js";
-import type { DecisionJudge } from "../src/policy/judge.js";
+import type { LinkClassifier } from "../src/links/intent.js";
 import { fingerprint } from "../src/vault/wiki/marker.js";
 import { Wiki } from "../src/vault/wiki/service.js";
 import { createFaux, fauxModels, lastUserText } from "./helpers/faux.js";
@@ -43,7 +43,7 @@ function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } }).trim();
 }
 
-async function startScenario(responses: Parameters<FauxProviderHandle["setResponses"]>[0], scenarioOptions: { seed?: string; failPush?: boolean; scheduled?: boolean; ownerMessage?: string; deferOwnerMessage?: boolean; bootstrap?: "done" | "awaiting-review"; toolPolicy?: VexConfig["toolPolicy"]; mcpServers?: VexConfig["mcpServers"]; webPageRequest?: PageRequest; decisionJudge?: DecisionJudge; wikiSourceResolver?: (url: string, signal: AbortSignal) => ReturnType<typeof readOriginalSource> } = {}): Promise<{ remote: string; head: string; identity: string }> {
+async function startScenario(responses: Parameters<FauxProviderHandle["setResponses"]>[0], scenarioOptions: { seed?: string; failPush?: boolean; scheduled?: boolean; ownerMessage?: string; deferOwnerMessage?: boolean; bootstrap?: "done" | "awaiting-review"; toolPolicy?: VexConfig["toolPolicy"]; mcpServers?: VexConfig["mcpServers"]; webPageRequest?: PageRequest; linkClassifier?: LinkClassifier; wikiSourceResolver?: (url: string, signal: AbortSignal) => ReturnType<typeof readOriginalSource> } = {}): Promise<{ remote: string; head: string; identity: string }> {
   const { remote, work } = makeRemote(join(dir, scenarioOptions.seed ?? "seed"));
   commit(work, { "wiki/Existing.md": "# Existing\n" }, "2026-10-01T10:00:00+0000");
   const head = git(work, ["rev-parse", "HEAD"]);
@@ -72,7 +72,7 @@ async function startScenario(responses: Parameters<FauxProviderHandle["setRespon
   if (!scenarioOptions.deferOwnerMessage) ilink.queueUpdates(textMessage("owner1", scenarioOptions.ownerMessage ?? "Please ingest this article", { message_id: scenarioOptions.seed ?? "m1" }));
   const articleHtml: PageRequest = async () => ({ status: 200, headers: { "content-type": "text/html" }, body: '<html><head><meta property="og:title" content="Article"></head><body><div id="js_content"><p>An original article body.</p></div></body></html>' });
   daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit,
-    ...(scenarioOptions.decisionJudge ? { decisionJudge: scenarioOptions.decisionJudge } : {}),
+    ...(scenarioOptions.linkClassifier ? { linkClassifier: scenarioOptions.linkClassifier } : {}),
     ...(scenarioOptions.webPageRequest ? { webPageRequest: scenarioOptions.webPageRequest } : {}),
     wikiSourceResolver: scenarioOptions.wikiSourceResolver ?? ((url, signal) => readOriginalSource(url, { signal, request: articleHtml })) });
   return { remote, head, identity };
@@ -171,8 +171,7 @@ describe("daemon Wiki notifications", () => {
     const { remote } = await startScenario(Array.from({ length: 12 }, () => response), {
       ownerMessage: `Please read this article: ${sourceUrl}`,
       mcpServers: { local: { command: process.execPath, args: ["--input-type=module", "-e", mcpServer], cwd: process.cwd() } },
-      decisionJudge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0,
-        classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: "archive", confidence: 0.99 })) },
+      linkClassifier: { classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: "archive", confidence: 0.99 })) },
     });
     await vi.waitFor(() => expect(ilink.sentTexts()).toContain("The article was read, archived, compiled, and published."), { timeout: 8000 });
     expect(sawReceipt).toBe(true);
@@ -198,8 +197,7 @@ describe("daemon Wiki notifications", () => {
         requestUrls.push(url.href);
         return { status: scenario.status, headers: { "content-type": "text/html" }, body: scenario.body };
       };
-      const judge: DecisionJudge = {
-        route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0,
+      const judge: LinkClassifier = {
         classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: scenario.intent, confidence: 0.99 })),
       };
       const response: FauxResponseFactory = (context) => {
@@ -215,7 +213,7 @@ describe("daemon Wiki notifications", () => {
       const { remote, head } = await startScenario(Array.from({ length: 8 }, () => response), {
         seed: `seed-${scenario.name.replaceAll(" ", "-")}`,
         ownerMessage: `${scenario.intent === "read" ? "Read this without saving" : "Please save this link"}: ${scenario.url}`,
-        decisionJudge: judge, webPageRequest: request,
+        linkClassifier: judge, webPageRequest: request,
         wikiSourceResolver: (url, signal) => readOriginalSource(url, { signal, request }),
         ...(scenario.policy ? { toolPolicy: scenario.policy } : {}),
         ...(scenario.bootstrap ? { bootstrap: scenario.bootstrap } : {}),
@@ -290,7 +288,7 @@ describe("daemon Wiki notifications", () => {
     expect(git(remote, ["rev-parse", "refs/heads/main"])).toBe(head);
   });
 
-  it("rejects a compiler narration after a failed Wiki write and preserves the successful read receipt", async () => {
+  it("fails the Wiki run after a failed write even when the compiler claims success, and keeps the read receipt", async () => {
     const sourceUrl = "https://example.com/article";
     const rawPath = `raw/link-${createHash("sha256").update(sourceUrl).digest("hex")}.md`;
     let failureReceipt: unknown;
@@ -298,7 +296,6 @@ describe("daemon Wiki notifications", () => {
       fauxAssistantMessage(fauxToolCall("wiki_ingest", { url: sourceUrl }, { id: "ingest" }), { stopReason: "toolUse" }),
       fauxAssistantMessage(fauxToolCall("wiki_write", { path: "outside/Article.md", content: "# Article" }, { id: "failed-write" }), { stopReason: "toolUse" }),
       fauxAssistantMessage("The Wiki page was compiled successfully."),
-      fauxAssistantMessage("Compilation failed because the Wiki write returned an error."),
       (context) => {
         const result = context.messages.find((message) => message.role === "toolResult" && message.toolName === "wiki_ingest") as ToolResultMessage | undefined;
         const receiptText = result?.content.map((part) => part.type === "text" ? part.text : "").join("") ?? "";

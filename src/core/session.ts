@@ -14,14 +14,13 @@ import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessa
 import type { ThinkingSetting } from "../config/schema.js";
 import { ContextCompactor, isCompactionRecord, type CompactionOptions, type CompactionRecord } from "../context/compaction.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
-import { TOOL_EVIDENCE_ERROR, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
-import { PROVIDER_OVERLOADED } from "../providers/errors.js";
+import { PROVIDER_OVERLOADED, withProviderFailures } from "../providers/errors.js";
 import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { RunTrace, TraceScope } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
-import type { HistoryItem, SessionEvent } from "./events.js";
+import type { HistoryItem, SessionEvent, TurnStatus } from "./events.js";
 import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
 import { TranscriptCursor } from "../context/cursor.js";
 import { MessageWindow } from "../context/window.js";
@@ -34,9 +33,9 @@ export interface SessionOptions {
   tools: AgentTool<any>[];
   streamFn: StreamFn;
   getApiKey: (provider: string) => string | undefined;
+  /** Receives a provider's raw error text; the owner sees only a short, secret-free cause. */
+  onProviderError?: (raw: string) => void;
   buildSystemPrompt: () => Promise<string>;
-  /** What tool results prove, optional outside advice, and the secrets kept out of that advice. */
-  evidence: Pick<EvidenceBoundaryOptions, "profiles" | "advisor" | "secrets" | "warn">;
   /** Runtime-owned turn behaviour, such as the owner's link actions. */
   controller?: TurnControllerFactory;
   beforeToolCall?: (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
@@ -48,6 +47,11 @@ export interface SessionOptions {
   onOwnerMessage?: () => void;
   onOwnerInteraction?: (count: number) => Promise<void>;
   onDispose?: () => void;
+  /**
+   * Sources of runtime-started runs that stay quiet until the owner joins: their failures, aborted
+   * replies and replyless endings are not shown, and their busy event is marked `quiet`.
+   */
+  quietSources?: readonly string[];
   /** Where each run's steps are recorded. */
   trace?: TraceScope;
 }
@@ -86,9 +90,10 @@ export class Session {
   private observedBudgetFailure?: string;
   private readonly failedTools = new Set<string>();
   private lastResponse?: AssistantMessage;
+  // The texts and errors that make up the reply ending the current run.
+  private turnReply: string[] = [];
   private readonly controller?: TurnController;
   private pendingProviderUsage = zeroUsage();
-  private activeRunStart = 0;
   private readonly currentTrace = (): RunTrace | undefined => this.opts.trace?.current;
 
   get successfulReply(): string | undefined {
@@ -155,10 +160,10 @@ export class Session {
         systemPrompt: "",
         model: opts.model,
         thinkingLevel: opts.thinking ?? "off",
-        tools: this.withControllerTools(opts.tools),
+        tools: opts.tools,
         messages,
       },
-      streamFn: this.captureBudgetCause(withContextBudget(this.checkedStream(opts))),
+      streamFn: this.captureBudgetCause(withContextBudget(this.modelStream(opts))),
       getApiKey: opts.getApiKey,
       beforeToolCall: tracedGate(this.controller
         ? (context, signal) => this.controller!.beforeToolCall(context, signal, async (ownerContext, ownerSignal) => opts.beforeToolCall?.(ownerContext, ownerSignal))
@@ -179,21 +184,11 @@ export class Session {
     this.releaseHistory();
   }
 
-  /**
-   * Every provider request is budget-checked, then evidence-checked; a controller may run its own
-   * requests ahead of the checked stream through the unchecked budgeted one.
-   */
-  private checkedStream(opts: SessionOptions): StreamFn {
-    const budgeted = withContextBudget(tracedStream(opts.streamFn, this.currentTrace));
-    const checked = withEvidenceBoundary(budgeted, {
-      ...opts.evidence,
-      onCheck: (detail) => this.currentTrace()?.record({ type: "check", kind: "evidence", detail }),
-      tools: () => this.agent.state.tools,
-      messages: () => this.agent.state.messages.slice(this.activeRunStart),
-      takeUsage: () => this.takePendingProviderUsage(),
-      returnUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
-    });
-    return this.controller ? this.controller.wrapStream(checked, () => this.agent.state.tools, budgeted) : checked;
+  /** Every provider request is traced and budget-checked; a controller may step in ahead of the model. */
+  private modelStream(opts: SessionOptions): StreamFn {
+    const provider = withProviderFailures(tracedStream(opts.streamFn, this.currentTrace), (raw) => opts.onProviderError?.(raw), (message) => message === CONTEXT_BUDGET_ERROR);
+    const budgeted = withContextBudget(provider);
+    return this.controller ? this.controller.wrapStream(budgeted, () => this.agent.state.tools, budgeted) : budgeted;
   }
 
   get busy(): boolean {
@@ -203,6 +198,11 @@ export class Session {
   /** A run the runtime started (a source is set) that no owner message has joined. */
   get unattended(): boolean {
     return this.current !== undefined && this.runSource !== undefined && this.pendingOwner === 0;
+  }
+
+  /** A quiet-source run that no owner message has joined. */
+  private get quiet(): boolean {
+    return this.runSource !== undefined && this.pendingOwner === 0 && (this.opts.quietSources?.includes(this.runSource) ?? false);
   }
 
   /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
@@ -239,16 +239,16 @@ export class Session {
     this.observedBudgetFailure = undefined;
     this.failedTools.clear();
     this.lastResponse = undefined;
-    this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}) });
+    this.turnReply = [];
+    this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}), ...(this.quiet ? { quiet: true } : {}) });
     this.opts.trace?.begin({ session: this.key, source: source ?? "owner", model: `${this.opts.model.provider}/${this.opts.model.id}`, text });
-    this.activeRunStart = this.agent.state.messages.length;
     this.current = this.run(message)
       .catch((err: unknown) => {
         this.runFailed = true;
         this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
         if (err instanceof ContextBudgetError) this.currentTrace()?.record({ type: "check", kind: "budget", detail: err.reason });
         this.opts.onError?.(err);
-        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
+        this.reportRunError(`Error while handling the message: ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(async () => {
         const reply = this.successfulReply;
@@ -258,10 +258,27 @@ export class Session {
         this.phase = "idle";
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
-        this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "proactive chat" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
+        if (!this.quiet || reply) {
+          const status: TurnStatus = this.stopped ? "interrupted" : this.runFailed ? "error" : "ok";
+          this.opts.emit({ kind: "turn_end", reply: this.turnReply.join("\n\n"), status });
+        }
+        this.opts.emit({ kind: "busy", busy: false });
         this.pendingOwner = 0;
         await this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
       });
+  }
+
+  /** Sends a runtime message and resolves once the session is idle again; aborting `signal` stops the run. */
+  async runToIdle(text: string, source: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const abort = () => this.stop();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      this.send(text, source);
+      await this.whenIdle();
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
   }
 
   stop(): void {
@@ -294,13 +311,7 @@ export class Session {
     this.opts.onDispose?.();
   }
 
-  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = this.withControllerTools(tools); }
-
-  private withControllerTools(tools: AgentTool<any>[]): AgentTool<any>[] {
-    const added = this.controller?.tools() ?? [];
-    const names = new Set(added.map((tool) => tool.name));
-    return [...tools.filter((tool) => !names.has(tool.name)), ...added];
-  }
+  setTools(tools: AgentTool<any>[]): void { this.agent.state.tools = tools; }
 
   private captureBudgetCause(stream: StreamFn): StreamFn {
     return async (model, context, options) => {
@@ -378,14 +389,15 @@ export class Session {
     this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, message));
   }
 
-  private reportError(err: unknown): void {
-    try { this.opts.onError?.(err); } catch { /* logging must not break session settlement */ }
+  /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */
+  private reportRunError(message: string): void {
+    if (this.quiet) return;
+    this.turnReply.push(message);
+    this.opts.emit({ kind: "error", message });
   }
 
-  private takePendingProviderUsage(): AssistantMessage["usage"] {
-    const usage = this.pendingProviderUsage;
-    this.pendingProviderUsage = zeroUsage();
-    return usage;
+  private reportError(err: unknown): void {
+    try { this.opts.onError?.(err); } catch { /* logging must not break session settlement */ }
   }
 
   private async flushPendingProviderUsage(): Promise<void> {
@@ -454,16 +466,16 @@ export class Session {
       this.pendingProviderUsage = addUsage(this.pendingProviderUsage, last.usage);
       this.agent.state.messages = this.agent.state.messages.slice(0, -1);
       if (this.stopping) { await this.flushPendingProviderUsage(); return; }
-      if (attempt > attempts || last.errorMessage === TOOL_EVIDENCE_ERROR || last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) {
+      const budgetFailure = last.errorMessage?.includes(CONTEXT_BUDGET_ERROR) ?? false;
+      if (attempt > attempts || budgetFailure) {
         await this.flushPendingProviderUsage();
         this.runFailed = true;
-        this.runFailureReason = last.errorMessage === CONTEXT_BUDGET_ERROR
+        this.runFailureReason = budgetFailure
           ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.observedBudgetFailure ?? "request could not be estimated"}` : last.errorMessage;
-        if (last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
-        else if (last.errorMessage === TOOL_EVIDENCE_ERROR) this.currentTrace()?.record({ type: "check", kind: "evidence", detail: last.errorMessage });
+        if (budgetFailure) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
         const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
-        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
+        this.reportRunError(error.message);
         return;
       }
       const backoff = new AbortController();
@@ -506,7 +518,9 @@ export class Session {
         } else if (message.role === "assistant") {
           this.lastResponse = message;
           const text = assistantText(message);
-          if ((text || message.stopReason === "aborted") && !(this.runSource === "proactive chat" && !this.pendingOwner && message.stopReason === "aborted")) {
+          // Text written beside tool calls narrates the work; the turn's reply is what ends it.
+          if (text && message.stopReason !== "toolUse") this.turnReply.push(text);
+          if ((text || message.stopReason === "aborted") && !(this.quiet && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }
         }

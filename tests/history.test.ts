@@ -7,7 +7,6 @@ import { HistoryWindow, TranscriptHistory } from "../src/core/history.js";
 import { MAX_CONTEXT_MESSAGES, MessageWindow } from "../src/context/window.js";
 import { Session } from "../src/core/session.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
-import { evidence } from "./helpers/evidence.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -73,7 +72,7 @@ it("restores a bounded model window while paging the complete transcript without
   const faux = createFaux();
   let providerMessages: unknown;
   faux.setResponses([(context) => { providerMessages = context.messages; return fauxAssistantMessage("new answer"); }]);
-  const session = await Session.open({ evidence, key: "wechat", transcriptPath: path, model: faux.getModel(), tools: [], streamFn: fauxStreamFn(faux), getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: () => {} });
+  const session = await Session.open({ key: "wechat", transcriptPath: path, model: faux.getModel(), tools: [], streamFn: fauxStreamFn(faux), getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: () => {} });
   expect(session.history().items).toHaveLength(100);
   const first = await session.historyPage();
   expect(first.nextBefore).toBe(500);

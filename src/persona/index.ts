@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { writeFileAtomic } from "../store/atomic.js";
 
+/** The run source of a proactive chat; such a run stays quiet until the owner answers. */
+export const PROACTIVE_CHAT_SOURCE = "proactive chat";
+
 const HOUR = 3_600_000;
 const MOOD_BASELINE = 60;
 const MOOD_HALF_LIFE_HOURS = 4;

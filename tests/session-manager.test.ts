@@ -8,7 +8,6 @@ import { SessionManager, UnknownSessionError, WECHAT_SESSION_KEY, webSessionKey,
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
-import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 let paths: VexPaths;
@@ -34,7 +33,7 @@ function makeManager(generateTitle?: (u: string, a: string) => Promise<string>, 
     idleTimeoutMs: 0,
     ...extra,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({ evidence,
+      Session.open({
         key,
         transcriptPath,
         model: faux.getModel(),
@@ -166,7 +165,8 @@ describe("SessionManager", () => {
   it("deletes a session with its transcript", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("x")]);
-    const manager = makeManager();
+    const deleted: string[] = [];
+    const manager = makeManager(undefined, { onDeleted: (key) => deleted.push(key) });
     await manager.init();
     const meta = await manager.createWeb();
     const session = await manager.get(webSessionKey(meta.id));
@@ -174,6 +174,7 @@ describe("SessionManager", () => {
     await session.whenIdle();
     await manager.deleteWeb(meta.id);
     expect(manager.listWeb()).toEqual([]);
+    expect(deleted).toEqual([webSessionKey(meta.id)]);
     await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
     await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);
@@ -202,6 +203,8 @@ describe("SessionManager", () => {
     const session = await manager.get(webSessionKey(meta.id));
     session.send("hi");
     await session.whenIdle();
+    // The message's index update is written asynchronously; let it land before the index is replaced.
+    await vi.waitFor(() => expect(busEvents.filter((event) => event.type === "sessions_changed").length).toBeGreaterThanOrEqual(2));
     const transcript = join(paths.webSessions, `${meta.id}.jsonl`);
     const before = await readFile(transcript, "utf8");
     const index = join(paths.webSessions, "index.json");

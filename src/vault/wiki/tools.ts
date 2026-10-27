@@ -95,7 +95,7 @@ export function createWikiInteractiveTools(wiki: Wiki, options: { sourceResolver
     description: "Approves (publishes) or rejects (discards) the pending wiki bootstrap preview. Call it only when the owner asks; the owner confirms the call in an approval prompt.",
     parameters: WikiBootstrapParams,
     async execute(_id, { action }, signal) {
-      // The receipt is the evidence a later "published" reply is checked against.
+      // The receipt records whether the preview was published, for the model and the trace.
       if (action === "approve") {
         const result = await wiki.approveBootstrap(fallbackSignal(signal));
         return { content: [{ type: "text", text: result.message }], details: { message: result.message, receipt: { publication: result.pushed ? "published" : "preview" } } };

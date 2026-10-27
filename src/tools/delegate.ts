@@ -1,14 +1,13 @@
 import { Agent, type AgentOptions, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { redactSecrets } from "../config/secrets.js";
-import { boundedEvidenceReceipt, withEvidenceBoundary, type EvidenceBoundaryOptions } from "../context/evidence.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { profileSection, residentFileSection, SystemPromptBuilder } from "../context/prompt.js";
 import { RESIDENT_LINE_LIMITS } from "../workspace/workspace.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
 import type { RunTrace } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
+import { withProviderFailures } from "../providers/errors.js";
 
 const DelegateParams = Type.Object({
   task: Type.String({ minLength: 1, description: "A self-contained task for the sub-agent" }),
@@ -23,8 +22,8 @@ export interface DelegateOptions {
   tools?: AgentTool<any>[];
   getTools?: () => AgentTool<any>[];
   beforeToolCall?: AgentOptions["beforeToolCall"];
-  /** The parent's evidence rules; the sub-agent's claims are checked the same way. */
-  evidence: Pick<EvidenceBoundaryOptions, "profiles" | "advisor" | "secrets" | "warn">;
+  /** Receives a provider's raw error text, as the parent session does. */
+  onProviderError?: (raw: string) => void;
   /** The parent's run in progress; the sub-agent's steps are recorded under the delegate call. */
   trace?: () => RunTrace | undefined;
 }
@@ -54,11 +53,9 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
       signal?.throwIfAborted();
       const run = opts.trace?.()?.child(id);
       const current = () => run;
-      let agent!: Agent;
-      agent = new Agent({
+      const agent = new Agent({
         initialState: { model: opts.model, systemPrompt: prompt, tools: selected, messages: [] },
-        streamFn: withContextBudget(withEvidenceBoundary(tracedStream(opts.streamFn, current), { ...opts.evidence, tools: () => selected, messages: () => agent.state.messages,
-          onCheck: (detail) => run?.record({ type: "check", kind: "evidence", detail }) })),
+        streamFn: withContextBudget(withProviderFailures(tracedStream(opts.streamFn, current), (raw) => opts.onProviderError?.(raw))),
         getApiKey: opts.getApiKey,
         beforeToolCall: tracedGate(opts.beforeToolCall, current),
       });
@@ -81,21 +78,9 @@ export function createDelegateTool(opts: DelegateOptions): AgentTool<typeof Dele
           if (last.stopReason === "error" && last.errorMessage === CONTEXT_BUDGET_ERROR) throw new ContextBudgetError("The delegated request exceeds its provider budget.");
           throw new Error(last.errorMessage ?? "The sub-agent was interrupted");
         }
-        const messages = agent.state.messages;
-        const secrets = opts.evidence.secrets?.() ?? [];
-        const calls = messages.flatMap((message) => message.role === "assistant" ? message.content.filter((part) => part.type === "toolCall") : []);
-        const results = messages.flatMap((message) => message.role === "toolResult" ? [message] : []);
-        const evidence = calls.flatMap((call) => {
-          const result = results.find((candidate) => candidate.toolCallId === call.id && candidate.toolName === call.name);
-          return result ? [{ tool: call.name, callId: call.id, arguments: redactSecrets(JSON.stringify(call.arguments), secrets).slice(0, 1000), error: result.isError,
-            result: redactSecrets(result.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"), secrets).slice(0, 1000),
-            receipt: result.details && typeof result.details === "object" && "receipt" in result.details ? boundedEvidenceReceipt(result.details.receipt, secrets) : undefined }] : [];
-        }).slice(-12);
         const reply = last.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
-        const checkedReply = redactSecrets(reply, secrets).slice(0, 4000);
-        const usage = messages.reduce((total, message) => message.role === "assistant" ? addUsage(total, message.usage) : total, zeroUsage());
-        const receipt = { version: 1, evidence, checkedReply, usage };
-        return { content: [{ type: "text", text: reply }], details: { receipt }, usage };
+        const usage = agent.state.messages.reduce((total, message) => message.role === "assistant" ? addUsage(total, message.usage) : total, zeroUsage());
+        return { content: [{ type: "text", text: reply }], details: { usage }, usage };
       } finally {
         signal?.removeEventListener("abort", abort);
         unsubscribe();

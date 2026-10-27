@@ -10,7 +10,6 @@ import { TraceStore } from "../src/trace/store.js";
 import type { TraceEvent } from "../src/trace/types.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
-import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 beforeEach(async () => { dir = await makeTmpDir(); });
@@ -142,7 +141,7 @@ describe("run traces from sessions", () => {
     faux.setResponses(responses);
     const session = await Session.open({
       key: "web:1", transcriptPath: join(dir, "t.jsonl"), model: faux.getModel(), tools, streamFn: fauxStreamFn(faux),
-      getApiKey: () => "test-key", buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 3, baseDelayMs: 1 }, evidence,
+      getApiKey: () => "test-key", buildSystemPrompt: async () => "SYSTEM", emit: () => {}, retry: { attempts: 3, baseDelayMs: 1 },
       trace: store.scope("web:1"),
     });
     session.send("please echo");
@@ -201,7 +200,7 @@ describe("run traces from sessions", () => {
       fauxAssistantMessage([fauxToolCall("echo", { text: "child" }, { id: "child-call" })], { stopReason: "toolUse" }),
       fauxAssistantMessage("child done"),
     ]);
-    const tool = createDelegateTool({ evidence, workspace: dir, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "k", tools: [echo], trace: () => run });
+    const tool = createDelegateTool({ workspace: dir, model: faux.getModel(), streamFn: fauxStreamFn(faux), getApiKey: () => "k", tools: [echo], trace: () => run });
     await writeFile(join(dir, "SOUL.md"), "soul");
     await tool.execute("delegate-call", { task: "do it" });
     await store.flush();

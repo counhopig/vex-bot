@@ -5,8 +5,15 @@ export type SessionEvent =
   | { kind: "tool_start"; toolCallId: string; toolName: string; summary: string }
   | { kind: "tool_end"; toolCallId: string; toolName: string; isError: boolean }
   | { kind: "tool_update"; toolCallId: string; toolName: string; text: string }
-  | { kind: "busy"; busy: boolean; discardReply?: boolean; source?: string }
+  | { kind: "busy"; busy: boolean; source?: string; quiet?: boolean }
+  /**
+   * The reply that ends a run, for channels that deliver one message per turn: the run's final texts
+   * and errors, without narration written beside tool calls. A quiet run without a reply has none.
+   */
+  | { kind: "turn_end"; reply: string; status: TurnStatus }
   | { kind: "error"; message: string };
+
+export type TurnStatus = "ok" | "interrupted" | "error";
 
 export type HistoryItem =
   | { kind: "user"; text: string; timestamp: number; source?: string }

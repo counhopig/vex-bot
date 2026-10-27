@@ -139,8 +139,10 @@ describe("scheduler", () => {
     await f.scheduler.start(); await f.flush(); expect(runWiki).not.toHaveBeenCalled();
     f.advance(6 * 3_600_000 - 1000); await f.scheduler.tick(); await f.flush(); expect(runWiki).not.toHaveBeenCalled();
     allow = false; f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(runWiki).not.toHaveBeenCalled(); expect(offered.at(-1)).toBe(true);
-    allow = true; f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(runWiki).toHaveBeenCalledTimes(1); expect(runWiki.mock.calls[0]?.[0]).toBe("scheduled");
-    f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(runWiki).toHaveBeenCalledTimes(1); expect(offered.at(-1)).toBe(false);
+    // A declined cadence is asked about again at the next minute's check, not on every tick.
+    allow = true; f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(runWiki).not.toHaveBeenCalled();
+    f.advance(59_000); await f.scheduler.tick(); await f.flush(); expect(runWiki).toHaveBeenCalledTimes(1); expect(runWiki.mock.calls[0]?.[0]).toBe("scheduled");
+    f.advance(60_000); await f.scheduler.tick(); await f.flush(); expect(runWiki).toHaveBeenCalledTimes(1); expect(offered.at(-1)).toBe(false);
   });
   it("reports the wiki cadence on its cron expression", async () => {
     const runWiki = vi.fn(async () => {});
@@ -160,5 +162,20 @@ describe("scheduler", () => {
     await f.scheduler.create({ name: "失败", prompt: "测试", target: "wechat", schedule: { every: "1s" } }); f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.log).toHaveBeenCalled();
     vi.mocked(f.hooks.deliver).mockImplementation(async (_target, _prompt, _kind, signal) => { await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); });
     f.advance(1000); await f.scheduler.tick(); await f.flush(); await f.scheduler.close(); f.advance(1000); await f.scheduler.tick(); expect(f.hooks.deliver).toHaveBeenCalledTimes(2);
+  });
+  it("sleeps until the earliest deadline instead of waking every second", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const f = await fixture();
+      const ticks = vi.spyOn(f.scheduler, "tick");
+      await f.scheduler.start();
+      ticks.mockClear();
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(ticks).not.toHaveBeenCalled();
+      await f.scheduler.create({ name: "soon", prompt: "p", target: "wechat", schedule: { every: "5s" } });
+      // The new task re-arms the timer for its own deadline.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(ticks).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
 });

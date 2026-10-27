@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
-import type { EventBus, SessionEvent, VexEvent } from "../../core/events.js";
-import { WECHAT_SESSION_KEY } from "../../core/sessionManager.js";
+import type { EventBus, SessionEvent, TurnStatus, VexEvent } from "../../core/events.js";
+import { WECHAT_SESSION_KEY } from "../../core/sessionKey.js";
 import type { ApprovalAnswer, ApprovalManager } from "../../policy/approvals.js";
 import { SESSION_EXPIRED_ERRCODE, WeChatApiError, type InboundMessage, type WeChatClient } from "./client.js";
 import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from "./messages.js";
@@ -28,17 +28,11 @@ export interface WeChatChannelOptions {
   onReplyDelivery?: (ok: boolean, error?: string) => void;
 }
 
-interface Turn {
-  texts: string[];
-  aborted: boolean;
-  timer: ReturnType<typeof setTimeout>;
-}
-
 const SEEN_LIMIT = 500;
 
-const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string) => string> = {
+const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string, scope: string) => string> = {
   allow: (tool) => `Allowed: ${tool}`,
-  allow_session: (tool) => `Allowed; ${tool} will not be asked about again in this conversation`,
+  allow_session: (_tool, scope) => `Allowed; ${scope} will not be asked about again in this conversation`,
   deny: (tool) => `Denied: ${tool}`,
 };
 
@@ -56,7 +50,8 @@ export class WeChatChannel {
   private readonly announced = new Set<string>();
   private contextToken: string | undefined;
   private syncBuf: string | undefined;
-  private turn: Turn | undefined;
+  // Sends "Working on it…" when a turn runs long.
+  private processingTimer: ReturnType<typeof setTimeout> | undefined;
   private outbox: Promise<void> = Promise.resolve();
   private loop: Promise<void> | undefined;
   private unsubscribe: (() => void) | undefined;
@@ -86,8 +81,7 @@ export class WeChatChannel {
   async stop(): Promise<void> {
     this.abort.abort();
     this.unsubscribe?.();
-    if (this.turn) clearTimeout(this.turn.timer);
-    this.turn = undefined;
+    this.clearProcessingNotice();
     await this.loop;
     await this.outbox;
     await this.stateWrites;
@@ -239,7 +233,9 @@ export class WeChatChannel {
       return;
     }
     this.opts.approvals.answer(oldest.id, answer);
-    this.send(ANSWER_REPLIES[answer](oldest.toolName));
+    // "Always allow" for a call that offers none answers it once.
+    const effective = answer === "allow_session" && oldest.allowScope === undefined ? "allow" : answer;
+    this.send(ANSWER_REPLIES[effective](oldest.toolName, oldest.allowScope ?? oldest.toolName));
   }
 
   private onBusEvent(event: VexEvent): void {
@@ -270,22 +266,15 @@ export class WeChatChannel {
         }
         return;
       case "busy":
-        if (event.busy) this.beginTurn(event.source === "proactive chat");
-        else this.endTurn(event.discardReply);
+        if (event.busy) this.beginTurn(event.quiet);
+        else this.clearProcessingNotice();
+        return;
+      case "turn_end":
+        this.deliverTurn(event.reply, event.status);
         return;
       case "assistant_message":
-        if (event.injected) { if (event.text) this.send(event.text); return; }
-        if (!this.turn) {
-          if (event.text) this.send(event.text);
-          return;
-        }
-        // Text written alongside tool calls narrates the work; the owner gets the reply that ends the turn.
-        if (event.text && event.stopReason !== "toolUse") this.turn.texts.push(event.text);
-        if (event.stopReason === "aborted") this.turn.aborted = true;
-        return;
-      case "error":
-        if (this.turn) this.turn.texts.push(event.message);
-        else this.send(event.message);
+        // Runtime notifications arrive on their own; a turn's own messages come with turn_end.
+        if (event.injected && event.text) this.send(event.text);
         return;
       default:
         return;
@@ -294,22 +283,23 @@ export class WeChatChannel {
 
   private beginTurn(silent = false): void {
     this.lastReply = Promise.resolve(false);
-    if (this.turn) clearTimeout(this.turn.timer);
+    this.clearProcessingNotice();
+    if (silent) return;
     const timer = setTimeout(() => {
-      if (!silent && this.turn?.timer === timer) this.send("Working on it…");
+      if (this.processingTimer === timer) this.send("Working on it…");
     }, this.opts.processingNoticeMs ?? 15_000);
-    this.turn = { texts: [], aborted: false, timer };
+    this.processingTimer = timer;
   }
 
-  private endTurn(discard = false): void {
-    const turn = this.turn;
-    if (!turn) return;
-    clearTimeout(turn.timer);
-    this.turn = undefined;
-    if (discard) return;
-    const reply = turn.texts.join("\n\n");
+  private clearProcessingNotice(): void {
+    if (this.processingTimer) clearTimeout(this.processingTimer);
+    this.processingTimer = undefined;
+  }
+
+  private deliverTurn(reply: string, status: TurnStatus): void {
+    this.clearProcessingNotice();
     const report = this.opts.onReplyDelivery;
-    if (turn.aborted) this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
+    if (status === "interrupted") this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
     else if (reply) this.lastReply = this.send(reply, report);
   }
 
