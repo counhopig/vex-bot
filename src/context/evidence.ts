@@ -91,13 +91,27 @@ function assistantOutput(message: AssistantMessage, content: AssistantMessage["c
   return { ...message, content, usage };
 }
 
+const CJK = /[\u3400-\u4dbf\u4e00-\u9fff]/;
+/** The replacement reply, in the language the owner wrote the request in. */
+const FALLBACK_TEXT = {
+  en: {
+    unverified: "I could not verify that the requested operation was performed, so I cannot report it as complete.",
+    failed: "The requested operation failed; its matching tool result records the failure.",
+  },
+  zh: {
+    unverified: "我无法确认所请求的操作已经完成，因此不能报告为已完成。",
+    failed: "所请求的操作失败了，对应的工具结果记录了这次失败。",
+  },
+};
+
 /** Replaces an unsupported reply with what the recorded receipts establish. */
 function fallback(message: AssistantMessage, state: ReturnType<typeof currentTurn>, profiles: EvidenceProfiles): AssistantMessage {
   const checked = { urls: state.urls, evidence: state.checks };
   const outcomes = describeOutcomes(checked, profiles);
-  let body = "I could not verify that the requested operation was performed, so I cannot report it as complete.";
+  const text = CJK.test(state.request) ? FALLBACK_TEXT.zh : FALLBACK_TEXT.en;
+  let body = text.unverified;
   if (outcomes.length) body = outcomes.join(" ");
-  else if (state.checks.some((entry) => Boolean(entry && typeof entry === "object" && (entry as { error?: unknown }).error === true))) body = "The requested operation failed; its matching tool result records the failure.";
+  else if (state.checks.some((entry) => Boolean(entry && typeof entry === "object" && (entry as { error?: unknown }).error === true))) body = text.failed;
   return assistantOutput(message, [{ type: "text", text: body }]);
 }
 
@@ -152,7 +166,8 @@ export interface EvidenceBoundaryOptions {
 }
 
 /**
- * When the run involves the owner's links, tool results or a required tool, holds back each
+ * When a reply could be rejected (the owner's links, a required tool, advised tool results, or a
+ * result whose tool supports a claim), holds back each
  * generation until its operation claims pass the evidence check, retries once with a correction,
  * and otherwise replaces the reply with what the receipts establish. Every other reply streams to
  * the owner as it is generated.
@@ -181,7 +196,11 @@ export function withEvidenceBoundary(stream: StreamFn, options: EvidenceBoundary
     }
     callOptions?.signal?.throwIfAborted();
     let accumulatedUsage = addUsage(zeroUsage(), options.takeUsage?.() ?? zeroUsage());
-    if (!state.urls.length && !state.hasResults && !routeRequired) {
+    // Hold a reply back only when something can reject it: a link claim, a routed tool, the advisor
+    // reviewing tool results, or a recorded call whose tool supports a claim. Everything else streams.
+    const checkable = state.urls.length > 0 || routeRequired || (options.advisor !== undefined && state.hasResults)
+      || state.checks.some((entry) => Boolean(entry && typeof entry === "object" && options.profiles[(entry as { tool?: string }).tool ?? ""]?.supports));
+    if (!checkable) {
       try {
         return passThrough(await stream(model, context, callOptions), accumulatedUsage, logProviderError);
       } catch (error) {

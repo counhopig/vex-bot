@@ -336,3 +336,31 @@ it("tells the trace what the check withheld and replaced", async () => {
     expect.stringMatching(/^Reply replaced with what the receipts establish: /),
   ]);
 });
+
+it("streams a reply live after tool results that can support no claim", async () => {
+  const message = fauxAssistantMessage("Done: the tests pass.");
+  const upstream = createAssistantMessageEventStream();
+  const boundary = withEvidenceBoundary(async () => upstream, { profiles: TOOL_EVIDENCE });
+  const call = fauxToolCall("bash", { command: "npm test" }, { id: "bash-call" });
+  const context = { messages: [
+    { role: "user" as const, content: "Run the tests", timestamp: 1 },
+    fauxAssistantMessage(call, { stopReason: "toolUse" }),
+    { role: "toolResult" as const, toolCallId: "bash-call", toolName: "bash", content: [{ type: "text" as const, text: "ok" }], isError: false, timestamp: 2 },
+  ] } as TranscriptContext;
+  upstream.push({ type: "start", partial: message });
+  const stream = await boundary(createFaux().getModel(), context, undefined);
+  // The first event reaches the owner before the generation has finished.
+  expect((await stream[Symbol.asyncIterator]().next()).value).toMatchObject({ type: "start" });
+  upstream.push({ type: "done", reason: "stop", message });
+  upstream.end(message);
+  expect((await stream.result()).content).toEqual(message.content);
+});
+
+it("replaces an unsupported reply in the language of the owner's request", async () => {
+  const faux = createFaux();
+  faux.setResponses([fauxAssistantMessage("已保存。"), fauxAssistantMessage("已保存。")]);
+  const boundary = withEvidenceBoundary(fauxStreamFn(faux), { profiles: TOOL_EVIDENCE });
+  const context = { messages: [{ role: "user" as const, content: "帮我存一下 https://example.test/a", timestamp: 1 }] } as TranscriptContext;
+  const reply = await (await boundary(faux.getModel(), context, undefined)).result();
+  expect(reply.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("无法确认") });
+});

@@ -121,3 +121,13 @@ it("checks completion claims when unrelated words describe an absence or failure
     `没有归档 ${url}。`,
   ]) expect(unsupportedClaim(reply, turn, TOOL_EVIDENCE)).toBe(false);
 });
+
+it("does not read questions or offers about a link as completed operations", () => {
+  const linked = { urls: ["https://example.test/a"], evidence: [] };
+  for (const reply of ["Should I read it for you?", "Do you want me to read the page first?", "Have you read this before?", "I can read it if you like.", "要我帮你读取吗？", "这篇你已读完了吗？"]) {
+    expect(unsupportedClaim(reply, linked, profiles)).toBe(false);
+  }
+  // A report beside a question in the same reply is still checked.
+  expect(unsupportedClaim("I read it. Want a summary?", linked, profiles)).toBe(true);
+  expect(unsupportedClaim("我已读取这个网页。要总结吗？", linked, TOOL_EVIDENCE)).toBe(true);
+});

@@ -96,10 +96,14 @@ export function extractUrls(text: string): string[] {
 /** One clause of a reply that claims operations, bound to the links that clause names. */
 interface Statement { text: string; urls: string[] }
 
-const CLAUSE_BREAK = /(?<=[.!?;])\s+|[。！？；，、]|,\s*|\bbut\b|\bhowever\b|\bwhile\b|但是?|不过|然而|而/i;
+// Sentence-final punctuation stays on its clause, so a question can be told from a report.
+const CLAUSE_BREAK = /(?<=[.!?;])\s+|(?<=[。！？；])|[，、]|,\s*|\bbut\b|\bhowever\b|\bwhile\b|但是?|不过|然而|而/i;
 const PROSPECTIVE = /^\s*(?:i(?:'ll| will| am going to)|let me|we(?:'ll| will)|going to)\b|^\s*(?:我(?:会|将|来|准备|正在)|正在|准备|稍后)/i;
 // A clause opening with the verb is an instruction ("Read the README first"), not a report.
 const IMPERATIVE = /^\s*(?:read|save|archive|publish|push|compile|download|retrieve)\b/i;
+// A question or an offer asks about an operation; it reports none ("Should I read it?", "要我读取吗？").
+const QUESTION = /[?？]\s*$|[吗呢]\s*$/;
+const OFFER = /^\s*(?:(?:should|shall)\s+(?:i|we)|(?:do|would)\s+you\s+(?:want|like)|(?:i|we)\s+can|if\s+you(?:'d|\s+would)?\s+like)\b|^\s*(?:要不要|需要我|要我|我可以|我能)/i;
 // Remove only negated operations; unrelated phrases such as "no errors" leave claims checkable.
 const NEGATED_OPERATION = /\b(?:not|never|cannot|can't|couldn't|didn't|haven't|hasn't|wasn't|weren't|won't|unable\s+to|failed\s+to|fails\s+to)\s+(?:(?:be|been|have|has|had|successfully|yet|already|fully|completely|actually|ever)\s+)*(?:(?:verify|confirm|report|claim)\s+(?:(?:a|an|the|new|successful|completed)\s+)*)?(?:saved|archived|published|pushed|compiled|read|retrieved|downloaded)\b|(?:尚未|未|没有|没能|无法|不能)(?:能|够|成功|完成|已)*(?:保存|归档|发布|推送|编译|读取|读完|获取)/gi;
 const NO_SOURCE_OPERATION = /\bno\s+(?:source|page|article|text|link|content|file|document|note)s?\s+(?:(?:was|were|has|have|been|successfully)\s+)*(?:saved|archived|published|pushed|compiled|read|retrieved|downloaded)\b/gi;
@@ -117,7 +121,7 @@ function statements(reply: string): Statement[] {
     return `URLTOKEN${urls.length - 1}END${suffix}`;
   });
   return protectedReply.split(CLAUSE_BREAK).flatMap((clause) => {
-    if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause)) return [];
+    if (!clause?.trim() || PROSPECTIVE.test(clause) || IMPERATIVE.test(clause) || QUESTION.test(clause) || OFFER.test(clause)) return [];
     const text = clause.replace(NEGATED_OPERATION, "").replace(NO_SOURCE_OPERATION, "")
       .replace(/URLTOKEN(\d+)END/g, (_match, index: string) => urls[Number(index)] ?? "");
     return [{ text, urls: extractUrls(text) }];
