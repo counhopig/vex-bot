@@ -28,11 +28,16 @@ export interface SessionManagerOptions {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60_000;
 
+interface CacheEntry {
+  opening: Promise<Session>;
+  /** Set once the opening resolves; only a resolved entry can be evicted. */
+  session?: Session;
+  lastUsed: number;
+}
+
 export class SessionManager {
-  private readonly sessions = new Map<string, Promise<Session>>();
-  // Resolved instances still current in `sessions`, with their last use, for idle eviction.
-  private readonly opened = new Map<string, { opening: Promise<Session>; session: Session }>();
-  private readonly lastUsed = new Map<string, number>();
+  // One entry per cached conversation: its opening, the instance once resolved, and its last use.
+  private readonly entries = new Map<string, CacheEntry>();
   // Evicted sessions still disposing; the next open of that key waits so it reads the flushed transcript.
   private readonly evicting = new Map<string, Promise<void>>();
   private sweeper: ReturnType<typeof setInterval> | undefined;
@@ -59,9 +64,11 @@ export class SessionManager {
   get(key: string): Promise<Session> {
     if (this.closing) return Promise.reject(new Error("vexd is shutting down and cannot open a conversation."));
     if (this.deleting.has(key)) return Promise.reject(new UnknownSessionError(`No such conversation: ${key}`));
-    this.lastUsed.set(key, this.now());
-    const existing = this.sessions.get(key);
-    if (existing) return this.availableSession(key, existing);
+    const existing = this.entries.get(key);
+    if (existing) {
+      existing.lastUsed = this.now();
+      return this.availableSession(key, existing.opening);
+    }
     let transcriptPath: string;
     try {
       transcriptPath = this.transcriptPath(key);
@@ -72,10 +79,7 @@ export class SessionManager {
     const opening = evicted
       ? evicted.then(() => this.opts.openSession(key, this.transcriptPath(key), () => this.windowLabel(key)))
       : this.opts.openSession(key, transcriptPath, () => this.windowLabel(key));
-    this.sessions.set(key, opening);
-    opening.then((session) => { if (this.sessions.get(key) === opening) this.opened.set(key, { opening, session }); }, () => {
-      if (this.sessions.get(key) === opening) this.sessions.delete(key);
-    });
+    this.cache(key, opening);
     return this.availableSession(key, opening);
   }
 
@@ -89,12 +93,10 @@ export class SessionManager {
     if (idle <= 0 || this.closing) return [];
     const now = this.now();
     const evicted: string[] = [];
-    for (const [key, { opening, session }] of this.opened) {
-      if (webSessionId(key) === undefined || this.deleting.has(key) || this.sessions.get(key) !== opening) continue;
-      if (now - (this.lastUsed.get(key) ?? 0) < idle || !session.idle || this.opts.retain?.(key)) continue;
-      this.sessions.delete(key);
-      this.opened.delete(key);
-      this.lastUsed.delete(key);
+    for (const [key, { session, lastUsed }] of this.entries) {
+      if (!session || webSessionId(key) === undefined || this.deleting.has(key)) continue;
+      if (now - lastUsed < idle || !session.idle || this.opts.retain?.(key)) continue;
+      this.entries.delete(key);
       const disposal = session.dispose().catch((err: unknown) => this.opts.onError?.(err)).finally(() => {
         if (this.evicting.get(key) === disposal) this.evicting.delete(key);
       });
@@ -139,10 +141,8 @@ export class SessionManager {
     if (!this.index.get(id) || this.deleting.has(key)) throw new UnknownSessionError(`No such WebChat conversation: ${id}`);
     const transcriptPath = this.transcriptPath(key);
     this.deleting.add(key);
-    const loaded = this.sessions.get(key);
-    this.sessions.delete(key);
-    this.opened.delete(key);
-    this.lastUsed.delete(key);
+    const loaded = this.entries.get(key)?.opening;
+    this.entries.delete(key);
     let restoreLoaded = false;
     try {
       // An evicted instance may still be writing its transcript; let it finish before removing the file.
@@ -174,8 +174,7 @@ export class SessionManager {
       this.opts.bus.emit({ type: "sessions_changed" });
     } finally {
       if (restoreLoaded && loaded && this.index.get(id)) {
-        this.sessions.set(key, loaded);
-        void loaded.then((session) => { if (this.sessions.get(key) === loaded) this.opened.set(key, { opening: loaded, session }); }, () => undefined);
+        this.cache(key, loaded);
       }
       this.deleting.delete(key);
     }
@@ -186,7 +185,7 @@ export class SessionManager {
     this.unsubscribe?.();
     if (this.sweeper) clearInterval(this.sweeper);
     await Promise.allSettled([...this.evicting.values()]);
-    const settled = await Promise.allSettled([...this.sessions.values()]);
+    const settled = await Promise.allSettled([...this.entries.values()].map((entry) => entry.opening));
     const open = settled.flatMap((r) => (r.status === "fulfilled" ? [r.value] : []));
     for (const session of open) session.stop();
     await Promise.allSettled(open.map((s) => s.dispose()));
@@ -200,11 +199,20 @@ export class SessionManager {
     throw new UnknownSessionError(`No such conversation: ${key}`);
   }
 
+  /** Caches an opening; the entry learns its instance on success and leaves the cache on failure. */
+  private cache(key: string, opening: Promise<Session>): void {
+    const entry: CacheEntry = { opening, lastUsed: this.now() };
+    this.entries.set(key, entry);
+    opening.then((session) => { if (this.entries.get(key) === entry) entry.session = session; }, () => {
+      if (this.entries.get(key) === entry) this.entries.delete(key);
+    });
+  }
+
   /** Resolves to the current instance; one evicted or replaced meanwhile is never handed out. */
   private availableSession(key: string, opening: Promise<Session>): Promise<Session> {
     return opening.then((session) => {
       this.assertAvailable(key);
-      if (this.sessions.get(key) !== opening) return this.get(key);
+      if (this.entries.get(key)?.opening !== opening) return this.get(key);
       return session;
     });
   }
@@ -218,7 +226,8 @@ export class SessionManager {
     const id = webSessionId(event.sessionKey);
     if (id === undefined) return;
     // Activity, including a scheduled delivery, counts as use.
-    if (this.sessions.has(event.sessionKey)) this.lastUsed.set(event.sessionKey, this.now());
+    const entry = this.entries.get(event.sessionKey);
+    if (entry) entry.lastUsed = this.now();
     if (this.deleting.has(event.sessionKey)) return;
     const meta = this.index.get(id);
     if (!meta) return;
