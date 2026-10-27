@@ -170,6 +170,18 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `wiki.notesCopy` (`WikiReadCopy`), which fast-forwards it only while no wiki operation holds or waits for the shared lock, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. `wiki_rebuild` commits and pushes a reset (`Vex-Wiki-Reset`) that removes the `wiki/` pages; reconciliation reads history only back to the newest reset, and ignores durable state and the bootstrap ref from before it, so the next bootstrap compiles every note and archived `raw/` source into a new preview. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
+What each part of the wiki engine protects against, so it is not mistaken for incidental complexity:
+
+| Mechanism | Failure it covers |
+|---|---|
+| `WikiLock` | Two wiki operations (a scheduled run, an ingest, a rollback) changing the clone at once; vault reads never wait for it |
+| In-flight marker with file fingerprints (`.git/vex-wiki-inflight.json`) | The process dying between writing pages and committing them, or between committing and publishing; on restart the batch is finished or undone, and a file someone else changed meanwhile is left alone |
+| Commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`, `Vex-Rollback`, `Vex-Wiki-Reset`) and reconciliation | The state file being lost or stale: the scan cursor, the last batch and the bootstrap state are rebuilt from history |
+| Rebase before push, then fingerprint checks | Notes pushed from the owner's other devices while a batch was compiling |
+| Bootstrap ref and preview | The first, largest batch being pushed before the owner has seen it (`wiki_bootstrap`) |
+| Rollback expectations | Reverting a batch twice, or reverting over later edits to the same pages (`wiki_rollback`) |
+| Reset trailer | Rebuilding from scratch without old batches, cursors or previews leaking into the new wiki (`wiki_rebuild`) |
+
 ## Mood and rest hours
 
 `state/mood.json` holds three values from 0 to 100, shared by both windows.
