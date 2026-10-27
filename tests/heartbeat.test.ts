@@ -18,8 +18,11 @@ describe("heartbeat outcome", () => {
 
   it("falls back to the reply when the tool was never called", () => {
     expect(heartbeatMessage({}, "HEARTBEAT_OK")).toBeNull();
-    expect(heartbeatMessage({}, "Checked everything. HEARTBEAT_OK.")).toBeNull();
+    expect(heartbeatMessage({}, " **heartbeat_ok.** ")).toBeNull();
     expect(heartbeatMessage({}, "  ")).toBeNull();
     expect(heartbeatMessage({}, "今天有预约")).toBe("今天有预约");
+    // A reminder that mentions the token is still a reminder.
+    const reminder = "Reminder: the tax filing is due tomorrow at 9:00. Everything else: HEARTBEAT_OK";
+    expect(heartbeatMessage({}, reminder)).toBe(reminder);
   });
 });

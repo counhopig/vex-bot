@@ -28,10 +28,11 @@ export function createHeartbeatReportTool(outcome: HeartbeatOutcome): AgentTool<
 
 /**
  * The message a heartbeat run leaves for the owner, or null. The report tool decides; a run that never
- * called it falls back to its reply, where HEARTBEAT_OK anywhere means there is nothing to tell.
+ * called it falls back to its reply, which is silent only when it is HEARTBEAT_OK and nothing else, so a
+ * reminder that happens to mention the token still reaches the owner.
  */
 export function heartbeatMessage(outcome: HeartbeatOutcome, reply: string): string | null {
   if (outcome.notify !== undefined) return outcome.notify ? outcome.message ?? null : null;
   const text = reply.trim();
-  return !text || /\bHEARTBEAT_OK\b/i.test(text) ? null : text;
+  return !text || /^[\s\p{P}]*HEARTBEAT_OK[\s\p{P}]*$/iu.test(text) ? null : text;
 }

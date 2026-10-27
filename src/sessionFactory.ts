@@ -163,7 +163,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
   const profiles: Record<RunKind, RunProfile> = {
     interactive: { owner: true, background: false, prompt: (toolNames) => new SystemPromptBuilder([...interactiveSections, availableToolsSection(toolNames)]), tools: conversationTools },
     heartbeat: { owner: false, background: true, prompt: (toolNames) => backgroundPrompt("heartbeat", toolNames),
-      tools: (run) => [...conversationTools(run), ...(run.heartbeat ? [createHeartbeatReportTool(run.heartbeat)] : [])] },
+      tools: (run) => [...conversationTools(run), ...policy.filter(run.heartbeat ? [createHeartbeatReportTool(run.heartbeat)] : [])] },
     consolidation: { owner: false, background: true, prompt: (toolNames) => backgroundPrompt("consolidation", toolNames), gate: workspaceOnlyGate,
       tools: () => policy.filter(commonTools.filter((tool) => CONSOLIDATION_TOOLS.includes(tool.name))) },
     wiki: { owner: false, background: true, prompt: (toolNames) => wikiPrompt(toolNames), tools: (run) => wikiTools(run.wikiContext!) },
