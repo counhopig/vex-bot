@@ -677,6 +677,21 @@ describe("Session", () => {
     await session.dispose();
   });
 
+  it("runs a runtime message to idle and stops it when the signal aborts", async () => {
+    faux = createFaux(20);
+    faux.setResponses([fauxAssistantMessage("long ".repeat(200))]);
+    const session = await open();
+    const controller = new AbortController();
+    const run = session.runToIdle("background", "scheduled task", controller.signal);
+    await vi.waitFor(() => expect(events.some((e) => e.kind === "text_delta")).toBe(true));
+    controller.abort();
+    await run;
+    expect(session.busy).toBe(false);
+    expect(events.find((e) => e.kind === "turn_end")).toMatchObject({ status: "interrupted" });
+    await expect(session.runToIdle("again", "scheduled task", controller.signal)).rejects.toThrow();
+    await session.dispose();
+  });
+
   it("runs tools and reports them", async () => {
     faux = createFaux();
     faux.setResponses([

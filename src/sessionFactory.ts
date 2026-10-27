@@ -232,12 +232,9 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
   const runTemporary = async <T>(kind: TemporaryKind, prompt: string, signal: AbortSignal, read: (session: Session) => T, wikiContext?: WikiRunContext): Promise<T> => {
     signal.throwIfAborted();
     return withTemporarySession(kind, async (session) => {
-      const abort = () => session.stop();
-      signal.addEventListener("abort", abort, { once: true });
-      try {
-        signal.throwIfAborted(); session.send(prompt, kind); await session.whenIdle(); signal.throwIfAborted();
-        return read(session);
-      } finally { signal.removeEventListener("abort", abort); }
+      await session.runToIdle(prompt, kind, signal);
+      signal.throwIfAborted();
+      return read(session);
     }, wikiContext);
   };
 

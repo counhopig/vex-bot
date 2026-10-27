@@ -268,6 +268,19 @@ export class Session {
       });
   }
 
+  /** Sends a runtime message and resolves once the session is idle again; aborting `signal` stops the run. */
+  async runToIdle(text: string, source: string, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    const abort = () => this.stop();
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      this.send(text, source);
+      await this.whenIdle();
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
   stop(): void {
     this.assistantQueue = [];
     this.afterStop = [];

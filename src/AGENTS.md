@@ -41,7 +41,7 @@ src/
 | Change session keys or schedule targets | `core/sessionKey.ts` (the only place `web:`/`run:` keys are built or parsed) |
 | Add or change a kind of run | `sessionFactory.ts` (`profiles`: owner or background, model, prompt, tools, gate) |
 | Add a browser command | `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
-| Change editable settings | `config/schema.ts`, `config/settings.ts`, `daemon.ts`, `web/static/app.js` |
+| Change editable settings | `config/schema.ts`, `config/settings.ts`, `config/editor.ts` (save, validate, restart), `web/static/app.js` |
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change the device protocol | `protocol/device.ts`, `channels/device/channel.ts`, `gateway/server.ts` (`/device/ws`), `docs/architecture.md` (Device channel) |
