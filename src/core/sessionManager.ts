@@ -5,13 +5,9 @@ import type { EventBus, VexEvent } from "./events.js";
 import type { Session } from "./session.js";
 import { WebSessionIndex, type WebSessionMeta } from "./webSessions.js";
 
-export const WECHAT_SESSION_KEY = "wechat";
-export const DEVICE_SESSION_KEY = "device";
-const WEB_PREFIX = "web:";
+import { DEVICE_SESSION_KEY, WECHAT_SESSION_KEY, webSessionId, webSessionKey } from "./sessionKey.js";
 
-export function webSessionKey(id: string): string {
-  return `${WEB_PREFIX}${id}`;
-}
+export { DEVICE_SESSION_KEY, WECHAT_SESSION_KEY, webSessionKey } from "./sessionKey.js";
 
 export class UnknownSessionError extends Error {}
 
@@ -94,7 +90,7 @@ export class SessionManager {
     const now = this.now();
     const evicted: string[] = [];
     for (const [key, { opening, session }] of this.opened) {
-      if (!key.startsWith(WEB_PREFIX) || this.deleting.has(key) || this.sessions.get(key) !== opening) continue;
+      if (webSessionId(key) === undefined || this.deleting.has(key) || this.sessions.get(key) !== opening) continue;
       if (now - (this.lastUsed.get(key) ?? 0) < idle || !session.idle || this.opts.retain?.(key)) continue;
       this.sessions.delete(key);
       this.opened.delete(key);
@@ -117,7 +113,7 @@ export class SessionManager {
   windowLabel(key: string): string {
     if (key === WECHAT_SESSION_KEY) return "WeChat";
     if (key === DEVICE_SESSION_KEY && this.opts.deviceLabel) return this.opts.deviceLabel;
-    const meta = this.index.get(key.slice(WEB_PREFIX.length));
+    const meta = this.index.get(webSessionId(key) ?? "");
     return `WebChat conversation "${meta?.title ?? "untitled"}"`;
   }
 
@@ -199,10 +195,8 @@ export class SessionManager {
   private transcriptPath(key: string): string {
     if (key === WECHAT_SESSION_KEY) return join(this.opts.paths.sessions, "wechat.jsonl");
     if (key === DEVICE_SESSION_KEY && this.opts.deviceLabel) return join(this.opts.paths.sessions, "device.jsonl");
-    if (key.startsWith(WEB_PREFIX)) {
-      const id = key.slice(WEB_PREFIX.length);
-      if (this.index.get(id)) return join(this.opts.paths.webSessions, `${id}.jsonl`);
-    }
+    const id = webSessionId(key);
+    if (id !== undefined && this.index.get(id)) return join(this.opts.paths.webSessions, `${id}.jsonl`);
     throw new UnknownSessionError(`No such conversation: ${key}`);
   }
 
@@ -220,10 +214,11 @@ export class SessionManager {
   private now(): number { return (this.opts.now ?? Date.now)(); }
 
   private onEvent(event: VexEvent): void {
-    if (event.type !== "session" || !event.sessionKey.startsWith(WEB_PREFIX)) return;
+    if (event.type !== "session") return;
+    const id = webSessionId(event.sessionKey);
+    if (id === undefined) return;
     // Activity, including a scheduled delivery, counts as use.
     if (this.sessions.has(event.sessionKey)) this.lastUsed.set(event.sessionKey, this.now());
-    const id = event.sessionKey.slice(WEB_PREFIX.length);
     if (this.deleting.has(event.sessionKey)) return;
     const meta = this.index.get(id);
     if (!meta) return;

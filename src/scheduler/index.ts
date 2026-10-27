@@ -3,6 +3,7 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
+import { WECHAT_SESSION_KEY } from "../core/sessionKey.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
 export type WikiWork = "bootstrap" | "scheduled";
@@ -174,7 +175,7 @@ export class Scheduler {
           try { await this.save(); } catch (error) { Object.assign(task, previous); throw error; }
           if (busy) continue;
           this.launch(task.id, async () => {
-            const target = task.target === "wechat" || await this.options.hooks.targetExists(task.target) ? task.target : "wechat";
+            const target = task.target === WECHAT_SESSION_KEY || await this.options.hooks.targetExists(task.target) ? task.target : WECHAT_SESSION_KEY;
             const missed = startup && once;
             const label = missed ? `[Missed scheduled task "${task.name}", originally due ${stamp(dueAt)}] ` : `[Scheduled task "${task.name}"] `;
             if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);

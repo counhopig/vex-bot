@@ -12,7 +12,8 @@ import type { VaultConfig, VexConfig } from "./config/schema.js";
 import { formatNow } from "./context/prompt.js";
 import { EventBus } from "./core/events.js";
 import type { Session } from "./core/session.js";
-import { DEVICE_SESSION_KEY, SessionManager, WECHAT_SESSION_KEY } from "./core/sessionManager.js";
+import { SessionManager } from "./core/sessionManager.js";
+import { DEVICE_SESSION_KEY, scheduleTargetKey, WECHAT_SESSION_KEY, webSessionKey } from "./core/sessionKey.js";
 import { DeviceChannel } from "./channels/device/channel.js";
 import { createTitleGenerator } from "./core/title.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
@@ -135,7 +136,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       branch: config.vault?.branch,
       maxNotesPerRun: wikiConfig.maxNotesPerRun,
       notifyEnabled: wikiConfig.notify,
-      notify: async (text) => { await (await sessions.get("wechat")).enqueueAssistant(text); },
+      notify: async (text) => { await (await sessions.get(WECHAT_SESSION_KEY)).enqueueAssistant(text); },
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), context),
       sourceSegmentBudget: async (prefix, context) => {
         const tools = wikiTools(context);
@@ -163,7 +164,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
       scheduler: () => scheduler, live,
       ...(opts.decisionJudge ? { decisionJudge: opts.decisionJudge } : {}),
-      onOwnerMessage: (key) => { if (key === "wechat") wechatInbound++; },
+      onOwnerMessage: (key) => { if (key === WECHAT_SESSION_KEY) wechatInbound++; },
     });
     const sessions = new SessionManager({
       paths,
@@ -189,8 +190,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     }
     const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
       signal.throwIfAborted();
-      const key = target === WECHAT_SESSION_KEY || target === DEVICE_SESSION_KEY ? target : target.startsWith("web:") ? target : `web:${target}`;
-      const session = await sessions.get(key);
+      const session = await sessions.get(scheduleTargetKey(target));
       signal.throwIfAborted();
       const abort = () => session.stop();
       signal.addEventListener("abort", abort, { once: true });
@@ -203,7 +203,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...(wikiConfig ? { wiki: { every: wikiConfig.every } } : {}),
       hooks: {
         log: (err) => log.warn({ err }, "scheduled task failed"),
-        targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => meta.id === target || `web:${meta.id}` === target),
+        targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => webSessionKey(meta.id) === scheduleTargetKey(target)),
         deliver: (target, text, kind, signal) => { log.info({ target, kind }, "scheduled message"); return deliver(target, text, kind === "missed" ? "missed scheduled task" : "scheduled task", signal); },
         runTemporary: async (text, kind, signal) => {
           signal.throwIfAborted();
@@ -216,11 +216,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           log.info({ kind, ms: Date.now() - startedAt, chars: reply.length }, "background run finished");
           return reply;
         },
-        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get("wechat")).injectAssistant(text, signal); },
+        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
         checkOutreach: async (signal) => {
           const wechat = wechatRuntime?.channel;
           if (!wechat?.available) return;
-          const session = await sessions.get("wechat");
+          const session = await sessions.get(WECHAT_SESSION_KEY);
           if (!wechat.available || !persona.shouldOutreach(!session.busy)) { await persona.save(); return; }
           const inboundBefore = wechatInbound;
           signal.throwIfAborted();
@@ -286,7 +286,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       schedules: {
         list: () => ({
           tasks: scheduler.list(),
-          targets: [{ id: "wechat", label: "WeChat" }, ...(device ? [{ id: DEVICE_SESSION_KEY, label: config.device!.label }] : []),
+          targets: [{ id: WECHAT_SESSION_KEY, label: "WeChat" }, ...(device ? [{ id: DEVICE_SESSION_KEY, label: config.device!.label }] : []),
             ...sessions.listWeb().map((meta) => ({ id: meta.id, label: meta.title }))],
         }),
         save: async ({ id, ...input }) => {

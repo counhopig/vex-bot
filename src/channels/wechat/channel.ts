@@ -1,7 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type { EventBus, SessionEvent, VexEvent } from "../../core/events.js";
-import { WECHAT_SESSION_KEY } from "../../core/sessionManager.js";
+import { WECHAT_SESSION_KEY } from "../../core/sessionKey.js";
 import type { ApprovalAnswer, ApprovalManager } from "../../policy/approvals.js";
 import { SESSION_EXPIRED_ERRCODE, WeChatApiError, type InboundMessage, type WeChatClient } from "./client.js";
 import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from "./messages.js";

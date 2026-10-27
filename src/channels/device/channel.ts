@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import type { EventBus, SessionEvent, VexEvent } from "../../core/events.js";
-import { DEVICE_SESSION_KEY } from "../../core/sessionManager.js";
+import { DEVICE_SESSION_KEY } from "../../core/sessionKey.js";
 import type { ApprovalManager } from "../../policy/approvals.js";
 import type { DeviceClientMessage, DeviceServerMessage, ReplyStatus } from "../../protocol/device.js";
 

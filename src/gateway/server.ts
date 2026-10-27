@@ -7,7 +7,8 @@ import { ConfigError } from "../config/load.js";
 import type { SettingsPatch, SettingsView } from "../config/settings.js";
 import type { ScheduledTask, ScheduleRule } from "../scheduler/index.js";
 import type { EventBus, VexEvent } from "../core/events.js";
-import { webSessionKey, type SessionManager } from "../core/sessionManager.js";
+import type { SessionManager } from "../core/sessionManager.js";
+import { webSessionId, webSessionKey } from "../core/sessionKey.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { WorkspaceConflictError } from "../workspace/workspace.js";
@@ -52,7 +53,6 @@ const STATIC_FILES: Record<string, StaticEntry> = {
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8", public: true },
 };
 
-const WEB_PREFIX = "web:";
 const DEVICE_PATH = "/device/ws";
 
 export class Gateway {
@@ -388,8 +388,9 @@ export class Gateway {
 
   private onBusEvent(event: VexEvent): void {
     if (event.type === "session") {
-      if (!event.sessionKey.startsWith(WEB_PREFIX)) return;
-      this.broadcast({ type: "event", sessionId: event.sessionKey.slice(WEB_PREFIX.length), event: event.event });
+      const sessionId = webSessionId(event.sessionKey);
+      if (sessionId === undefined) return;
+      this.broadcast({ type: "event", sessionId, event: event.event });
     } else if (event.type === "sessions_changed") {
       this.broadcast({ type: "sessions", sessions: this.opts.sessions.listWeb() });
     } else {

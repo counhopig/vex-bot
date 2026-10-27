@@ -20,7 +20,7 @@ import {
 } from "./context/prompt.js";
 import type { EventBus, SessionEvent } from "./core/events.js";
 import { Session, type SessionOptions } from "./core/session.js";
-import { DEVICE_SESSION_KEY } from "./core/sessionManager.js";
+import { DEVICE_SESSION_KEY, runSessionKey, scheduleTargetOf, WECHAT_SESSION_KEY } from "./core/sessionKey.js";
 import type { MemoryIndex } from "./index/memory.js";
 import { LinkActionController } from "./links/actions.js";
 import type { Logger } from "./logger.js";
@@ -168,8 +168,8 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     const getTools = (): AgentTool<any>[] => {
       if (temporary === "consolidation") return policy.filter(commonTools.filter((tool) => ["read", "write", "edit", "grep", "find", "memory_search"].includes(tool.name)));
       if (temporary === "wiki") return wikiTools(wikiContext!);
-      const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTarget(key)), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
-      return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTarget(key))]), beforeToolCall, trace: () => trace.current, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
+      const base = policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTargetOf(key)), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
+      return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: temporary ? backgroundModel : model, streamFn: models.streamFn, getApiKey, getTools: () => policy.filter([...commonTools, ...mcp.getTools(), createScheduleTool(deps.scheduler(), scheduleTargetOf(key))]), beforeToolCall, trace: () => trace.current, evidence: { profiles: TOOL_EVIDENCE, ...(advisor ? { advisor } : {}), secrets, warn: (err) => log.warn({ err, session: key }, "delegate evidence boundary warning") } })]);
     };
     const session = await Session.open({
       key,
@@ -199,7 +199,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
       buildSystemPrompt: sessionPrompt,
       beforeToolCall,
       emit: (event) => { if (!temporary) { logSessionEvent(key, event); bus.emit({ type: "session", sessionKey: key, event }); } },
-      onOwnerMessage: temporary ? undefined : () => { deps.onOwnerMessage?.(key); persona.userMessage(key === "wechat" ? "wechat" : "web"); },
+      onOwnerMessage: temporary ? undefined : () => { deps.onOwnerMessage?.(key); persona.userMessage(key === WECHAT_SESSION_KEY ? "wechat" : "web"); },
       onOwnerInteraction: temporary ? undefined : async (count) => { for (let i = 0; i < count; i++) persona.interactionCompleted(); await persona.save(); },
       onError: (err) => log.error({ err, session: key }, "session run failed"),
       compaction: { backgroundModel, complete: models.completeSimple, workspace: config.workspace, threshold: config.compaction?.threshold, onError: (err) => log.warn({ err, session: key }, "context compaction failed"), onCompact: (info) => log.info({ session: key, ...info }, "context compacted") },
@@ -216,9 +216,9 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
   const withTemporarySession = async <T>(kind: TemporaryKind, use: (session: Session) => Promise<T>, wikiContext?: WikiRunContext): Promise<T> => {
     const id = randomUUID();
     const transcript = join(paths.sessions, "runs", `${id}.jsonl`);
-    const session = await openSession(`run:${id}`, transcript, () => TEMPORARY_WINDOW_LABELS[kind], kind, wikiContext);
+    const session = await openSession(runSessionKey(id), transcript, () => TEMPORARY_WINDOW_LABELS[kind], kind, wikiContext);
     try { return await use(session); }
-    finally { await session.dispose(); live.delete(session); traces.release(`run:${id}`); await rm(transcript, { force: true }); }
+    finally { await session.dispose(); live.delete(session); traces.release(runSessionKey(id)); await rm(transcript, { force: true }); }
   };
   /** Runs one background turn to completion; `read` inspects the finished session before it is disposed. */
   const runTemporary = async <T>(kind: TemporaryKind, prompt: string, signal: AbortSignal, read: (session: Session) => T, wikiContext?: WikiRunContext): Promise<T> => {
@@ -239,12 +239,6 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
 /** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
 /** Device replies are synthesized to speech on a small speaker. */
 const SPOKEN_REPLY_HINT = " (replies are read aloud: answer in a few short plain sentences, without Markdown, lists, tables, code or links)";
-
-/** Where a schedule created in this conversation delivers by default. */
-function scheduleTarget(key: string): string {
-  if (key === DEVICE_SESSION_KEY) return DEVICE_SESSION_KEY;
-  return key.startsWith("web:") ? key.slice(4) : "wechat";
-}
 
 const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
 const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
