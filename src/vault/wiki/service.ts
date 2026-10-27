@@ -156,8 +156,6 @@ export class Wiki {
   private stateStore!: StateStore;
   private reconciled: ReconcileResult | null = null;
   private reconcileMemo: { key: string; result: ReconcileResult } | null = null;
-  private cachedNextAttemptAt: number | null = null;
-  private statusCache: { at: number; value: WikiStatus } | null = null;
   private lastStatus: WikiStatus | null = null;
   private readonly lock = new WikiLock();
   private opened = false;
@@ -174,7 +172,6 @@ export class Wiki {
     this.notesCopy = new WikiReadCopy({
       lock: this.lock,
       open: () => this.opened ? { repo: this.repo, marker: this.marker } : undefined,
-      onAdvanced: () => { this.statusCache = null; },
       ...(opts.now ? { now: opts.now } : {}),
       ...(opts.onWarning ? { onWarning: opts.onWarning } : {}),
     });
@@ -191,11 +188,6 @@ export class Wiki {
     await this.ready();
     const preview = await this.preview();
     if (preview) await this.opts.notify(previewNotice(preview));
-  }
-
-  /** Synchronous backoff gate for the scheduler. */
-  nextAttemptAt(): number | null {
-    return this.cachedNextAttemptAt;
   }
 
   /**
@@ -236,16 +228,14 @@ export class Wiki {
     this.marker = new MarkerStore(join(root, ".git"));
     this.stateStore = new StateStore(join(this.opts.home, "state", "wiki.json"));
     const state = await this.stateStore.read();
-    this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     this.reconciled = await this.runReconcile(state);
     this.lastStatus = statusOf(state, this.reconciled);
-    this.statusCache = null;
   }
 
   /** The work the scheduler may start now; see `dueWikiWork`. */
   async dueWork(now: number, cadenceDue: boolean): Promise<"bootstrap" | "scheduled" | null> {
     if (!this.opened) { this.start(); return null; }
-    const gate = this.nextAttemptAt();
+    const gate = (await this.stateStore.read())?.nextAttemptAt ?? null;
     if (gate !== null && now < gate) return null;
     // Only a pending bootstrap can start off-cadence; an idle wiki reads no history between runs.
     if (!cadenceDue && this.lastStatus && this.lastStatus.bootstrap !== "pending") return null;
@@ -254,25 +244,20 @@ export class Wiki {
   }
 
   async status(): Promise<WikiStatus> {
-    // The scheduler asks for due work every minute; cache briefly so an idle wiki does no history scans.
-    if (this.statusCache && this.clock() - this.statusCache.at < 10_000) return this.statusCache.value;
     await this.ready();
     // A running operation may be mid-rebase; report the last settled status instead of reading history.
     if (this.lock.busy && this.lastStatus) return this.lastStatus;
     const state = await this.stateStore.read();
     const reconciled = await this.runReconcile(state);
     this.reconciled = reconciled;
-    this.cachedNextAttemptAt = state?.nextAttemptAt ?? null;
     const value = statusOf(state, reconciled);
     this.lastStatus = value;
-    this.statusCache = { at: this.clock(), value };
     return value;
   }
 
   async close(): Promise<void> {
     this.closed = true;
     this.reconciled = null;
-    this.statusCache = null;
   }
 
   async run(request: WikiRunRequest, signal: AbortSignal): Promise<WikiRunResult> {
@@ -390,8 +375,6 @@ export class Wiki {
       lastRunAt: this.clock(),
     });
     await this.marker.remove();
-    this.cachedNextAttemptAt = null;
-    this.statusCache = null;
     const settledPages = (await this.repo.changedPaths(settledSha)).filter((path) => path.startsWith("wiki/"));
     const source = request.kind === "on-demand" ? request.source : undefined;
     const url = source?.url;
@@ -413,8 +396,6 @@ export class Wiki {
     const current = (await this.stateStore.read()) ?? emptyState();
     await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
     if (kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, baseHead);
-    this.cachedNextAttemptAt = null;
-    this.statusCache = null;
   }
 
   /** Opens a batch and lets the compiler agent apply the changes chunk by chunk; returns the batch id. */
@@ -526,7 +507,6 @@ export class Wiki {
       await this.marker.setCommitted(sha);
     } catch {
       try { await this.recordFailure(); } catch { /* the writing marker and commit trailer remain sufficient for recovery */ }
-      this.statusCache = null;
       await this.notifyOutcome(wikiOutcomeText(rawPaths, pages, "pending"));
       return { result: { batchId, commit: sha, pages, publication: "pending" } };
     }
@@ -635,15 +615,12 @@ export class Wiki {
     } catch {
       await this.notifyOutcome(wikiOutcomeText(rawPaths, pages, "pending"));
       try { await this.recordFailure(); } catch { /* the committed marker remains the durable recovery record */ }
-      this.statusCache = null;
       return { batchId, commit: sha, pages, publication: "pending" };
     }
 
     await this.notifyOutcome(kind === "bootstrap"
       ? previewNotice({ batchId, commit: sha, pages })
       : wikiOutcomeText(rawPaths, pages, pushed ? "published" : "pending"));
-    this.cachedNextAttemptAt = null;
-    this.statusCache = null;
     return { batchId, commit: sha, pages, publication: kind === "bootstrap" ? "preview" : pushed ? "published" : "pending" };
   }
 
@@ -658,7 +635,6 @@ export class Wiki {
     const backoff = Math.min(60 * 60_000, 5 * 60_000 * 2 ** (failureStreak - 1));
     const nextAttemptAt = this.clock() + backoff;
     await this.stateStore.write({ ...current, failureStreak, nextAttemptAt });
-    this.cachedNextAttemptAt = nextAttemptAt;
     return failureStreak;
   }
 
@@ -667,7 +643,6 @@ export class Wiki {
     signal.throwIfAborted();
     await this.ready();
     return this.lock.run(async () => {
-      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -754,7 +729,6 @@ export class Wiki {
     signal.throwIfAborted();
     await this.ready();
     return this.lock.run(async () => {
-      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -782,7 +756,6 @@ export class Wiki {
     signal.throwIfAborted();
     await this.ready();
     return this.lock.run(async () => {
-      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -819,7 +792,6 @@ export class Wiki {
     await this.ready();
     return this.lock.run(async () => {
       const refused = (message: string): WikiRebuildResult => ({ reset: false, commit: null, removed: 0, publication: "not-needed", message });
-      this.statusCache = null;
       await this.repo.fetch();
       const state = await this.stateStore.read();
       const reconciled = await this.runReconcile(state);
@@ -837,7 +809,6 @@ export class Wiki {
       if (await this.repo.ref(BOOTSTRAP_REF)) await this.repo.deleteRef(BOOTSTRAP_REF);
       this.roots = await validateSubtreeRoots(this.repo.root);
       this.lastStatus = null;
-      this.cachedNextAttemptAt = null;
       try {
         signal.throwIfAborted();
         await this.pushWithRetry(true, signal);
