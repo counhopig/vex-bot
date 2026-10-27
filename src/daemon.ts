@@ -140,7 +140,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), context),
       sourceSegmentBudget: async (prefix, context) => {
         const tools = wikiTools(context);
-        const systemPrompt = await wikiPrompt(() => tools).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
+        const systemPrompt = await wikiPrompt(() => tools.map((tool) => tool.name)).build({ windowLabel: TEMPORARY_WINDOW_LABELS.wiki, now: new Date() });
         return maxUserPromptBytes(backgroundModel, systemPrompt, tools, prefix);
       },
       ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
