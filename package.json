@@ -15,7 +15,7 @@
   "scripts": {
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node scripts/copy-static.mjs",
     "dev": "tsx src/cli/index.ts start",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && tsc -p tsconfig.web.json",
     "test": "vitest run"
   },
   "dependencies": {

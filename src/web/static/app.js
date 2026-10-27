@@ -1,4 +1,12 @@
+// @ts-check
+/** @typedef {import("../../protocol/messages.js").ClientMessage} ClientMessage */
+/** @typedef {import("../../protocol/messages.js").ServerMessage} ServerMessage */
+/** @typedef {Extract<ClientMessage, { type: "save_schedule" }>} ScheduleMessage */
+/** @typedef {Extract<ClientMessage, { type: "approve" }>["answer"]} ApprovalAnswer */
+
 const $ = (id) => document.getElementById(id);
+/** A form control by id: an input, textarea or select, which all carry value and disabled. */
+const $field = (id) => /** @type {HTMLInputElement} */ ($(id));
 
 const state = {
   ws: null,
@@ -32,6 +40,7 @@ const state = {
   traces: { runs: [], nextBefore: undefined, loadingMore: false, query: "", source: "", errorsOnly: false, selected: null, summary: null, events: null, buffer: [], expanded: new Set(), renderTimer: null, dirtyDetail: false, searchTimer: null, liveTimer: null },
 };
 
+/** @param {ClientMessage} message */
 function send(message) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     try {
@@ -68,6 +77,7 @@ function connect() {
   });
 }
 
+/** @param {ServerMessage} msg */
 function handle(msg) {
   switch (msg.type) {
     case "sessions":
@@ -120,8 +130,8 @@ function handle(msg) {
       break;
     case "config":
       if (state.settingsTab === "yaml" && state.configBase === undefined) {
-        $("settings-text").value = msg.text;
-        $("settings-text").disabled = false;
+        $field("settings-text").value = msg.text;
+        $field("settings-text").disabled = false;
         state.configBase = msg.text;
       }
       break;
@@ -268,6 +278,7 @@ function parseMarkdown(text) {
   return blocks;
 }
 
+/** @type {[string, RegExp][]} */
 const INLINE_PATTERNS = [
   ["code", /`([^`\n]+)`/],
   ["link", /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/],
@@ -419,7 +430,7 @@ function selectSession(id) {
   state.currentId = id;
   remember(id);
   clearMessages();
-  for (const row of $("session-list").children) row.className = row.dataset.sessionId === id ? "active" : "";
+  for (const row of /** @type {HTMLCollectionOf<HTMLElement>} */ ($("session-list").children)) row.className = row.dataset.sessionId === id ? "active" : "";
   updateTopbar();
   closeDrawer();
   showChat();
@@ -657,11 +668,11 @@ function renderApprovals() {
     detail.textContent = request.detail;
     const actions = document.createElement("div");
     actions.className = "approval-actions";
-    for (const [answer, label, cls] of [
+    for (const [answer, label, cls] of /** @type {[ApprovalAnswer, string, string][]} */ ([
       ["allow", "Allow", ""],
       ...(request.everyCall ? [] : [["allow_session", `Always allow ${request.allowScope ?? request.toolName} in this conversation`, "secondary"]]),
       ["deny", "Deny", "danger"],
-    ]) {
+    ])) {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = label;
@@ -1020,7 +1031,9 @@ function renderSettingsForm() {
 /** Turns the form's edits into the set and unset lists the server applies to config.yaml. */
 function buildPatch(settings) {
   const { loaded, draft, secrets, typed, cleared } = settings;
+  /** @type {Record<string, string | number | boolean | string[]>} */
   const set = {};
+  /** @type {string[]} */
   const unset = [];
   const blank = (value) => value === undefined || value === "" || (Array.isArray(value) && value.every((item) => !item));
   const same = (a, b) => JSON.stringify(a ?? "") === JSON.stringify(b ?? "");
@@ -1160,14 +1173,14 @@ function openSettingsTab() {
     if (!state.settings) send({ type: "get_settings" });
     return;
   }
-  $("settings-text").value = "";
+  $field("settings-text").value = "";
   if (tab.pages) {
     renderFileTabs();
     renderFileEditors(FILE_PAGES.find((page) => page.id === state.filePage));
   } else {
     $("settings-hint").textContent = YAML_HINT;
     state.configBase = undefined;
-    $("settings-text").disabled = true;
+    $field("settings-text").disabled = true;
     send({ type: "get_config" });
   }
 }
@@ -1204,6 +1217,7 @@ function targetLabel(id) {
   return state.schedules?.targets.find((target) => target.id === id)?.label ?? id;
 }
 
+/** @returns {ScheduleMessage} */
 function scheduleMessage(task, changes = {}) {
   return { type: "save_schedule", id: task.id, name: task.name, prompt: task.prompt, target: task.target, enabled: task.enabled, schedule: task.schedule, ...changes };
 }
@@ -1276,7 +1290,7 @@ function renderScheduleForm(box) {
     if (!draft.name.trim() || !draft.prompt.trim() || !ruleValue) { showSaved(false, "", "Name, repeat rule and instruction are required"); return; }
     $("settings-result").textContent = "Saving…";
     $("settings-result").className = "";
-    send({ type: "save_schedule", ...(draft.id ? { id: draft.id } : {}), name: draft.name.trim(), prompt: draft.prompt.trim(), target: draft.target, enabled: draft.enabled, schedule: { [draft.kind]: ruleValue } });
+    send({ type: "save_schedule", ...(draft.id ? { id: draft.id } : {}), name: draft.name.trim(), prompt: draft.prompt.trim(), target: draft.target, enabled: draft.enabled, schedule: /** @type {ScheduleMessage["schedule"]} */ ({ [draft.kind]: ruleValue }) });
   });
   const cancel = element("button", "secondary", "Cancel");
   cancel.type = "button";
@@ -1359,7 +1373,7 @@ function saveSettings() {
     }
   } else {
     if (state.configBase === undefined) { showSaved(false, "", "Wait for the configuration to finish loading"); return; }
-    state.savingConfig = $("settings-text").value;
+    state.savingConfig = $field("settings-text").value;
     send({ type: "save_config", text: state.savingConfig, base: state.configBase });
   }
 }
@@ -1526,7 +1540,7 @@ function traceMeta(run) {
 }
 
 function renderTraceSources() {
-  const select = $("trace-source");
+  const select = $field("trace-source");
   const sources = [...new Set(state.traces.runs.map((run) => run.source))].sort();
   if (state.traces.source && !sources.includes(state.traces.source)) sources.push(state.traces.source);
   const all = element("option", "", "All sources");
@@ -1885,7 +1899,7 @@ function autoGrow() {
 
 $("composer").addEventListener("submit", (event) => {
   event.preventDefault();
-  const input = $("input");
+  const input = $field("input");
   const text = input.value.trim();
   if (!text || !state.currentId) return;
   if (!send({ type: "send", sessionId: state.currentId, text })) return;
@@ -1898,7 +1912,7 @@ $("input").addEventListener("keydown", (event) => {
   // On touch screens Enter starts a new line and the send button sends.
   if (event.ctrlKey || event.metaKey || (!event.shiftKey && !isTouchDevice())) {
     event.preventDefault();
-    $("composer").requestSubmit();
+    /** @type {HTMLFormElement} */ ($("composer")).requestSubmit();
   }
 });
 
@@ -1923,19 +1937,19 @@ $("close-traces").addEventListener("click", showChat);
 $("trace-search").addEventListener("input", () => {
   clearTimeout(state.traces.searchTimer);
   state.traces.searchTimer = setTimeout(() => {
-    state.traces.query = $("trace-search").value.trim();
+    state.traces.query = $field("trace-search").value.trim();
     state.traces.runs = [];
     state.traces.nextBefore = undefined;
     loadTraces();
     renderTraceDetail();
   }, TRACE_SEARCH_MS);
 });
-$("trace-source").addEventListener("change", () => { state.traces.source = $("trace-source").value; renderTraceList(); });
-$("trace-errors").addEventListener("change", () => { state.traces.errorsOnly = $("trace-errors").checked; renderTraceList(); });
+$("trace-source").addEventListener("change", () => { state.traces.source = $field("trace-source").value; renderTraceList(); });
+$("trace-errors").addEventListener("change", () => { state.traces.errorsOnly = $field("trace-errors").checked; renderTraceList(); });
 
 applyTheme(currentTheme());
 renderSettingsTabs();
-$("input").placeholder = isTouchDevice() ? "Say something…" : "Say something… (Enter sends, Shift+Enter adds a line)";
+$field("input").placeholder = isTouchDevice() ? "Say something…" : "Say something… (Enter sends, Shift+Enter adds a line)";
 setInterval(() => { if (!document.hidden) send({ type: "get_status" }); }, 20000);
 
 connect();
