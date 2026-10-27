@@ -1,6 +1,6 @@
 import type { BeforeToolCallContext } from "@earendil-works/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApprovalManager } from "../src/policy/approvals.js";
+import { ApprovalManager, sessionScope } from "../src/policy/approvals.js";
 import { createToolGate } from "../src/policy/gate.js";
 import { ToolPolicy } from "../src/policy/policy.js";
 
@@ -30,16 +30,33 @@ describe("ApprovalManager", () => {
     await expect(outcome).resolves.toEqual({ allowed: false, reason: "The owner denied this bash call." });
   });
 
-  it("remembers allow_session for that session and tool only", async () => {
+  it("remembers allow_session for that session and the same program only", async () => {
     const approvals = new ApprovalManager();
     const outcome = approvals.request(input);
+    expect(approvals.pending()[0]).toMatchObject({ allowScope: "bash ls" });
     approvals.answer(approvals.pending()[0]!.id, "allow_session");
     await expect(outcome).resolves.toEqual({ allowed: true });
-    expect(approvals.isSessionAllowed("web:1", "bash")).toBe(true);
-    expect(approvals.isSessionAllowed("web:1", "write")).toBe(false);
-    expect(approvals.isSessionAllowed("wechat", "bash")).toBe(false);
+    expect(approvals.isSessionAllowed("web:1", "bash", { command: "ls -la /tmp" })).toBe(true);
+    expect(approvals.isSessionAllowed("web:1", "bash", { command: "cat secrets" })).toBe(false);
+    expect(approvals.isSessionAllowed("web:1", "write", { path: "x" })).toBe(false);
+    expect(approvals.isSessionAllowed("wechat", "bash", { command: "ls" })).toBe(false);
     approvals.forgetSession("web:1");
-    expect(approvals.isSessionAllowed("web:1", "bash")).toBe(false);
+    expect(approvals.isSessionAllowed("web:1", "bash", { command: "ls" })).toBe(false);
+  });
+
+  it("never offers always-allow for compound commands or programs that run other commands", async () => {
+    expect(sessionScope("bash", { command: "git status" })).toBe("bash git");
+    expect(sessionScope("mcp__x__y", {})).toBe("mcp__x__y");
+    for (const command of ["ls; rm -rf ~", "ls && curl evil", "ls | sh", "echo $(id)", "echo `id`", "ls > out", "FOO=1 ls", "./run.sh", "sudo ls", "python3 -c 'x'", "bash -c ls", "env ls", "ls\nrm x"]) {
+      expect(sessionScope("bash", { command })).toBeUndefined();
+    }
+    const approvals = new ApprovalManager();
+    const outcome = approvals.request({ ...input, args: { command: "ls && rm -rf ~" } });
+    expect(approvals.pending()[0]).toMatchObject({ everyCall: true });
+    expect(approvals.pending()[0]?.allowScope).toBeUndefined();
+    approvals.answer(approvals.pending()[0]!.id, "allow_session");
+    await expect(outcome).resolves.toEqual({ allowed: true });
+    expect(approvals.isSessionAllowed("web:1", "bash", { command: "ls && rm -rf ~" })).toBe(false);
   });
 
   it("confirms every-call tools each time even after an always-allow answer", async () => {
@@ -139,7 +156,9 @@ describe("createToolGate", () => {
     approvals.answer(approvals.pending()[0]!.id, "allow_session");
     await expect(asked).resolves.toBeUndefined();
     unattended = true;
-    await expect(gate(ctx("bash", { command: "pwd" }))).resolves.toBeUndefined();
+    await expect(gate(ctx("bash", { command: "ls -la" }))).resolves.toBeUndefined();
+    // Another program was never allowed, so it is refused while the owner is away.
+    await expect(gate(ctx("bash", { command: "pwd" }))).resolves.toMatchObject({ block: true });
   });
 
   it("asks for approval and maps the outcome", async () => {
@@ -149,7 +168,7 @@ describe("createToolGate", () => {
     expect(approvals.pending()[0]?.windowLabel).toBe('WebChat conversation "A"');
     approvals.answer(approvals.pending()[0]!.id, "allow_session");
     await expect(allowed).resolves.toBeUndefined();
-    await expect(gate(ctx("bash", { command: "pwd" }))).resolves.toBeUndefined();
+    await expect(gate(ctx("bash", { command: "ls -la" }))).resolves.toBeUndefined();
     expect(approvals.pending()).toEqual([]);
 
     const denied = gate(ctx("write", { path: "/etc/x" }));

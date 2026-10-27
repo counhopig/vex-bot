@@ -659,7 +659,7 @@ function renderApprovals() {
     actions.className = "approval-actions";
     for (const [answer, label, cls] of [
       ["allow", "Allow", ""],
-      ...(request.everyCall ? [] : [["allow_session", "Always allow in this conversation", "secondary"]]),
+      ...(request.everyCall ? [] : [["allow_session", `Always allow ${request.allowScope ?? request.toolName} in this conversation`, "secondary"]]),
       ["deny", "Deny", "danger"],
     ]) {
       const button = document.createElement("button");

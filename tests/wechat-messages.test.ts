@@ -69,6 +69,7 @@ describe("splitMessage", () => {
 
 describe("formatApprovalPrompt", () => {
   const request: ApprovalRequest = {
+    allowScope: "bash ls",
     id: "a1",
     sessionKey: "web:1",
     windowLabel: "WebChat conversation 'Tidy'",
@@ -81,7 +82,7 @@ describe("formatApprovalPrompt", () => {
 
   it("names the source, tool, command and deadline", () => {
     expect(formatApprovalPrompt(request, 1, "Asia/Shanghai")).toBe(
-      "[Approval needed] WebChat conversation 'Tidy' wants to run bash:\nls -la\nReply /y to allow, /ya to always allow in this conversation, /n to deny (denied automatically if there is no answer by 14:10)",
+      "[Approval needed] WebChat conversation 'Tidy' wants to run bash:\nls -la\nReply /y to allow, /ya to always allow bash ls in this conversation, /n to deny (denied automatically if there is no answer by 14:10)",
     );
   });
 

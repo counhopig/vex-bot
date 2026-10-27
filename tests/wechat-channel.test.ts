@@ -314,8 +314,9 @@ describe("WeChatChannel approvals", () => {
     const pending = approvals.request({ sessionKey: "wechat", windowLabel: "WeChat", toolName: "bash", args: { command: "pwd" } });
     ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "b1" }));
     await expect(pending).resolves.toEqual({ allowed: true });
-    expect(approvals.isSessionAllowed("wechat", "bash")).toBe(true);
-    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash will not be asked about again in this conversation"));
+    expect(approvals.isSessionAllowed("wechat", "bash", { command: "pwd -P" })).toBe(true);
+    expect(approvals.isSessionAllowed("wechat", "bash", { command: "rm -rf x" })).toBe(false);
+    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash pwd will not be asked about again in this conversation"));
   });
 });
 

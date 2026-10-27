@@ -30,9 +30,9 @@ export interface WeChatChannelOptions {
 
 const SEEN_LIMIT = 500;
 
-const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string) => string> = {
+const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string, scope: string) => string> = {
   allow: (tool) => `Allowed: ${tool}`,
-  allow_session: (tool) => `Allowed; ${tool} will not be asked about again in this conversation`,
+  allow_session: (_tool, scope) => `Allowed; ${scope} will not be asked about again in this conversation`,
   deny: (tool) => `Denied: ${tool}`,
 };
 
@@ -233,7 +233,9 @@ export class WeChatChannel {
       return;
     }
     this.opts.approvals.answer(oldest.id, answer);
-    this.send(ANSWER_REPLIES[answer](oldest.toolName));
+    // "Always allow" for a call that offers none answers it once.
+    const effective = answer === "allow_session" && oldest.allowScope === undefined ? "allow" : answer;
+    this.send(ANSWER_REPLIES[effective](oldest.toolName, oldest.allowScope ?? oldest.toolName));
   }
 
   private onBusEvent(event: VexEvent): void {
