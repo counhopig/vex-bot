@@ -84,6 +84,7 @@ export const ConfigSchema = StrictObject({
     maxMinutes: Type.Optional(Type.Integer({ minimum: 1, maximum: 600 })),
   })),
   links: Type.Optional(StrictObject({
+    defaultIntent: Type.Optional(Type.Union([Type.Literal("archive"), Type.Literal("read")])),
     bilibili: Type.Optional(StrictObject({ sessdata: Type.Optional(Type.String()) })),
   })),
   vault: Type.Optional(StrictObject({
@@ -148,7 +149,7 @@ export interface VexConfig {
   persona?: { sleep?: [string, string]; outreach?: { enabled?: boolean; checkEvery?: string; socialThreshold?: number; quietHours?: number; dailyLimit?: number } };
   webSearch?: { provider: "brave" | "tavily" | "searxng" | "deepseek"; apiKey?: string; baseUrl?: string };
   stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };
-  links?: { bilibili?: { sessdata?: string } };
+  links?: { defaultIntent?: "archive" | "read"; bilibili?: { sessdata?: string } };
   vault?: VaultConfig;
   jev?: import("../providers/jev.js").JevConfig;
   mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string>; cwd?: string } | { url: string; headers?: Record<string, string> }>;

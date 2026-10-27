@@ -77,6 +77,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `stt.language` | auto | Language hint such as `zh`; MiMo accepts `auto`, `zh` and `en` |
 | `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30; at most 15 with MiMo); lower it for services with small upload limits |
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
+| `links.defaultIntent` | `archive` | With the wiki enabled, what a shared link gets when the message does not say: `archive` saves it into the wiki (say "don't save" to only read it); `read` only reads it (say "save it" to archive). Applies without a restart |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
 | `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps one copy, shared with the wiki. The address must not contain credentials |

@@ -27,7 +27,7 @@ import type { VexPaths } from "./paths.js";
 import { PROACTIVE_CHAT_SOURCE, type Persona } from "./persona/index.js";
 import type { ApprovalManager } from "./policy/approvals.js";
 import { createToolGate } from "./policy/gate.js";
-import type { LinkClassifier } from "./links/intent.js";
+import type { DefaultLinkIntent, LinkClassifier } from "./links/intent.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { Jev } from "./providers/jev.js";
 import type { ModelRegistry } from "./providers/models.js";
@@ -185,9 +185,10 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
         onOutcome: (message) => host.enqueueAssistant(message),
         onUsage: (usage) => host.recordUsage(usage),
         confidence: linkConfidence,
-        ...(linkClassifier ? { classify: async (input: string, urls: string[], signal?: AbortSignal) => {
+        defaultIntent: () => config.links?.defaultIntent ?? "archive",
+        ...(linkClassifier ? { classify: async (input: string, urls: string[], signal?: AbortSignal, defaultIntent?: DefaultLinkIntent) => {
           const clean = redactSecrets({ input, urls }, secrets());
-          const choices = await linkClassifier.classifyLinks(clean.input, clean.urls, signal);
+          const choices = await linkClassifier.classifyLinks(clean.input, clean.urls, signal, defaultIntent);
           // Redaction can rewrite a URL; answers follow the order of the URLs sent.
           return choices.map((choice, index) => ({ ...choice, url: urls[index] ?? choice.url }));
         } } : {}),

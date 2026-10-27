@@ -765,6 +765,7 @@ const SETTINGS_TABS = [
       { path: "stt.maxMinutes", label: "Longest video (minutes)", type: "number", min: 1, max: 600, help: "Longer videos are not transcribed; default 90." },
     ] },
     { title: "Reading links", fields: [
+      { path: "links.defaultIntent", label: "Shared links", type: "select", options: ["", "read"], labels: { "": "Archive into the wiki unless I say not to", read: "Only read them unless I ask to save" }, help: "Applies when the wiki is enabled; you can always say what to do with a particular link." },
       { path: "links.bilibili.sessdata", label: "Bilibili SESSDATA", type: "secret", help: "After signing in to bilibili.com, copy SESSDATA from the browser developer tools under Application → Cookies. Most subtitles need a login to read; it is as good as your login credential, so keep it safe. Takes effect as soon as it is saved." },
     ] },
     { title: "Web search", fields: [

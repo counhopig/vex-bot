@@ -29,6 +29,13 @@ describe("settings", () => {
     expect(() => applySettings(base, { set: { "jev.confidence": 2 } }, paths)).toThrow(ConfigError);
   });
 
+  it("applies the default link intent live and rejects unknown values", () => {
+    const updated = applySettings(base, { set: { "links.defaultIntent": "read" } }, paths);
+    expect(updated.text).toContain("defaultIntent: read");
+    expect(updated.restartRequired).toBe(false);
+    expect(() => applySettings(base, { set: { "links.defaultIntent": "delete" } }, paths)).toThrow(ConfigError);
+  });
+
   it("lists editable values and reports secrets without revealing them", () => {
     const view = readSettings(`${base}stt:\n  baseUrl: https://stt.example/v1\n  model: whisper-1\n  apiKey: k\nheartbeat:\n  activeHours: ["08:00", "22:00"]\nlinks:\n  bilibili:\n    sessdata: abc\n`);
     expect(view.values).toMatchObject({ "model.provider": "deepseek", "stt.model": "whisper-1", "heartbeat.activeHours": ["08:00", "22:00"] });

@@ -129,7 +129,7 @@ Notifications the runtime delivers (wiki results, link-action outcomes, heartbea
 
 With the wiki enabled, an owner message containing links is handled in three steps before the model writes its reply:
 
-1. **Intake.** Each link's intent is classified once: `archive`, `read` (the owner asked not to save it) or `defer`. Jev answers when it is enabled; otherwise, or when Jev is unsure, the main model answers a bounded JSON question. Only a confident answer counts.
+1. **Intake.** Each link's intent is classified once: `archive`, `read` or `defer`, against the owner's standing preference `links.defaultIntent` (archive unless told not to, or read unless asked to save). Jev answers when it is enabled; otherwise, or when Jev is unsure, the main model answers a bounded JSON question. Only a confident answer counts.
 2. **Action.** The runtime calls `wiki_ingest` (archive) or `web_fetch` (read) for each confidently classified link, as the run's first steps, through the normal policy and approval gate. A deferred link, or one whose tool is unavailable, is left to the model.
 3. **Result.** The tool result is in the conversation when the model answers. The owner is told directly about what no wiki run reports: a refused or failed call, a source that could not be read, a metadata-only page, or an archive waiting for bootstrap review. The wiki reports its own compile and publish results.
 
