@@ -6,6 +6,7 @@ import type { ApprovalAnswer, ApprovalManager } from "../../policy/approvals.js"
 import { SESSION_EXPIRED_ERRCODE, WeChatApiError, type InboundMessage, type WeChatClient } from "./client.js";
 import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from "./messages.js";
 import type { WeChatStore } from "./store.js";
+import { TurnReply } from "../turnReply.js";
 
 export interface WeChatSessions {
   get(key: string): Promise<{ send(text: string, source?: string, existingRequestId?: string): void; stop(): void; readonly busy: boolean }>;
@@ -29,8 +30,7 @@ export interface WeChatChannelOptions {
 }
 
 interface Turn {
-  texts: string[];
-  aborted: boolean;
+  reply: TurnReply;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -279,12 +279,10 @@ export class WeChatChannel {
           if (event.text) this.send(event.text);
           return;
         }
-        // Text written alongside tool calls narrates the work; the owner gets the reply that ends the turn.
-        if (event.text && event.stopReason !== "toolUse") this.turn.texts.push(event.text);
-        if (event.stopReason === "aborted") this.turn.aborted = true;
+        this.turn.reply.add(event);
         return;
       case "error":
-        if (this.turn) this.turn.texts.push(event.message);
+        if (this.turn) this.turn.reply.add(event);
         else this.send(event.message);
         return;
       default:
@@ -298,7 +296,7 @@ export class WeChatChannel {
     const timer = setTimeout(() => {
       if (!silent && this.turn?.timer === timer) this.send("Working on it…");
     }, this.opts.processingNoticeMs ?? 15_000);
-    this.turn = { texts: [], aborted: false, timer };
+    this.turn = { reply: new TurnReply(), timer };
   }
 
   private endTurn(discard = false): void {
@@ -307,9 +305,9 @@ export class WeChatChannel {
     clearTimeout(turn.timer);
     this.turn = undefined;
     if (discard) return;
-    const reply = turn.texts.join("\n\n");
+    const reply = turn.reply.text;
     const report = this.opts.onReplyDelivery;
-    if (turn.aborted) this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
+    if (turn.reply.status === "interrupted") this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
     else if (reply) this.lastReply = this.send(reply, report);
   }
 
