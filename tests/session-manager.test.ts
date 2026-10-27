@@ -203,6 +203,8 @@ describe("SessionManager", () => {
     const session = await manager.get(webSessionKey(meta.id));
     session.send("hi");
     await session.whenIdle();
+    // The message's index update is written asynchronously; let it land before the index is replaced.
+    await vi.waitFor(() => expect(busEvents.filter((event) => event.type === "sessions_changed").length).toBeGreaterThanOrEqual(2));
     const transcript = join(paths.webSessions, `${meta.id}.jsonl`);
     const before = await readFile(transcript, "utf8");
     const index = join(paths.webSessions, "index.json");
