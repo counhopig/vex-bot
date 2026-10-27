@@ -65,13 +65,33 @@ const OVERLOAD_BACKOFF = 10;
  */
 type RunPhase = "idle" | "running" | "finishing" | "stopping";
 
+/** One run's own facts, from the message that starts it until the next run starts; read after it ends. */
+interface RunState {
+  /** The runtime source that started it; undefined for an owner message. */
+  source: string | undefined;
+  /** Owner messages in this run, the starting one included. */
+  ownerMessages: number;
+  stopped: boolean;
+  failed: boolean;
+  failureReason?: string;
+  /** Why the budget check refused a request, for the failure reason. */
+  budgetCause?: string;
+  failedTools: Set<string>;
+  lastResponse?: AssistantMessage;
+  /** The texts and errors that make up the reply ending the run. */
+  reply: string[];
+}
+
+function newRunState(source?: string): RunState {
+  return { source, ownerMessages: source ? 0 : 1, stopped: false, failed: false, failedTools: new Set(), reply: [] };
+}
+
 export class Session {
   readonly key: string;
   private readonly agent: Agent;
   private current: Promise<void> | undefined;
   private phase: RunPhase = "idle";
-  // Whether the latest run was stopped; read after it ends.
-  private stopped = false;
+  private runState: RunState = newRunState();
   private backoff: AbortController | undefined;
   // Messages sent while a stopped or finishing run winds down; they start a fresh run afterwards.
   private afterStop: { text: string; source?: string; requestId?: string }[] = [];
@@ -81,29 +101,20 @@ export class Session {
   private readonly transcriptHistory: TranscriptHistory;
   private readonly compactor?: ContextCompactor;
   private readonly cursor = new TranscriptCursor();
-  private pendingOwner = 0;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
-  private runSource?: string;
-  private runFailed = false;
-  private runFailureReason?: string;
-  private observedBudgetFailure?: string;
-  private readonly failedTools = new Set<string>();
-  private lastResponse?: AssistantMessage;
-  // The texts and errors that make up the reply ending the current run.
-  private turnReply: string[] = [];
   private readonly controller?: TurnController;
   private pendingProviderUsage = zeroUsage();
   private readonly currentTrace = (): RunTrace | undefined => this.opts.trace?.current;
 
   get successfulReply(): string | undefined {
-    return !this.runFailed && !this.stopped && this.lastResponse && this.lastResponse.stopReason !== "error" && this.lastResponse.stopReason !== "aborted" ? assistantText(this.lastResponse) : undefined;
+    return !this.runState.failed && !this.runState.stopped && this.runState.lastResponse && this.runState.lastResponse.stopReason !== "error" && this.runState.lastResponse.stopReason !== "aborted" ? assistantText(this.runState.lastResponse) : undefined;
   }
 
   /** How the last run ended; callers decide which failed tools make it unusable. */
   get completionOutcome(): { successful: boolean; failureReason?: string; failedTools: string[] } {
     return { successful: this.successfulReply !== undefined,
-      ...(this.runFailureReason ? { failureReason: this.runFailureReason } : {}), failedTools: [...this.failedTools] };
+      ...(this.runState.failureReason ? { failureReason: this.runState.failureReason } : {}), failedTools: [...this.runState.failedTools] };
   }
 
   static async open(opts: SessionOptions): Promise<Session> {
@@ -197,12 +208,12 @@ export class Session {
 
   /** A run the runtime started (a source is set) that no owner message has joined. */
   get unattended(): boolean {
-    return this.current !== undefined && this.runSource !== undefined && this.pendingOwner === 0;
+    return this.current !== undefined && this.runState.source !== undefined && this.runState.ownerMessages === 0;
   }
 
   /** A quiet-source run that no owner message has joined. */
   private get quiet(): boolean {
-    return this.runSource !== undefined && this.pendingOwner === 0 && (this.opts.quietSources?.includes(this.runSource) ?? false);
+    return this.runState.source !== undefined && this.runState.ownerMessages === 0 && (this.opts.quietSources?.includes(this.runState.source) ?? false);
   }
 
   /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
@@ -224,46 +235,39 @@ export class Session {
       return;
     }
     if (!this.current) this.controller?.runStarting();
-    if (!source) { this.pendingOwner++; this.opts.onOwnerMessage?.(); }
+    if (!source) this.opts.onOwnerMessage?.();
     const message: UserMessage & { vexSource?: string; vexRequestId?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}), ...(requestId ? { vexRequestId: requestId } : {}) };
     if (this.current) {
+      if (!source) this.runState.ownerMessages++;
       this.currentTrace()?.record({ type: "user", text, ...(source ? { source } : {}) });
       this.agent.steer(message);
       return;
     }
     this.phase = "running";
-    this.stopped = false;
-    this.runSource = source;
-    this.runFailed = false;
-    this.runFailureReason = undefined;
-    this.observedBudgetFailure = undefined;
-    this.failedTools.clear();
-    this.lastResponse = undefined;
-    this.turnReply = [];
+    this.runState = newRunState(source);
     this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}), ...(this.quiet ? { quiet: true } : {}) });
     this.opts.trace?.begin({ session: this.key, source: source ?? "owner", model: `${this.opts.model.provider}/${this.opts.model.id}`, text });
     this.current = this.run(message)
       .catch((err: unknown) => {
-        this.runFailed = true;
-        this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
+        this.runState.failed = true;
+        this.runState.failureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
         if (err instanceof ContextBudgetError) this.currentTrace()?.record({ type: "check", kind: "budget", detail: err.reason });
         this.opts.onError?.(err);
         this.reportRunError(`Error while handling the message: ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(async () => {
         const reply = this.successfulReply;
-        this.opts.trace?.finish(this.stopped ? "stopped" : this.runFailed ? "error" : "ok",
-          { ...(this.runFailureReason ? { error: this.runFailureReason } : {}), ...(reply ? { reply } : {}) });
+        this.opts.trace?.finish(this.runState.stopped ? "stopped" : this.runState.failed ? "error" : "ok",
+          { ...(this.runState.failureReason ? { error: this.runState.failureReason } : {}), ...(reply ? { reply } : {}) });
         this.current = undefined;
         this.phase = "idle";
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
         if (!this.quiet || reply) {
-          const status: TurnStatus = this.stopped ? "interrupted" : this.runFailed ? "error" : "ok";
-          this.opts.emit({ kind: "turn_end", reply: this.turnReply.join("\n\n"), status });
+          const status: TurnStatus = this.runState.stopped ? "interrupted" : this.runState.failed ? "error" : "ok";
+          this.opts.emit({ kind: "turn_end", reply: this.runState.reply.join("\n\n"), status });
         }
         this.opts.emit({ kind: "busy", busy: false });
-        this.pendingOwner = 0;
         await this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
       });
   }
@@ -287,7 +291,7 @@ export class Session {
     this.controller?.stopped();
     if (this.phase === "idle") return;
     this.phase = "stopping";
-    this.stopped = true;
+    this.runState.stopped = true;
     this.backoff?.abort();
     this.agent.clearAllQueues();
     this.agent.abort();
@@ -317,7 +321,7 @@ export class Session {
     return async (model, context, options) => {
       try { return await stream(model, context, options); }
       catch (error) {
-        if (error instanceof ContextBudgetError) this.observedBudgetFailure = error.reason;
+        if (error instanceof ContextBudgetError) this.runState.budgetCause = error.reason;
         throw error;
       }
     };
@@ -392,7 +396,7 @@ export class Session {
   /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */
   private reportRunError(message: string): void {
     if (this.quiet) return;
-    this.turnReply.push(message);
+    this.runState.reply.push(message);
     this.opts.emit({ kind: "error", message });
   }
 
@@ -438,8 +442,8 @@ export class Session {
     }
     this.beginFinishing();
     await this.writes;
-    if (this.pendingOwner && this.successfulReply) {
-      await this.opts.onOwnerInteraction?.(this.pendingOwner);
+    if (this.runState.ownerMessages && this.successfulReply) {
+      await this.opts.onOwnerInteraction?.(this.runState.ownerMessages);
     }
     } finally {
       this.beginFinishing();
@@ -469,11 +473,11 @@ export class Session {
       const budgetFailure = last.errorMessage?.includes(CONTEXT_BUDGET_ERROR) ?? false;
       if (attempt > attempts || budgetFailure) {
         await this.flushPendingProviderUsage();
-        this.runFailed = true;
-        this.runFailureReason = budgetFailure
-          ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.observedBudgetFailure ?? "request could not be estimated"}` : last.errorMessage;
-        if (budgetFailure) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
-        const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
+        this.runState.failed = true;
+        this.runState.failureReason = budgetFailure
+          ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.runState.budgetCause ?? "request could not be estimated"}` : last.errorMessage;
+        if (budgetFailure) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.runState.budgetCause ?? "request could not be estimated" });
+        const error = new Error(this.runState.failureReason ? `Model call failed: ${this.runState.failureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
         this.reportRunError(error.message);
         return;
@@ -505,7 +509,7 @@ export class Session {
         return;
       case "message_end": {
         const message = event.message;
-        if (message.role === "toolResult" && message.isError) this.failedTools.add(message.toolName);
+        if (message.role === "toolResult" && message.isError) this.runState.failedTools.add(message.toolName);
         if (message.role === "toolResult") this.controller?.toolResults(this.agent.state.messages);
         // System messages are rebuilt from the current prompt and tools on every start.
         if (message.role === "system") return;
@@ -516,10 +520,10 @@ export class Session {
         if (message.role === "user") {
           this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource, requestId: (message as UserMessage & { vexRequestId?: string }).vexRequestId });
         } else if (message.role === "assistant") {
-          this.lastResponse = message;
+          this.runState.lastResponse = message;
           const text = assistantText(message);
           // Text written beside tool calls narrates the work; the turn's reply is what ends it.
-          if (text && message.stopReason !== "toolUse") this.turnReply.push(text);
+          if (text && message.stopReason !== "toolUse") this.runState.reply.push(text);
           if ((text || message.stopReason === "aborted") && !(this.quiet && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }

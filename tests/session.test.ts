@@ -692,6 +692,27 @@ describe("Session", () => {
     await session.dispose();
   });
 
+  it("counts the owner's message in a run started from the previous run's busy:false event", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
+    const interactions: number[] = [];
+    let session!: Session;
+    let sent = false;
+    session = await open({
+      onOwnerInteraction: async (count) => { interactions.push(count); },
+      emit: (event) => {
+        events.push(event);
+        if (event.kind === "busy" && !event.busy && !sent) { sent = true; session.send("follow-up"); }
+      },
+    });
+    session.send("ping", "scheduled task");
+    await session.whenIdle();
+    await session.whenIdle();
+    expect(session.successfulReply).toBe("second");
+    expect(interactions).toEqual([1]);
+    await session.dispose();
+  });
+
   it("runs tools and reports them", async () => {
     faux = createFaux();
     faux.setResponses([
