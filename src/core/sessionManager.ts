@@ -21,6 +21,8 @@ export interface SessionManagerOptions {
   idleTimeoutMs?: number;
   /** Keeps a session open for an outside reason, such as an approval it is waiting for. */
   retain?: (key: string) => boolean;
+  /** Told after a WebChat conversation has been deleted. */
+  onDeleted?: (key: string) => void;
   /** The device session's window label; without it the device session does not exist. */
   deviceLabel?: string;
   now?: () => number;
@@ -171,6 +173,7 @@ export class SessionManager {
       }
       if (moved) await rm(removed, { force: true }).catch((err: unknown) => this.opts.onError?.(err));
       this.untitledFirstMessage.delete(id);
+      this.opts.onDeleted?.(key);
       this.opts.bus.emit({ type: "sessions_changed" });
     } finally {
       if (restoreLoaded && loaded && this.index.get(id)) {

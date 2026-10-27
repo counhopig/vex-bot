@@ -38,6 +38,8 @@ describe("ApprovalManager", () => {
     expect(approvals.isSessionAllowed("web:1", "bash")).toBe(true);
     expect(approvals.isSessionAllowed("web:1", "write")).toBe(false);
     expect(approvals.isSessionAllowed("wechat", "bash")).toBe(false);
+    approvals.forgetSession("web:1");
+    expect(approvals.isSessionAllowed("web:1", "bash")).toBe(false);
   });
 
   it("confirms every-call tools each time even after an always-allow answer", async () => {

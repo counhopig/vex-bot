@@ -166,7 +166,8 @@ describe("SessionManager", () => {
   it("deletes a session with its transcript", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("x")]);
-    const manager = makeManager();
+    const deleted: string[] = [];
+    const manager = makeManager(undefined, { onDeleted: (key) => deleted.push(key) });
     await manager.init();
     const meta = await manager.createWeb();
     const session = await manager.get(webSessionKey(meta.id));
@@ -174,6 +175,7 @@ describe("SessionManager", () => {
     await session.whenIdle();
     await manager.deleteWeb(meta.id);
     expect(manager.listWeb()).toEqual([]);
+    expect(deleted).toEqual([webSessionKey(meta.id)]);
     await expect(stat(join(paths.webSessions, `${meta.id}.jsonl`))).rejects.toThrow();
     await expect(manager.get(webSessionKey(meta.id))).rejects.toThrow(UnknownSessionError);
     await expect(manager.deleteWeb(meta.id)).rejects.toThrow(UnknownSessionError);

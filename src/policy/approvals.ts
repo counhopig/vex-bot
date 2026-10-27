@@ -114,6 +114,11 @@ export class ApprovalManager {
     return !this.everyCall.has(toolName) && (this.sessionAllowed.get(sessionKey)?.has(toolName) ?? false);
   }
 
+  /** Drops the "always allow" answers of a conversation that no longer exists. */
+  forgetSession(sessionKey: string): void {
+    this.sessionAllowed.delete(sessionKey);
+  }
+
   dispose(): void {
     for (const pending of [...this.pendingById.values()]) {
       pending.settle({ allowed: false, reason: "vexd is shutting down." });

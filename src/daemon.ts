@@ -36,7 +36,7 @@ import { Wiki, type WikiRunContext } from "./vault/wiki/service.js";
 import type { GitRunner } from "./vault/wiki/git.js";
 import { unresolvedWikiWrites } from "./vault/wiki/tools.js";
 import { Persona, PROACTIVE_CHAT_SOURCE } from "./persona/index.js";
-import { Scheduler } from "./scheduler/index.js";
+import { Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
@@ -104,8 +104,6 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     workspace: config.workspace,
     onEvent: (event) => (event.type === "denied" ? log.warn : log.info).call(log, { tool: event.toolName, window: event.windowLabel, reason: event.reason }, `approval ${event.type}`),
   });
-  const protectedRoots: string[] = [];
-  const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots, readableRoots: [builtinSkillsDirectory()] });
   const memoryIndex = await MemoryIndex.open({ databasePath: join(paths.home, "index.sqlite"), workspace: config.workspace, sessions: paths.sessions, onWarning: (message) => log.warn(message) });
   const shutdown = new ShutdownPlan(log);
   shutdown.add("approvals", () => approvals.dispose());
@@ -146,6 +144,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...(opts.wikiGitRunner ? { run: opts.wikiGitRunner } : {}),
       onWarning: (message) => log.warn(message),
     }) : undefined;
+    // The wiki's clone is written only through the wiki's own tools, never by general file tools.
+    const policy = new ToolPolicy({ workspace: config.workspace, overrides: config.toolPolicy, protectedRoots: wiki ? [wiki.root] : [], readableRoots: [builtinSkillsDirectory()] });
     const vault = config.vault ? new Vault({ home: paths.home, config: config.vault, ...(wiki ? { copy: wiki.notesCopy } : {}), onWarning: (message) => log.warn(message) }) : undefined;
     const linkReading = (signal: AbortSignal, request?: PageRequest) => ({
       signal,
@@ -174,6 +174,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       onError: (err) => log.warn({ err }, "session manager task failed"),
       // A WebChat session waiting for the owner's approval stays open until the answer arrives.
       retain: (key) => approvals.pending().some((request) => request.sessionKey === key),
+      onDeleted: (key) => approvals.forgetSession(key),
       ...(deviceToken ? { deviceLabel: config.device!.label } : {}),
     });
     await sessions.init();
@@ -184,10 +185,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       shutdown.add("device", () => device.stop());
     }
 
-    if (wiki) {
-      protectedRoots.push(wiki.root);
-      shutdown.add("wiki", () => wiki.close());
-    }
+    if (wiki) shutdown.add("wiki", () => wiki.close());
     const deliver = async (target: string, text: string, source: string, signal: AbortSignal): Promise<void> => {
       signal.throwIfAborted();
       const session = await sessions.get(scheduleTargetKey(target));
@@ -197,9 +195,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       try { session.send(text, source); await session.whenIdle(); } finally { signal.removeEventListener("abort", abort); }
     };
     scheduler = new Scheduler({ dataDir: paths.home, workspace: config.workspace,
-      heartbeat: { every: config.heartbeat?.every ?? "30m", activeHours: config.heartbeat?.activeHours ?? ["08:00", "22:00"] },
-      memory: { consolidateAt: config.memory?.consolidateAt ?? "03:00" },
-      outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? "30m" },
+      heartbeat: { every: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery, activeHours: config.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours },
+      memory: { consolidateAt: config.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt },
+      outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery },
       ...(wikiConfig ? { wiki: { every: wikiConfig.every } } : {}),
       hooks: {
         log: (err) => log.warn({ err }, "scheduled task failed"),
@@ -342,7 +340,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       mcpServers: Object.keys(config.mcpServers ?? {}).length,
       webSearch: config.webSearch?.provider,
       speechToText: !!config.stt,
-      heartbeat: config.heartbeat?.every ?? "30m",
+      heartbeat: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery,
     }, "vexd started");
 
     return {

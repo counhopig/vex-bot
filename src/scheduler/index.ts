@@ -29,6 +29,13 @@ export interface SchedulerOptions {
   /** Wiki cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
   wiki?: { every: string };
 }
+/** Built-in cadences used when the configuration leaves them out. */
+export const SCHEDULER_DEFAULTS = {
+  heartbeatEvery: "30m",
+  activeHours: ["08:00", "22:00"] as [string, string],
+  consolidateAt: "03:00",
+  outreachEvery: "30m",
+} as const;
 const DURATION = /^(\d+(?:\.\d+)?)(s|m|h|d)$/;
 export function duration(value: string): number {
   const match = DURATION.exec(value);
@@ -77,13 +84,13 @@ export class Scheduler {
   private wikiAt = 0;
   constructor(private readonly options: SchedulerOptions) {
     this.now = options.now ?? Date.now;
-    this.heartbeatAt = this.now() + duration(options.heartbeat?.every ?? "30m");
-    this.outreachAt = this.now() + duration(options.outreach?.checkEvery ?? "30m");
-    const time = options.memory?.consolidateAt ?? "03:00"; minute(time);
+    this.heartbeatAt = this.now() + duration(options.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery);
+    this.outreachAt = this.now() + duration(options.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery);
+    const time = options.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt; minute(time);
     const [h, m] = time.split(":");
     this.consolidationAt = next({ cron: `${m} ${h} * * *` }, this.now());
     if (options.wiki) this.wikiAt = next(cadenceRule(options.wiki.every), this.now()) ?? this.now();
-    activeAt(this.now(), options.heartbeat?.activeHours ?? ["08:00", "22:00"]);
+    activeAt(this.now(), options.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours);
   }
   private mutate<T>(action: () => Promise<T>): Promise<T> {
     const pending = this.mutations.then(action); this.mutations = pending.catch(() => {}); return pending;
@@ -183,15 +190,15 @@ export class Scheduler {
         }
       });
       if (now >= this.heartbeatAt) {
-        this.heartbeatAt = now + duration(this.options.heartbeat?.every ?? "30m");
-        if (activeAt(now, this.options.heartbeat?.activeHours ?? ["08:00", "22:00"])) this.launch("heartbeat", () => this.heartbeat());
+        this.heartbeatAt = now + duration(this.options.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery);
+        if (activeAt(now, this.options.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours)) this.launch("heartbeat", () => this.heartbeat());
       }
       if (this.consolidationAt !== null && now >= this.consolidationAt) {
-        const [h, m] = (this.options.memory?.consolidateAt ?? "03:00").split(":");
+        const [h, m] = (this.options.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt).split(":");
         this.consolidationAt = next({ cron: `${m} ${h} * * *` }, now);
         this.launch("consolidation", () => this.consolidate(now));
       }
-      if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? "30m"); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
+      if (now >= this.outreachAt) { this.outreachAt = now + duration(this.options.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery); if (this.options.outreach?.enabled !== false) this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal)); }
       if (this.options.wiki) {
         try {
           const work = await this.options.hooks.wikiWork(now, now >= this.wikiAt);

@@ -464,12 +464,13 @@ export class Session {
       this.pendingProviderUsage = addUsage(this.pendingProviderUsage, last.usage);
       this.agent.state.messages = this.agent.state.messages.slice(0, -1);
       if (this.stopping) { await this.flushPendingProviderUsage(); return; }
-      if (attempt > attempts || last.errorMessage === TOOL_EVIDENCE_ERROR || last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) {
+      const budgetFailure = last.errorMessage?.includes(CONTEXT_BUDGET_ERROR) ?? false;
+      if (attempt > attempts || last.errorMessage === TOOL_EVIDENCE_ERROR || budgetFailure) {
         await this.flushPendingProviderUsage();
         this.runFailed = true;
-        this.runFailureReason = last.errorMessage === CONTEXT_BUDGET_ERROR
+        this.runFailureReason = budgetFailure
           ? `Context budget failure (${CONTEXT_BUDGET_ERROR}): ${this.observedBudgetFailure ?? "request could not be estimated"}` : last.errorMessage;
-        if (last.errorMessage?.includes(CONTEXT_BUDGET_ERROR)) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
+        if (budgetFailure) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
         else if (last.errorMessage === TOOL_EVIDENCE_ERROR) this.currentTrace()?.record({ type: "check", kind: "evidence", detail: last.errorMessage });
         const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
