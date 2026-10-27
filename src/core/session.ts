@@ -20,7 +20,7 @@ import { appendJsonl, scanJsonl } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { RunTrace, TraceScope } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
-import type { HistoryItem, SessionEvent } from "./events.js";
+import type { HistoryItem, SessionEvent, TurnStatus } from "./events.js";
 import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
 import { TranscriptCursor } from "../context/cursor.js";
 import { MessageWindow } from "../context/window.js";
@@ -90,6 +90,8 @@ export class Session {
   private observedBudgetFailure?: string;
   private readonly failedTools = new Set<string>();
   private lastResponse?: AssistantMessage;
+  // The texts and errors that make up the reply ending the current run.
+  private turnReply: string[] = [];
   private readonly controller?: TurnController;
   private pendingProviderUsage = zeroUsage();
   private readonly currentTrace = (): RunTrace | undefined => this.opts.trace?.current;
@@ -237,6 +239,7 @@ export class Session {
     this.observedBudgetFailure = undefined;
     this.failedTools.clear();
     this.lastResponse = undefined;
+    this.turnReply = [];
     this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}), ...(this.quiet ? { quiet: true } : {}) });
     this.opts.trace?.begin({ session: this.key, source: source ?? "owner", model: `${this.opts.model.provider}/${this.opts.model.id}`, text });
     this.current = this.run(message)
@@ -245,7 +248,7 @@ export class Session {
         this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
         if (err instanceof ContextBudgetError) this.currentTrace()?.record({ type: "check", kind: "budget", detail: err.reason });
         this.opts.onError?.(err);
-        if (!this.quiet) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
+        this.reportRunError(`Error while handling the message: ${err instanceof Error ? err.message : String(err)}`);
       })
       .finally(async () => {
         const reply = this.successfulReply;
@@ -255,7 +258,11 @@ export class Session {
         this.phase = "idle";
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
-        this.opts.emit({ kind: "busy", busy: false, ...(this.quiet && !this.successfulReply ? { discardReply: true } : {}) });
+        if (!this.quiet || reply) {
+          const status: TurnStatus = this.stopped ? "interrupted" : this.runFailed ? "error" : "ok";
+          this.opts.emit({ kind: "turn_end", reply: this.turnReply.join("\n\n"), status });
+        }
+        this.opts.emit({ kind: "busy", busy: false });
         this.pendingOwner = 0;
         await this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
       });
@@ -369,6 +376,13 @@ export class Session {
     this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, message));
   }
 
+  /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */
+  private reportRunError(message: string): void {
+    if (this.quiet) return;
+    this.turnReply.push(message);
+    this.opts.emit({ kind: "error", message });
+  }
+
   private reportError(err: unknown): void {
     try { this.opts.onError?.(err); } catch { /* logging must not break session settlement */ }
   }
@@ -448,7 +462,7 @@ export class Session {
         if (budgetFailure) this.currentTrace()?.record({ type: "check", kind: "budget", detail: this.observedBudgetFailure ?? "request could not be estimated" });
         const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
-        if (!this.quiet) this.opts.emit({ kind: "error", message: error.message });
+        this.reportRunError(error.message);
         return;
       }
       const backoff = new AbortController();
@@ -491,6 +505,8 @@ export class Session {
         } else if (message.role === "assistant") {
           this.lastResponse = message;
           const text = assistantText(message);
+          // Text written beside tool calls narrates the work; the turn's reply is what ends it.
+          if (text && message.stopReason !== "toolUse") this.turnReply.push(text);
           if ((text || message.stopReason === "aborted") && !(this.quiet && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }

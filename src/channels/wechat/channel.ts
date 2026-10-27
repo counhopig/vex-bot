@@ -1,12 +1,11 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
-import type { EventBus, SessionEvent, VexEvent } from "../../core/events.js";
+import type { EventBus, SessionEvent, TurnStatus, VexEvent } from "../../core/events.js";
 import { WECHAT_SESSION_KEY } from "../../core/sessionKey.js";
 import type { ApprovalAnswer, ApprovalManager } from "../../policy/approvals.js";
 import { SESSION_EXPIRED_ERRCODE, WeChatApiError, type InboundMessage, type WeChatClient } from "./client.js";
 import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from "./messages.js";
 import type { WeChatStore } from "./store.js";
-import { TurnReply } from "../turnReply.js";
 
 export interface WeChatSessions {
   get(key: string): Promise<{ send(text: string, source?: string, existingRequestId?: string): void; stop(): void; readonly busy: boolean }>;
@@ -27,11 +26,6 @@ export interface WeChatChannelOptions {
   timeZone?: string;
   /** Told whether each turn's reply reached the owner. */
   onReplyDelivery?: (ok: boolean, error?: string) => void;
-}
-
-interface Turn {
-  reply: TurnReply;
-  timer: ReturnType<typeof setTimeout>;
 }
 
 const SEEN_LIMIT = 500;
@@ -56,7 +50,8 @@ export class WeChatChannel {
   private readonly announced = new Set<string>();
   private contextToken: string | undefined;
   private syncBuf: string | undefined;
-  private turn: Turn | undefined;
+  // Sends "Working on it…" when a turn runs long.
+  private processingTimer: ReturnType<typeof setTimeout> | undefined;
   private outbox: Promise<void> = Promise.resolve();
   private loop: Promise<void> | undefined;
   private unsubscribe: (() => void) | undefined;
@@ -86,8 +81,7 @@ export class WeChatChannel {
   async stop(): Promise<void> {
     this.abort.abort();
     this.unsubscribe?.();
-    if (this.turn) clearTimeout(this.turn.timer);
-    this.turn = undefined;
+    this.clearProcessingNotice();
     await this.loop;
     await this.outbox;
     await this.stateWrites;
@@ -271,19 +265,14 @@ export class WeChatChannel {
         return;
       case "busy":
         if (event.busy) this.beginTurn(event.quiet);
-        else this.endTurn(event.discardReply);
+        else this.clearProcessingNotice();
+        return;
+      case "turn_end":
+        this.deliverTurn(event.reply, event.status);
         return;
       case "assistant_message":
-        if (event.injected) { if (event.text) this.send(event.text); return; }
-        if (!this.turn) {
-          if (event.text) this.send(event.text);
-          return;
-        }
-        this.turn.reply.add(event);
-        return;
-      case "error":
-        if (this.turn) this.turn.reply.add(event);
-        else this.send(event.message);
+        // Runtime notifications arrive on their own; a turn's own messages come with turn_end.
+        if (event.injected && event.text) this.send(event.text);
         return;
       default:
         return;
@@ -292,22 +281,23 @@ export class WeChatChannel {
 
   private beginTurn(silent = false): void {
     this.lastReply = Promise.resolve(false);
-    if (this.turn) clearTimeout(this.turn.timer);
+    this.clearProcessingNotice();
+    if (silent) return;
     const timer = setTimeout(() => {
-      if (!silent && this.turn?.timer === timer) this.send("Working on it…");
+      if (this.processingTimer === timer) this.send("Working on it…");
     }, this.opts.processingNoticeMs ?? 15_000);
-    this.turn = { reply: new TurnReply(), timer };
+    this.processingTimer = timer;
   }
 
-  private endTurn(discard = false): void {
-    const turn = this.turn;
-    if (!turn) return;
-    clearTimeout(turn.timer);
-    this.turn = undefined;
-    if (discard) return;
-    const reply = turn.reply.text;
+  private clearProcessingNotice(): void {
+    if (this.processingTimer) clearTimeout(this.processingTimer);
+    this.processingTimer = undefined;
+  }
+
+  private deliverTurn(reply: string, status: TurnStatus): void {
+    this.clearProcessingNotice();
     const report = this.opts.onReplyDelivery;
-    if (turn.reply.status === "interrupted") this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
+    if (status === "interrupted") this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
     else if (reply) this.lastReply = this.send(reply, report);
   }
 

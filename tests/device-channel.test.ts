@@ -1,7 +1,7 @@
 import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DeviceChannel, type DeviceConnection } from "../src/channels/device/channel.js";
-import { EventBus, type SessionEvent } from "../src/core/events.js";
+import { EventBus, type SessionEvent, type TurnStatus } from "../src/core/events.js";
 import { ApprovalManager } from "../src/policy/approvals.js";
 import type { DeviceServerMessage } from "../src/protocol/device.js";
 
@@ -63,25 +63,22 @@ function emit(event: SessionEvent, sessionKey = "device"): void {
   bus.emit({ type: "session", sessionKey, event });
 }
 
-/** Runs one turn as the session would: busy, the owner message entering the transcript, the replies, idle. */
-function turn(ids: string[], replies: SessionEvent[]): void {
+/** Runs one turn as the session would: busy, the owner messages entering the transcript, the turn's reply, idle. */
+function turn(ids: string[], reply: string, status: TurnStatus = "ok"): void {
   emit({ kind: "busy", busy: true });
   for (const id of ids) emit({ kind: "user_message", text: "q", timestamp: 1, requestId: id });
-  for (const reply of replies) emit(reply);
+  emit({ kind: "turn_end", reply, status });
   emit({ kind: "busy", busy: false });
 }
 
 describe("DeviceChannel", () => {
-  it("sends to the device session and answers each turn with one reply that omits tool narration", async () => {
+  it("sends to the device session and answers each turn with the session's one reply", async () => {
     const device = new FakeConnection();
     channel.connect(device);
     await channel.receive({ type: "send", id: "a1", text: "今天有什么安排" });
     expect(keys).toEqual(["device"]);
     expect(session.sent).toEqual([{ text: "今天有什么安排", requestId: "a1" }]);
-    turn(["a1"], [
-      { kind: "assistant_message", text: "我查一下日程", stopReason: "toolUse", timestamp: 2 },
-      { kind: "assistant_message", text: "下午三点开会。", stopReason: "stop", timestamp: 3 },
-    ]);
+    turn(["a1"], "下午三点开会。");
     expect(device.messages).toEqual([
       { type: "hello", busy: false },
       { type: "busy", busy: true },
@@ -96,9 +93,9 @@ describe("DeviceChannel", () => {
     channel.connect(device);
     emit({ kind: "assistant_message", text: "for WeChat", stopReason: "stop", timestamp: 1 }, "wechat");
     await channel.receive({ type: "send", id: "a1", text: "q" });
-    turn(["a1"], [{ kind: "assistant_message", text: "half", stopReason: "aborted", timestamp: 2 }]);
+    turn(["a1"], "half", "interrupted");
     await channel.receive({ type: "send", id: "a2", text: "q" });
-    turn(["a2"], [{ kind: "error", message: "model unavailable" }]);
+    turn(["a2"], "model unavailable", "error");
     expect(device.of("reply")).toEqual([
       { type: "reply", ids: ["a1"], text: "half", status: "interrupted" },
       { type: "reply", ids: ["a2"], text: "model unavailable", status: "error" },
@@ -111,7 +108,7 @@ describe("DeviceChannel", () => {
     await channel.receive({ type: "send", id: "a1", text: "q" });
     await channel.receive({ type: "send", id: "a1", text: "q" });
     expect(session.sent).toHaveLength(1);
-    turn(["a1"], [{ kind: "assistant_message", text: "ok", stopReason: "stop", timestamp: 2 }]);
+    turn(["a1"], "ok");
     await channel.receive({ type: "send", id: "a1", text: "q" });
     expect(session.sent).toHaveLength(1);
     expect(device.of("accepted")).toEqual([{ type: "accepted", id: "a1" }, { type: "accepted", id: "a1" }]);
@@ -125,7 +122,7 @@ describe("DeviceChannel", () => {
     detach();
     for (const id of ["a1", "a2", "a3"]) {
       await channel.receive({ type: "send", id, text: "q" });
-      turn([id], [{ kind: "assistant_message", text: `answer ${id}`, stopReason: "stop", timestamp: 2 }]);
+      turn([id], `answer ${id}`);
     }
     const second = new FakeConnection();
     channel.connect(second);
@@ -146,15 +143,15 @@ describe("DeviceChannel", () => {
   it("delivers runtime-started and injected messages as replies without ids", () => {
     const device = new FakeConnection();
     channel.connect(device);
-    turn([], [{ kind: "assistant_message", text: "九点了，该看日程了", stopReason: "stop", timestamp: 2 }]);
+    turn([], "九点了，该看日程了");
     emit({ kind: "assistant_message", text: "heartbeat note", stopReason: "stop", timestamp: 3, injected: true });
     expect(device.of("reply")).toEqual([
       { type: "reply", ids: [], text: "九点了，该看日程了", status: "ok" },
       { type: "reply", ids: [], text: "heartbeat note", status: "ok" },
     ]);
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "assistant_message", text: "", stopReason: "stop", timestamp: 5 });
-    emit({ kind: "busy", busy: false, discardReply: true });
+    // A quiet run without a reply ends with no turn_end.
+    emit({ kind: "busy", busy: true, quiet: true });
+    emit({ kind: "busy", busy: false });
     expect(device.of("reply")).toHaveLength(2);
   });
 
@@ -168,18 +165,6 @@ describe("DeviceChannel", () => {
     await channel.receive({ type: "stop" });
     expect(session.stops).toBe(1);
     expect(device.of("reply")).toEqual([{ type: "reply", ids: ["a2"], text: "", status: "interrupted" }]);
-  });
-
-  it("reports a stopped turn as interrupted even without an aborted model message", async () => {
-    const device = new FakeConnection();
-    channel.connect(device);
-    await channel.receive({ type: "send", id: "a1", text: "q" });
-    emit({ kind: "busy", busy: true });
-    emit({ kind: "user_message", text: "q", timestamp: 1, requestId: "a1" });
-    // A stop during retry backoff: the run ends with no assistant message at all.
-    await channel.receive({ type: "stop" });
-    emit({ kind: "busy", busy: false });
-    expect(device.of("reply")).toEqual([{ type: "reply", ids: ["a1"], text: "", status: "interrupted" }]);
   });
 
   it("tells a reconnecting device about approvals created while it was away", async () => {

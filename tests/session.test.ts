@@ -495,9 +495,10 @@ describe("Session", () => {
     expect(session.busy).toBe(true);
     await session.whenIdle();
     expect(session.busy).toBe(false);
-    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "busy"]);
+    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "turn_end", "busy"]);
     expect(events.filter((e) => e.kind === "text_delta").map((e) => e.delta).join("")).toBe("sys=SYSTEM");
-    expect(events.at(-2)).toMatchObject({ kind: "assistant_message", text: "sys=SYSTEM", stopReason: "stop" });
+    expect(events.at(-3)).toMatchObject({ kind: "assistant_message", text: "sys=SYSTEM", stopReason: "stop" });
+    expect(events.at(-2)).toEqual({ kind: "turn_end", reply: "sys=SYSTEM", status: "ok" });
     const saved = await readJsonl<{ role: string }>(join(dir, "t.jsonl"));
     expect(saved.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
@@ -539,7 +540,9 @@ describe("Session", () => {
     session.send("internal", "proactive chat");
     await session.whenIdle();
     expect(events.some(e => e.kind === "error")).toBe(false);
-    expect(events.at(-1)).toMatchObject({ kind: "busy", busy: false, discardReply: true });
+    expect(events.at(-1)).toMatchObject({ kind: "busy", busy: false });
+    // A quiet run without a reply leaves the channels nothing to deliver.
+    expect(events.some((e) => e.kind === "turn_end")).toBe(false);
     expect(session.successfulReply).toBeUndefined();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
     session.send("owner");
@@ -605,7 +608,7 @@ describe("Session", () => {
     ]);
     second.send("二");
     await second.whenIdle();
-    expect(events.at(-2)).toMatchObject({ kind: "assistant_message", text: "看到 3 条消息" });
+    expect(events.at(-3)).toMatchObject({ kind: "assistant_message", text: "看到 3 条消息" });
   });
 
   it("keeps a Wiki receipt in tool results across transcript restoration and provider context", async () => {
@@ -641,6 +644,39 @@ describe("Session", () => {
     await restored.dispose();
   });
 
+  it("ends each turn with one reply: final texts and errors, not narration beside tool calls", async () => {
+    faux = createFaux();
+    faux.setResponses([
+      fauxAssistantMessage([{ type: "text", text: "Let me check." }, fauxToolCall("echo", { text: "hi" })], { stopReason: "toolUse" }),
+      fauxAssistantMessage("Here it is."),
+    ]);
+    const session = await open();
+    session.send("go");
+    await session.whenIdle();
+    expect(events.find((e) => e.kind === "turn_end")).toEqual({ kind: "turn_end", reply: "Here it is.", status: "ok" });
+
+    events.length = 0;
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom" })]);
+    const failing = await open({ key: "web:2", transcriptPath: join(dir, "t2.jsonl"), retry: { attempts: 0, baseDelayMs: 1 } });
+    failing.send("go");
+    await failing.whenIdle();
+    expect(events.find((e) => e.kind === "turn_end")).toEqual({ kind: "turn_end", reply: "Model call failed: Provider generation failed.", status: "error" });
+    await session.dispose();
+    await failing.dispose();
+  });
+
+  it("reports a turn stopped during retry backoff as interrupted", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "boom" }), fauxAssistantMessage("late")]);
+    const session = await open({ retry: { attempts: 3, baseDelayMs: 60_000 } });
+    session.send("go");
+    await vi.waitFor(() => expect(faux.state.callCount).toBe(1));
+    session.stop();
+    await session.whenIdle();
+    expect(events.find((e) => e.kind === "turn_end")).toEqual({ kind: "turn_end", reply: "", status: "interrupted" });
+    await session.dispose();
+  });
+
   it("runs tools and reports them", async () => {
     faux = createFaux();
     faux.setResponses([
@@ -650,7 +686,7 @@ describe("Session", () => {
     const session = await open();
     session.send("go");
     await session.whenIdle();
-    expect(kinds()).toEqual(["busy", "user_message", "tool_start", "tool_end", "assistant_message", "busy"]);
+    expect(kinds()).toEqual(["busy", "user_message", "tool_start", "tool_end", "assistant_message", "turn_end", "busy"]);
     expect(events.find((e) => e.kind === "tool_start")).toEqual({
       kind: "tool_start", toolCallId: "call-1", toolName: "echo", summary: '{"text":"hi"}',
     });
@@ -675,7 +711,7 @@ describe("Session", () => {
     session.send("go");
     await session.whenIdle();
     expect(events.find((e) => e.kind === "tool_end")).toMatchObject({ isError: true });
-    expect(events.at(-2)).toMatchObject({ text: "model saw: The owner denied this echo call." });
+    expect(events.at(-3)).toMatchObject({ text: "model saw: The owner denied this echo call." });
   });
 
   it("injects a message sent while busy into the same run", async () => {
@@ -689,8 +725,8 @@ describe("Session", () => {
     await new Promise((r) => setTimeout(r, 100));
     session.send("二");
     await session.whenIdle();
-    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "user_message", "assistant_message", "busy"]);
-    expect(events.at(-2)).toMatchObject({ text: "回应：二" });
+    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "user_message", "assistant_message", "turn_end", "busy"]);
+    expect(events.at(-3)).toMatchObject({ text: "回应：二" });
   });
 
   it("stops the current turn and drops queued messages", async () => {
@@ -717,7 +753,7 @@ describe("Session", () => {
     const session = await open();
     session.send("go");
     await session.whenIdle();
-    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "busy"]);
+    expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "turn_end", "busy"]);
     const saved = await readJsonl<{ role: string; stopReason?: string }>(join(dir, "t.jsonl"));
     // The failed attempt's usage is kept as its own provider_usage record.
     expect(saved.filter((m) => m.role).map((m) => m.stopReason ?? m.role)).toEqual(["user", "stop"]);

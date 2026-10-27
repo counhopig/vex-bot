@@ -37,7 +37,7 @@ src/
 | Change | Coordinated files |
 |--------|-------------------|
 | Add an agent tool | `tools/<name>.ts`, `tools/registry.ts`, `daemon.ts`, `sessionFactory.ts`, `policy/policy.ts`, `tools/summary.ts` |
-| Change a streamed event | `core/events.ts`, `core/session.ts`, `channels/turnReply.ts`, `channels/wechat/channel.ts`, `channels/device/channel.ts`, `web/static/app.js` |
+| Change a streamed event | `core/events.ts`, `core/session.ts` (`turn_end` carries the reply that ends a run), `channels/wechat/channel.ts`, `channels/device/channel.ts`, `web/static/app.js` |
 | Change session keys or schedule targets | `core/sessionKey.ts` (the only place `web:`/`run:` keys are built or parsed) |
 | Add or change a kind of run | `sessionFactory.ts` (`profiles`: owner or background, model, prompt, tools, gate) |
 | Add a browser command | `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
