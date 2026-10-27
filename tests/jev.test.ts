@@ -56,3 +56,13 @@ it("classifies each bounded owner URL with a typed intent and ignores untrusted 
   expect(body.state.urls).toEqual(["https://one.example", "https://two.example"]);
   expect(JSON.stringify(body)).not.toContain("secret-key");
 });
+
+it("tells Jev the owner's default intent for links", async () => {
+  const request = vi.fn<typeof fetch>().mockImplementation(async () => answer("read"));
+  const jev = new Jev({ apiKey: "key" }, request);
+  await jev.classifyLinks("look at https://one.example", ["https://one.example"]);
+  await jev.classifyLinks("look at https://one.example", ["https://one.example"], undefined, "read");
+  const instructions = request.mock.calls.map(([, init]) => JSON.parse(init!.body as string).questions.link_0.instructions as string);
+  expect(instructions[0]).toContain("standing preference is to archive shared links");
+  expect(instructions[1]).toContain("standing preference is to only read shared links");
+});

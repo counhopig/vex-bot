@@ -108,6 +108,20 @@ it("tells a model retrying a refused archive that it failed, not that it succeed
   expect(await outcome({ details: { receipt: { status: "completed", sourceAvailable: true } } })).toMatchObject({ reason: expect.stringContaining("already archived") });
 });
 
+it("passes the owner's default intent to the classifier and to the model fallback", async () => {
+  const seen: (string | undefined)[] = [];
+  let prompt = "";
+  const fallback: StreamFn = async (_model, context) => {
+    prompt = JSON.stringify(context.messages);
+    return reply(JSON.stringify({ actions: [{ url: "https://example.com/a", intent: "read", confidence: 0.99 }] }))(model, context, {});
+  };
+  const runtime = controller({ defaultIntent: () => "read", classify: async (_input, _urls, _signal, defaultIntent) => { seen.push(defaultIntent); throw new Error("Jev offline"); } });
+  runtime.addOwnerRequest("1", "https://example.com/a");
+  await (await runtime.wrapStream(unused, () => [tool("web_fetch")], fallback)(model, empty, {})).result();
+  expect(seen).toEqual(["read"]);
+  expect(prompt).toContain("standing preference is to only read shared links");
+});
+
 it("clears request actions when the run settles, keeping queued requests", () => {
   const runtime = controller();
   runtime.addOwnerRequest("1", "https://example.com/a");

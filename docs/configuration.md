@@ -77,6 +77,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `stt.language` | auto | Language hint such as `zh`; MiMo accepts `auto`, `zh` and `en` |
 | `stt.chunkMinutes` | `10` | Length of each audio part sent to the service (1–30; at most 15 with MiMo); lower it for services with small upload limits |
 | `stt.maxMinutes` | `90` | Longest video that will be transcribed (1–600) |
+| `links.defaultIntent` | `archive` | With the wiki enabled, what a shared link gets when the message does not say: `archive` saves it into the wiki (say "don't save" to only read it); `read` only reads it (say "save it" to archive). Applies without a restart |
 | `links.bilibili.sessdata` | none | Bilibili `SESSDATA` cookie; lets the `link-reader` skill fetch subtitles that need a login; the environment variable `BILIBILI_SESSDATA` also works (allow it through `bashEnvPassthrough`) |
 | `vault.path` | none | Folder of Markdown notes (an Obsidian vault works) as vexd sees it; set either this or `vault.url` |
 | `vault.url` | none | `http` or `https` address of a git repository holding the notes; vexd keeps one copy, shared with the wiki. The address must not contain credentials |
@@ -151,7 +152,7 @@ Edit these Markdown files to shape Vex; the next message sees the change. WebCha
 
 The line limits in brackets are how much of each file the model sees; when a save in WebChat goes over a limit, the page says so (the file is still saved). The agent's own `write` and `edit` calls cannot take `MEMORY.md` past 100 lines or 32 KB; it has to merge or remove older entries first. Templates for these files are created on first start.
 
-The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to answer `HEARTBEAT_OK` when there is nothing to report, a reply vexd relies on, so put your own heartbeat instructions in `HEARTBEAT.md`. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), the instructions for memory consolidation and proactive chat, and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries are built in; shape Vex's personality and habits through `SOUL.md` instead.
+The heartbeat's fixed one-line instruction tells the agent to read `HEARTBEAT.md` and to report the result through its `heartbeat_report` tool (nothing to tell, or a message for the owner), so put your own heartbeat instructions in `HEARTBEAT.md`. An older `HEARTBEAT.md` that asks for a `HEARTBEAT_OK` reply keeps working. The operating instructions at the top of every system prompt (workspace layout, memory conventions, approval rules, replying in the owner's language), the instructions for memory consolidation and proactive chat, and the internal prompts for compaction, conversation titles, the mood phrasing and the link summaries are built in; shape Vex's personality and habits through `SOUL.md` instead.
 
 ## Skills
 

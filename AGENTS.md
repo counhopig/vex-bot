@@ -56,7 +56,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner, MCP SDK; Node.js ≥24.
 
 - Relative TypeScript imports use `.js`; Node built-ins use `node:`.
 - ES2023/NodeNext; strict checking with `noUncheckedIndexedAccess`, `noImplicitReturns`, `noFallthroughCasesInSwitch`.
-- `npm run lint` checks source, tests and Vitest configuration; browser JS and skill MJS are outside its coverage.
+- `npm run lint` checks source, tests and Vitest configuration, then the browser `app.js` against the protocol types (`tsconfig.web.json`, JSDoc only, no build step); skill MJS is outside its coverage.
 - Double quotes, two spaces, semicolons; no separate formatter or ESLint configuration.
 
 ## ANTI-PATTERNS (THIS PROJECT)

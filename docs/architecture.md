@@ -129,7 +129,7 @@ Notifications the runtime delivers (wiki results, link-action outcomes, heartbea
 
 With the wiki enabled, an owner message containing links is handled in three steps before the model writes its reply:
 
-1. **Intake.** Each link's intent is classified once: `archive`, `read` (the owner asked not to save it) or `defer`. Jev answers when it is enabled; otherwise, or when Jev is unsure, the main model answers a bounded JSON question. Only a confident answer counts.
+1. **Intake.** Each link's intent is classified once: `archive`, `read` or `defer`, against the owner's standing preference `links.defaultIntent` (archive unless told not to, or read unless asked to save). Jev answers when it is enabled; otherwise, or when Jev is unsure, the main model answers a bounded JSON question. Only a confident answer counts.
 2. **Action.** The runtime calls `wiki_ingest` (archive) or `web_fetch` (read) for each confidently classified link, as the run's first steps, through the normal policy and approval gate. A deferred link, or one whose tool is unavailable, is left to the model.
 3. **Result.** The tool result is in the conversation when the model answers. The owner is told directly about what no wiki run reports: a refused or failed call, a source that could not be read, a metadata-only page, or an archive waiting for bootstrap review. The wiki reports its own compile and publish results.
 
@@ -170,6 +170,18 @@ A Bilibili or YouTube video without subtitles is transcribed when `stt` is confi
 
 The vault and its wiki are one notes tool. When `vault.wiki.enabled` is set, `vault/wiki/` maintains the only clone of the git-backed vault: `Vault` reads it through `wiki.notesCopy` (`WikiReadCopy`), which fast-forwards it only while no wiki operation holds or waits for the shared lock, and the wiki compiles changed notes into `wiki/` pages. A run holds a lock, reconciles durable state from commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`) and an in-flight marker, then opens a temporary agent run whose only tools are `vault_search`, `vault_read`, `wiki_write` and `wiki_edit`. The batch is one commit, pushed unless it is the bootstrap preview. The runtime only notifies the owner about a preview; publishing or rejecting it goes through `wiki_bootstrap`, whose `ask` policy makes the owner confirm in the ordinary approval prompt. `wiki_rollback` reverts the last committed batch, or discards an unpublished one. `wiki_rebuild` commits and pushes a reset (`Vex-Wiki-Reset`) that removes the `wiki/` pages; reconciliation reads history only back to the newest reset, and ignores durable state and the bootstrap ref from before it, so the next bootstrap compiles every note and archived `raw/` source into a new preview. Vex writes only `wiki/` and `raw/`; the daemon clamps general `write`/`edit` out of the whole vault, and `wiki_write`/`wiki_edit` validate every path against the owned subtrees.
 
+What each part of the wiki engine protects against, so it is not mistaken for incidental complexity:
+
+| Mechanism | Failure it covers |
+|---|---|
+| `WikiLock` | Two wiki operations (a scheduled run, an ingest, a rollback) changing the clone at once; vault reads never wait for it |
+| In-flight marker with file fingerprints (`.git/vex-wiki-inflight.json`) | The process dying between writing pages and committing them, or between committing and publishing; on restart the batch is finished or undone, and a file someone else changed meanwhile is left alone |
+| Commit trailers (`Vex-Batch`, `Vex-Kind`, `Vex-Scan-Base`, `Vex-Rollback`, `Vex-Wiki-Reset`) and reconciliation | The state file being lost or stale: the scan cursor, the last batch and the bootstrap state are rebuilt from history |
+| Rebase before push, then fingerprint checks | Notes pushed from the owner's other devices while a batch was compiling |
+| Bootstrap ref and preview | The first, largest batch being pushed before the owner has seen it (`wiki_bootstrap`) |
+| Rollback expectations | Reverting a batch twice, or reverting over later edits to the same pages (`wiki_rollback`) |
+| Reset trailer | Rebuilding from scratch without old batches, cursors or previews leaking into the new wiki (`wiki_rebuild`) |
+
 ## Mood and rest hours
 
 `state/mood.json` holds three values from 0 to 100, shared by both windows.
@@ -203,7 +215,7 @@ Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when al
 |---|---|
 | Scheduled message | Fields: name (unique), rule (`cron`, `every`, or `once`), prompt, target (`wechat` or a WebChat session), enabled. Stored in `schedules.json`. Delivered as a marked user message into the target session. A deleted WebChat target falls back to WeChat. A run still in progress skips the next trigger. |
 | Missed tasks | At startup, a missed one-time task is delivered once as a "missed" message and disabled. Recurring tasks move to their next time without delivery. |
-| Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. `HEARTBEAT_OK` is silent; anything else is sent to WeChat and appended to the WeChat history. |
+| Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. The run reports through its `heartbeat_report` tool: `notify: false` is silent, `notify: true` sends its message to WeChat and appends it to the WeChat history. A run that never calls the tool falls back to its reply, which is silent only when it is `HEARTBEAT_OK` and nothing else. |
 | Consolidation | See Memory. |
 | Outreach check | See Mood. |
 | Wiki | At `vault.wiki.every`, and once a minute for work the wiki may start at any time (a pending bootstrap). |

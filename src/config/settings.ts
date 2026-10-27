@@ -15,6 +15,7 @@ const ALLOWED = [
   /^wechat\.(enabled|ownerId)$/,
   /^stt\.(provider|baseUrl|model|apiKey|language|chunkMinutes|maxMinutes)$/,
   /^links\.bilibili\.sessdata$/,
+  /^links\.defaultIntent$/,
   /^vault\.(path|url|branch|username|token)$/,
   /^vault\.wiki\.(enabled|every|notify|maxNotesPerRun)$/,
   /^jev\.(enabled|apiKey|model|confidence|timeoutMs)$/,
