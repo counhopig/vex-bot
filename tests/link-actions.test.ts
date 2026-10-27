@@ -92,6 +92,22 @@ it("tells the owner only what no wiki run reports: a refusal or an archive that 
   ]);
 });
 
+it("tells a model retrying a refused archive that it failed, not that it succeeded", async () => {
+  const outcome = async (extra: Partial<ToolResultMessage>) => {
+    const runtime = controller({ classify: intents("archive") });
+    runtime.addOwnerRequest("1", "save https://example.com/a");
+    const first = await (await runtime.wrapStream(unused, () => [tool("wiki_ingest")])(model, empty, {})).result();
+    const call = first.content.find((part) => part.type === "toolCall");
+    if (!call || call.type !== "toolCall") throw new Error("expected the runtime archive call");
+    runtime.toolResults([first, result(call.id, "wiki_ingest", extra)]);
+    return runtime.beforeToolCall(gateCall("wiki_ingest", { url: "https://example.com/a" }), undefined, ownerGate);
+  };
+  expect(await outcome({ isError: true, content: [{ type: "text", text: "The owner denied this wiki_ingest call." }] }))
+    .toMatchObject({ block: true, reason: expect.stringContaining("refused or failed") });
+  expect(await outcome({ details: { receipt: { status: "failed-read" } } })).toMatchObject({ reason: expect.stringContaining("refused or failed") });
+  expect(await outcome({ details: { receipt: { status: "completed", sourceAvailable: true } } })).toMatchObject({ reason: expect.stringContaining("already archived") });
+});
+
 it("clears request actions when the run settles, keeping queued requests", () => {
   const runtime = controller();
   runtime.addOwnerRequest("1", "https://example.com/a");

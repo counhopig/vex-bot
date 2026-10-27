@@ -12,7 +12,8 @@ export interface LinkAction {
   intent: LinkIntent["intent"];
   /** The intent came from a confident classification, not the "defer" default. */
   confirmed: boolean;
-  state: "pending" | "running" | "done" | "cancelled";
+  /** `failed`: the call was refused or failed, or the archive receipt reports no archive. */
+  state: "pending" | "running" | "done" | "failed" | "cancelled";
 }
 
 export interface OwnerLinkRequest { id: string; input: string; actions: LinkAction[]; classified: boolean }
@@ -67,12 +68,14 @@ export class LinkActionController implements TurnController {
     for (const request of this.requests) for (const action of request.actions) if (action.state === "pending" || action.state === "running") action.state = "cancelled";
   }
 
-  /** Keeps the model from archiving a link the owner declined, or archiving one twice. */
+  /** Keeps the model from archiving a link the owner declined, or retrying an archive the runtime already ran. */
   async beforeToolCall(context: BeforeToolCallContext, signal: AbortSignal | undefined, ownerGate: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>): Promise<BeforeToolCallResult | undefined> {
     const args = context.args;
     const url = context.toolCall.name === this.opts.routes.archive && !this.calls.has(context.toolCall.id) && args && typeof args === "object" && "url" in args && typeof args.url === "string" ? args.url : undefined;
     if (url !== undefined && this.ownerDeclinedArchive(url)) return { block: true, reason: "The owner asked not to archive this link." };
-    if (url !== undefined && this.alreadyArchived(url)) return { block: true, reason: "This link was already archived for the owner's request; use that result." };
+    const attempted = url === undefined ? undefined : this.archiveAttempt(url);
+    if (attempted === "done") return { block: true, reason: "This link was already archived for the owner's request; use that result." };
+    if (attempted === "failed") return { block: true, reason: "Archiving this link was refused or failed for the owner's request; report that result instead of retrying." };
     return ownerGate(context, signal);
   }
 
@@ -129,8 +132,11 @@ export class LinkActionController implements TurnController {
     return false;
   }
 
-  private alreadyArchived(url: string): boolean {
-    return this.requests.some((request) => request.actions.some((action) => action.url === url && action.intent === "archive" && (action.state === "running" || action.state === "done")));
+  /** How the runtime's archive of this link ended: done (or still running), failed, or not attempted. */
+  private archiveAttempt(url: string): "done" | "failed" | undefined {
+    const states = this.requests.flatMap((request) => request.actions.filter((action) => action.url === url && action.intent === "archive").map((action) => action.state));
+    if (states.includes("running") || states.includes("done")) return "done";
+    return states.includes("failed") ? "failed" : undefined;
   }
 
   /** A newer confirmed "read" or "defer" for a link cancels an older archive still waiting. */
@@ -197,8 +203,9 @@ export class LinkActionController implements TurnController {
       const result = messages.find((message): message is ToolResultMessage => message.role === "toolResult" && message.toolCallId === callId && message.toolName === tool);
       if (!result) continue;
       this.calls.delete(callId);
-      action.state = "done";
       const notice = outcomeNotice(action, result, tool === this.opts.routes.archive);
+      // Every notice reports an action that did not happen.
+      action.state = notice ? "failed" : "done";
       if (notice) this.opts.onOutcome?.(notice).catch((error: unknown) => this.opts.warn?.(error));
     }
   }
