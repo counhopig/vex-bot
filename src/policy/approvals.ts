@@ -32,21 +32,25 @@ export interface ApprovalEvent { type: "requested" | "allowed" | "denied"; toolN
 
 const ABORTED: ApprovalOutcome = { allowed: false, reason: "This turn was interrupted." };
 
-/** Programs that run whatever they are given; allowing one for a session would allow any command. */
-const COMMAND_RUNNERS = new Set(["sh", "bash", "zsh", "dash", "fish", "env", "sudo", "doas", "su", "xargs", "nohup", "timeout", "nice", "watch", "eval", "exec", "command", "builtin", "source", "python", "python3", "node", "perl", "ruby", "php", "lua", "deno", "bun", "npx", "ssh"]);
+/**
+ * Programs whose "always allow" can be scoped per program: they only read and print, and have no
+ * option that runs another program or writes a file. Anything else, such as git (config hooks),
+ * sed (`e`), find (`-exec`), sort (`--compress-program`) or tar (`--checkpoint-action`), can be made to
+ * run arbitrary commands with ordinary arguments, so it is confirmed every time.
+ */
+const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "grep", "du", "df", "stat", "which", "whoami", "uname", "basename", "dirname", "realpath", "nl", "cut"]);
 
 /**
- * What answering "always allow" to a call covers: the tool, or for `bash` the one program a simple
- * command runs. A compound or substituted command, a path, or a program that runs other commands has
- * no such scope and is confirmed every time.
+ * What answering "always allow" to a call covers: the tool, or for `bash` the read-only program a
+ * simple command runs. Any other bash call (a compound or substituted command, a path, another
+ * program) has no such scope and is confirmed every time.
  */
 export function sessionScope(toolName: string, args: unknown): string | undefined {
   if (toolName !== "bash") return toolName;
   const command = args && typeof args === "object" ? (args as { command?: unknown }).command : undefined;
   if (typeof command !== "string" || /[;&|`$<>(){}\\\n]/.test(command)) return undefined;
   const program = command.trim().split(/\s+/)[0] ?? "";
-  if (!/^[A-Za-z0-9][A-Za-z0-9._+-]*$/.test(program) || COMMAND_RUNNERS.has(program)) return undefined;
-  return `bash ${program}`;
+  return READ_ONLY_PROGRAMS.has(program) ? `bash ${program}` : undefined;
 }
 
 export class ApprovalManager {

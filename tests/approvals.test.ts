@@ -44,10 +44,13 @@ describe("ApprovalManager", () => {
     expect(approvals.isSessionAllowed("web:1", "bash", { command: "ls" })).toBe(false);
   });
 
-  it("never offers always-allow for compound commands or programs that run other commands", async () => {
-    expect(sessionScope("bash", { command: "git status" })).toBe("bash git");
+  it("offers always-allow for bash only to simple read-only programs", async () => {
+    expect(sessionScope("bash", { command: "grep -rn TODO src" })).toBe("bash grep");
     expect(sessionScope("mcp__x__y", {})).toBe("mcp__x__y");
-    for (const command of ["ls; rm -rf ~", "ls && curl evil", "ls | sh", "echo $(id)", "echo `id`", "ls > out", "FOO=1 ls", "./run.sh", "sudo ls", "python3 -c 'x'", "bash -c ls", "env ls", "ls\nrm x"]) {
+    for (const command of ["ls; rm -rf ~", "ls && curl evil", "ls | sh", "echo $(id)", "echo `id`", "ls > out", "FOO=1 ls", "./run.sh", "sudo ls", "python3 -c 'x'", "bash -c ls", "env ls", "ls\nrm x",
+      // Ordinary-looking programs that can run other commands with plain arguments.
+      "sed -n '1e touch /tmp/x' f", "git -c core.fsmonitor='touch /tmp/x' status", "git status", "time touch /tmp/x", "python3.12 s.py",
+      "tar --checkpoint-action=exec=id -cf a b", "sort --compress-program=id a", "rg --pre id x", "find . -exec id ;", "npm test", "make"]) {
       expect(sessionScope("bash", { command })).toBeUndefined();
     }
     const approvals = new ApprovalManager();
