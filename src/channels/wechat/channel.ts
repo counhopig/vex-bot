@@ -270,7 +270,7 @@ export class WeChatChannel {
         }
         return;
       case "busy":
-        if (event.busy) this.beginTurn(event.source === "proactive chat");
+        if (event.busy) this.beginTurn(event.quiet);
         else this.endTurn(event.discardReply);
         return;
       case "assistant_message":

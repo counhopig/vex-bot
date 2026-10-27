@@ -25,7 +25,7 @@ import type { MemoryIndex } from "./index/memory.js";
 import { LinkActionController } from "./links/actions.js";
 import type { Logger } from "./logger.js";
 import type { VexPaths } from "./paths.js";
-import type { Persona } from "./persona/index.js";
+import { PROACTIVE_CHAT_SOURCE, type Persona } from "./persona/index.js";
 import { judgeAdvisor } from "./policy/advice.js";
 import type { ApprovalManager } from "./policy/approvals.js";
 import { createToolGate } from "./policy/gate.js";
@@ -205,6 +205,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
       compaction: { backgroundModel, complete: models.completeSimple, workspace: config.workspace, threshold: config.compaction?.threshold, onError: (err) => log.warn({ err, session: key }, "context compaction failed"), onCompact: (info) => log.info({ session: key, ...info }, "context compacted") },
       onRunEnd: () => memoryIndex.sync().catch((err: unknown) => log.warn({ err }, "memory index sync failed")),
       onDispose: () => live.delete(session),
+      ...(temporary ? {} : { quietSources: [PROACTIVE_CHAT_SOURCE] }),
       trace,
     });
     opened = session;

@@ -34,7 +34,7 @@ import { createVaultTools } from "./vault/tools.js";
 import { Wiki, type WikiRunContext } from "./vault/wiki/service.js";
 import type { GitRunner } from "./vault/wiki/git.js";
 import { unresolvedWikiWrites } from "./vault/wiki/tools.js";
-import { Persona } from "./persona/index.js";
+import { Persona, PROACTIVE_CHAT_SOURCE } from "./persona/index.js";
 import { Scheduler } from "./scheduler/index.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
@@ -227,7 +227,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           const abort = () => session.stop();
           signal.addEventListener("abort", abort, { once: true });
           log.info("proactive chat started");
-          try { session.send(persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)), "proactive chat"); await session.whenIdle(); }
+          try { session.send(persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)), PROACTIVE_CHAT_SOURCE); await session.whenIdle(); }
           finally { signal.removeEventListener("abort", abort); }
           if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(wechatInbound !== inboundBefore); await persona.save(); }
         },

@@ -48,6 +48,11 @@ export interface SessionOptions {
   onOwnerMessage?: () => void;
   onOwnerInteraction?: (count: number) => Promise<void>;
   onDispose?: () => void;
+  /**
+   * Sources of runtime-started runs that stay quiet until the owner joins: their failures, aborted
+   * replies and replyless endings are not shown, and their busy event is marked `quiet`.
+   */
+  quietSources?: readonly string[];
   /** Where each run's steps are recorded. */
   trace?: TraceScope;
 }
@@ -205,6 +210,11 @@ export class Session {
     return this.current !== undefined && this.runSource !== undefined && this.pendingOwner === 0;
   }
 
+  /** A quiet-source run that no owner message has joined. */
+  private get quiet(): boolean {
+    return this.runSource !== undefined && this.pendingOwner === 0 && (this.opts.quietSources?.includes(this.runSource) ?? false);
+  }
+
   /** No run, no queued notice or message and no pending transcript work: safe to dispose and reopen later. */
   get idle(): boolean {
     return !this.current && !this.closing && !this.assistantDrain
@@ -239,7 +249,7 @@ export class Session {
     this.observedBudgetFailure = undefined;
     this.failedTools.clear();
     this.lastResponse = undefined;
-    this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}) });
+    this.opts.emit({ kind: "busy", busy: true, ...(source ? { source } : {}), ...(this.quiet ? { quiet: true } : {}) });
     this.opts.trace?.begin({ session: this.key, source: source ?? "owner", model: `${this.opts.model.provider}/${this.opts.model.id}`, text });
     this.activeRunStart = this.agent.state.messages.length;
     this.current = this.run(message)
@@ -248,7 +258,7 @@ export class Session {
         this.runFailureReason = err instanceof ContextBudgetError ? `Context budget failure: ${err.reason}` : err instanceof Error ? err.message : String(err);
         if (err instanceof ContextBudgetError) this.currentTrace()?.record({ type: "check", kind: "budget", detail: err.reason });
         this.opts.onError?.(err);
-        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
+        if (!this.quiet) this.opts.emit({ kind: "error", message: `Error while handling the message: ${err instanceof Error ? err.message : String(err)}` });
       })
       .finally(async () => {
         const reply = this.successfulReply;
@@ -258,7 +268,7 @@ export class Session {
         this.phase = "idle";
         // Run-end hooks may enqueue notifications, so drain only after run() (and
         // its final settlement hooks) has completed.
-        this.opts.emit({ kind: "busy", busy: false, ...(this.runSource === "proactive chat" && !this.pendingOwner && !this.successfulReply ? { discardReply: true } : {}) });
+        this.opts.emit({ kind: "busy", busy: false, ...(this.quiet && !this.successfulReply ? { discardReply: true } : {}) });
         this.pendingOwner = 0;
         await this.finishQueuedOwnerMessages().catch((err: unknown) => this.reportError(err));
       });
@@ -463,7 +473,7 @@ export class Session {
         else if (last.errorMessage === TOOL_EVIDENCE_ERROR) this.currentTrace()?.record({ type: "check", kind: "evidence", detail: last.errorMessage });
         const error = new Error(this.runFailureReason ? `Model call failed: ${this.runFailureReason}` : "Model call failed: unknown error");
         this.opts.onError?.(error);
-        if (this.runSource !== "proactive chat" || this.pendingOwner) this.opts.emit({ kind: "error", message: error.message });
+        if (!this.quiet) this.opts.emit({ kind: "error", message: error.message });
         return;
       }
       const backoff = new AbortController();
@@ -506,7 +516,7 @@ export class Session {
         } else if (message.role === "assistant") {
           this.lastResponse = message;
           const text = assistantText(message);
-          if ((text || message.stopReason === "aborted") && !(this.runSource === "proactive chat" && !this.pendingOwner && message.stopReason === "aborted")) {
+          if ((text || message.stopReason === "aborted") && !(this.quiet && message.stopReason === "aborted")) {
             this.opts.emit({ kind: "assistant_message", text, stopReason: message.stopReason, timestamp: message.timestamp });
           }
         }

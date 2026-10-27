@@ -840,7 +840,7 @@ describe("Session", () => {
   it("silences failed outreach while keeping owner errors visible", async () => {
     faux = createFaux();
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
-    const session = await open({ retry: { attempts: 0, baseDelayMs: 1 } });
+    const session = await open({ retry: { attempts: 0, baseDelayMs: 1 }, quietSources: ["proactive chat"] });
     session.send("internal", "proactive chat");
     await session.whenIdle();
     expect(events.some(e => e.kind === "error")).toBe(false);
@@ -849,6 +849,21 @@ describe("Session", () => {
     faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
     session.send("owner");
     await session.whenIdle();
+    expect(events.some(e => e.kind === "error")).toBe(true);
+  });
+
+  it("marks only configured quiet sources as quiet", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" }), fauxAssistantMessage("", { stopReason: "error", errorMessage: "offline" })]);
+    const session = await open({ retry: { attempts: 0, baseDelayMs: 1 }, quietSources: ["proactive chat"] });
+    session.send("ping", "proactive chat");
+    await session.whenIdle();
+    expect(events.find(e => e.kind === "busy" && e.busy)).toMatchObject({ quiet: true });
+    events.length = 0;
+    // Any other runtime source reports its failure as before.
+    session.send("task", "scheduled task");
+    await session.whenIdle();
+    expect(events.find(e => e.kind === "busy" && e.busy)).not.toHaveProperty("quiet");
     expect(events.some(e => e.kind === "error")).toBe(true);
   });
 
