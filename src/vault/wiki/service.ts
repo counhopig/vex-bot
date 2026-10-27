@@ -254,7 +254,7 @@ export class Wiki {
   }
 
   async status(): Promise<WikiStatus> {
-    // `status()` is polled every scheduler tick; cache briefly so an idle wiki does no history scans.
+    // The scheduler asks for due work every minute; cache briefly so an idle wiki does no history scans.
     if (this.statusCache && this.clock() - this.statusCache.at < 10_000) return this.statusCache.value;
     await this.ready();
     // A running operation may be mid-rebase; report the last settled status instead of reading history.

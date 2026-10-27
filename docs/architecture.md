@@ -206,6 +206,9 @@ Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when al
 | Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. `HEARTBEAT_OK` is silent; anything else is sent to WeChat and appended to the WeChat history. |
 | Consolidation | See Memory. |
 | Outreach check | See Mood. |
+| Wiki | At `vault.wiki.every`, and once a minute for work the wiki may start at any time (a pending bootstrap). |
+
+Built-in work and the owner's tasks share one timetable. The scheduler sleeps until the earliest deadline (at least one second, at most one minute, so a changed clock is noticed) and re-arms whenever a task is created, changed or deleted.
 
 A corrupt `schedules.json` is moved aside as `schedules.json.bad-<timestamp>` and the daemon starts with no tasks.
 
