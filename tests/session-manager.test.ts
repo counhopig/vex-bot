@@ -8,7 +8,6 @@ import { SessionManager, UnknownSessionError, WECHAT_SESSION_KEY, webSessionKey,
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
-import { evidence } from "./helpers/evidence.js";
 
 let dir: string;
 let paths: VexPaths;
@@ -34,7 +33,7 @@ function makeManager(generateTitle?: (u: string, a: string) => Promise<string>, 
     idleTimeoutMs: 0,
     ...extra,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({ evidence,
+      Session.open({
         key,
         transcriptPath,
         model: faux.getModel(),

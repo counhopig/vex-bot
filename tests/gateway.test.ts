@@ -23,7 +23,6 @@ import { TraceStore } from "../src/trace/store.js";
 import { TestClient } from "./helpers/client.js";
 import { createFaux, fauxStreamFn } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
-import { evidence } from "./helpers/evidence.js";
 
 const staticDir = fileURLToPath(new URL("../src/web/static/", import.meta.url));
 
@@ -62,7 +61,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     paths,
     bus,
     openSession: (key, transcriptPath, windowLabel) =>
-      Session.open({ evidence,
+      Session.open({
         key,
         transcriptPath,
         model: faux.getModel(),

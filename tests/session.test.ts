@@ -6,17 +6,15 @@ import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEvent } from "../src/core/events.js";
 import { Session, type SessionOptions } from "../src/core/session.js";
-import type { LinkIntent } from "../src/policy/judge.js";
+import type { LinkIntent } from "../src/links/intent.js";
 import { LinkActionController, type LinkActionOptions } from "../src/links/actions.js";
 import type { TurnControllerFactory } from "../src/core/turnController.js";
-import { createRequestActionOutcomeTool } from "../src/tools/requestOutcome.js";
 import { estimateProviderInput } from "../src/context/budget.js";
 import type { Wiki } from "../src/vault/wiki/service.js";
 import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { readJsonl } from "../src/store/jsonl.js";
 import { createFaux, fauxStreamFn, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
-import { evidence, judged } from "./helpers/evidence.js";
 
 let dir: string;
 let faux: FauxProviderHandle;
@@ -40,9 +38,9 @@ const echoTool: AgentTool<typeof EchoParams> = {
 };
 
 /** The daemon's link-action controller with its routes, for sessions under test. */
-function linkActions(options: Omit<LinkActionOptions, "routes" | "fallbackTools">): TurnControllerFactory {
+function linkActions(options: Omit<LinkActionOptions, "routes">): TurnControllerFactory {
   return (host) => new LinkActionController({
-    routes: { archive: "wiki_ingest", read: "web_fetch" }, fallbackTools: ["bash", "delegate"],
+    routes: { archive: "wiki_ingest", read: "web_fetch" },
     onOutcome: (message) => host.enqueueAssistant(message), onUsage: (usage) => host.recordUsage(usage), ...options,
   });
 }
@@ -58,7 +56,6 @@ function open(overrides: Partial<SessionOptions> = {}): Promise<Session> {
     buildSystemPrompt: async () => "SYSTEM",
     emit: (event) => events.push(event),
     retry: { attempts: 3, baseDelayMs: 1 },
-    evidence,
     ...overrides,
   });
 }
@@ -69,7 +66,7 @@ describe("Session", () => {
   it("reports an oversized final request locally without calling or retrying the provider", async () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 500, maxTokens: 100 };
-    const session = await Session.open({ evidence,
+    const session = await Session.open({
       key: "web:budget", transcriptPath: join(dir, "budget.jsonl"), model, tools: [], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -85,7 +82,7 @@ describe("Session", () => {
     const provider = vi.fn(fauxStreamFn(createFaux()));
     const model = { ...createFaux().getModel(), contextWindow: 4000, maxTokens: 100 };
     const oversized = { ...echoTool, description: "schema declaration ".repeat(2000) } as AgentTool<any>;
-    const session = await Session.open({ evidence,
+    const session = await Session.open({
       key: "web:tool-budget", transcriptPath: join(dir, "tool-budget.jsonl"), model, tools: [oversized], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event), retry: { attempts: 3, baseDelayMs: 1 },
     });
@@ -96,93 +93,6 @@ describe("Session", () => {
     await session.dispose();
   });
 
-  it("records first-generation usage when an oversized correction is rejected without retry", async () => {
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage("I saved it.")]);
-    const provider = vi.fn(fauxStreamFn(faux));
-    const request = "Please save https://example.test/a.";
-    const baseInput = estimateProviderInput({
-      messages: [
-        { role: "system", content: "SYSTEM", timestamp: 0 },
-        { role: "user", content: request, timestamp: 0 },
-      ],
-      tools: [echoTool],
-    });
-    const model = { ...faux.getModel(), contextWindow: baseInput + 150, maxTokens: 100 };
-    const session = await Session.open({
-      key: "web:correction-budget", transcriptPath: join(dir, "correction-budget.jsonl"), model, tools: [echoTool], streamFn: provider,
-      getApiKey: () => undefined, buildSystemPrompt: async () => "SYSTEM", emit: (event) => events.push(event),
-      evidence: judged({ judge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 1 }, confidence: 0.8, warn: () => {} }),
-      retry: { attempts: 3, baseDelayMs: 1 },
-    });
-    session.send(request);
-    await session.whenIdle();
-    expect(provider).toHaveBeenCalledTimes(1);
-    expect(events.filter((event) => event.kind === "error").map((event) => event.kind === "error" ? event.message : "").join(" ")).toContain("VEX_CONTEXT_BUDGET:");
-    const records = await readJsonl<{ type?: string; usage?: { input: number; output: number; totalTokens: number } }>(join(dir, "correction-budget.jsonl"));
-    const usage = records.find((record) => record.type === "provider_usage")?.usage;
-    expect(usage?.input).toBeGreaterThan(0);
-    expect(usage?.output).toBeGreaterThan(0);
-    expect(usage!.totalTokens).toBeGreaterThan(usage!.input + usage!.output);
-    await session.dispose();
-  });
-
-  it("routes to a tool and prevents an unattempted failure from reaching the owner or transcript", async () => {
-    let calls = 0;
-    faux = createFaux();
-    faux.setResponses([
-      () => { calls++; return fauxAssistantMessage("I could not read it: 2MB limit."); },
-      (context) => {
-        calls++;
-        expect(getCurrentSystemPrompt(context.messages)).toContain("Tool routing: use echo");
-        expect(getCurrentSystemPrompt(context.messages)).toContain("proposed reply was rejected");
-        return fauxAssistantMessage(fauxToolCall("echo", { text: "article" }), { stopReason: "toolUse" });
-      },
-      () => { calls++; return fauxAssistantMessage("Article was read."); },
-      () => { calls++; return fauxAssistantMessage("I could not verify that operation."); },
-    ]);
-    const s = await open({ evidence: judged({
-      confidence: 0.8, warn: () => {},
-      judge: { route: async () => ({ tool: "echo", confidence: 0.95 }), unsupported: async () => 0 },
-    }) });
-    s.send("check https://example.com/article");
-    await s.whenIdle();
-    expect(calls).toBe(4);
-    expect(events.filter((e) => e.kind === "assistant_message")).not.toEqual(expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining("2MB") })]));
-    expect(events.filter((e) => e.kind === "text_delta")).not.toEqual(expect.arrayContaining([expect.objectContaining({ delta: expect.stringContaining("2MB") })]));
-    expect(JSON.stringify(await readJsonl(join(dir, "t.jsonl")))).not.toContain("2MB");
-    expect(s.successfulReply).toContain("could not verify");
-    await s.dispose();
-  });
-
-  it("does not reuse a previous Session run's real tool result for a new claim", async () => {
-    faux = createFaux();
-    const fetchTool: AgentTool<any> = {
-      name: "web_fetch",
-      label: "Fetch web page",
-      description: "Fetch a web page",
-      parameters: Type.Object({ url: Type.String() }),
-      execute: async () => ({ content: [{ type: "text", text: "Original article body" }], details: {} }),
-    };
-    faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("web_fetch", { url: "https://example.test/article" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("I read https://example.test/article."),
-      fauxAssistantMessage("I already read https://example.test/article."),
-      fauxAssistantMessage("I cannot verify a new read in this turn."),
-    ]);
-    const session = await open({ tools: [fetchTool] });
-    session.send("Read https://example.test/article");
-    await session.whenIdle();
-    expect(session.successfulReply).toContain("I read");
-    session.send("Confirm you read https://example.test/article");
-    await session.whenIdle();
-    // The unsupported claim is withheld; the honest correction that follows is kept.
-    expect(session.successfulReply).toBe("I cannot verify a new read in this turn.");
-    expect(JSON.stringify(session.history().items)).not.toContain("I already read");
-    expect(session.history().items.filter((item) => item.kind === "tool" && item.toolName === "web_fetch")).toHaveLength(1);
-    await session.dispose();
-  });
-
   it("charges actual fallback classification usage once when the owner request is rejected by its budget", async () => {
     faux = createFaux();
     const url = "https://example.test/article";
@@ -190,15 +100,17 @@ describe("Session", () => {
     const classifierResponse = (context: Parameters<typeof lastUserText>[0]) => {
       const input = lastUserText(context);
       return input.includes("Classify each supplied URL")
-        ? fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "defer", confidence: 0.99 }] }))
-        : fauxAssistantMessage("The link action was deferred.");
+        ? fauxAssistantMessage(JSON.stringify({ actions: [{ url, intent: "archive", confidence: 0.99 }] }))
+        : fauxAssistantMessage("Archived.");
     };
     faux.setResponses(Array.from({ length: 10 }, () => classifierResponse));
     const baseModel = faux.getModel();
     const model = { ...baseModel, contextWindow: 5_000, maxTokens: 1_000 };
     const requestText = `Please read ${url}`;
-    const outcomeTool = createRequestActionOutcomeTool(() => true);
-    const fixedInput = estimateProviderInput({ messages: [{ role: "user", content: requestText, timestamp: 0 }], tools: [outcomeTool] });
+    // The archive result pushes the main request past its budget once the runtime call has run.
+    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }),
+      execute: async () => ({ content: [{ type: "text", text: "汉".repeat(600) }], details: {} }) };
+    const fixedInput = estimateProviderInput({ messages: [{ role: "user", content: requestText, timestamp: 0 }], tools: [ingest] });
     const systemPrompt = `SYSTEM ${"汉".repeat(3_850 - fixedInput)}`;
     const upstream = fauxStreamFn(faux);
     const provider = vi.fn(async (...args: Parameters<typeof upstream>) => {
@@ -208,19 +120,16 @@ describe("Session", () => {
       }
       return stream;
     });
-    const route = vi.fn(async () => ({ tool: "echo", confidence: 0.99 }));
     const session = await Session.open({
-      key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [], streamFn: provider,
+      key: "web:classification-budget", transcriptPath: join(dir, "classification-budget.jsonl"), model, tools: [ingest], streamFn: provider,
       getApiKey: () => undefined, buildSystemPrompt: async () => systemPrompt,
       controller: linkActions({ confidence: 0.8, classify: async () => { throw new Error("classification service unavailable"); } }),
-      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route, unsupported: async () => 0 } }),
       emit: (event) => events.push(event), retry: { attempts: 1, baseDelayMs: 1 },
     });
     session.send(requestText);
     await session.whenIdle();
     expect(faux.state.callCount).toBe(1);
     expect(provider).toHaveBeenCalledTimes(1);
-    expect(route).not.toHaveBeenCalled();
     expect(session.completionOutcome.failureReason).toContain("VEX_CONTEXT_BUDGET:");
     const records = await readJsonl<{ type?: string; usage?: AssistantMessage["usage"] }>(join(dir, "classification-budget.jsonl"));
     const usageRecords = records.filter((record) => record.type === "provider_usage");
@@ -330,29 +239,25 @@ describe("Session", () => {
     await s.dispose();
   });
 
-  it("treats an actual ingestion policy denial as terminal and blocks a model retry", async () => {
+  it("reports an ingestion denial to the owner and lets the model answer from it", async () => {
     let ingests = 0;
-    let shellCalls = 0;
     const url = "https://example.com/denied";
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
-    const bash: AgentTool<any> = { name: "bash", label: "Shell", description: "Run commands", parameters: Type.Object({ command: Type.String() }), execute: async () => { shellCalls++; return { content: [], details: {} }; } };
     faux = createFaux();
     faux.setResponses([
       (context) => {
         expect(JSON.stringify(context.messages)).toContain("owner denied the action");
-        return fauxAssistantMessage(fauxToolCall("bash", { command: `echo ${url}` }), { stopReason: "toolUse" });
+        return fauxAssistantMessage("The action was denied.");
       },
-      fauxAssistantMessage("The action was denied."),
     ]);
-    const s = await open({ tools: [ingest, bash], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
+    const s = await open({ tools: [ingest], beforeToolCall: async (context) => context.toolCall.name === "wiki_ingest" ? { block: true, reason: "owner denied the action" } : undefined,
       controller: linkActions({ confidence: 0.8, classify: async (_input, urls) => urls.map((candidate): LinkIntent => ({ url: candidate, intent: "archive", confidence: 0.99 })) }),
-      evidence: judged({ confidence: 0.8, warn: () => {}, judge: { route: async () => ({ tool: "bash", confidence: 0.99 }), unsupported: async () => 0 } }),
     });
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(0);
-    expect(shellCalls).toBe(0);
-    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("was blocked or denied"), injected: true }));
+    expect(s.successfulReply).toBe("The action was denied.");
+    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("did not run: owner denied the action"), injected: true }));
     await s.dispose();
   });
 
@@ -366,7 +271,7 @@ describe("Session", () => {
     s.send(`summarize ${url}`);
     await s.whenIdle();
     expect(ingests).toBe(1);
-    expect(JSON.stringify(await readJsonl(join(dir, "t.jsonl")))).toContain("already attempted archival");
+    expect(JSON.stringify(await readJsonl(join(dir, "t.jsonl")))).toContain("already archived");
     await s.dispose();
   });
 
@@ -431,7 +336,7 @@ describe("Session", () => {
     await s.dispose();
   });
 
-  it("uses one schema-validated model fallback, and reports uncertain intent as deferred", async () => {
+  it("uses one schema-validated model fallback, and leaves an uncertain link to the model", async () => {
     const url = "https://example.com/a";
     let ingests = 0;
     const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => { ingests++; return { content: [], details: {} }; } };
@@ -455,7 +360,7 @@ describe("Session", () => {
     uncertain.send(`summarize ${url}`);
     await uncertain.whenIdle();
     expect(ingests).toBe(1);
-    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("Archival was deferred"), injected: true }));
+    expect(events.some((event) => event.kind === "assistant_message" && event.injected)).toBe(false);
     await uncertain.dispose();
 
     faux = createFaux();
@@ -467,7 +372,7 @@ describe("Session", () => {
     partial.send(`summarize ${url}`);
     await partial.whenIdle();
     expect(ingests).toBe(1);
-    expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("Archival was deferred"), injected: true }));
+    expect(events.some((event) => event.kind === "assistant_message" && event.injected)).toBe(false);
     await partial.dispose();
   });
 
@@ -579,216 +484,6 @@ describe("Session", () => {
     s.send("summarize https://example.com/a");
     await s.whenIdle();
     expect(events).toContainEqual(expect.objectContaining({ kind: "assistant_message", text: expect.stringContaining("awaiting bootstrap review"), injected: true }));
-    await s.dispose();
-  });
-
-  it("checks claims against actual tool results before releasing a final reply", async () => {
-    faux = createFaux();
-    let judgments = 0;
-    faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("echo", { text: "article" }), { stopReason: "toolUse" }),
-      fauxAssistantMessage("Reading failed with a size limit."),
-      fauxAssistantMessage("Read successfully."),
-    ]);
-    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
-      route: async () => ({ tool: null, confidence: 1 }),
-      unsupported: async (state) => { expect(JSON.stringify(state)).toContain("echo:article"); judgments++; return 0.99; },
-    } }) });
-    s.send("read this article");
-    await s.whenIdle();
-    expect(judgments).toBe(2);
-    expect(s.successfulReply).toContain("could not verify");
-    expect(JSON.stringify(events)).not.toContain("size limit");
-    await s.dispose();
-  });
-
-  it("suppresses unsupported prose beside a valid tool call while preserving the call", async () => {
-    faux = createFaux();
-    const read: AgentTool<any> = { name: "web_fetch", label: "Read", description: "Read a page", parameters: Type.Object({ url: Type.String() }), execute: async () => ({
-      content: [{ type: "text", text: "read receipt" }], details: { receipt: { version: 1, requestedUrl: "https://example.test/a", sourceAvailable: true, excerpt: "short source" } },
-    }) };
-    faux.setResponses([
-      fauxAssistantMessage([{ type: "text", text: "Saved and pushed." }, fauxToolCall("web_fetch", { url: "https://example.test/a" })], { stopReason: "toolUse" }),
-      fauxAssistantMessage("I read the page."),
-    ]);
-    const s = await open({ tools: [read] });
-    s.send("Read https://example.test/a");
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("I read the page.");
-    expect(JSON.stringify(events)).not.toContain("Saved and pushed");
-    expect(events).toContainEqual(expect.objectContaining({ kind: "tool_start", toolName: "web_fetch" }));
-    await s.dispose();
-  });
-
-  it("uses pending and raw-only Wiki receipts in the honest fallback", async () => {
-    const url = "https://example.test/wiki";
-    const run = async (receipt: Record<string, unknown>) => {
-      faux = createFaux();
-      faux.setResponses([
-        fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }),
-        fauxAssistantMessage("It was saved and pushed."),
-        fauxAssistantMessage("It was saved and pushed."),
-      ]);
-      const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({ content: [], details: { receipt } }) };
-      const s = await open({ tools: [ingest] });
-      s.send(`Save ${url}`);
-      await s.whenIdle();
-      const reply = s.successfulReply;
-      await s.dispose();
-      return reply;
-    };
-    const pending = await run({ version: 1, status: "bootstrap-pending", requestedUrl: url, sourceAvailable: false, rawPath: null, publication: "not-needed", compiledPages: [] });
-    expect(pending).toContain("awaiting review");
-    expect(pending).not.toContain("pushed");
-    events = [];
-    const rawOnly = await run({ version: 1, status: "completed", requestedUrl: url, sourceAvailable: true, rawPath: "raw/item.md", publication: "not-needed", compiledPages: [] });
-    expect(rawOnly).toContain("source archived");
-    expect(rawOnly).not.toContain("compiled");
-    expect(rawOnly).not.toContain("published");
-  });
-
-  it("does not reuse an older same-URL publication receipt for a pending action", async () => {
-    const url = "https://example.test/repeated";
-    let runs = 0;
-    const ingest: AgentTool<any> = { name: "wiki_ingest", label: "Ingest", description: "Archive", parameters: Type.Object({ url: Type.String() }), execute: async () => ({
-      content: [], details: { receipt: runs++ === 0
-        ? { version: 1, status: "completed", requestedUrl: url, sourceAvailable: true, rawPath: "raw/item.md", compiledPages: ["wiki/page.md"], publication: "published" }
-        : { version: 1, status: "bootstrap-pending", requestedUrl: url, sourceAvailable: false, rawPath: null, compiledPages: [], publication: "not-needed" } },
-    }) };
-    faux = createFaux();
-    faux.setResponses([
-      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("It was pushed."),
-      fauxAssistantMessage(fauxToolCall("wiki_ingest", { url }), { stopReason: "toolUse" }), fauxAssistantMessage("It was pushed."), fauxAssistantMessage("It was pushed."),
-    ]);
-    const s = await open({ tools: [ingest] });
-    s.send(`Publish ${url}`);
-    await s.whenIdle();
-    s.send(`Publish ${url}`);
-    await s.whenIdle();
-    expect(runs).toBe(2);
-    expect(s.successfulReply).toContain("awaiting review");
-    expect(s.successfulReply).not.toContain("published");
-    await s.dispose();
-  });
-
-  it("uses matched execution evidence nested in a delegate receipt", async () => {
-    const url = "https://example.test/child";
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage(fauxToolCall("delegate", { task: `Read ${url}` }), { stopReason: "toolUse" }), fauxAssistantMessage("I read the page.")]);
-    const delegate: AgentTool<any> = { name: "delegate", label: "Delegate", description: "Delegate", parameters: Type.Object({ task: Type.String() }), execute: async () => ({
-      content: [{ type: "text", text: "child receipt" }], details: { receipt: { version: 1, evidence: [{ tool: "web_fetch", callId: "child-read", arguments: JSON.stringify({ url }), error: false, result: "read", receipt: { version: 1, requestedUrl: url, sourceAvailable: true } }], checkedReply: "I read it." } },
-    }) };
-    const s = await open({ tools: [delegate] });
-    s.send(`Read ${url}`);
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("I read the page.");
-    await s.dispose();
-  });
-
-  it("does not treat delegate narration as read evidence", async () => {
-    const url = "https://example.test/child";
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage(fauxToolCall("delegate", { task: `Read ${url}` }), { stopReason: "toolUse" }), fauxAssistantMessage("I read the page."), fauxAssistantMessage("I cannot confirm a read.")]);
-    const delegate: AgentTool<any> = { name: "delegate", label: "Delegate", description: "Delegate", parameters: Type.Object({ task: Type.String() }), execute: async () => ({ content: [{ type: "text", text: "child narration" }], details: { receipt: { version: 1, evidence: [], checkedReply: "I read it." } } }) };
-    const s = await open({ tools: [delegate] });
-    s.send(`Read ${url}`);
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("I cannot confirm a read.");
-    expect(JSON.stringify(s.history().items)).not.toContain("I read the page.");
-    await s.dispose();
-  });
-
-  it("falls back to normal execution when the routing service is unavailable", async () => {
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage("hello")]);
-    const warnings: unknown[] = [];
-    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
-      route: async () => { throw new Error("TypeSafe unavailable"); }, unsupported: async () => 0,
-    } }) });
-    s.send("hello");
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("hello");
-    expect(warnings).toHaveLength(1);
-    await s.dispose();
-  });
-
-  it("redacts configured secrets from every Jev evaluation", async () => {
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage("Hello.")]);
-    const captured: string[] = [];
-    const s = await open({
-      tools: [{ ...echoTool, description: "Tool credential TOPSECRET" } as AgentTool<any>],
-      evidence: judged({ secrets: () => ["TOPSECRET", "jev-secret"], confidence: 0.8, warn: () => {}, judge: {
-        route: async (state, tools) => { captured.push(JSON.stringify(state), JSON.stringify(tools)); return { tool: null, confidence: 1 }; },
-        unsupported: async (state) => { captured.push(JSON.stringify(state)); return 0; },
-      } }),
-    });
-    s.send("Hi TOPSECRET");
-    await s.whenIdle();
-    expect(captured.join(" ")).not.toContain("TOPSECRET");
-    expect(captured.join(" ")).not.toContain("jev-secret");
-    await s.dispose();
-  });
-
-  it("uses the local receipt guard when the evidence judge is unavailable", async () => {
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage("I read https://example.test/a."), fauxAssistantMessage("I read https://example.test/a.")]);
-    const warnings: unknown[] = [];
-    const s = await open({ evidence: judged({ confidence: 0.8, warn: (error) => warnings.push(error), judge: {
-      route: async () => ({ tool: null, confidence: 1 }),
-      unsupported: async () => { throw new Error("checker unavailable"); },
-    } }) });
-    s.send("Read https://example.test/a");
-    await s.whenIdle();
-    expect(warnings).toHaveLength(2);
-    expect(s.successfulReply).toContain("could not verify");
-    expect(events.some((event) => event.kind === "error")).toBe(false);
-    await s.dispose();
-  });
-
-  it("does not force uncertain tool routes", async () => {
-    faux = createFaux();
-    faux.setResponses([fauxAssistantMessage("hello")]);
-    const s = await open({ evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
-      route: async () => ({ tool: "echo", confidence: 0.1 }), unsupported: async () => 0,
-    } }) });
-    s.send("hello");
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("hello");
-    expect(faux.state.callCount).toBe(1);
-    await s.dispose();
-  });
-
-  it("bounds evidence repair to one attempt", async () => {
-    let calls = 0;
-    faux = createFaux();
-    faux.setResponses([() => { calls++; return fauxAssistantMessage("I ran the command."); }, () => { calls++; return fauxAssistantMessage("I ran the command."); }]);
-    const s = await open({ evidence: judged({
-      confidence: 0.8, warn: () => {},
-      judge: { route: async () => ({ tool: "echo", confidence: 1 }), unsupported: async () => 1 },
-    }) });
-    s.send("run echo");
-    await s.whenIdle();
-    expect(calls).toBe(2);
-    expect(s.successfulReply).toContain("could not verify");
-    expect(JSON.stringify(events)).not.toContain("could not be verified");
-    await s.dispose();
-  });
-
-  it("preserves approval denials when tool routing is enabled", async () => {
-    faux = createFaux();
-    let calls = 0;
-    faux.setResponses([() => { calls++; return fauxAssistantMessage(fauxToolCall("echo", { text: "article" }), { stopReason: "toolUse" }); }, () => { calls++; return fauxAssistantMessage("The owner denied the operation."); }]);
-    const s = await open({
-      beforeToolCall: async () => ({ block: true, reason: "owner denied" }),
-      evidence: judged({ confidence: 0.8, warn: () => {}, judge: {
-        route: async () => ({ tool: "echo", confidence: 1 }),
-        unsupported: async (state) => { expect(JSON.stringify(state)).toContain("owner denied"); return 0; },
-      } }),
-    });
-    s.send("read link");
-    await s.whenIdle();
-    expect(s.successfulReply).toBe("The owner denied the operation.");
     await s.dispose();
   });
 
@@ -1024,7 +719,8 @@ describe("Session", () => {
     await session.whenIdle();
     expect(kinds()).toEqual(["busy", "user_message", "assistant_message", "busy"]);
     const saved = await readJsonl<{ role: string; stopReason?: string }>(join(dir, "t.jsonl"));
-    expect(saved.map((m) => m.stopReason ?? m.role)).toEqual(["user", "stop"]);
+    // The failed attempt's usage is kept as its own provider_usage record.
+    expect(saved.filter((m) => m.role).map((m) => m.stopReason ?? m.role)).toEqual(["user", "stop"]);
   });
 
   it("reports the error after exhausting retries", async () => {
@@ -1034,7 +730,7 @@ describe("Session", () => {
     const session = await open();
     session.send("go");
     await session.whenIdle();
-    expect(events).toContainEqual({ kind: "error", message: "Model call failed: Provider generation failed before a checked reply was available." });
+    expect(events).toContainEqual({ kind: "error", message: "Model call failed: Provider generation failed." });
     expect(faux.getPendingResponseCount()).toBe(0);
     expect(session.history().items.map((i) => i.kind)).toEqual(["user"]);
     expect(await readFile(join(dir, "t.jsonl"), "utf8")).toContain('"type":"provider_usage"');

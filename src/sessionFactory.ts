@@ -5,7 +5,6 @@ import type { Api, Model } from "@earendil-works/pi-ai";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { VexConfig } from "./config/schema.js";
 import { redactSecrets } from "./config/secrets.js";
-import type { EvidenceProfiles } from "./context/claims.js";
 import {
   availableToolsSection,
   baseInstructionsSection,
@@ -26,23 +25,19 @@ import { LinkActionController } from "./links/actions.js";
 import type { Logger } from "./logger.js";
 import type { VexPaths } from "./paths.js";
 import { PROACTIVE_CHAT_SOURCE, type Persona } from "./persona/index.js";
-import { judgeAdvisor, type TurnAdvisor } from "./policy/advice.js";
 import type { ApprovalManager } from "./policy/approvals.js";
 import { createToolGate } from "./policy/gate.js";
-import type { DecisionJudge } from "./policy/judge.js";
+import type { LinkClassifier } from "./links/intent.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { Jev } from "./providers/jev.js";
 import type { ModelRegistry } from "./providers/models.js";
 import type { Scheduler } from "./scheduler/index.js";
 import { skillBodySection, skillsSection } from "./skills/index.js";
 import { createDelegateTool } from "./tools/delegate.js";
-import { CORE_TOOL_EVIDENCE } from "./tools/evidence.js";
 import type { McpBridge } from "./tools/mcp.js";
 import { createScheduleTool } from "./tools/schedule.js";
 import type { TraceScope, TraceStore } from "./trace/store.js";
-import { VAULT_TOOL_EVIDENCE } from "./vault/evidence.js";
 import type { Vault } from "./vault/notes.js";
-import { WIKI_TOOL_EVIDENCE } from "./vault/wiki/evidence.js";
 import type { Wiki, WikiRunContext } from "./vault/wiki/service.js";
 import { createWikiInteractiveTools, createWikiWriteTools } from "./vault/wiki/tools.js";
 import type { OriginalSource } from "./links/source.js";
@@ -72,11 +67,12 @@ export interface SessionFactoryDeps {
   scheduler: () => Scheduler;
   /** Every open session with its tool list, so MCP changes and restarts can reach them. */
   live: Map<Session, () => AgentTool<any>[]>;
-  decisionJudge?: DecisionJudge;
+  /** Replaces Jev as the link classifier, for isolated tests. */
+  linkClassifier?: LinkClassifier;
   onOwnerMessage?: (key: string) => void;
 }
 
-/** Assembles sessions: prompts, tools, gates, evidence and link actions for owner and background runs. */
+/** Assembles sessions: prompts, tools, gates and link actions for owner and background runs. */
 export function createSessionFactory(deps: SessionFactoryDeps) {
   const { paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, wiki, wikiSourceResolver, live } = deps;
   const interactiveSections = [
@@ -92,7 +88,9 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     timeSection(),
   ];
 
-  const judgeConfidence = config.jev?.confidence ?? 0.8;
+  const linkConfidence = config.jev?.confidence ?? 0.8;
+  const linkClassifier = deps.linkClassifier ?? (config.jev?.enabled ? new Jev(config.jev, fetch, (decision) => log.info(decision, "jev decision")) : undefined);
+  const providerErrorLog = (key: string) => (raw: string) => log.warn({ session: key }, `provider generation failed: ${redactSecrets(raw, secrets())}`);
   const runStarted = new Map<string, number>();
   const logSessionEvent = (key: string, event: SessionEvent) => {
     switch (event.kind) {
@@ -151,7 +149,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     const base = policy.filter([...commonTools, ...mcp.getTools(), schedule(), ...(wiki ? createWikiInteractiveTools(wiki, { sourceResolver: wikiSourceResolver }) : [])]);
     return policy.filter([...base, createDelegateTool({ workspace: config.workspace, model: run.model, streamFn: models.streamFn, getApiKey,
       getTools: () => policy.filter([...commonTools, ...mcp.getTools(), schedule()]), beforeToolCall: run.beforeToolCall, trace: () => run.trace.current,
-      evidence: { profiles: TOOL_EVIDENCE, ...(run.advisor ? { advisor: run.advisor } : {}), secrets, warn: (err) => log.warn({ err, session: run.key }, "delegate evidence boundary warning") } })]);
+      onProviderError: providerErrorLog(run.key) })]);
   };
   const workspacePolicy = new ToolPolicy({ workspace: config.workspace, overrides: {} });
   /** Memory consolidation may search memory and touch workspace files, and nothing else. */
@@ -175,31 +173,24 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
     const toolNames = () => getTools().map((tool) => tool.name);
     const promptBuilder = profile.prompt(toolNames);
     const sessionPrompt = () => promptBuilder.build({ windowLabel: key === DEVICE_SESSION_KEY ? `${windowLabel()}${SPOKEN_REPLY_HINT}` : windowLabel(), now: new Date() });
-    const decisionJudge = config.jev?.enabled || deps.decisionJudge
-      ? deps.decisionJudge ?? new Jev(config.jev ?? {}, fetch, (decision) => log.info({ session: key, ...decision }, "jev decision"))
-      : undefined;
     const trace = traces.scope(key);
-    const advisor = decisionJudge ? judgeAdvisor(decisionJudge, { confidence: judgeConfidence, fallbackTools: LINK_FALLBACK_TOOLS }) : undefined;
     let opened: Session | undefined;
     const beforeToolCall: ToolGate = profile.gate
       ?? createToolGate({ policy, approvals, sessionKey: key, windowLabel, unattended: () => opened?.unattended ?? false });
-    const run: RunContext = { key, model: runModel, beforeToolCall, trace, advisor, ...(wikiContext ? { wikiContext } : {}) };
+    const run: RunContext = { key, model: runModel, beforeToolCall, trace, ...(wikiContext ? { wikiContext } : {}) };
     const getTools = (): AgentTool<any>[] => profile.tools(run);
     const owner: Partial<SessionOptions> = profile.owner ? {
       ...(wiki ? { controller: (host) => new LinkActionController({
         routes: LINK_ROUTES,
-        fallbackTools: LINK_FALLBACK_TOOLS,
         onOutcome: (message) => host.enqueueAssistant(message),
         onUsage: (usage) => host.recordUsage(usage),
-        confidence: judgeConfidence,
-        classify: async (input: string, urls: string[], signal?: AbortSignal) => {
-          if (!decisionJudge) throw new Error("Jev link classification is disabled.");
-          if (!decisionJudge.classifyLinks) throw new Error("The configured decision judge does not classify link intents.");
+        confidence: linkConfidence,
+        ...(linkClassifier ? { classify: async (input: string, urls: string[], signal?: AbortSignal) => {
           const clean = redactSecrets({ input, urls }, secrets());
-          const choices = await decisionJudge.classifyLinks(clean.input, clean.urls, signal);
+          const choices = await linkClassifier.classifyLinks(clean.input, clean.urls, signal);
           // Redaction can rewrite a URL; answers follow the order of the URLs sent.
           return choices.map((choice, index) => ({ ...choice, url: urls[index] ?? choice.url }));
-        },
+        } } : {}),
         warn: (err: unknown) => log.warn({ err, session: key }, "link intent classification unavailable"),
       }) } satisfies Partial<SessionOptions> : {}),
       onOwnerMessage: () => { deps.onOwnerMessage?.(key); persona.userMessage(key === WECHAT_SESSION_KEY ? "wechat" : "web"); },
@@ -213,7 +204,7 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
       thinking: profile.background ? config.backgroundModel.thinking : config.model.thinking,
       tools: getTools(),
       streamFn: models.streamFn,
-      evidence: { profiles: TOOL_EVIDENCE, ...(advisor && profile.owner ? { advisor } : {}), secrets, warn: (err: unknown) => log.warn({ err, session: key }, "evidence boundary warning") },
+      onProviderError: providerErrorLog(key),
       getApiKey,
       buildSystemPrompt: sessionPrompt,
       beforeToolCall,
@@ -256,12 +247,8 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
 /** Device replies are synthesized to speech on a small speaker. */
 const SPOKEN_REPLY_HINT = " (replies are read aloud: answer in a few short plain sentences, without Markdown, lists, tables, code or links)";
 
+/** Shared links are archived into the wiki or read from the web. */
 const LINK_ROUTES = { archive: "wiki_ingest", read: "web_fetch" };
-/** Shared links are archived into the wiki or read from the web; a denied link must not be retried through these. */
-const LINK_FALLBACK_TOOLS = ["bash", "delegate"];
-
-/** What each tool's results prove, declared by the module that owns the tool. */
-const TOOL_EVIDENCE: EvidenceProfiles = { ...CORE_TOOL_EVIDENCE, ...VAULT_TOOL_EVIDENCE, ...WIKI_TOOL_EVIDENCE };
 
 export type TemporaryKind = "heartbeat" | "consolidation" | "wiki";
 type RunKind = "interactive" | TemporaryKind;
@@ -273,7 +260,6 @@ interface RunContext {
   model: Model<Api>;
   beforeToolCall: ToolGate;
   trace: TraceScope;
-  advisor: TurnAdvisor | undefined;
   wikiContext?: WikiRunContext;
 }
 

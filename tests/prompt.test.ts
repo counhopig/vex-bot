@@ -99,10 +99,9 @@ describe("wikiSection", () => {
 });
 
 describe("run profiles", () => {
-  it("keeps intent advice, runtime actions and receipt evidence distinct", async () => {
+  it("explains runtime link actions and keeps receipt states distinct", async () => {
     const text = await profileSection("interactive")(ctx);
-    expect(text).toContain("Jev classifies intent and provides advisory suggestions");
-    expect(text).toContain("runtime owns fixed link actions");
+    expect(text).toContain("the runtime archives or reads it before you answer");
     expect(text).toContain("pending publication");
   });
 });

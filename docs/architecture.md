@@ -30,17 +30,17 @@ Stack: TypeScript (ESM, strict), `@earendil-works/pi-ai` and `@earendil-works/pi
 | `channels/wechat/` | iLink long polling, owner check, message delivery, QR login, credential reload |
 | `web/` | WebChat front end: session list, chat, approvals, settings, run traces |
 | `trace/` | Run traces: one record per run of its model calls, tool calls, approvals, checks and outcome, with the store and the WebChat feed |
-| `context/` | System prompt assembly, context compaction, memory rescue, request budget and the tool-agnostic evidence boundary (claims are checked against per-tool evidence profiles) |
+| `context/` | System prompt assembly, context compaction, memory rescue and the request budget |
 | `links/` | Original-source reading for shared links and `LinkActionController`, the turn controller that runs the owner's link actions |
-| `tools/` | Built-in tools and their evidence profiles, MCP bridge, `delegate` sub-agent |
-| `policy/` | Approval policy, pending approvals, the `DecisionJudge` contract and its advisor adapter |
+| `tools/` | Built-in tools, MCP bridge, `delegate` sub-agent |
+| `policy/` | Approval policy, pending approvals and the execution gate |
 | `index/` | SQLite FTS5 index over memory files and transcripts; `memory_search` |
 | `vault/` | Notes vault: git mirror or folder, note parsing and link resolution, `vault_search` and `vault_read` |
 | `vault/wiki/` | LLM wiki over the vault's writable clone, which the vault then reads instead of a mirror: scheduled ingest, batch commits and push, history reconciliation, rollback |
 | `scheduler/` | Scheduled messages, heartbeat, consolidation, outreach checks |
 | `persona/` | Mood values, rest hours, outreach decision, mood description |
 | `skills/` | `SKILL.md` discovery |
-| `providers/` | Model resolution and API keys, usage accounting, the TypeSafe Jev judge |
+| `providers/` | Model resolution and API keys, usage accounting, provider error causes, the TypeSafe Jev link classifier |
 | `store/` | Append-only JSONL and atomic file writes |
 | `cli/` | The `vex` command |
 
@@ -70,7 +70,7 @@ In order: built-in base instructions, `SOUL.md`, `USER.md`, mood and rest-hours 
 
 Messages that did not come from the owner are marked in the text the model sees: `[Scheduled task "name"]`, `[Missed scheduled task "name", originally due time]`, and a proactive-chat marker. The instructions for the heartbeat, memory consolidation and proactive chat are built in.
 
-Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Jev advises on intent and tool routing; fixed link actions are executed by the runtime through the regular tool gate. Receipts and tool results ground owner-facing read, archive, compile, publish, pending-publication, and preview-review claims.
+Interactive, Wiki, consolidation, heartbeat, and delegate runs use separate instructions matched to their available tools. A Wiki compiler receives the `llm-wiki` skill directly and only `vault_search`, `vault_read`, `wiki_write`, and `wiki_edit`. It does not retrieve a shared URL: the runtime archives the original and supplies its `raw/` path. Shared links are handled before the model answers (see Link actions below).
 
 ### Compaction
 
@@ -101,7 +101,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `vault_search`, `vault_read` | Search and read the notes vault (read-only); registered only when `vault` is configured |
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
-| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns a checked reply, bounded tool evidence and usage |
+| `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns its final reply and usage |
 | `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
@@ -124,6 +124,16 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 `ask` publishes a request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y` (allow), `/ya` (always allow for that tool in the session), `/n` (deny) on WeChat, which answer the oldest pending request. Requests unanswered after ten minutes are denied. A run the runtime starts (proactive chat, scheduled turns, heartbeat, wiki compilation) has no owner to answer, so until an owner message joins it a tool that needs approval is refused at once, with a reason telling the model to continue without it; tools allowed by policy, or always allowed earlier in the session, still run. Sub-agents use their parent's gate; consolidation may only touch workspace files.
 
 Notifications the runtime delivers (wiki results, link-action outcomes, heartbeat reports) are kept in the transcript as assistant messages and labelled in model requests as already delivered, so the model does not restate them.
+
+### Link actions
+
+With the wiki enabled, an owner message containing links is handled in three steps before the model writes its reply:
+
+1. **Intake.** Each link's intent is classified once: `archive`, `read` (the owner asked not to save it) or `defer`. Jev answers when it is enabled; otherwise, or when Jev is unsure, the main model answers a bounded JSON question. Only a confident answer counts.
+2. **Action.** The runtime calls `wiki_ingest` (archive) or `web_fetch` (read) for each confidently classified link, as the run's first steps, through the normal policy and approval gate. A deferred link, or one whose tool is unavailable, is left to the model.
+3. **Result.** The tool result is in the conversation when the model answers. The owner is told directly about what no wiki run reports: a refused or failed call, a source that could not be read, a metadata-only page, or an archive waiting for bootstrap review. The wiki reports its own compile and publish results.
+
+The model may not archive a link the owner confidently declined, or archive the same link twice in one request. Replies are not inspected: what the runtime did reaches the owner from the runtime itself.
 
 ### Link reading
 
@@ -225,9 +235,9 @@ Like WeChat, the device receives the reply that ends each turn, without the text
 
 ## Run traces
 
-Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, evidence-check and budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
+Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
 
-- Each run is one JSONL file under `traces/`, with run summaries in `traces/index.jsonl`. Model requests are recorded where they leave for the provider, so the corrective request of an evidence check appears as its own step; a system prompt is stored only when it differs from the previous request's.
+- Each run is one JSONL file under `traces/`, with run summaries in `traces/index.jsonl`. Model requests are recorded where they leave for the provider, so a link-intent classification appears as its own step; a system prompt is stored only when it differs from the previous request's.
 - Payload fields are redacted with the configured secrets and cut to fixed lengths (system prompt 64 KiB, tool results, thinking and reply text 16 KiB, arguments 8 KiB); a run stores at most 4 MiB of events, then only its end. Runs older than seven days are deleted, and a run that never ended (the daemon stopped) is listed as interrupted.
 - The WebChat Traces page lists runs newest first with source and error filters and a full-text search over the stored traces. A run opens as a waterfall: model calls on a shared time axis, tools under the call that requested them, sub-agent steps under their delegate call; each step expands to its full payload, and a running run updates live.
 

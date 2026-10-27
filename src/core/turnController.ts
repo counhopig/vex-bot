@@ -14,10 +14,8 @@ type ToolGate = (context: BeforeToolCallContext, signal?: AbortSignal) => Promis
  * points of its lifecycle and knows nothing about what a controller decides or which tools it uses.
  */
 export interface TurnController {
-  /** Tools the controller contributes beside the session's own. */
-  tools(): AgentTool<any>[];
-  /** Wraps the checked model stream; `unchecked` bypasses the evidence boundary for internal requests. */
-  wrapStream(checked: StreamFn, tools: () => AgentTool<any>[], unchecked: StreamFn): StreamFn;
+  /** Wraps the session's model stream; `internal` serves the controller's own requests. */
+  wrapStream(stream: StreamFn, tools: () => AgentTool<any>[], internal: StreamFn): StreamFn;
   /** Decides a tool call first; call `ownerGate` to fall through to the owner's policy and approvals. */
   beforeToolCall(context: BeforeToolCallContext, signal: AbortSignal | undefined, ownerGate: ToolGate): Promise<BeforeToolCallResult | undefined>;
   /** An owner message that starts or steers a turn. */

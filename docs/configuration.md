@@ -17,7 +17,7 @@ The settings page has seven tabs:
 
 | Tab | What it edits |
 |---|---|
-| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one; optional Jev tool routing |
+| Model | Main model (provider, model, thinking level, API key, and for a custom provider its protocol and `baseUrl`) and the background model, which can simply follow the main one; optional Jev link intent |
 | WeChat | Whether WeChat is on, the owner account, and the live connection state |
 | Voice & links | Speech to text, the Bilibili `SESSDATA`, web search, the notes vault |
 | Routine | Heartbeat, daily memory consolidation, compaction threshold, rest hours and proactive chat |
@@ -86,7 +86,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `vault.wiki.every` | `6h` | Wiki ingest cadence: a duration such as `6h` or a cron expression |
 | `vault.wiki.notify` | `true` | Send a WeChat notification after each wiki batch, and once when consecutive runs start failing |
 | `vault.wiki.maxNotesPerRun` | `20` | Notes compiled per model call; a run processes every pending note and makes one commit |
-| `jev.enabled` | `false` | Use TypeSafe Jev for tool suggestions and tool-evidence checks in owner conversations |
+| `jev.enabled` | `false` | Use TypeSafe Jev to classify what the owner wants done with shared links |
 | `jev.apiKey` | none | Official TypeSafe API key; `TYPESAFE_API_KEY` also works |
 | `jev.model` | `jev-latest` | TypeSafe decision model |
 | `jev.confidence` | `0.8` | Minimum routing confidence and unsupported-claim probability for intervention (0.5–1) |
@@ -99,13 +99,11 @@ Default tool policy: `web_fetch`, `web_search`, `memory_search`, `vault_search`,
 
 Built-in providers (DeepSeek, Kimi, MiniMax, Zhipu, Qwen, Xiaomi, OpenRouter and the others in the installed pi-ai registry) are referenced by `provider` and `id`. Any OpenAI- or Anthropic-compatible endpoint is declared under `providers` with `api` and `baseUrl`. A model can see images only when it declares `input: [text, image]`; the built-in image skill requires such a model.
 
-## Jev tool routing
+## Jev link intent
 
-Enable Jev under **Settings → Model → Tool routing (Jev)** and enter your TypeSafe API key. Save to apply the configuration. The key is stored with the other secrets and is never returned in the settings response.
+Enable Jev under **Settings → Model → Link intent (Jev)** and enter your TypeSafe API key. Save to apply the configuration. The key is stored with the other secrets and is never returned in the settings response.
 
-Jev uses the [official TypeSafe evaluation API](https://docs.typesafe.ai/api). It receives the bounded request, available tool names and descriptions, execution evidence, and a proposed reply; configuration secrets are excluded. Jev classifies link intent and gives advisory tool suggestions. With the wiki enabled, the runtime owns fixed link actions and submits them through the normal tool and approval path. Without the wiki, shared links go to the model like any other message. When Jev is disabled, unavailable, or uncertain, Vex tries a bounded main-model JSON intent classification; if that remains uncertain, it reports the action as deferred. Local evidence checks remain active regardless of Jev. Receipts distinguish a successful read from archival, Wiki compilation, publication, pending publication, and bootstrap review; a model summary or child-agent narration is not execution evidence.
-
-When a run involves shared links, tool results or a required tool, final replies are held until their operation claims are checked against current-turn receipts; other replies stream as they are generated and are not sent to Jev for checking. Low-confidence routes do not force a tool. Jev API errors log a warning; the runtime still reports fixed actions as deferred when their intent cannot be classified. Each check adds an API request, and a corrective model request may also be needed. Background tasks use profile-specific tools and prompts.
+Jev uses the [official TypeSafe evaluation API](https://docs.typesafe.ai/api). With the wiki enabled, it receives the owner's message (bounded and with configuration secrets removed) and its links, and answers for each link whether to archive it, only read it, or wait. An answer below `jev.confidence` is not used. When Jev is disabled, unavailable or unsure, the main model answers the same question as bounded JSON; a link still without a confident intent is left to the model. Jev API errors log a warning. See [Link actions](architecture.md#link-actions) for what happens next.
 
 ## MCP servers
 

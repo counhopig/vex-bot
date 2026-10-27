@@ -103,8 +103,7 @@ describe("assembled shared-link workflow", () => {
     const localGit = (args: string[], options: Parameters<typeof runGit>[1]) => runGit(args, { ...options, env: { ...options.env, GIT_ALLOW_PROTOCOL: "file:http:https" } });
     daemon = await startDaemon({
       paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit,
-      decisionJudge: { route: async () => ({ tool: null, confidence: 0 }), unsupported: async () => 0,
-        classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: "archive" as const, confidence: 0.99 })) },
+      linkClassifier: { classifyLinks: async (_input, urls) => urls.map((url) => ({ url, intent: "archive" as const, confidence: 0.99 })) },
       wikiSourceResolver: async (url, signal) => { sourceReads.push(url); return readOriginalSource(url, { signal, request: pageRequest }); },
     });
 

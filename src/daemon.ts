@@ -26,7 +26,7 @@ import { createMemorySearchTool } from "./index/tool.js";
 import { ApprovalManager } from "./policy/approvals.js";
 import { ToolPolicy } from "./policy/policy.js";
 import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
-import type { DecisionJudge } from "./policy/judge.js";
+import type { LinkClassifier } from "./links/intent.js";
 import { maxUserPromptBytes } from "./context/budget.js";
 import { createCoreTools } from "./tools/registry.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile } from "./workspace/workspace.js";
@@ -59,8 +59,8 @@ export interface DaemonOptions {
   wikiGitRunner?: GitRunner;
   /** Source reader override for isolated Wiki integrations. */
   wikiSourceResolver?: (url: string, signal: AbortSignal) => Promise<OriginalSource>;
-  /** Decision override for isolated request-action integration tests. */
-  decisionJudge?: DecisionJudge;
+  /** Link classifier override for isolated link-action integration tests. */
+  linkClassifier?: LinkClassifier;
   /** Public page request override for isolated WebChat and Wiki integration tests. */
   webPageRequest?: PageRequest;
 }
@@ -163,7 +163,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const { openSession, runTemporary, wikiTools, wikiPrompt } = createSessionFactory({
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
       scheduler: () => scheduler, live,
-      ...(opts.decisionJudge ? { decisionJudge: opts.decisionJudge } : {}),
+      ...(opts.linkClassifier ? { linkClassifier: opts.linkClassifier } : {}),
       onOwnerMessage: (key) => { if (key === WECHAT_SESSION_KEY) wechatInbound++; },
     });
     const sessions = new SessionManager({
