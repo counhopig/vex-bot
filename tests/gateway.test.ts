@@ -178,6 +178,22 @@ describe("Gateway HTTP", () => {
     expect(attempts.map((response) => response.status).sort()).toEqual([401, 429, 429, 429, 429]);
   });
 
+  it("locks out only the address that failed", async () => {
+    const host = await start({ token: "secret" });
+    const port = Number(host.slice(host.lastIndexOf(":") + 1));
+    const login = (token: string, localAddress: string) => new Promise<number>((resolve, reject) => {
+      const req = httpRequest({ hostname: "127.0.0.1", port, path: "/api/login", method: "POST", localAddress, headers: { host } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode ?? 0));
+      });
+      req.on("error", reject);
+      req.end(JSON.stringify({ token }));
+    });
+    expect(await login("wrong", "127.0.0.2")).toBe(401);
+    expect(await login("secret", "127.0.0.2")).toBe(429);
+    expect(await login("secret", "127.0.0.1")).toBe(204);
+  });
+
   it("rejects cross-origin sockets", async () => {
     const host = await start();
     await expect(connect(host, { origin: "http://evil.example" })).rejects.toThrow();

@@ -55,6 +55,31 @@ const STATIC_FILES: Record<string, StaticEntry> = {
 
 const DEVICE_PATH = "/device/ws";
 
+/**
+ * Allows one failed attempt per second from each address, so guessing stays slow while a stranger's
+ * failures cannot lock the owner out. Behind a reverse proxy every request shares the proxy's address.
+ */
+class Lockout {
+  private readonly until = new Map<string, number>();
+
+  locked(address: string): boolean {
+    const until = this.until.get(address);
+    if (until === undefined) return false;
+    if (Date.now() < until) return true;
+    this.until.delete(address);
+    return false;
+  }
+
+  fail(address: string): void {
+    const now = Date.now();
+    // Entries last a second, so pruning expired ones keeps the map as small as the current attack.
+    if (this.until.size >= 1024) for (const [key, until] of this.until) if (until <= now) this.until.delete(key);
+    this.until.set(address, now + 1000);
+  }
+}
+
+const addressOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? "";
+
 export class Gateway {
   private server: Server | undefined;
   private wss: WebSocketServer | undefined;
@@ -62,8 +87,8 @@ export class Gateway {
   private readonly traceWatchers = new Set<WebSocket>();
   private unsubscribe: (() => void) | undefined;
   private unsubscribeTraces: (() => void) | undefined;
-  private loginLockedUntil = 0;
-  private deviceLockedUntil = 0;
+  private readonly loginLockout = new Lockout();
+  private readonly deviceLockout = new Lockout();
 
   constructor(private readonly opts: GatewayOptions) {}
 
@@ -170,7 +195,7 @@ export class Gateway {
   }
 
   private async handleLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (Date.now() < this.loginLockedUntil) {
+    if (this.loginLockout.locked(addressOf(req))) {
       req.resume();
       res.writeHead(429, { "Retry-After": "1" }).end();
       return;
@@ -184,12 +209,12 @@ export class Gateway {
     } catch {
       // A malformed body is treated as an empty token.
     }
-    if (Date.now() < this.loginLockedUntil) {
+    if (this.loginLockout.locked(addressOf(req))) {
       res.writeHead(429, { "Retry-After": "1" }).end();
       return;
     }
     if (!this.opts.auth.checkToken(token)) {
-      this.loginLockedUntil = Date.now() + 1000;
+      this.loginLockout.fail(addressOf(req));
       res.writeHead(401).end();
       return;
     }
@@ -215,9 +240,9 @@ export class Gateway {
     const device = this.opts.device;
     if (!device) return "404 Not Found";
     if (req.headers.origin !== undefined) return "403 Forbidden";
-    if (Date.now() < this.deviceLockedUntil) return "429 Too Many Requests";
+    if (this.deviceLockout.locked(addressOf(req))) return "429 Too Many Requests";
     if (!matchesBearer(req.headers.authorization, device.token)) {
-      this.deviceLockedUntil = Date.now() + 1000;
+      this.deviceLockout.fail(addressOf(req));
       return "401 Unauthorized";
     }
     return undefined;

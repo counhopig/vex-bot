@@ -260,8 +260,8 @@ Every run of every session, temporary ones included, is recorded as a trace: wha
 
 | Area | Measure |
 |---|---|
-| Web access | Loopback by default; token required otherwise; Host/Origin checks; payload limit |
-| Device access | Off without `device.token`; separate bearer token limited to send and stop in the device session; Origin refused |
+| Web access | Loopback by default; token required otherwise; Host/Origin checks; payload limit; one failed login per second from each address, so another address cannot lock the owner out (behind a reverse proxy all requests share its address) |
+| Device access | Off without `device.token`; separate bearer token limited to send and stop in the device session; Origin refused; one failed attempt per second from each address |
 | `web_fetch` | Only public HTTP(S) addresses. Loopback, private, link-local, carrier-grade NAT, documentation and metadata ranges are blocked, including IPv6 mapped and tunnel forms. DNS answers are validated at connection time, redirects are re-checked (at most five), size is capped at 2 MB, and responses are decoded with their declared charset |
 | MCP | stdio servers receive a minimal environment; output is labelled untrusted |
 | Files | Workspace path checks use real paths, so symlinks cannot leave the workspace unnoticed |
