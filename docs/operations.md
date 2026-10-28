@@ -72,7 +72,7 @@ Container details:
 
 A QR code expires after a few minutes and is refreshed up to three times. When the session expires later, vexd shows a new QR code; scanning it reconnects without a restart. Set `wechat.enabled: false` to disable the channel.
 
-WeChat commands: `/stop` interrupts the current reply; `/y`, `/ya` and `/n` answer the oldest pending approval.
+WeChat commands: `/stop` interrupts the current reply; `/y 3`, `/ya 3` and `/n 3` answer approval #3; the number can be left out while only one approval is pending.
 
 ## Data directory
 

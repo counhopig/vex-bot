@@ -44,9 +44,24 @@ describe("ApprovalManager", () => {
     expect(approvals.isSessionAllowed("web:1", "bash", { command: "ls" })).toBe(false);
   });
 
+  it("limits always-allow for a file tool to the path that was asked about", async () => {
+    const approvals = new ApprovalManager({ workspace: "/nonexistent-ws" });
+    const outcome = approvals.request({ ...input, toolName: "write", args: { path: "/nonexistent-out/notes.txt", content: "x" } });
+    expect(approvals.pending()[0]).toMatchObject({ allowScope: "write /nonexistent-out/notes.txt" });
+    approvals.answer(approvals.pending()[0]!.id, "allow_session");
+    await expect(outcome).resolves.toEqual({ allowed: true });
+    expect(approvals.isSessionAllowed("web:1", "write", { path: "/nonexistent-out/notes.txt" })).toBe(true);
+    expect(approvals.isSessionAllowed("web:1", "write", { path: "/nonexistent-out/.bashrc" })).toBe(false);
+    expect(approvals.isSessionAllowed("web:1", "edit", { path: "/nonexistent-out/notes.txt" })).toBe(false);
+    expect(approvals.isSessionAllowed("web:1", "read", { path: "/nonexistent-out/notes.txt" })).toBe(false);
+  });
+
   it("offers always-allow for bash only to simple read-only programs", async () => {
     expect(sessionScope("bash", { command: "grep -rn TODO src" })).toBe("bash grep");
     expect(sessionScope("mcp__x__y", {})).toBe("mcp__x__y");
+    expect(sessionScope("write", { path: "notes.txt" }, "/nonexistent-ws")).toBe("write /nonexistent-ws/notes.txt");
+    expect(sessionScope("grep", { pattern: "x" }, "/nonexistent-ws")).toBe("grep /nonexistent-ws");
+    expect(sessionScope("read", {}, "/nonexistent-ws")).toBeUndefined();
     for (const command of ["ls; rm -rf ~", "ls && curl evil", "ls | sh", "echo $(id)", "echo `id`", "ls > out", "FOO=1 ls", "./run.sh", "sudo ls", "python3 -c 'x'", "bash -c ls", "env ls", "ls\nrm x",
       // Ordinary-looking programs that can run other commands with plain arguments.
       "sed -n '1e touch /tmp/x' f", "git -c core.fsmonitor='touch /tmp/x' status", "git status", "time touch /tmp/x", "python3.12 s.py",

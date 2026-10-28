@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { resolveRealPath, resolveToolPath } from "../tools/paths.js";
 import { approvalDetail, summarizeArgs } from "../tools/summary.js";
 
 export type ApprovalAnswer = "allow" | "allow_session" | "deny";
 
 export interface ApprovalRequest {
   id: string;
+  /** A short number, unique among pending requests, that WeChat answers name (`/y 3`). */
+  code: number;
   sessionKey: string;
   windowLabel: string;
   toolName: string;
@@ -40,12 +43,25 @@ const ABORTED: ApprovalOutcome = { allowed: false, reason: "This turn was interr
  */
 const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "pwd", "echo", "grep", "du", "df", "stat", "which", "whoami", "uname", "basename", "dirname", "realpath", "nl", "cut"]);
 
+/** File tools ask only outside the workspace; "always allow" covers the one path asked about, never its folder. */
+const PATH_TOOLS = new Set(["read", "write", "edit", "grep", "find"]);
+
 /**
- * What answering "always allow" to a call covers: the tool, or for `bash` the read-only program a
- * simple command runs. Any other bash call (a compound or substituted command, a path, another
- * program) has no such scope and is confirmed every time.
+ * What answering "always allow" to a call covers: for `bash` the read-only program a simple command
+ * runs, for a file tool the exact real path, otherwise the tool. Any other bash call (a compound or
+ * substituted command, a path, another program) has no such scope and is confirmed every time.
  */
-export function sessionScope(toolName: string, args: unknown): string | undefined {
+export function sessionScope(toolName: string, args: unknown, workspace = process.cwd()): string | undefined {
+  if (PATH_TOOLS.has(toolName)) {
+    const given = args && typeof args === "object" ? (args as { path?: unknown }).path : undefined;
+    const path = given ?? (toolName === "grep" || toolName === "find" ? "." : undefined);
+    if (typeof path !== "string") return undefined;
+    try {
+      return `${toolName} ${resolveRealPath(resolveToolPath(workspace, path))}`;
+    } catch {
+      return undefined;
+    }
+  }
   if (toolName !== "bash") return toolName;
   const command = args && typeof args === "object" ? (args as { command?: unknown }).command : undefined;
   if (typeof command !== "string" || /[;&|`$<>(){}\\\n]/.test(command)) return undefined;
@@ -62,6 +78,7 @@ export class ApprovalManager {
   private readonly workspace: string | undefined;
   private readonly onEvent: (event: ApprovalEvent) => void;
   private readonly everyCall: ReadonlySet<string>;
+  private nextCode = 1;
 
   constructor(opts: { timeoutMs?: number; now?: () => number; onChange?: () => void; workspace?: string; onEvent?: (event: ApprovalEvent) => void; everyCall?: Iterable<string> } = {}) {
     this.timeoutMs = opts.timeoutMs ?? 10 * 60_000;
@@ -84,6 +101,7 @@ export class ApprovalManager {
     const scope = this.scope(input.toolName, input.args);
     const request: ApprovalRequest = {
       id: randomUUID(),
+      code: this.nextCode++,
       sessionKey: input.sessionKey,
       windowLabel: input.windowLabel,
       toolName: input.toolName,
@@ -141,7 +159,7 @@ export class ApprovalManager {
   }
 
   private scope(toolName: string, args: unknown): string | undefined {
-    return this.everyCall.has(toolName) ? undefined : sessionScope(toolName, args);
+    return this.everyCall.has(toolName) ? undefined : sessionScope(toolName, args, this.workspace);
   }
 
   /** Drops the "always allow" answers of a conversation that no longer exists. */

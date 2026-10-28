@@ -6,15 +6,11 @@ const MAX_APPROVAL_DETAIL_CHARS = 1500;
 
 export type OwnerCommand =
   | { kind: "stop" }
-  | { kind: "approve"; answer: ApprovalAnswer }
+  /** `code` names the request (`/y 3`); without it the answer applies only when one request is pending. */
+  | { kind: "approve"; answer: ApprovalAnswer; code?: number }
   | { kind: "chat"; text: string };
 
-const COMMANDS: Record<string, OwnerCommand> = {
-  "/stop": { kind: "stop" },
-  "/y": { kind: "approve", answer: "allow" },
-  "/ya": { kind: "approve", answer: "allow_session" },
-  "/n": { kind: "approve", answer: "deny" },
-};
+const ANSWERS: Record<string, ApprovalAnswer> = { "/y": "allow", "/ya": "allow_session", "/n": "deny" };
 
 // Move back if cutting between a high and low surrogate pair.
 function safeCutPoint(text: string, cut: number): number {
@@ -60,7 +56,11 @@ export function extractText(items: InboundItem[]): string {
 export function parseCommand(text: string): OwnerCommand {
   // Chinese input methods often produce a full-width slash.
   const normalized = text.trim().replace(/^／/, "/").toLowerCase();
-  return COMMANDS[normalized] ?? { kind: "chat", text };
+  if (normalized === "/stop") return { kind: "stop" };
+  const match = /^(\/ya|\/y|\/n)(?:\s*[#＃]?\s*(\d+))?$/.exec(normalized);
+  const answer = match ? ANSWERS[match[1]!] : undefined;
+  if (!match || !answer) return { kind: "chat", text };
+  return match[2] === undefined ? { kind: "approve", answer } : { kind: "approve", answer, code: Number(match[2]) };
 }
 
 export function splitMessage(text: string, max = MAX_MESSAGE_CHARS): string[] {
@@ -88,13 +88,14 @@ export function formatApprovalPrompt(request: ApprovalRequest, pendingCount: num
     const cut = safeCutPoint(detail, MAX_APPROVAL_DETAIL_CHARS);
     detail = `${detail.slice(0, cut)}\n… (content too long; see the full text in WebChat)`;
   }
+  const n = request.code;
   const lines = [
-    `[Approval needed] ${request.windowLabel} wants to run ${request.toolName}:`,
+    `[Approval needed #${n}] ${request.windowLabel} wants to run ${request.toolName}:`,
     detail,
     request.everyCall
-      ? `Reply /y to allow or /n to deny; this is asked every time (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`
-      : `Reply /y to allow, /ya to always allow ${request.allowScope ?? request.toolName} in this conversation, /n to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
+      ? `Reply /y ${n} to allow or /n ${n} to deny; this is asked every time (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`
+      : `Reply /y ${n} to allow, /ya ${n} to always allow ${request.allowScope ?? request.toolName} in this conversation, /n ${n} to deny (denied automatically if there is no answer by ${formatClock(request.expiresAt, timeZone)})`,
   ];
-  if (pendingCount > 1) lines.push(`(${pendingCount} approvals are pending; they are handled in order)`);
+  if (pendingCount > 1) lines.push(`(${pendingCount} approvals are pending; a reply without a number is not accepted)`);
   return lines.join("\n");
 }

@@ -66,7 +66,7 @@ describe("vexd with WeChat", () => {
     ]);
     ilink.queueUpdates(textMessage("owner1", "run date", { message_id: "m1" }));
     await start(cfg);
-    await vi.waitFor(() => expect(ilink.sentTexts()[0]).toContain("[Approval needed]"));
+    await vi.waitFor(() => expect(ilink.sentTexts()[0]).toContain("[Approval needed #"));
     await vi.waitFor(() => expect(faux.getPendingResponseCount()).toBe(0), { timeout: 3000 });
     const started = Date.now();
     await daemon!.stop(); daemon = undefined;
@@ -125,9 +125,9 @@ describe("vexd with WeChat", () => {
     ]);
     ilink.queueUpdates(textMessage("owner1", "跑一下", { message_id: "m1" }));
     await start(config());
-    await vi.waitFor(() => expect(ilink.sentTexts()[0]).toContain("[Approval needed] WeChat wants to run bash:\necho hi"), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts()[0]).toContain("[Approval needed #1] WeChat wants to run bash:\necho hi"), { timeout: 5000 });
     ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "m2" }));
-    await vi.waitFor(() => expect(ilink.sentTexts().slice(1)).toEqual(["Allowed: bash", "跑完了"]), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts().slice(1)).toEqual(["Allowed #1 bash: echo hi", "跑完了"]), { timeout: 5000 });
   });
 
   it("uses the configured owner over the scanner", async () => {

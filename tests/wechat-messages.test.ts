@@ -31,6 +31,10 @@ describe("parseCommand", () => {
     expect(parseCommand(" /Y ")).toEqual({ kind: "approve", answer: "allow" });
     expect(parseCommand("／ya")).toEqual({ kind: "approve", answer: "allow_session" });
     expect(parseCommand("/n")).toEqual({ kind: "approve", answer: "deny" });
+    expect(parseCommand("/y 3")).toEqual({ kind: "approve", answer: "allow", code: 3 });
+    expect(parseCommand("／ya#12")).toEqual({ kind: "approve", answer: "allow_session", code: 12 });
+    expect(parseCommand("/n ＃4")).toEqual({ kind: "approve", answer: "deny", code: 4 });
+    expect(parseCommand("/y 3 please")).toEqual({ kind: "chat", text: "/y 3 please" });
   });
 
   it("treats everything else as chat", () => {
@@ -72,6 +76,7 @@ describe("formatApprovalPrompt", () => {
     allowScope: "bash ls",
     id: "a1",
     sessionKey: "web:1",
+    code: 3,
     windowLabel: "WebChat conversation 'Tidy'",
     toolName: "bash",
     summary: "ls",
@@ -82,20 +87,20 @@ describe("formatApprovalPrompt", () => {
 
   it("names the source, tool, command and deadline", () => {
     expect(formatApprovalPrompt(request, 1, "Asia/Shanghai")).toBe(
-      "[Approval needed] WebChat conversation 'Tidy' wants to run bash:\nls -la\nReply /y to allow, /ya to always allow bash ls in this conversation, /n to deny (denied automatically if there is no answer by 14:10)",
+      "[Approval needed #3] WebChat conversation 'Tidy' wants to run bash:\nls -la\nReply /y 3 to allow, /ya 3 to always allow bash ls in this conversation, /n 3 to deny (denied automatically if there is no answer by 14:10)",
     );
   });
 
   it("offers no always-allow answer for a tool confirmed on every call", () => {
     expect(formatApprovalPrompt({ ...request, toolName: "wiki_bootstrap", detail: "Publish the Wiki bootstrap preview", everyCall: true }, 1, "Asia/Shanghai")).toBe(
-      "[Approval needed] WebChat conversation 'Tidy' wants to run wiki_bootstrap:\nPublish the Wiki bootstrap preview\nReply /y to allow or /n to deny; this is asked every time (denied automatically if there is no answer by 14:10)",
+      "[Approval needed #3] WebChat conversation 'Tidy' wants to run wiki_bootstrap:\nPublish the Wiki bootstrap preview\nReply /y 3 to allow or /n 3 to deny; this is asked every time (denied automatically if there is no answer by 14:10)",
     );
   });
 
   it("mentions the queue and truncates long details", () => {
     const text = formatApprovalPrompt({ ...request, detail: "x".repeat(2000) }, 3, "Asia/Shanghai");
     expect(text).toContain(`${"x".repeat(1500)}\n… (content too long; see the full text in WebChat)`);
-    expect(text.endsWith("(3 approvals are pending; they are handled in order)")).toBe(true);
+    expect(text.endsWith("(3 approvals are pending; a reply without a number is not accepted)")).toBe(true);
     expect(text.length).toBeLessThan(2000);
   });
 

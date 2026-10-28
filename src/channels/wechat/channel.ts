@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type { EventBus, SessionEvent, TurnStatus, VexEvent } from "../../core/events.js";
 import { WECHAT_SESSION_KEY } from "../../core/sessionKey.js";
-import type { ApprovalAnswer, ApprovalManager } from "../../policy/approvals.js";
+import type { ApprovalAnswer, ApprovalManager, ApprovalRequest } from "../../policy/approvals.js";
 import { SESSION_EXPIRED_ERRCODE, WeChatApiError, type InboundMessage, type WeChatClient } from "./client.js";
 import { extractText, formatApprovalPrompt, parseCommand, splitMessage } from "./messages.js";
 import type { WeChatStore } from "./store.js";
@@ -30,10 +30,10 @@ export interface WeChatChannelOptions {
 
 const SEEN_LIMIT = 500;
 
-const ANSWER_REPLIES: Record<ApprovalAnswer, (tool: string, scope: string) => string> = {
-  allow: (tool) => `Allowed: ${tool}`,
-  allow_session: (_tool, scope) => `Allowed; ${scope} will not be asked about again in this conversation`,
-  deny: (tool) => `Denied: ${tool}`,
+const ANSWER_REPLIES: Record<ApprovalAnswer, (request: ApprovalRequest) => string> = {
+  allow: (request) => `Allowed #${request.code} ${request.toolName}: ${request.summary}`,
+  allow_session: (request) => `Allowed #${request.code}; ${request.allowScope ?? request.toolName} will not be asked about again in this conversation`,
+  deny: (request) => `Denied #${request.code} ${request.toolName}: ${request.summary}`,
 };
 
 const MAX_INBOUND_ATTEMPTS = 8;
@@ -154,7 +154,7 @@ export class WeChatChannel {
     const command = parseCommand(text);
     this.opts.log.info({ chars: text.length, command: command.kind === "chat" ? undefined : command.kind }, "wechat message received");
     if (command.kind === "approve") {
-      this.answerOldest(command.answer);
+      this.answerApproval(command.answer, command.code);
       return;
     }
     const session = await this.opts.sessions.get(WECHAT_SESSION_KEY);
@@ -226,16 +226,23 @@ export class WeChatChannel {
     this.savedInboxVersion = Math.max(this.savedInboxVersion, version);
   }
 
-  private answerOldest(answer: ApprovalAnswer): void {
-    const oldest = this.opts.approvals.pending()[0];
-    if (!oldest) {
-      this.send("There are no pending requests.");
+  /**
+   * Answers the request the owner named. A bare `/y` is accepted only while a single request is
+   * pending, so it can never land on a request other than the one its prompt was about.
+   */
+  private answerApproval(answer: ApprovalAnswer, code: number | undefined): void {
+    const pending = this.opts.approvals.pending();
+    const request = code === undefined ? (pending.length === 1 ? pending[0] : undefined) : pending.find((item) => item.code === code);
+    if (!request) {
+      if (code !== undefined) this.send(`There is no pending request #${code}; it may have been answered or expired.`);
+      else if (pending.length === 0) this.send("There are no pending requests.");
+      else this.send([`${pending.length} requests are pending; reply with the number, such as /y ${pending[0]!.code}:`, ...pending.map((item) => `#${item.code} ${item.toolName}: ${item.summary}`)].join("\n"));
       return;
     }
-    this.opts.approvals.answer(oldest.id, answer);
+    this.opts.approvals.answer(request.id, answer);
     // "Always allow" for a call that offers none answers it once.
-    const effective = answer === "allow_session" && oldest.allowScope === undefined ? "allow" : answer;
-    this.send(ANSWER_REPLIES[effective](oldest.toolName, oldest.allowScope ?? oldest.toolName));
+    const effective = answer === "allow_session" && request.allowScope === undefined ? "allow" : answer;
+    this.send(ANSWER_REPLIES[effective](request));
   }
 
   private onBusEvent(event: VexEvent): void {

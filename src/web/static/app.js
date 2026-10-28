@@ -663,7 +663,7 @@ function renderApprovals() {
     const head = document.createElement("div");
     head.className = "approval-head";
     const deadline = new Date(request.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    head.textContent = `${request.windowLabel} wants to run ${request.toolName} (denied automatically if there is no answer by ${deadline})`;
+    head.textContent = `#${request.code} ${request.windowLabel} wants to run ${request.toolName} (denied automatically if there is no answer by ${deadline})`;
     const detail = document.createElement("pre");
     detail.textContent = request.detail;
     const actions = document.createElement("div");
