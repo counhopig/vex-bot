@@ -13,7 +13,7 @@
     "dist/**"
   ],
   "scripts": {
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node scripts/copy-static.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json && node scripts/copy-static.mjs && node scripts/build-sandbox.mjs",
     "dev": "tsx src/cli/index.ts start",
     "lint": "tsc --noEmit && tsc -p tsconfig.web.json",
     "test": "vitest run"

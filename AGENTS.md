@@ -16,7 +16,8 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner, MCP SDK; Node.js ≥24.
 ├── src/                    # Runtime and static WebChat
 ├── tests/                  # Module and local-service integration suites
 ├── skills/                 # Bundled image, weather and link-reader assets
-├── scripts/copy-static.mjs # Copies browser and skill assets into dist
+├── native/vex-sandbox.c    # Landlock helper behind tools.sandbox
+├── scripts/                # copy-static.mjs copies browser and skill assets; build-sandbox.mjs compiles the helper
 ├── docs/                   # Architecture, configuration, operations, samples
 ├── .github/workflows/docker.yml
 ├── Dockerfile
@@ -71,7 +72,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner, MCP SDK; Node.js ≥24.
 - Single package; browser UI is plain JS/CSS/HTML without a frontend build.
 - Published files are `dist/**`; executable entry is `dist/cli/index.js`.
 - Workspace skills override bundled skills by name; discovery code and skill assets live separately.
-- Build clears `dist`, compiles only `src/**/*.ts`, then copies static files and bundled skills.
+- Build clears `dist`, compiles only `src/**/*.ts`, copies static files and bundled skills, then compiles the sandbox helper into `dist/native` when `cc` exists (skipped with a warning otherwise).
 
 ## COMMANDS
 
@@ -92,5 +93,5 @@ docker-compose up -d
 - Docker runs as `node` with `/data`; health checks target container port 7860.
 - Compose publishes on host loopback; the container listens on `0.0.0.0`.
 - Docker includes FFmpeg and architecture-specific yt-dlp for link-reader transcription.
-- Docker includes git for the notes vault mirror (`vault.url`).
+- Docker includes git for the notes vault mirror (`vault.url`) and `/usr/local/bin/vex-sandbox`, compiled in the `deps` stage.
 - CI runs lint, tests and the full build on Node 24 for pushes and pull requests; the amd64/arm64 image is built and published only on `main` and version tags, so pull requests skip the image job.

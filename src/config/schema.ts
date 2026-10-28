@@ -55,7 +55,15 @@ export const ConfigSchema = StrictObject({
     }),
   ),
   workspace: Type.Optional(Type.String({ minLength: 1 })),
-  tools: Type.Optional(StrictObject({ policy: Type.Optional(Type.Record(Type.String(), DecisionSchema)) })),
+  tools: Type.Optional(StrictObject({
+    policy: Type.Optional(Type.Record(Type.String(), DecisionSchema)),
+    sandbox: Type.Optional(StrictObject({
+      mode: Type.Optional(Type.Union([Type.Literal("off"), Type.Literal("workspace")])),
+      readable: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      writable: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+      helper: Type.Optional(Type.String({ minLength: 1 })),
+    })),
+  })),
   bashEnvPassthrough: Type.Optional(Type.Array(Type.String())),
   compaction: Type.Optional(StrictObject({ threshold: Type.Optional(Type.Number({ exclusiveMinimum: 0, maximum: 1 })) })),
   memory: Type.Optional(StrictObject({ consolidateAt: Type.Optional(Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })) })),
@@ -139,6 +147,8 @@ export interface VexConfig {
   web: { host: string; port: number; token?: string };
   workspace: string;
   toolPolicy: Record<string, Decision>;
+  /** Absent when `tools.sandbox` is not configured, which leaves bash unconfined. */
+  sandbox?: import("../tools/sandbox.js").SandboxConfig;
   bashEnvPassthrough: string[];
   wechat: { enabled: boolean; ownerId?: string; baseUrl: string };
   /** The device connection is on only with a token, which `VEX_DEVICE_TOKEN` can also supply. */

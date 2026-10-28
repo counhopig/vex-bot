@@ -113,6 +113,7 @@ When a tool needs approval, the request appears in WeChat and in every open WebC
 - Keep `config.yaml` private; it holds API keys, the web token and the device token.
 - Leave `bash` and MCP tools on `ask` unless you trust the prompts reaching Vex; `web_fetch` cannot reach private networks.
 - Pass secrets to shell commands only through `bashEnvPassthrough`.
+- On Linux, set `tools.sandbox.mode: workspace` so shell commands can change only the workspace and temporary files and cannot read Vex's data apart from `config.yaml`; check `vex logs` after a restart for the sandbox line. Docker's default seccomp profile allows Landlock on recent Docker releases; if the log says the sandbox is unavailable, update Docker.
 
 ## Troubleshooting
 

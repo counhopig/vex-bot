@@ -94,7 +94,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | Tool | Notes |
 |---|---|
 | `read`, `write`, `edit`, `grep`, `find` | Relative paths resolve inside the workspace |
-| `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough` |
+| `bash` | Runs in the workspace; inherits only an environment allowlist plus `bashEnvPassthrough`; with `tools.sandbox.mode: workspace`, runs under Landlock through `native/vex-sandbox.c` and refuses commands when the sandbox is unavailable |
 | `web_fetch` | Reads public pages and returns a JSON receipt with an excerpt (see Security) |
 | `web_search` | Tavily, SearXNG, Brave Search or DeepSeek Search, as configured |
 | `memory_search` | FTS5 search over memory files and transcripts |

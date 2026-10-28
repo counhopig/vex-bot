@@ -23,6 +23,7 @@ import { createModelRegistry, type ModelRegistry } from "./providers/models.js";
 import type { LinkClassifier } from "./links/intent.js";
 import { maxUserPromptBytes } from "./context/budget.js";
 import { createCoreTools } from "./tools/registry.js";
+import { prepareSandbox } from "./tools/sandbox.js";
 import { ensureWorkspace, listDailyNotes, readWorkspaceFile, residentLimitWarning, saveWorkspaceFile } from "./workspace/workspace.js";
 import { Vault } from "./vault/notes.js";
 import { createVaultTools } from "./vault/tools.js";
@@ -143,7 +144,10 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       ...(config.stt ? { stt: config.stt } : {}),
     });
     const wikiSourceResolver = opts.wikiSourceResolver ?? ((url: string, signal: AbortSignal) => readOriginalSource(url, linkReading(signal)));
-    const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config }),
+    const sandbox = config.sandbox && await prepareSandbox({ workspace: config.workspace, home: paths.home, config: paths.config }, config.sandbox);
+    if (sandbox?.ok) log.info({ abi: sandbox.abi }, "bash commands run in the Landlock sandbox");
+    else if (sandbox) log.error({ reason: sandbox.reason }, "the bash sandbox is on but unavailable; bash will refuse commands");
+    const commonTools = [...createCoreTools({ workspace: config.workspace, bashEnvPassthrough: config.bashEnvPassthrough, configPath: paths.config, ...(sandbox ? { sandbox } : {}) }),
       createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool({
         ...(opts.webPageRequest ? { request: opts.webPageRequest } : {}),
         sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),

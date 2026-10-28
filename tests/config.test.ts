@@ -80,6 +80,13 @@ describe("parseConfig", () => {
     });
   });
 
+  it("resolves sandbox paths like the workspace and leaves the sandbox off by default", () => {
+    expect(parseConfig(minimal, paths).sandbox).toBeUndefined();
+    const config = parseConfig(`${minimal}tools: { sandbox: { mode: workspace, readable: [notes], writable: ["~/cache"], helper: /opt/vex-sandbox } }\n`, paths);
+    expect(config.sandbox).toEqual({ mode: "workspace", readable: [join(dir, "notes")], writable: [join(homedir(), "cache")], helper: "/opt/vex-sandbox" });
+    expect(() => parseConfig(`${minimal}tools: { sandbox: { mode: strict } }\n`, paths)).toThrow(ConfigError);
+  });
+
   it("reads the wechat block", () => {
     const config = parseConfig(`${minimal}wechat: { enabled: false, ownerId: o9x, baseUrl: "http://127.0.0.1:9000" }\n`, paths);
     expect(config.wechat).toEqual({ enabled: false, ownerId: "o9x", baseUrl: "http://127.0.0.1:9000" });

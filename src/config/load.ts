@@ -5,6 +5,7 @@ import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { checkCadence } from "../scheduler/index.js";
 import { writeFileAtomic } from "../store/atomic.js";
+import type { SandboxConfig } from "../tools/sandbox.js";
 import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
 
 export class ConfigError extends Error {}
@@ -33,6 +34,17 @@ function checkVault(vault: RawVault, paths: VexPaths): VaultConfig {
   return {
     ...git,
     ...(wiki?.enabled ? { wiki: { every: wiki.every ?? "6h", notify: wiki.notify ?? true, maxNotesPerRun: wiki.maxNotesPerRun ?? 20 } } : {}),
+  };
+}
+
+/** Sandbox paths resolve like `workspace`: `~` is the user's home and relative paths start at the data home. */
+function checkSandbox(sandbox: Partial<SandboxConfig>, paths: VexPaths): SandboxConfig {
+  const at = (path: string) => resolve(paths.home, expandHome(path));
+  return {
+    mode: sandbox.mode ?? "off",
+    readable: (sandbox.readable ?? []).map(at),
+    writable: (sandbox.writable ?? []).map(at),
+    ...(sandbox.helper ? { helper: at(sandbox.helper) } : {}),
   };
 }
 
@@ -70,6 +82,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.stt ? { stt: raw.stt } : {}),
     ...(raw.links ? { links: raw.links } : {}),
     ...(raw.vault ? { vault: checkVault(raw.vault, paths) } : {}),
+    ...(raw.tools?.sandbox ? { sandbox: checkSandbox(raw.tools.sandbox, paths) } : {}),
     ...(raw.jev ? { jev: raw.jev } : {}),
     ...(raw.mcpServers ? { mcpServers: raw.mcpServers } : {}),
     ...(raw.device ? { device: { ...(raw.device.token ? { token: raw.device.token } : {}), label: raw.device.label ?? DEFAULT_DEVICE_LABEL } } : {}),
