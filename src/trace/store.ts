@@ -96,21 +96,25 @@ export class TraceStore {
     this.scopes.get(session)?.latest?.record(event);
   }
 
-  /** Newest first; with a query, only runs whose trace contains it, ignoring case. */
-  async list(opts: { before?: number; limit?: number; query?: string } = {}): Promise<{ runs: TraceSummary[]; nextBefore?: number }> {
+  /**
+   * Newest first; with a query, only runs whose trace contains it, ignoring case. Runs that start in the
+   * same millisecond are ordered by id, and the cursor names both, so a page boundary never skips one.
+   */
+  async list(opts: { before?: string; limit?: number; query?: string } = {}): Promise<{ runs: TraceSummary[]; nextBefore?: string }> {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const cursor = parseCursor(opts.before);
     const candidates = [...this.runs.values()]
-      .filter((run) => opts.before === undefined || run.startedAt < opts.before)
-      .sort((a, b) => b.startedAt - a.startedAt);
+      .filter((run) => !cursor || run.startedAt < cursor.at || (run.startedAt === cursor.at && run.id < cursor.id))
+      .sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
     const query = opts.query?.trim().toLowerCase();
     if (!query) {
       const runs = candidates.slice(0, limit);
-      return { runs, ...(candidates.length > limit ? { nextBefore: runs.at(-1)!.startedAt } : {}) };
+      return { runs, ...(candidates.length > limit ? { nextBefore: cursorOf(runs.at(-1)!) } : {}) };
     }
     const runs: TraceSummary[] = [];
     let scanned = 0;
     for (const run of candidates) {
-      if (runs.length >= limit || scanned >= SEARCH_FILES) return { runs, nextBefore: candidates[scanned - 1]?.startedAt ?? run.startedAt };
+      if (runs.length >= limit || scanned >= SEARCH_FILES) return { runs, nextBefore: cursorOf(candidates[scanned - 1] ?? run) };
       scanned++;
       const text = await readFile(this.pathOf(run.id), "utf8").catch(() => "");
       if (text.toLowerCase().includes(query) || run.title.toLowerCase().includes(query)) runs.push(run);
@@ -294,4 +298,14 @@ class Scope implements TraceScope {
     this.previous = run;
     run.record({ type: "run_end", ms: Math.max(0, this.store.now() - run.summary.startedAt), outcome, ...(detail.error ? { error: detail.error } : {}), ...(detail.reply ? { reply: detail.reply } : {}) });
   }
+}
+
+const cursorOf = (run: TraceSummary): string => `${run.startedAt}:${run.id}`;
+
+function parseCursor(cursor: string | undefined): { at: number; id: string } | undefined {
+  if (cursor === undefined) return undefined;
+  const split = cursor.indexOf(":");
+  const at = Number(split < 0 ? cursor : cursor.slice(0, split));
+  // A cursor without an id names only a time: the runs that started before it.
+  return Number.isFinite(at) ? { at, id: split < 0 ? "" : cursor.slice(split + 1) } : undefined;
 }
