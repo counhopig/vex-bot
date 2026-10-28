@@ -164,6 +164,25 @@ describe("scheduler", () => {
     vi.mocked(f.hooks.deliver).mockImplementation(async (_target, _prompt, _kind, signal) => { await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); });
     f.advance(1000); await f.scheduler.tick(); await f.flush(); await f.scheduler.close(); f.advance(1000); await f.scheduler.tick(); expect(f.hooks.deliver).toHaveBeenCalledTimes(2);
   });
+  it("keeps built-in jobs running and waits a minute before retrying when due tasks cannot be saved", async () => {
+    const f = await fixture({ outreach: { enabled: true, checkEvery: "1m" } }); await f.scheduler.start();
+    await f.scheduler.create({ name: "tick", prompt: "p", target: "wechat", schedule: { every: "1m" } });
+    // A directory in place of the file makes every save fail, as a full or read-only disk would.
+    const file = join(f.dataDir, "schedules.json");
+    await rm(file); await mkdir(file);
+    for (let i = 0; i < 3; i++) { f.advance(60_000); await f.scheduler.tick(); await f.flush(); }
+    expect(f.hooks.deliver).not.toHaveBeenCalled();
+    expect(f.hooks.checkOutreach).toHaveBeenCalledTimes(3);
+    const saveErrors = () => vi.mocked(f.hooks.log).mock.calls.filter(([error]) => String(error).includes("could not be saved")).length;
+    expect(saveErrors()).toBe(3);
+    // Within the minute the due task is not retried.
+    f.advance(30_000); await f.scheduler.tick(); await f.flush();
+    expect(saveErrors()).toBe(3);
+    await rm(file, { recursive: true });
+    f.advance(30_000); await f.scheduler.tick(); await f.flush();
+    expect(f.hooks.deliver).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(await readFile(file, "utf8"))).toHaveLength(1);
+  });
   it("sleeps until the earliest deadline instead of waking every second", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {

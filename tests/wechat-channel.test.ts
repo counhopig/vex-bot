@@ -289,22 +289,29 @@ describe("WeChatChannel outbound", () => {
 });
 
 describe("WeChatChannel approvals", () => {
-  it("announces pending approvals and answers the oldest one", async () => {
+  it("announces numbered approvals and answers only the one the owner names", async () => {
     await store.saveState({ contextToken: "ctx" });
     await startChannel();
     const first = approvals.request({ sessionKey: "web:1", windowLabel: "WebChat conversation 'A'", toolName: "bash", args: { command: "ls" } });
     const second = approvals.request({ sessionKey: "wechat", windowLabel: "WeChat", toolName: "write", args: { path: "/etc/x" } });
     await vi.waitFor(async () => expect(await sentTexts()).toHaveLength(2));
     const [promptA, promptB] = await sentTexts();
-    expect(promptA).toContain("[Approval needed] WebChat conversation 'A' wants to run bash:\nls");
-    expect(promptB).toContain("(2 approvals are pending; they are handled in order)");
+    expect(promptA).toContain("[Approval needed #1] WebChat conversation 'A' wants to run bash:\nls");
+    expect(promptB).toContain("[Approval needed #2]");
 
+    // With two pending, a bare answer could land on the wrong request, so it is refused.
     ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "a1" }));
-    await expect(first).resolves.toEqual({ allowed: true });
-    ilink.queueUpdates(textMessage("owner1", "/n", { message_id: "a2" }));
+    await vi.waitFor(async () => expect((await sentTexts())[2]).toMatch(/^2 requests are pending; reply with the number, such as \/y 1:\n#1 bash: ls\n#2 write: /));
+    ilink.queueUpdates(textMessage("owner1", "/n 2", { message_id: "a2" }));
     await expect(second).resolves.toMatchObject({ allowed: false });
-    ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "a3" }));
-    await vi.waitFor(async () => expect((await sentTexts()).slice(2)).toEqual(["Allowed: bash", "Denied: write", "There are no pending requests."]));
+    ilink.queueUpdates(textMessage("owner1", "/y 2", { message_id: "a3" }));
+    // With one pending, the bare answer applies to it.
+    ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "a4" }));
+    await expect(first).resolves.toEqual({ allowed: true });
+    ilink.queueUpdates(textMessage("owner1", "/ya", { message_id: "a5" }));
+    await vi.waitFor(async () => expect((await sentTexts()).slice(3)).toEqual([
+      "Denied #2 write: /etc/x", "There is no pending request #2; it may have been answered or expired.", "Allowed #1 bash: ls", "There are no pending requests.",
+    ]));
     expect(session.sent).toEqual([]);
   });
 
@@ -316,7 +323,7 @@ describe("WeChatChannel approvals", () => {
     await expect(pending).resolves.toEqual({ allowed: true });
     expect(approvals.isSessionAllowed("wechat", "bash", { command: "pwd -P" })).toBe(true);
     expect(approvals.isSessionAllowed("wechat", "bash", { command: "rm -rf x" })).toBe(false);
-    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed; bash pwd will not be asked about again in this conversation"));
+    await vi.waitFor(async () => expect(await sentTexts()).toContain("Allowed #1; bash pwd will not be asked about again in this conversation"));
   });
 });
 

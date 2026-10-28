@@ -72,7 +72,7 @@ Container details:
 
 A QR code expires after a few minutes and is refreshed up to three times. When the session expires later, vexd shows a new QR code; scanning it reconnects without a restart. Set `wechat.enabled: false` to disable the channel.
 
-WeChat commands: `/stop` interrupts the current reply; `/y`, `/ya` and `/n` answer the oldest pending approval.
+WeChat commands: `/stop` interrupts the current reply; `/y 3`, `/ya 3` and `/n 3` answer approval #3; the number can be left out while only one approval is pending.
 
 ## Data directory
 
@@ -113,6 +113,7 @@ When a tool needs approval, the request appears in WeChat and in every open WebC
 - Keep `config.yaml` private; it holds API keys, the web token and the device token.
 - Leave `bash` and MCP tools on `ask` unless you trust the prompts reaching Vex; `web_fetch` cannot reach private networks.
 - Pass secrets to shell commands only through `bashEnvPassthrough`.
+- On Linux, set `tools.sandbox.mode: workspace` so shell commands can change only the workspace and temporary files and cannot read Vex's data apart from `config.yaml`; check `vex logs` after a restart for the sandbox line. Docker's default seccomp profile allows Landlock on recent Docker releases; if the log says the sandbox is unavailable, update Docker.
 
 ## Troubleshooting
 

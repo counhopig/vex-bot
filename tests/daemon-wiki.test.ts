@@ -129,9 +129,9 @@ describe("daemon Wiki notifications", () => {
     };
     daemon = await startDaemon({ paths, config, log: createLogger(), models: createModelRegistry({}, fauxModels(faux)), wikiGitRunner: localGit });
     await vi.waitFor(() => expect(ilink.sentTexts()).toEqual(expect.arrayContaining([expect.stringContaining("Wiki bootstrap preview is awaiting review")])), { timeout: 5000 });
-    expect(ilink.sentTexts().some((text) => text.includes("[Approval needed]"))).toBe(false);
+    expect(ilink.sentTexts().some((text) => text.includes("[Approval needed #"))).toBe(false);
     ilink.queueUpdates(textMessage("owner1", "Approve the Wiki preview.", { message_id: "review-attempt" }));
-    await vi.waitFor(() => expect(ilink.sentTexts().filter((text) => text.includes("[Approval needed]") && text.includes("Publish the Wiki bootstrap preview"))).toHaveLength(1), { timeout: 5000 });
+    await vi.waitFor(() => expect(ilink.sentTexts().filter((text) => text.includes("[Approval needed #") && text.includes("Publish the Wiki bootstrap preview"))).toHaveLength(1), { timeout: 5000 });
     expect(git(remote, ["rev-parse", "main"])).toBe(unpublishedHead);
 
     ilink.queueUpdates(textMessage("owner1", "/y", { message_id: "review-yes" }));

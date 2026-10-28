@@ -57,6 +57,10 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `wechat.ownerId` | the account that scanned the QR code | The only WeChat account Vex answers |
 | `wechat.baseUrl` | `https://ilinkai.weixin.qq.com` | iLink API endpoint |
 | `tools.policy.<tool>` | see below | `allow`, `ask` or `deny`; an MCP server name (`mcp__<server>`) covers its tools |
+| `tools.sandbox.mode` | `off` | `workspace` runs every `bash` command under Landlock (see below) |
+| `tools.sandbox.readable` | `[]` | Extra paths commands may read, such as folders inside the data directory; relative paths start at the data directory |
+| `tools.sandbox.writable` | `[]` | Extra paths commands may change, such as a cache folder |
+| `tools.sandbox.helper` | `dist/native/vex-sandbox`, else `vex-sandbox` on `PATH` | The Landlock helper binary |
 | `bashEnvPassthrough` | `[]` | Extra environment variables visible to shell commands |
 | `compaction.threshold` | `0.7` | Share of the context window that triggers compaction (0–1) |
 | `memory.consolidateAt` | `03:00` | Daily consolidation time, `HH:mm` |
@@ -95,6 +99,8 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
 Default tool policy: `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild`, `bash` and MCP tools are `ask`, and `wiki_bootstrap`, `wiki_rollback` and `wiki_rebuild` are confirmed on every call; `read`, `grep` and `find` are `allow` inside the workspace and the bundled skills directory and `ask` elsewhere; `write` and `edit` are `allow` inside the workspace and `ask` outside.
+
+**Bash sandbox.** With `tools.sandbox.mode: workspace`, each `bash` command runs through a small Linux helper that applies a Landlock ruleset before starting bash. Commands can list any directory and read and run anything outside the data directory; inside it they can read only `config.yaml` (the bundled skills read their API keys from it) and the workspace. They can change only the workspace, the system temporary directory, `/dev/shm` and `tools.sandbox.writable`. They cannot signal processes outside the sandbox and, unless Vex runs as root, cannot read the daemon's memory or environment through `/proc`. Network access is not restricted, so approvals still matter. The setting needs Linux 5.13 or later with Landlock enabled; the daemon checks the helper at startup and logs the result, and if the kernel or the helper is missing, `bash` refuses every command rather than running it unconfined. The Docker image includes the helper; `npm run build` compiles it when a C compiler is available. Programs that write to caches in your home directory (`~/.cache`, `~/.npm`) need those folders in `tools.sandbox.writable`. A data directory inside the system temporary directory or inside the workspace cannot be hidden. Changing the sandbox needs a restart.
 
 ## Models
 

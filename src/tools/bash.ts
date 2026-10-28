@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
+import type { Sandbox } from "./sandbox.js";
 
 const BASE_ENV_ALLOWLIST = [
   "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "TMPDIR", "TZ",
@@ -35,6 +36,8 @@ interface BashOptions {
   workspace: string;
   envPassthrough: string[];
   configPath?: string;
+  /** When set, every command runs through it; an unavailable sandbox refuses commands. */
+  sandbox?: Sandbox;
 }
 
 export function createBashTool(opts: BashOptions): AgentTool<typeof BashParams> {
@@ -58,7 +61,12 @@ function runCommand(
       reject(new Error("Command interrupted"));
       return;
     }
-    const child = spawn("bash", ["-c", command], {
+    if (opts.sandbox && !opts.sandbox.ok) {
+      reject(new Error(`The bash sandbox is on but cannot confine commands, so nothing ran: ${opts.sandbox.reason}`));
+      return;
+    }
+    const { file, args } = opts.sandbox ? opts.sandbox.wrap("bash", ["-c", command]) : { file: "bash", args: ["-c", command] };
+    const child = spawn(file, args, {
       cwd: opts.workspace,
       env: { ...buildChildEnv(opts.envPassthrough), ...(opts.configPath ? { VEX_CONFIG_PATH: opts.configPath } : {}) },
       detached: true,

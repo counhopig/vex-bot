@@ -51,6 +51,13 @@ tools:
   policy:
     bash: ask
     mcp__remote: ask
+  # Linux only: run bash under Landlock. "workspace" lets commands change only the workspace and
+  # temporary files and hides the data directory except config.yaml; bash refuses commands if the
+  # kernel or the helper cannot confine them. Paths are relative to the data directory.
+  sandbox:
+    mode: "off"
+    readable: []
+    writable: []
 
 # Environment variables that shell commands may inherit, in addition to the built-in allowlist.
 bashEnvPassthrough: []

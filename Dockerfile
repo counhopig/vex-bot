@@ -1,9 +1,12 @@
 # syntax=docker/dockerfile:1
 FROM node:24-bookworm-slim AS deps
-RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make gcc g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+# The Landlock helper behind tools.sandbox; the build stage has no compiler.
+COPY native ./native
+RUN cc -O2 -Wall -o /vex-sandbox native/vex-sandbox.c
 
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
@@ -30,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 # ffmpeg and yt-dlp let the link-reader skill transcribe videos that have no subtitles.
 COPY --from=mwader/static-ffmpeg:7.1.1 /ffmpeg /usr/local/bin/ffmpeg
 COPY --from=tools /yt-dlp /usr/local/bin/yt-dlp
+COPY --from=deps /vex-sandbox /usr/local/bin/vex-sandbox
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
