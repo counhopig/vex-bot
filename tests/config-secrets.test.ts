@@ -20,6 +20,17 @@ describe("configuredSecrets", () => {
     expect(secrets.every((secret) => secret.length > 0)).toBe(true);
   });
 
+  it("collects only secret-named MCP variables and headers", () => {
+    const config = {
+      providers: {}, web: {},
+      mcpServers: {
+        local: { command: "node", env: { DEBUG: "1", NODE_ENV: "production", GITHUB_TOKEN: "gh-token", AUTH_ENABLED: "true" } },
+        remote: { url: "https://mcp.example/", headers: { Accept: "application/json", "X-Api-Key": "header-key" } },
+      },
+    } as unknown as VexConfig;
+    expect(configuredSecrets(config, {}).sort()).toEqual(["gh-token", "header-key"]);
+  });
+
   it("ignores secret-named environment settings that are not credentials", () => {
     const config = { providers: {}, web: {} } as unknown as VexConfig;
     const secrets = configuredSecrets(config, { FEATURE_KEYS_FACT: "1", MAX_THINKING_TOKENS: "31999", AUTH_ENABLED: "true", SHORT_TOKEN: "abc", REAL_TOKEN: "ghp_abcdef123456" });

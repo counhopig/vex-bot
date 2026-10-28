@@ -81,6 +81,8 @@ interface SystemJob { at: number | null; due(now: number): Promise<void> | void 
 const MAX_SLEEP_MS = 60_000;
 /** Shortest sleep, so a deadline that cannot advance (a failing save) is not retried in a busy loop. */
 const MIN_SLEEP_MS = 1_000;
+/** How long due tasks wait after the task file could not be saved, so a full disk is not retried every second. */
+const SAVE_RETRY_MS = 60_000;
 /** How often the wiki is asked for off-cadence work, such as a pending bootstrap. */
 const WIKI_CHECK_MS = 60_000;
 
@@ -94,6 +96,8 @@ export class Scheduler {
   private started = false;
   private stopped = false;
   private ticking = false;
+  /** Due tasks wait until then after a failed save; built-in jobs do not. */
+  private saveRetryAt = 0;
   private readonly jobs: SystemJob[];
   constructor(private readonly options: SchedulerOptions) {
     this.now = options.now ?? Date.now;
@@ -141,7 +145,7 @@ export class Scheduler {
   private arm(): void {
     if (!this.started || this.stopped) return;
     if (this.timer) clearTimeout(this.timer);
-    const due = [...this.tasks.flatMap((task) => task.enabled && task.nextAt !== null ? [task.nextAt] : []), ...this.jobs.flatMap((job) => job.at === null ? [] : [job.at])];
+    const due = [...this.tasks.flatMap((task) => task.enabled && task.nextAt !== null ? [Math.max(task.nextAt, this.saveRetryAt)] : []), ...this.jobs.flatMap((job) => job.at === null ? [] : [job.at])];
     const delay = Math.min(MAX_SLEEP_MS, Math.max(MIN_SLEEP_MS, Math.min(...due) - this.now()));
     this.timer = setTimeout(() => { void this.tick().catch(this.options.hooks.log); }, delay);
     this.timer.unref();
@@ -224,17 +228,28 @@ export class Scheduler {
     this.ticking = true;
     try {
       const now = this.now();
+      // Due tasks advance and are saved together before any runs, so a crash cannot repeat them.
+      // A failed save leaves them due and retries later; it never holds up the built-in jobs below.
       await this.mutate(async () => {
-        for (const task of this.tasks) {
-          if (!task.enabled || task.nextAt === null || task.nextAt > now) continue;
-          const busy = this.running.has(task.id);
-          const once = "once" in task.schedule;
-          const dueAt = task.nextAt;
-          const previous = { enabled: task.enabled, nextAt: task.nextAt };
-          if (once) task.enabled = false;
+        if (now < this.saveRetryAt) return;
+        const due = this.tasks.filter((task) => task.enabled && task.nextAt !== null && task.nextAt <= now)
+          .map((task) => ({ task, enabled: task.enabled, dueAt: task.nextAt! }));
+        if (due.length === 0) return;
+        for (const { task } of due) {
+          if ("once" in task.schedule) task.enabled = false;
           else task.nextAt = next(task.schedule, now);
-          try { await this.save(); } catch (error) { Object.assign(task, previous); throw error; }
-          if (busy) continue;
+        }
+        try {
+          await this.save();
+        } catch (error) {
+          for (const { task, enabled, dueAt } of due) Object.assign(task, { enabled, nextAt: dueAt });
+          this.saveRetryAt = now + SAVE_RETRY_MS;
+          this.options.hooks.log(new Error(`Scheduled tasks could not be saved, so due tasks wait ${SAVE_RETRY_MS / 1000} seconds: ${error instanceof Error ? error.message : String(error)}`));
+          return;
+        }
+        this.saveRetryAt = 0;
+        for (const { task, dueAt } of due) {
+          const once = "once" in task.schedule;
           this.launch(task.id, async () => {
             const target = task.target === WECHAT_SESSION_KEY || await this.options.hooks.targetExists(task.target) ? task.target : WECHAT_SESSION_KEY;
             const missed = startup && once;
@@ -242,7 +257,7 @@ export class Scheduler {
             if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);
           });
         }
-      });
+      }).catch(this.options.hooks.log);
       for (const job of this.jobs) {
         if (job.at === null || now < job.at) continue;
         try { await job.due(now); } catch (error) { this.options.hooks.log(error); }

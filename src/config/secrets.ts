@@ -14,7 +14,7 @@ export function configuredSecrets(config: VexConfig, env: NodeJS.ProcessEnv = pr
     config.links?.bilibili?.sessdata, env.BILIBILI_SESSDATA,
     config.web.token, config.device?.token, config.webSearch?.apiKey, config.stt?.apiKey, ...urlCredentialValues(config.stt?.baseUrl),
     config.vault?.token, ...urlCredentialValues(config.vault?.url),
-    ...Object.values(config.mcpServers ?? {}).flatMap((server) => "env" in server ? Object.values(server.env ?? {}) : "headers" in server ? Object.values(server.headers ?? {}) : []),
+    ...Object.values(config.mcpServers ?? {}).flatMap((server) => secretNamed("env" in server ? server.env : "headers" in server ? server.headers : undefined)),
     ...Object.values(config.mcpServers ?? {}).flatMap((server) => urlCredentialValues("url" in server ? server.url : undefined)),
     ...Object.entries(env).filter(([name, value]) => SECRET_ENV_NAME.test(name) && typeof value === "string" && credentialLike(value)).map(([, value]) => value),
   ].filter((secret): secret is string => typeof secret === "string" && secret.length > 0);
@@ -26,7 +26,17 @@ export function configuredSecrets(config: VexConfig, env: NodeJS.ProcessEnv = pr
  * matching digit or word in the request, including the URLs a link action must match.
  */
 function credentialLike(value: string): boolean {
-  return value.length >= 8 && !/^\d+$/.test(value) && !/^(?:true|false|yes|no|on|off)$/i.test(value);
+  return value.length >= 8 && !settingLike(value);
+}
+
+const settingLike = (value: string): boolean => /^\d+$/.test(value) || /^(?:true|false|yes|no|on|off)$/i.test(value);
+
+/**
+ * MCP server variables and headers also carry settings (`DEBUG: "1"`, `Accept: application/json`),
+ * so only secret-named entries count; those were written for this server, so short values count too.
+ */
+function secretNamed(entries: Record<string, string> | undefined): string[] {
+  return Object.entries(entries ?? {}).filter(([name, value]) => SECRET_ENV_NAME.test(name) && !settingLike(value)).map(([, value]) => value);
 }
 
 function urlCredentialValues(value: string | undefined): string[] {
