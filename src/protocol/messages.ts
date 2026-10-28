@@ -63,7 +63,8 @@ export const ClientMessageSchema = Type.Union([
   Type.Object({ type: Type.Literal("save_config"), text: Type.String({ maxLength: 1_000_000 }), base: Type.Optional(Type.String({ maxLength: 1_000_000 })) }),
   Type.Object({
     type: Type.Literal("list_traces"),
-    before: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+    /** The `nextBefore` cursor of the previous page. */
+    before: Type.Optional(Type.String({ maxLength: 100 })),
     query: Type.Optional(Type.String({ maxLength: 200 })),
   }),
   Type.Object({ type: Type.Literal("get_trace"), id: Type.String({ minLength: 1, maxLength: 40 }) }),
@@ -96,7 +97,7 @@ export type ServerMessage =
   | { type: "schedule_saved"; ok: boolean; error?: string }
   | { type: "config"; text: string }
   | { type: "config_saved"; ok: boolean; error?: string; restarting?: boolean }
-  | { type: "traces"; runs: TraceSummary[]; nextBefore?: number; before?: number; query?: string }
+  | { type: "traces"; runs: TraceSummary[]; nextBefore?: string; before?: string; query?: string }
   | { type: "trace"; id: string; summary: TraceSummary; events: TraceEvent[] }
   | { type: "trace_event"; summary: TraceSummary; event: TraceEvent }
   | { type: "error"; message: string };

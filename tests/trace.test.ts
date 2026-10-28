@@ -103,6 +103,24 @@ describe("TraceStore", () => {
     await expect(store.read("../index")).rejects.toThrow("No such run");
   });
 
+  it("keeps runs that start in the same millisecond across a page boundary", async () => {
+    const store = await openStore({ now: () => 1_000_000 });
+    for (let index = 0; index < 5; index++) {
+      const scope = store.scope(`web:${index}`);
+      scope.begin({ session: `web:${index}`, source: "owner", model: "faux/m", text: `run ${index}` });
+      scope.finish("ok");
+    }
+    await store.flush();
+    const seen: string[] = [];
+    let before: string | undefined;
+    do {
+      const page = await store.list({ limit: 2, ...(before ? { before } : {}) });
+      seen.push(...page.runs.map((run) => run.title));
+      before = page.nextBefore;
+    } while (before);
+    expect(seen.sort()).toEqual(["run 0", "run 1", "run 2", "run 3", "run 4"]);
+  });
+
   it("stops storing payloads past the per-run limit but still ends the run", async () => {
     const store = await openStore();
     const scope = store.scope("wechat");
