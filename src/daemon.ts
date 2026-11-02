@@ -175,14 +175,15 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     await sessions.init();
     shutdown.add("sessions", () => sessions.shutdown());
     tasks = new BackgroundTasks({
-      run: async (task, signal) => {
+      run: async (task, signal, traced) => {
         log.info({ task: task.id, origin: task.origin }, "background task started");
-        const reply = await runTask(task, signal);
+        const reply = await runTask(task, signal, traced);
         log.info({ task: task.id, ms: Date.now() - task.startedAt, chars: reply.length }, "background task finished");
         return reply;
       },
       deliver: async (origin, text) => { (await sessions.get(origin)).send(text, BACKGROUND_TASK_SOURCE); },
       onError: (err, task) => log.warn({ err, task: task.id, origin: task.origin }, "background task failed"),
+      onChange: () => bus.emit({ type: "tasks_changed" }),
     });
     shutdown.add("tasks", () => tasks.close());
     const device = deviceToken ? new DeviceChannel({ sessions, approvals, bus, log }) : undefined;
@@ -239,6 +240,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       auth: new WebAuth(config.web.token),
       sessions,
       approvals,
+      tasks,
       bus,
       config: editor.config,
       schedules: {

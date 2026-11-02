@@ -514,6 +514,23 @@ describe("web app", () => {
     expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type: "watch_traces", on: false });
   });
 
+  it("lists running background tasks with their conversation, opens a task's trace and stops a task", async () => {
+    const { get, socket, context } = await loadApp();
+    const last = () => JSON.parse(socket.send.mock.calls.at(-1)![0]);
+    const tasks = [{ id: "t1", title: "Research", origin: "web:one", startedAt: 1_000, traceId: "r1" }, { id: "t2", title: "Batch", origin: "wechat", startedAt: 2_000 }];
+    runInContext(`handle(${JSON.stringify({ type: "tasks", tasks })})`, context);
+    const rows = get("tasks").children;
+    expect(rows.map(textOf)).toEqual([expect.stringMatching(/^Research一 · since .*TraceStop$/), expect.stringMatching(/^BatchWeChat · since .*Stop$/)]);
+    const button = (row: Element, label: string) => find(row, (el) => el.tagName === "button" && el.textContent === label)!;
+    button(rows[0]!, "Trace").dispatch("click");
+    expect(get("traces").hidden).toBe(false);
+    expect(last()).toEqual({ type: "get_trace", id: "r1" });
+    button(get("tasks").children[1]!, "Stop").dispatch("click");
+    expect(last()).toEqual({ type: "stop_task", id: "t2" });
+    runInContext('handle({ type: "tasks", tasks: [] })', context);
+    expect(get("tasks").children).toEqual([]);
+  });
+
   it("clears input after a successful send", async () => {
     const { get, socket, context } = await loadApp();
     get("input").value = "  已发送  ";

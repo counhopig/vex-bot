@@ -165,6 +165,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   overflow: auto;
 }
 .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#tasks { display: flex; flex-direction: column; gap: 6px; padding: 0 16px; }
+#tasks:not(:empty) { padding-top: 12px; }
+.task { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding: 8px 12px; }
+.task-title { font-weight: 600; }
+.task-meta { color: var(--muted); }
+.task-actions { display: flex; gap: 12px; margin-left: auto; }
 
 #chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #messages {

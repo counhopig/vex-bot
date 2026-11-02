@@ -10,6 +10,7 @@ import type { EventBus, VexEvent } from "../core/events.js";
 import type { SessionManager } from "../core/sessionManager.js";
 import { webSessionId, webSessionKey } from "../core/sessionKey.js";
 import type { ApprovalManager } from "../policy/approvals.js";
+import type { BackgroundTasks } from "../tasks/index.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { WorkspaceConflictError } from "../workspace/workspace.js";
 import type { TraceStore } from "../trace/store.js";
@@ -23,6 +24,7 @@ export interface GatewayOptions {
   auth: WebAuth;
   sessions: SessionManager;
   approvals: ApprovalManager;
+  tasks: Pick<BackgroundTasks, "list" | "stop">;
   bus: EventBus;
   config: { read: () => Promise<string>; save: (text: string, base?: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
@@ -284,6 +286,7 @@ export class Gateway {
     });
     send(ws, { type: "sessions", sessions: this.opts.sessions.listWeb() });
     send(ws, { type: "approvals", pending: this.opts.approvals.pending() });
+    send(ws, { type: "tasks", tasks: this.opts.tasks.list() });
   }
 
   private async onClientMessage(ws: WebSocket, raw: string): Promise<void> {
@@ -332,6 +335,9 @@ export class Gateway {
         return;
       case "approve":
         this.opts.approvals.answer(message.id, message.answer);
+        return;
+      case "stop_task":
+        this.opts.tasks.stop(message.id);
         return;
       case "get_schedules":
         send(ws, { type: "schedules", ...this.opts.schedules.list() });
@@ -418,6 +424,8 @@ export class Gateway {
       this.broadcast({ type: "event", sessionId, event: event.event });
     } else if (event.type === "sessions_changed") {
       this.broadcast({ type: "sessions", sessions: this.opts.sessions.listWeb() });
+    } else if (event.type === "tasks_changed") {
+      this.broadcast({ type: "tasks", tasks: this.opts.tasks.list() });
     } else {
       this.broadcast({ type: "approvals", pending: this.opts.approvals.pending() });
     }

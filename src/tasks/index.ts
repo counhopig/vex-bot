@@ -11,14 +11,18 @@ export interface TaskInfo {
   /** The session the task was started from; its result is delivered there. */
   origin: string;
   startedAt: number;
+  /** The run trace of the task, once it has started. */
+  traceId?: string;
 }
 
 export interface BackgroundTaskOptions {
-  /** Runs the task to completion and resolves to its final reply; rejects when it fails. */
-  run: (task: TaskInfo & { prompt: string }, signal: AbortSignal) => Promise<string>;
+  /** Runs the task to completion and resolves to its final reply; rejects when it fails. `traced` names its run trace. */
+  run: (task: TaskInfo & { prompt: string }, signal: AbortSignal, traced: (traceId: string) => void) => Promise<string>;
   /** Sends the report to the task's conversation. */
   deliver: (origin: string, text: string) => Promise<void>;
   onError?: (err: unknown, task: TaskInfo) => void;
+  /** Called whenever the list of running tasks or one of their details changes. */
+  onChange?: () => void;
   limit?: number;
   now?: () => number;
 }
@@ -42,7 +46,8 @@ export class BackgroundTasks {
     if (this.running.size >= limit) throw new Error(`${limit} background tasks are already running; wait for one to finish or stop one.`);
     const info: TaskInfo = { id: randomUUID(), title: input.title, origin: input.origin, startedAt: (this.opts.now ?? Date.now)() };
     const abort = new AbortController();
-    const done = this.opts.run({ ...info, prompt: input.prompt }, abort.signal)
+    const traced = (traceId: string) => { info.traceId = traceId; this.opts.onChange?.(); };
+    const done = this.opts.run({ ...info, prompt: input.prompt }, abort.signal, traced)
       .then((reply) => `[Background task "${info.title}" finished]\n${reply}`,
         (err: unknown) => {
           if (abort.signal.aborted) return undefined;
@@ -51,16 +56,18 @@ export class BackgroundTasks {
         })
       .then(async (report) => {
         this.running.delete(info.id);
+        this.opts.onChange?.();
         if (report === undefined || abort.signal.aborted) return;
         await this.opts.deliver(info.origin, report);
       })
       .catch((err: unknown) => this.opts.onError?.(err, info));
     this.running.set(info.id, { info, abort, done });
-    return info;
+    this.opts.onChange?.();
+    return { ...info };
   }
 
   list(): TaskInfo[] {
-    return [...this.running.values()].map((task) => task.info);
+    return [...this.running.values()].map((task) => ({ ...task.info }));
   }
 
   /** Stops a running task; its result is not delivered. */

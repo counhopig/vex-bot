@@ -18,6 +18,7 @@ import { ApprovalManager } from "../src/policy/approvals.js";
 import { createToolGate } from "../src/policy/gate.js";
 import { ToolPolicy } from "../src/policy/policy.js";
 import type { ServerMessage } from "../src/protocol/messages.js";
+import { BackgroundTasks } from "../src/tasks/index.js";
 import { createCoreTools } from "../src/tools/registry.js";
 import { TraceStore } from "../src/trace/store.js";
 import { TestClient } from "./helpers/client.js";
@@ -32,6 +33,7 @@ let faux: FauxProviderHandle;
 let gateway: Gateway | undefined;
 let sessions: SessionManager | undefined;
 let traces: TraceStore;
+let tasks: BackgroundTasks;
 let clients: TestClient[];
 
 beforeEach(async () => {
@@ -57,6 +59,14 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
   const tools = createCoreTools({ workspace: dir, bashEnvPassthrough: [] });
   traces = new TraceStore({ dir: paths.traces });
   await traces.open();
+  tasks = new BackgroundTasks({
+    run: (_task, signal, traced) => new Promise((_resolve, reject) => {
+      traced("trace-1");
+      signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+    }),
+    deliver: async () => {},
+    onChange: () => bus.emit({ type: "tasks_changed" }),
+  });
   sessions = new SessionManager({
     paths,
     bus,
@@ -81,6 +91,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     auth: new WebAuth(opts.token),
     sessions,
     approvals,
+    tasks,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
     schedules: { list: () => ({ tasks: [], targets: [{ id: "wechat", label: "WeChat" }] }), save: async () => undefined, remove: async () => undefined },
@@ -333,6 +344,19 @@ describe("Gateway chat", () => {
     await client.waitFor((m) => m.type === "event" && m.event.kind === "tool_end" && !m.event.isError);
     await client.waitFor((m) => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "跑完了");
     expect(client.messages.filter(isType("approvals")).at(-1)?.pending).toEqual([]);
+  });
+
+  it("lists running background tasks and stops one on request", async () => {
+    const client = await connect(await start());
+    const initial = await client.waitFor(isType("tasks"));
+    if (initial.type !== "tasks") throw new Error("unreachable");
+    expect(initial.tasks).toEqual([]);
+    const task = tasks.start({ origin: "wechat", title: "Research", prompt: "find things" });
+    const listed = await client.waitFor((m) => m.type === "tasks" && m.tasks.some((item) => item.traceId === "trace-1"));
+    if (listed.type !== "tasks") throw new Error("unreachable");
+    expect(listed.tasks).toEqual([{ ...task, traceId: "trace-1" }]);
+    client.send({ type: "stop_task", id: task.id });
+    await vi.waitFor(() => expect(client.messages.filter(isType("tasks")).at(-1)?.tasks).toEqual([]));
   });
 
   it("reads and saves workspace files and rejects other names", async () => {

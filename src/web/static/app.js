@@ -16,6 +16,7 @@ const state = {
   creating: false,
   busy: false,
   pending: [],
+  tasks: [],
   streamEl: null,
   streamText: "",
   streamFrame: false,
@@ -102,6 +103,10 @@ function handle(msg) {
     case "approvals":
       state.pending = msg.pending;
       renderApprovals();
+      break;
+    case "tasks":
+      state.tasks = msg.tasks;
+      renderTasks();
       break;
     case "status":
       state.statusInfo = msg.status;
@@ -682,6 +687,29 @@ function renderApprovals() {
     }
     card.append(head, detail, actions);
     box.append(card);
+  }
+}
+
+function renderTasks() {
+  const box = $("tasks");
+  box.replaceChildren();
+  for (const task of state.tasks) {
+    const row = element("div", "task");
+    const started = new Date(task.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    row.append(element("span", "task-title", task.title), element("span", "task-meta", `${sessionLabel(task.origin)} · since ${started}`));
+    const actions = element("span", "task-actions");
+    const action = (label, onClick) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "link";
+      button.textContent = label;
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    if (task.traceId) action("Trace", () => { showTraces(); selectTrace(task.traceId); });
+    action("Stop", () => { if (confirm(`Stop the background task "${task.title}"?`)) send({ type: "stop_task", id: task.id }); });
+    row.append(actions);
+    box.append(row);
   }
 }
 

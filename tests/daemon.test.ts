@@ -253,6 +253,9 @@ describe("startDaemon", () => {
     daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
     const id = await chat("research this");
     await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "started");
+    const running = await client!.waitFor(m => m.type === "tasks" && m.tasks.length === 1 && m.tasks[0]!.traceId !== undefined);
+    if (running.type !== "tasks") throw new Error("unreachable");
+    expect(running.tasks[0]).toMatchObject({ title: "Research", origin: `web:${id}` });
     const asked = await client!.waitFor(m => m.type === "approvals" && m.pending.length === 1);
     if (asked.type !== "approvals") throw new Error("unreachable");
     expect(asked.pending[0]).toMatchObject({ toolName: "bash", windowLabel: "background task \"Research\"" });
@@ -263,6 +266,7 @@ describe("startDaemon", () => {
     const report = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "background task");
     expect(report).toMatchObject({ sessionId: id, event: { text: "[Background task \"Research\" finished]\ntask result" } });
     await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "relayed");
+    expect(client!.messages.filter((m) => m.type === "tasks").at(-1)).toEqual({ type: "tasks", tasks: [] });
     expect(workerPrompt).toBe("research marker");
     expect(workerTools).toContain("delegate");
     expect(workerTools).not.toContain("background_task");

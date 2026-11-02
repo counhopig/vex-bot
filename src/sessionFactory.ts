@@ -258,10 +258,14 @@ export function createSessionFactory(deps: SessionFactoryDeps) {
   };
 
   /** Runs a background task in its own `run:<task id>` session; resolves to its final reply. */
-  const runTask = (task: TaskInfo & { prompt: string }, signal: AbortSignal): Promise<string> => {
+  const runTask = (task: TaskInfo & { prompt: string }, signal: AbortSignal, traced: (traceId: string) => void): Promise<string> => {
     signal.throwIfAborted();
     return withTemporarySession("task", async (session) => {
-      await session.runToIdle(task.prompt, BACKGROUND_TASK_SOURCE, signal);
+      const running = session.runToIdle(task.prompt, BACKGROUND_TASK_SOURCE, signal);
+      // The run and its trace start as the message is sent.
+      const traceId = traces.scope(session.key).current?.id;
+      if (traceId) traced(traceId);
+      await running;
       signal.throwIfAborted();
       const reply = session.successfulReply;
       if (reply === undefined) throw new Error(session.completionOutcome.failureReason ?? "The background task did not finish");
