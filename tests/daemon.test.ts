@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, getCurrentSystemPrompt, getCurrentTools, type FauxProviderHandle, type FauxResponseFactory } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseConfig } from "../src/config/load.js";
 import type { VexConfig } from "../src/config/schema.js";
@@ -147,7 +147,7 @@ describe("startDaemon", () => {
     ]);
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" } }), log: createLogger(), models: models() });
     await chat("hi");
-    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate"]);
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate", "background_task"]);
   });
 
   it("offers the notes vault tools and prompt only when a vault is configured", async () => {
@@ -165,7 +165,7 @@ describe("startDaemon", () => {
     ]);
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" }, vault: { path: join(dir, "notes") } }), log: createLogger(), models: models() });
     await chat("hi");
-    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "vault_search", "vault_read", "schedule", "delegate"]);
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "vault_search", "vault_read", "schedule", "delegate", "background_task"]);
     expect(systemPrompt).toContain("## Notes vault");
   });
 
@@ -223,6 +223,49 @@ describe("startDaemon", () => {
     await daemon.stop(); daemon = undefined;
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(35, 1);
+  });
+
+  it("runs a background task apart from the conversation, asks the owner for its approvals and reports back to the conversation", async () => {
+    let workerPrompt = "";
+    let workerTools: string[] = [];
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    const respond: FauxResponseFactory = async (ctx) => {
+      const system = getCurrentSystemPrompt(ctx.messages);
+      const last = ctx.messages.at(-1);
+      if (system.includes("You title a conversation")) return fauxAssistantMessage("标题");
+      if (system.includes("background task the owner handed off")) {
+        if (last?.role === "user") {
+          workerPrompt = typeof last.content === "string" ? last.content : "";
+          workerTools = getCurrentTools(ctx.messages).map((t) => t.name);
+          return fauxAssistantMessage(fauxToolCall("bash", { command: "echo hi" }), { stopReason: "toolUse" });
+        }
+        await released;
+        return fauxAssistantMessage("task result");
+      }
+      if (last?.role === "toolResult") return fauxAssistantMessage("started");
+      const text = last?.role === "user" && typeof last.content === "string" ? last.content : "";
+      if (text.startsWith("[Background task")) return fauxAssistantMessage("relayed");
+      if (text === "still there?") return fauxAssistantMessage("here");
+      return fauxAssistantMessage(fauxToolCall("background_task", { action: "start", title: "Research", task: "research marker" }), { stopReason: "toolUse" });
+    };
+    faux.setResponses(Array.from({ length: 8 }, () => respond));
+    daemon = await startDaemon({ paths, config: config(), log: createLogger(), models: models() });
+    const id = await chat("research this");
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "started");
+    const asked = await client!.waitFor(m => m.type === "approvals" && m.pending.length === 1);
+    if (asked.type !== "approvals") throw new Error("unreachable");
+    expect(asked.pending[0]).toMatchObject({ toolName: "bash", windowLabel: "background task \"Research\"" });
+    client!.send({ type: "send", sessionId: id, text: "still there?" });
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "here");
+    client!.send({ type: "approve", id: asked.pending[0]!.id, answer: "deny" });
+    release();
+    const report = await client!.waitFor(m => m.type === "event" && m.event.kind === "user_message" && m.event.source === "background task");
+    expect(report).toMatchObject({ sessionId: id, event: { text: "[Background task \"Research\" finished]\ntask result" } });
+    await client!.waitFor(m => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "relayed");
+    expect(workerPrompt).toBe("research marker");
+    expect(workerTools).toContain("delegate");
+    expect(workerTools).not.toContain("background_task");
   });
 
   it("runs heartbeat silently in an isolated background transcript and injects its result without another model call", async () => {

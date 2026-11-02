@@ -17,7 +17,7 @@ Suites combine module tests with real local HTTP, WebSocket, SQLite and subproce
 | Desk device | `device-channel`, `daemon-device` | Turn replies, resend deduplication, outbox, bearer/Origin refusal and schedule delivery to the device |
 | WeChat | `wechat-client`, `wechat-login`, `wechat-channel`, `wechat-messages`, `wechat-store`, `daemon-wechat` | iLink requests, QR state, polling, delivery and credentials |
 | Tools and approvals | `tools-*`, `policy`, `approvals` | Execution, access boundaries, cancellation and approval lifecycle |
-| Background work | `scheduler`, `persona`, `memory-index` | Scheduled delivery, persona state and FTS memory |
+| Background work | `scheduler`, `background-tasks`, `persona`, `memory-index` | Scheduled delivery, owner-started tasks, persona state and FTS memory |
 | Workspace and prompts | `workspace`, `prompt` | File boundaries, templates, daily notes and prompt composition |
 | Notes vault | `vault-parse`, `vault-git`, `vault`, `vault-tools` | Note parsing, git mirror, search, tool output and path safety |
 | LLM wiki | `wiki-*`, `daemon-wiki` | Repo transactions, markers, reconciliation, scheduling gates, shared-clone reads, tools, bootstrap approval and daemon delivery |

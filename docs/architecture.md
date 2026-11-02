@@ -102,6 +102,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns its final reply and usage |
+| `background_task` | Owner conversations only: `start` returns a task id at once and the task runs in its own `run:<id>` session on the main model with the conversation's tools except `background_task`; `list` and `stop` manage running tasks (at most 3). When a task ends, its conversation receives a `background task` message, `[Background task "<title>" finished]` with the reply or `[Background task "<title>" failed]` with the reason, and answers it. A stopped task reports nothing; tasks do not survive a restart |
 | `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
 
@@ -115,13 +116,13 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
+| `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `background_task`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
 | `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild` | ask, confirmed on every call |
 | `read`, `grep`, `find` | allow inside the workspace and the bundled skills directory (real paths), ask elsewhere |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
 | `bash`, MCP tools | ask |
 
-`ask` publishes a numbered request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y 3` (allow), `/ya 3` (always allow in the session: for `read`, `write`, `edit`, `grep` and `find` the one real path asked about, for `bash` one simple read-only program such as `ls`, `cat` or `grep`, otherwise the tool; every other shell command, including `git`, `sed`, `find` and anything compound, is asked every time), `/n 3` (deny) on WeChat. The number may be left out only while a single request is pending; with several, a bare answer is refused and the pending requests are listed, so an answer never lands on a request other than the one meant. Each answer is confirmed with the request's number and summary. Requests unanswered after ten minutes are denied. A run the runtime starts (proactive chat, scheduled turns, heartbeat, wiki compilation) has no owner to answer, so until an owner message joins it a tool that needs approval is refused at once, with a reason telling the model to continue without it; tools allowed by policy, or always allowed earlier in the session, still run. Sub-agents use their parent's gate; consolidation may only touch workspace files.
+`ask` publishes a numbered request to WeChat and every open WebChat window. The first answer wins: WebChat buttons, or `/y 3` (allow), `/ya 3` (always allow in the session: for `read`, `write`, `edit`, `grep` and `find` the one real path asked about, for `bash` one simple read-only program such as `ls`, `cat` or `grep`, otherwise the tool; every other shell command, including `git`, `sed`, `find` and anything compound, is asked every time), `/n 3` (deny) on WeChat. The number may be left out only while a single request is pending; with several, a bare answer is refused and the pending requests are listed, so an answer never lands on a request other than the one meant. Each answer is confirmed with the request's number and summary. Requests unanswered after ten minutes are denied. A run the runtime starts (proactive chat, scheduled turns, heartbeat, wiki compilation) has no owner to answer, so until an owner message joins it a tool that needs approval is refused at once, with a reason telling the model to continue without it; tools allowed by policy, or always allowed earlier in the session, still run. A background task was started by the owner, so its approvals are asked as usual, labelled `background task "<title>"`. Sub-agents use their parent's gate; consolidation may only touch workspace files.
 
 Notifications the runtime delivers (wiki results, link-action outcomes, heartbeat reports) are kept in the transcript as assistant messages and labelled in model requests as already delivered, so the model does not restate them.
 
@@ -250,7 +251,7 @@ Like WeChat, the device receives the reply that ends each turn, without the text
 
 ## Run traces
 
-Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
+Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki, background task), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
 
 - Each run is one JSONL file under `traces/`, with run summaries in `traces/index.jsonl`. Model requests are recorded where they leave for the provider, so a link-intent classification appears as its own step; a system prompt is stored only when it differs from the previous request's.
 - Payload fields are redacted with the configured secrets and cut to fixed lengths (system prompt 64 KiB, tool results, thinking and reply text 16 KiB, arguments 8 KiB); a run stores at most 4 MiB of events, then only its end. Runs older than seven days are deleted, and a run that never ended (the daemon stopped) is listed as interrupted.

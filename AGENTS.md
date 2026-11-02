@@ -34,7 +34,7 @@ TypeScript ESM; pi Agent/AI, SQLite FTS5, Croner, MCP SDK; Node.js ≥24.
 | Browser interface | `src/gateway/`, `src/protocol/`, `src/web/static/` | HTTP, WebSocket, handwritten browser handlers |
 | WeChat | `src/channels/wechat/` | iLink polling, QR login, credential reload |
 | Tools and permissions | `src/tools/`, `src/policy/` | Factories, MCP, approvals, execution gate |
-| Memory and background work | `src/index/`, `src/scheduler/`, `src/persona/` | FTS5, schedules, mood and proactive messages |
+| Memory and background work | `src/index/`, `src/scheduler/`, `src/tasks/`, `src/persona/` | FTS5, schedules, mood and proactive messages |
 | Configuration and models | `src/config/`, `src/providers/models.ts`, `src/paths.ts` | Validation, settings, registry, data home |
 | Workspace and skill discovery | `src/workspace/`, `src/skills/` | User files, daily notes, skill precedence |
 | Bundled skill scripts | `skills/` | Link-reader modules split by platform |

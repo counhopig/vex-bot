@@ -34,6 +34,7 @@ import { Persona } from "./persona/index.js";
 import { createOutreachCheck } from "./persona/outreach.js";
 import { createConfigEditor } from "./config/editor.js";
 import { Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
+import { BACKGROUND_TASK_SOURCE, BackgroundTasks } from "./tasks/index.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
@@ -106,6 +107,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       outreach: config.persona?.outreach, warn: (message) => log.warn(message) });
     shutdown.add("persona", () => persona.save());
     let scheduler: Scheduler;
+    let tasks: BackgroundTasks;
     let wechatRuntime: WeChatRuntime | undefined;
     let wechatInbound = 0;
     const live = new Map<Session, () => AgentTool<any>[]>();
@@ -153,9 +155,9 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),
       }), createWebSearchTool(config.webSearch),
       ...(vault ? createVaultTools(vault) : [])];
-    const { openSession, runTemporary, runHeartbeat, wikiTools, wikiPrompt } = createSessionFactory({
+    const { openSession, runTemporary, runHeartbeat, runTask, wikiTools, wikiPrompt } = createSessionFactory({
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
-      scheduler: () => scheduler, live,
+      scheduler: () => scheduler, tasks: () => tasks, live,
       ...(opts.linkClassifier ? { linkClassifier: opts.linkClassifier } : {}),
       onOwnerMessage: (key) => { if (key === WECHAT_SESSION_KEY) wechatInbound++; },
     });
@@ -172,6 +174,17 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     });
     await sessions.init();
     shutdown.add("sessions", () => sessions.shutdown());
+    tasks = new BackgroundTasks({
+      run: async (task, signal) => {
+        log.info({ task: task.id, origin: task.origin }, "background task started");
+        const reply = await runTask(task, signal);
+        log.info({ task: task.id, ms: Date.now() - task.startedAt, chars: reply.length }, "background task finished");
+        return reply;
+      },
+      deliver: async (origin, text) => { (await sessions.get(origin)).send(text, BACKGROUND_TASK_SOURCE); },
+      onError: (err, task) => log.warn({ err, task: task.id, origin: task.origin }, "background task failed"),
+    });
+    shutdown.add("tasks", () => tasks.close());
     const device = deviceToken ? new DeviceChannel({ sessions, approvals, bus, log }) : undefined;
     if (device) {
       device.start();

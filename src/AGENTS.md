@@ -20,6 +20,7 @@ src/
 ├── policy/                # Decisions, approval lifecycle and execution gate
 ├── config/                # Schema, editable settings and restart recovery
 ├── scheduler/             # Persistent schedules and temporary background turns
+├── tasks/                 # Owner-started background tasks and their delivery
 ├── index/                 # Memory indexing, tokenization and search
 ├── persona/               # Mood, rest and proactive conversation state
 ├── vault/                 # Notes vault: git mirror or folder, note parsing, search tools
@@ -43,7 +44,7 @@ src/
 | Add a browser command | `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
 | Change editable settings | `config/schema.ts`, `config/settings.ts`, `config/editor.ts` (save, validate, restart), `web/static/app.js` |
 | Expose a workspace file in WebChat | `workspace/workspace.ts`, `protocol/messages.ts`, `gateway/server.ts`, `daemon.ts`, `web/static/app.js` |
-| Change background delivery | `scheduler/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
+| Change background delivery | `scheduler/index.ts`, `tasks/index.ts`, `daemon.ts`, `core/session.ts`, `index/memory.ts` |
 | Change the device protocol | `protocol/device.ts`, `channels/device/channel.ts`, `gateway/server.ts` (`/device/ws`), `docs/architecture.md` (Device channel) |
 | Change WeChat lifecycle | `channels/wechat/setup.ts`, `channel.ts`, `store.ts`, `client.ts` |
 | Change link actions | `links/actions.ts`, `core/turnController.ts`, `tools/requestOutcome.ts`, `sessionFactory.ts` (`LINK_ROUTES`) |
