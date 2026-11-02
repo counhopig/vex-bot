@@ -77,6 +77,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     compaction: { threshold: raw.compaction?.threshold ?? 0.7 },
     ...(raw.memory ? { memory: raw.memory } : {}),
     ...(raw.heartbeat ? { heartbeat: raw.heartbeat } : {}),
+    ...(raw.watchdog ? { watchdog: raw.watchdog } : {}),
     ...(raw.persona ? { persona: raw.persona } : {}),
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),

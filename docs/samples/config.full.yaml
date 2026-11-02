@@ -74,6 +74,12 @@ heartbeat:
   every: 30m                       # s | m | h | d
   activeHours: ["08:00", "22:00"]
 
+# Looks over recent run traces inside the heartbeat's activeHours. Calls the model only when a run failed,
+# was interrupted or was not delivered to WeChat.
+watchdog:
+  enabled: true
+  every: 1h
+
 persona:
   sleep: ["23:00", "07:00"]        # rest hours; may cross midnight
   outreach:

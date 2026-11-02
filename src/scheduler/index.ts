@@ -18,6 +18,8 @@ export interface SchedulerHooks {
   /** Sends to WeChat and appends an assistant message to its permanent history. */
   deliverHeartbeat(text: string, signal: AbortSignal): Promise<void>;
   checkOutreach(signal: AbortSignal): Promise<void>;
+  /** Looks over the recent run traces and tells the owner about problems that need them. */
+  checkWatchdog(signal: AbortSignal): Promise<void>;
   /** The wiki work allowed now: a pending bootstrap whatever the cadence, or a scheduled run once `cadenceDue`. */
   wikiWork(now: number, cadenceDue: boolean): Promise<WikiWork | null>;
   runWiki(work: WikiWork, signal: AbortSignal): Promise<void>;
@@ -28,6 +30,8 @@ export interface SchedulerOptions {
   heartbeat?: { every: string; activeHours: [string, string] };
   memory?: { consolidateAt: string };
   outreach?: { enabled: boolean; checkEvery: string };
+  /** Runs inside the heartbeat's active hours; absent, there is no watchdog. */
+  watchdog?: { every: string };
   /** Wiki cadence: a duration like "6h" or a cron expression like "0 4 * * *". */
   wiki?: { every: string };
 }
@@ -121,7 +125,12 @@ export class Scheduler {
       outreach.at = at + outreachEvery;
       this.launch("outreach", () => this.options.hooks.checkOutreach(this.abort.signal));
     } };
-    this.jobs = [heartbeat, consolidate, outreach, ...(options.wiki ? [this.wikiJob(options.wiki.every, now)] : [])];
+    const watchdogEvery = options.watchdog ? duration(options.watchdog.every) : undefined;
+    const watchdog: SystemJob = { at: watchdogEvery === undefined ? null : now + watchdogEvery, due: (at) => {
+      watchdog.at = at + watchdogEvery!;
+      if (activeAt(at, activeHours)) this.launch("watchdog", () => this.options.hooks.checkWatchdog(this.abort.signal));
+    } };
+    this.jobs = [heartbeat, consolidate, outreach, watchdog, ...(options.wiki ? [this.wikiJob(options.wiki.every, now)] : [])];
   }
   /**
    * The wiki is asked at its cadence for scheduled work, and in between, every WIKI_CHECK_MS, for

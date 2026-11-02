@@ -9,8 +9,9 @@ import { createLogger } from "../src/logger.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { createModelRegistry, type ModelRegistry } from "../src/providers/models.js";
 import type { ServerMessage } from "../src/protocol/messages.js";
+import { TraceStore } from "../src/trace/store.js";
 import { TestClient } from "./helpers/client.js";
-import { createFaux, fauxModels } from "./helpers/faux.js";
+import { createFaux, fauxModels, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 let dir: string;
@@ -147,7 +148,7 @@ describe("startDaemon", () => {
     ]);
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" } }), log: createLogger(), models: models() });
     await chat("hi");
-    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "schedule", "delegate", "background_task"]);
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "trace_query", "schedule", "delegate", "background_task"]);
   });
 
   it("offers the notes vault tools and prompt only when a vault is configured", async () => {
@@ -165,7 +166,7 @@ describe("startDaemon", () => {
     ]);
     daemon = await startDaemon({ paths, config: config({ toolPolicy: { bash: "deny" }, vault: { path: join(dir, "notes") } }), log: createLogger(), models: models() });
     await chat("hi");
-    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "vault_search", "vault_read", "schedule", "delegate", "background_task"]);
+    expect(toolNames).toEqual(["read", "write", "edit", "grep", "find", "memory_search", "feel", "web_fetch", "web_search", "trace_query", "vault_search", "vault_read", "schedule", "delegate", "background_task"]);
     expect(systemPrompt).toContain("## Notes vault");
   });
 
@@ -294,6 +295,30 @@ describe("startDaemon", () => {
     expect(heartbeatTools).toContain("heartbeat_report");
     const mood = JSON.parse(await readFile(join(paths.home, "state", "mood.json"), "utf8"));
     expect(mood.social).toBeCloseTo(50, 1);
+  });
+
+  it("has the watchdog look into a failed run and tell the owner on WeChat", async () => {
+    const seeded = new TraceStore({ dir: paths.traces });
+    await seeded.open();
+    const scope = seeded.scope("wechat");
+    scope.begin({ session: "wechat", source: "scheduled task", model: "faux/m", text: "morning news" });
+    scope.finish("error", { error: "provider down" });
+    await seeded.flush();
+    let watchdogPrompt = "";
+    let watchdogTools: string[] = [];
+    faux.setResponses([
+      (ctx) => {
+        watchdogPrompt = lastUserText(ctx);
+        watchdogTools = getCurrentTools(ctx.messages).map((tool) => tool.name);
+        return fauxAssistantMessage(fauxToolCall("watchdog_report", { notify: true, message: "早上的新闻任务失败了：模型服务不可用" }), { stopReason: "toolUse" });
+      },
+      fauxAssistantMessage("reported"),
+    ]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1h", activeHours: ["00:00", "00:00"] }, watchdog: { every: "2s" } }), log: createLogger(), models: models() });
+    const transcript = () => readFile(join(paths.sessions, "wechat.jsonl"), "utf8").catch(() => "");
+    await vi.waitFor(async () => expect(await transcript()).toContain("早上的新闻任务失败了"), { timeout: 10_000, interval: 50 });
+    expect(watchdogPrompt).toContain("source scheduled task · error · error: provider down");
+    expect(watchdogTools.sort()).toEqual(["find", "grep", "memory_search", "read", "trace_query", "watchdog_report"]);
   });
 
   it("keeps a heartbeat silent when it reports nothing, however chatty its reply", async () => {

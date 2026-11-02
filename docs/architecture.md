@@ -102,6 +102,7 @@ Before each provider call, Vex reserves the configured output allowance and appl
 | `feel` | Records a temporary mood change |
 | `schedule` | Create, list, delete scheduled messages |
 | `delegate` | Isolated sub-agent, depth 1, inherits approvals; returns its final reply and usage |
+| `trace_query` | Read-only: `list` recent runs (by text, source, or failed only) or `read` one run's condensed steps |
 | `background_task` | Owner conversations only: `start` returns a task id at once and the task runs in its own `run:<id>` session on the main model with the conversation's tools except `background_task`; `list` and `stop` manage running tasks (at most 3). WebChat shows the running tasks under the approval cards, each with its conversation, start time, its trace and a Stop button. When a task ends, its conversation receives a `background task` message, `[Background task "<title>" finished]` with the reply or `[Background task "<title>" failed]` with the reason, and answers it. A stopped task reports nothing; tasks do not survive a restart |
 | `wiki_ingest`, `wiki_write`, `wiki_edit` | Read and archive shared links, or compile Wiki pages; registered when Wiki is enabled |
 | `mcp__<server>__<tool>` | Tools from MCP servers (stdio or Streamable HTTP) |
@@ -116,7 +117,7 @@ Each tool resolves to `allow`, `ask` or `deny` (`deny` hides the tool from the m
 
 | Tool | Default |
 |---|---|
-| `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `background_task`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
+| `web_fetch`, `web_search`, `memory_search`, `feel`, `schedule`, `delegate`, `background_task`, `trace_query`, `wiki_write`, `wiki_edit`, `wiki_ingest` | allow |
 | `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild` | ask, confirmed on every call |
 | `read`, `grep`, `find` | allow inside the workspace and the bundled skills directory (real paths), ask elsewhere |
 | `write`, `edit` | allow inside the workspace (real paths), ask outside |
@@ -217,6 +218,7 @@ Proactive chat: every `checkEvery`, vexd starts a conversation on WeChat when al
 | Scheduled message | Fields: name (unique), rule (`cron`, `every`, or `once`), prompt, target (`wechat` or a WebChat session), enabled. Stored in `schedules.json`. Delivered as a marked user message into the target session. A deleted WebChat target falls back to WeChat. A run still in progress skips the next trigger. |
 | Missed tasks | At startup, a missed one-time task is delivered once as a "missed" message and disabled. Recurring tasks move to their next time without delivery. |
 | Heartbeat | Every `heartbeat.every` inside `activeHours`, if `HEARTBEAT.md` has content: a temporary session checks the list. The run reports through its `heartbeat_report` tool: `notify: false` is silent, `notify: true` sends its message to WeChat and appends it to the WeChat history. A run that never calls the tool falls back to its reply, which is silent only when it is `HEARTBEAT_OK` and nothing else. |
+| Watchdog | Every `watchdog.every` (default `1h`) inside the heartbeat's `activeHours`, unless `watchdog.enabled` is false. The runtime picks the runs since the last check that ended in an error, were interrupted or whose WeChat reply was not delivered, leaving out the watchdog's own runs; with none, no model is called. Otherwise a temporary session on the background model, with only `trace_query`, `read`, `grep`, `find`, `memory_search` and `watchdog_report`, looks into them and reports like the heartbeat: `notify: true` sends its message to WeChat and appends it to the WeChat history. A check that fails covers the same runs next time. The first check after a start also covers the interval before it. |
 | Consolidation | See Memory. |
 | Outreach check | See Mood. |
 | Wiki | At `vault.wiki.every`, and once a minute for work the wiki may start at any time (a pending bootstrap). |
@@ -251,7 +253,7 @@ Like WeChat, the device receives the reply that ends each turn, without the text
 
 ## Run traces
 
-Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki, background task), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
+Every run of every session, temporary ones included, is recorded as a trace: what started it (owner message, proactive chat, scheduled task, heartbeat, consolidation, wiki, background task, watchdog), each model request with its estimated context (system prompt, tool schemas, conversation), time to first token, duration, usage, stop reason, thinking, reply text and tool calls, each tool call with its arguments, result and duration, approval waits and blocks, budget outcomes, retries, compactions, steered messages, a `delegate` sub-agent's steps under its call, the outcome and, for WeChat, whether the reply was delivered.
 
 - Each run is one JSONL file under `traces/`, with run summaries in `traces/index.jsonl`. Model requests are recorded where they leave for the provider, so a link-intent classification appears as its own step; a system prompt is stored only when it differs from the previous request's.
 - Payload fields are redacted with the configured secrets and cut to fixed lengths (system prompt 64 KiB, tool results, thinking and reply text 16 KiB, arguments 8 KiB); a run stores at most 4 MiB of events, then only its end. Runs older than seven days are deleted, and a run that never ended (the daemon stopped) is listed as interrupted.

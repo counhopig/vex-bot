@@ -61,7 +61,19 @@ owner 用 `stop` 中止的任务不投递。daemon 停止时，正在运行的�
 
 ## 阶段二：基于 trace 的 Watchdog
 
-定时运行的临时会话，检查最近的 trace：有没有出错、被中断、微信没送达、耗时异常，以及 heartbeat 或 Wiki 连续失败。检查分两层：先由程序筛选，只有发现异常时才调用模型分析原因，再通过一个带类型的上报工具决定是否通知 owner。另外提供一个只读的 trace 查询工具，owner 可以直接问「昨晚的定时任务为什么没发」。
+owner 不用盯着 Traces 页面，出了需要知道的问题时，Vex 会在微信上说。
+
+### 检查
+
+- 每隔 `watchdog.every`（默认 `1h`）检查一次，只在 heartbeat 的 `activeHours` 内运行；`watchdog.enabled: false` 可以关闭。
+- 第一层是程序筛选：找出自上次检查以来出错、被中断或微信回复没送达的运行，Watchdog 自己的运行不算。没有异常就不调用模型。
+- 第二层是模型分析：临时会话 `run:<id>` 使用后台模型，只能用 `trace_query`、`read`、`grep`、`find`、`memory_search` 和 `watchdog_report`，查明原因后通过 `watchdog_report` 决定是否通知 owner。它只查原因，不做修复。
+- 通知的方式和 heartbeat 一样：消息发到微信，并写进微信会话的历史。
+- 模型检查失败时，检查窗口不前移，下次检查会覆盖同一批运行。daemon 启动后的第一次检查，会把启动前的一个检查间隔也算进去。
+
+### trace 查询
+
+`trace_query` 是只读工具，owner 的对话、后台任务、heartbeat 和 Watchdog 都能用：`list` 按文本、来源或「只看失败」列出最近的运行，`read` 读取一次运行的步骤摘要。owner 可以直接问「昨晚的定时任务为什么没发」。
 
 ## 阶段三：统一 Trigger 与只记录模式
 
