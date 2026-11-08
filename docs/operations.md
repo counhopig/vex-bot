@@ -87,6 +87,7 @@ WeChat commands: `/stop` interrupts the current reply; `/y 3`, `/ya 3` and `/n 3
 ├── traces/                     run traces, kept seven days; index.jsonl
 ├── index.sqlite                search index; rebuildable
 ├── schedules.json              scheduled messages
+├── triggers.jsonl              work recorded instead of run, kept seven days
 ├── state/mood.json             mood values and outreach counters
 ├── wechat/                     credentials.json, state.json (0600); directory 0700
 ├── logs/vexd.log

@@ -227,6 +227,14 @@ Built-in work and the owner's tasks share one timetable. The scheduler sleeps un
 
 A corrupt `schedules.json` is moved aside as `schedules.json.bad-<timestamp>` and the daemon starts with no tasks.
 
+## Recorded triggers
+
+Work that Vex starts on its own is one of six trigger sources, each named after its trace source: `scheduled task`, `missed scheduled task`, `heartbeat`, `proactive chat`, `wiki`, `watchdog`. A source listed in `triggers.recordOnly` keeps its schedule and its trace source but does nothing: before it would run, it hands its request to the trigger log, which writes the source, a title and the text it was about to use (the prompt, the `HEARTBEAT.md` it read, the runs a watchdog check would have looked into) to `triggers.jsonl` and refuses the work.
+
+The log keeps the newest hundred records in memory for the WebChat panel under the approval cards, where each record expands to the text the source would have sent, so a source can be watched before it acts. Records are kept seven days, like a run trace, and the file is rewritten with the newest two thousand once it holds five thousand. Text is cut at 4000 characters.
+
+Two places in the scheduler check before they launch (the heartbeat and a due task, which the hooks cannot see early enough), and the outreach check and the watchdog check each ask before they run. A recorded watchdog check moves its window on, since nothing looked into those runs and they should not be offered again. A finished background task is not a trigger: its report answers what the owner asked for, so it is always delivered.
+
 ## WeChat channel
 
 The channel talks to the iLink OC API (`getupdates` long polling with a persisted cursor, `sendmessage` with the stored context token). Only the owner's messages are handled; everyone else, including groups, is ignored. The owner is the account that scanned the QR code unless `wechat.ownerId` is set.
@@ -247,7 +255,7 @@ Like WeChat, the device receives the reply that ends each turn, without the text
 ## Gateway and WebChat
 
 - Listens on `127.0.0.1` by default. A non-loopback host requires `web.token`; login sets an HttpOnly cookie. Host and Origin headers are checked, and failed logins are rate limited.
-- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, stopping a background task, status and settings requests, config and workspace file (`SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`, `memory/YYYY-MM-DD.md`) read/save, the daily note list and run trace listing, reading and watching from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, the running background tasks, trace events, notices and errors from the server.
+- The WebSocket protocol is defined with TypeBox schemas shared by both ends: send, stop, session management, approval answers, stopping a background task, status and settings requests, config and workspace file (`SOUL.md`, `USER.md`, `MEMORY.md`, `HEARTBEAT.md`, `memory/YYYY-MM-DD.md`) read/save, the daily note list and run trace listing, reading and watching from the client; text deltas, completed messages, tool start/update/end, approval requests and invalidations, the running background tasks, the recorded triggers, trace events, notices and errors from the server.
 - Settings edits go through a fixed list of keys. The server applies them to `config.yaml` as a YAML document edit (comments and unmanaged keys survive), validates the result, and applies it (instantly for skill-read settings, otherwise by restarting the process in place after running turns finish; a configuration that cannot start is rolled back and the reason is shown in the status line); secrets are reported only as set or unset. Status (model, WeChat state, mood values) is polled every 20 seconds.
 - The front end is static files served by vexd; there is no front-end build step. Assistant replies are rendered from Markdown (headings, lists, tables, code blocks with a copy button, links) into DOM nodes without `innerHTML`, and only `http`, `https` and `mailto` links are active. On phones the session list is a drawer under a top bar, inputs are 16 px so browsers do not zoom, and Enter starts a new line (the send button sends); light, dark and system themes are stored in the browser.
 

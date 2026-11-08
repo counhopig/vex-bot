@@ -11,6 +11,7 @@ import type { SessionManager } from "../core/sessionManager.js";
 import { webSessionId, webSessionKey } from "../core/sessionKey.js";
 import type { ApprovalManager } from "../policy/approvals.js";
 import type { BackgroundTasks } from "../tasks/index.js";
+import type { TriggerLog } from "../triggers/index.js";
 import { parseClientMessage, type ClientMessage, type ServerMessage, type StatusInfo, type WorkspaceFile } from "../protocol/messages.js";
 import { WorkspaceConflictError } from "../workspace/workspace.js";
 import type { TraceStore } from "../trace/store.js";
@@ -25,6 +26,8 @@ export interface GatewayOptions {
   sessions: SessionManager;
   approvals: ApprovalManager;
   tasks: Pick<BackgroundTasks, "list" | "stop">;
+  /** Work recorded instead of run, shown so the owner can see what a source would have done. */
+  triggers: Pick<TriggerLog, "list">;
   bus: EventBus;
   config: { read: () => Promise<string>; save: (text: string, base?: string) => Promise<{ restarting?: boolean } | void> };
   status: () => StatusInfo | Promise<StatusInfo>;
@@ -287,6 +290,7 @@ export class Gateway {
     send(ws, { type: "sessions", sessions: this.opts.sessions.listWeb() });
     send(ws, { type: "approvals", pending: this.opts.approvals.pending() });
     send(ws, { type: "tasks", tasks: this.opts.tasks.list() });
+    send(ws, { type: "triggers", triggers: this.opts.triggers.list() });
   }
 
   private async onClientMessage(ws: WebSocket, raw: string): Promise<void> {
@@ -426,6 +430,8 @@ export class Gateway {
       this.broadcast({ type: "sessions", sessions: this.opts.sessions.listWeb() });
     } else if (event.type === "tasks_changed") {
       this.broadcast({ type: "tasks", tasks: this.opts.tasks.list() });
+    } else if (event.type === "triggers_changed") {
+      this.broadcast({ type: "triggers", triggers: this.opts.triggers.list() });
     } else {
       this.broadcast({ type: "approvals", pending: this.opts.approvals.pending() });
     }

@@ -1,3 +1,4 @@
+import type { TriggerRequest } from "../triggers/index.js";
 import type { TraceStore } from "./store.js";
 import type { TraceSummary } from "./types.js";
 
@@ -57,6 +58,8 @@ export interface WatchdogOptions {
   /** Runs the model over the prompt; resolves to the message for the owner, or null when there is nothing to tell. */
   run: (prompt: string, signal: AbortSignal) => Promise<string | null>;
   deliver: (text: string, signal: AbortSignal) => Promise<void>;
+  /** False when the check is to be recorded instead of run; absent, it runs. */
+  admit?: (request: TriggerRequest) => boolean;
   now?: () => number;
 }
 
@@ -72,7 +75,10 @@ export function createWatchdog(opts: WatchdogOptions): (signal: AbortSignal) => 
     const runs = await anomaliesSince(opts.traces, since);
     if (runs.length === 0) { since = until; return; }
     signal.throwIfAborted();
-    const message = await opts.run(watchdogPrompt(runs), signal);
+    const prompt = watchdogPrompt(runs);
+    // A recorded check moves its window on: nothing looked into these runs, so they are not offered again.
+    if (opts.admit && !opts.admit({ source: WATCHDOG_SOURCE, title: "Watchdog check", text: prompt })) { since = until; return; }
+    const message = await opts.run(prompt, signal);
     since = until;
     if (message) await opts.deliver(message, signal);
   };

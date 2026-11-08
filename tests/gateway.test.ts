@@ -19,6 +19,7 @@ import { createToolGate } from "../src/policy/gate.js";
 import { ToolPolicy } from "../src/policy/policy.js";
 import type { ServerMessage } from "../src/protocol/messages.js";
 import { BackgroundTasks } from "../src/tasks/index.js";
+import { TriggerLog } from "../src/triggers/index.js";
 import { createCoreTools } from "../src/tools/registry.js";
 import { TraceStore } from "../src/trace/store.js";
 import { TestClient } from "./helpers/client.js";
@@ -34,6 +35,7 @@ let gateway: Gateway | undefined;
 let sessions: SessionManager | undefined;
 let traces: TraceStore;
 let tasks: BackgroundTasks;
+let triggers: TriggerLog;
 let clients: TestClient[];
 
 beforeEach(async () => {
@@ -44,6 +46,7 @@ beforeEach(async () => {
 afterEach(async () => {
   for (const c of clients) c.close();
   await sessions?.shutdown();
+  await triggers?.close();
   await gateway?.stop();
   gateway = undefined;
   sessions = undefined;
@@ -59,6 +62,8 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
   const tools = createCoreTools({ workspace: dir, bashEnvPassthrough: [] });
   traces = new TraceStore({ dir: paths.traces });
   await traces.open();
+  triggers = new TriggerLog({ path: join(paths.home, "triggers.jsonl"), recordOnly: ["heartbeat"], onChange: () => bus.emit({ type: "triggers_changed" }) });
+  await triggers.open();
   tasks = new BackgroundTasks({
     run: (_task, signal, traced) => new Promise((_resolve, reject) => {
       traced("trace-1");
@@ -92,6 +97,7 @@ async function start(opts: { token?: string; responses?: FauxResponseStep[] } = 
     sessions,
     approvals,
     tasks,
+    triggers,
     bus,
     config: { read: () => readFile(paths.config, "utf8"), save: (text) => saveConfigText(paths, text) },
     schedules: { list: () => ({ tasks: [], targets: [{ id: "wechat", label: "WeChat" }] }), save: async () => undefined, remove: async () => undefined },
@@ -344,6 +350,22 @@ describe("Gateway chat", () => {
     await client.waitFor((m) => m.type === "event" && m.event.kind === "tool_end" && !m.event.isError);
     await client.waitFor((m) => m.type === "event" && m.event.kind === "assistant_message" && m.event.text === "跑完了");
     expect(client.messages.filter(isType("approvals")).at(-1)?.pending).toEqual([]);
+  });
+
+  it("lists recorded triggers and sends new ones as they are recorded", async () => {
+    const host = await start();
+    const client = await connect(host);
+    const initial = await client.waitFor(isType("triggers"));
+    if (initial.type !== "triggers") throw new Error("unreachable");
+    expect(initial.triggers).toEqual([]);
+
+    expect(triggers.admit({ source: "heartbeat", title: "Heartbeat check", text: "Read HEARTBEAT.md" })).toBe(false);
+    const listed = await client.waitFor((m) => m.type === "triggers" && m.triggers.length === 1);
+    if (listed.type !== "triggers") throw new Error("unreachable");
+    expect(listed.triggers[0]).toMatchObject({ source: "heartbeat", title: "Heartbeat check", text: "Read HEARTBEAT.md" });
+
+    expect(triggers.admit({ source: "proactive chat", title: "Proactive chat", text: "say hi" })).toBe(true);
+    expect(client.messages.filter(isType("triggers")).at(-1)?.triggers).toHaveLength(1);
   });
 
   it("lists running background tasks and stops one on request", async () => {

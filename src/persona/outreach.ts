@@ -1,5 +1,6 @@
 import { formatNow } from "../context/prompt.js";
 import type { Logger } from "../logger.js";
+import type { TriggerRequest } from "../triggers/index.js";
 import { PROACTIVE_CHAT_SOURCE, type Persona } from "./index.js";
 
 export interface OutreachDeps {
@@ -10,6 +11,8 @@ export interface OutreachDeps {
   session: () => Promise<{ readonly busy: boolean; readonly successfulReply: string | undefined; runToIdle(text: string, source: string, signal: AbortSignal): Promise<void> }>;
   /** Owner WeChat messages received so far, to tell whether the owner answered during the chat. */
   inbound: () => number;
+  /** False when a proactive chat is to be recorded instead of started; absent, it starts. */
+  admit?: (request: TriggerRequest) => boolean;
   log: Logger;
 }
 
@@ -25,8 +28,14 @@ export function createOutreachCheck(deps: OutreachDeps): (signal: AbortSignal) =
     const session = await deps.session();
     if (!wechat.available || !persona.shouldOutreach(!session.busy)) { await persona.save(); return; }
     const inboundBefore = deps.inbound();
+    const prompt = persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone));
+    if (deps.admit?.({ source: PROACTIVE_CHAT_SOURCE, title: "Proactive chat", text: prompt }) === false) {
+      deps.log.info("proactive chat recorded instead of started");
+      await persona.save();
+      return;
+    }
     deps.log.info("proactive chat started");
-    await session.runToIdle(persona.outreachPrompt(formatNow(new Date(), Intl.DateTimeFormat().resolvedOptions().timeZone)), PROACTIVE_CHAT_SOURCE, signal);
+    await session.runToIdle(prompt, PROACTIVE_CHAT_SOURCE, signal);
     if (session.successfulReply && await wechat.replyDelivered()) { persona.outreachSent(deps.inbound() !== inboundBefore); await persona.save(); }
   };
 }

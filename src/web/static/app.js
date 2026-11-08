@@ -17,6 +17,7 @@ const state = {
   busy: false,
   pending: [],
   tasks: [],
+  triggers: [],
   streamEl: null,
   streamText: "",
   streamFrame: false,
@@ -107,6 +108,10 @@ function handle(msg) {
     case "tasks":
       state.tasks = msg.tasks;
       renderTasks();
+      break;
+    case "triggers":
+      state.triggers = msg.triggers;
+      renderTriggers();
       break;
     case "status":
       state.statusInfo = msg.status;
@@ -713,8 +718,24 @@ function renderTasks() {
   }
 }
 
-/* ---------- Status line, drawer and theme ---------- */
+/** Work a source would have done, recorded because the source is set to record only. */
+function renderTriggers() {
+  const box = $("triggers");
+  box.replaceChildren();
+  if (!state.triggers.length) return;
+  box.append(element("p", "hint", `Recorded instead of run (${state.triggers.length})`));
+  for (const trigger of state.triggers) {
+    const card = document.createElement("details");
+    card.className = "trigger";
+    const summary = document.createElement("summary");
+    const at = new Date(trigger.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    summary.append(element("span", "trigger-title", trigger.title), element("span", "trigger-meta", `${trigger.source} · ${at}`));
+    card.append(summary, element("p", "trigger-text", trigger.text));
+    box.append(card);
+  }
+}
 
+/* ---------- Status line, drawer and theme ---------- */
 const WECHAT_LABELS = { connected: "WeChat connected", connecting: "WeChat connecting", unlinked: "WeChat not linked", expired: "WeChat expired", disabled: "WeChat off" };
 
 function renderStatusLine() {

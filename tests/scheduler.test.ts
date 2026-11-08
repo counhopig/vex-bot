@@ -114,6 +114,19 @@ describe("scheduler", () => {
     f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runHeartbeat).toHaveBeenCalledTimes(2);
   });
 
+  it("records a heartbeat and a due task instead of running them when their source is set to record only", async () => {
+    const admitTrigger = vi.fn(() => false);
+    const f = await fixture({}, { admitTrigger }); await f.scheduler.start();
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), "检查今天日程");
+    await f.scheduler.create({ name: "提醒", prompt: "喝水", target: "wechat", schedule: { every: "1m" } });
+    const settle = () => Promise.allSettled([...(f.scheduler as any).running.values()]);
+    f.advance(30 * 60_000); await f.scheduler.tick(); await settle();
+    expect(admitTrigger).toHaveBeenCalledWith({ source: "heartbeat", title: "Heartbeat check", text: "检查今天日程" });
+    expect(admitTrigger).toHaveBeenCalledWith({ source: "scheduled task", title: "Scheduled task \"提醒\"", text: "喝水" });
+    expect(f.hooks.runHeartbeat).not.toHaveBeenCalled();
+    expect(f.hooks.deliver).not.toHaveBeenCalled();
+  });
+
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {
     const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick();
     await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledWith(expect.stringContaining("memory/2026-10-04.md"), "consolidation", expect.any(AbortSignal)));

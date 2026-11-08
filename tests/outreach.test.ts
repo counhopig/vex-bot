@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { Persona } from "../src/persona/index.js";
 import { createOutreachCheck } from "../src/persona/outreach.js";
 import { createLogger } from "../src/logger.js";
+import type { TriggerRequest } from "../src/triggers/index.js";
 
-function fixture(options: { want?: boolean; available?: boolean; delivered?: boolean; reply?: string; answered?: boolean } = {}) {
+function fixture(options: { want?: boolean; available?: boolean; delivered?: boolean; reply?: string; answered?: boolean; admit?: (request: TriggerRequest) => boolean } = {}) {
   let inbound = 0;
   const persona = { shouldOutreach: vi.fn(() => options.want ?? true), outreachPrompt: vi.fn(() => "say hi"), outreachSent: vi.fn(), save: vi.fn(async () => {}) };
   const session = {
@@ -16,6 +17,7 @@ function fixture(options: { want?: boolean; available?: boolean; delivered?: boo
     wechat: () => ({ available: options.available ?? true, replyDelivered: async () => options.delivered ?? true }),
     session: async () => session,
     inbound: () => inbound,
+    ...(options.admit ? { admit: options.admit } : {}),
     log: createLogger(),
   });
   return { check, persona, session };
@@ -41,5 +43,14 @@ describe("outreach check", () => {
       await check(new AbortController().signal);
       expect(session.runToIdle).not.toHaveBeenCalled();
     }
+  });
+
+  it("records the chat it would have started when the source is set to record only", async () => {
+    const admit = vi.fn(() => false);
+    const { check, persona, session } = fixture({ admit });
+    await check(new AbortController().signal);
+    expect(admit).toHaveBeenCalledWith({ source: "proactive chat", title: "Proactive chat", text: "say hi" });
+    expect(session.runToIdle).not.toHaveBeenCalled();
+    expect(persona.outreachSent).not.toHaveBeenCalled();
   });
 });

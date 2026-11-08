@@ -341,6 +341,22 @@ describe("startDaemon", () => {
     expect(await readFile(join(paths.sessions, "wechat.jsonl"), "utf8").catch(() => "")).not.toContain("nothing urgent");
   });
 
+  it("records a heartbeat instead of running it when its source is set to record only", async () => {
+    const workspace = join(dir, "workspace");
+    await mkdir(workspace, { recursive: true });
+    await writeFile(join(workspace, "HEARTBEAT.md"), "Check something");
+    let calls = 0;
+    faux.setResponses([() => { calls++; return fauxAssistantMessage("检查完成"); }]);
+    daemon = await startDaemon({ paths, config: config({ heartbeat: { every: "1s", activeHours: ["00:00", "00:00"] }, triggers: { recordOnly: ["heartbeat"] } }), log: createLogger(), models: models() });
+    client = await TestClient.connect(`ws://127.0.0.1:${daemon.port}/ws`);
+    const recorded = await client.waitFor((m) => m.type === "triggers" && m.triggers.length > 0);
+    if (recorded.type !== "triggers") throw new Error("unreachable");
+    expect(recorded.triggers[0]).toMatchObject({ source: "heartbeat", title: "Heartbeat check", text: "Check something" });
+    expect(calls).toBe(0);
+    expect(await readFile(join(paths.sessions, "wechat.jsonl"), "utf8").catch(() => "")).toBe("");
+    expect(await readFile(join(paths.home, "triggers.jsonl"), "utf8")).toContain("Check something");
+  });
+
   it("keeps a background run from asking the absent owner for approval", async () => {
     const workspace = join(dir, "workspace");
     await mkdir(workspace, { recursive: true });

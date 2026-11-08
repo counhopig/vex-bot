@@ -531,6 +531,22 @@ describe("web app", () => {
     expect(get("tasks").children).toEqual([]);
   });
 
+  it("lists recorded triggers with what they would have done", async () => {
+    const { get, context } = await loadApp();
+    const triggers = [
+      { id: "g1", at: Date.UTC(2026, 10, 2, 3, 4), source: "proactive chat", title: "Proactive chat", text: "Proactive chat: say hello" },
+      { id: "g2", at: Date.UTC(2026, 10, 2, 2, 0), source: "heartbeat", title: "Heartbeat check", text: "Read HEARTBEAT.md" },
+    ];
+    runInContext(`handle(${JSON.stringify({ type: "triggers", triggers })})`, context);
+    const box = get("triggers");
+    expect(box.children.map(textOf)[0]).toBe("Recorded instead of run (2)");
+    const [card] = box.children.slice(1);
+    expect(textOf(card!)).toMatch(/^Proactive chatproactive chat · /);
+    expect(find(card!, (el) => el.className === "trigger-text")!.textContent).toBe("Proactive chat: say hello");
+    runInContext('handle({ type: "triggers", triggers: [] })', context);
+    expect(get("triggers").children).toEqual([]);
+  });
+
   it("clears input after a successful send", async () => {
     const { get, socket, context } = await loadApp();
     get("input").value = "  已发送  ";

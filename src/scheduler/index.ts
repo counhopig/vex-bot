@@ -3,6 +3,7 @@ import { readFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { Cron } from "croner";
 import { writeFileAtomic } from "../store/atomic.js";
+import type { TriggerRequest } from "../triggers/index.js";
 import { WECHAT_SESSION_KEY } from "../core/sessionKey.js";
 
 export type ScheduleRule = { cron: string } | { every: string } | { once: string };
@@ -23,6 +24,8 @@ export interface SchedulerHooks {
   /** The wiki work allowed now: a pending bootstrap whatever the cadence, or a scheduled run once `cadenceDue`. */
   wikiWork(now: number, cadenceDue: boolean): Promise<WikiWork | null>;
   runWiki(work: WikiWork, signal: AbortSignal): Promise<void>;
+  /** False when the work is to be recorded instead of run; absent, everything runs. */
+  admitTrigger?: (request: TriggerRequest) => boolean;
   log(error: unknown): void;
 }
 export interface SchedulerOptions {
@@ -227,6 +230,11 @@ export class Scheduler {
   delete(idOrName: string): Promise<boolean> {
     return this.mutate(async () => { const old = this.tasks; this.tasks = old.filter(t => t.id !== idOrName && t.name !== idOrName); if (old.length === this.tasks.length) return false; try { await this.save(); } catch (error) { this.tasks = old; throw error; } this.arm(); return true; });
   }
+  /** A request is refused when its source is set to record only; the request is logged by the hook. */
+  private admit(request: TriggerRequest): boolean {
+    const admit = this.options.hooks.admitTrigger;
+    return admit ? admit(request) : true;
+  }
   private launch(key: string, action: () => Promise<void>): void {
     if (this.stopped || this.running.has(key)) return;
     const promise = Promise.resolve().then(() => this.stopped ? undefined : action()).catch(this.options.hooks.log).finally(() => { this.running.delete(key); });
@@ -260,8 +268,10 @@ export class Scheduler {
         for (const { task, dueAt } of due) {
           const once = "once" in task.schedule;
           this.launch(task.id, async () => {
-            const target = task.target === WECHAT_SESSION_KEY || await this.options.hooks.targetExists(task.target) ? task.target : WECHAT_SESSION_KEY;
             const missed = startup && once;
+            const title = missed ? `Missed scheduled task "${task.name}"` : `Scheduled task "${task.name}"`;
+            if (!this.admit({ source: missed ? "missed scheduled task" : "scheduled task", title, text: task.prompt })) return;
+            const target = task.target === WECHAT_SESSION_KEY || await this.options.hooks.targetExists(task.target) ? task.target : WECHAT_SESSION_KEY;
             const label = missed ? `[Missed scheduled task "${task.name}", originally due ${stamp(dueAt)}] ` : `[Scheduled task "${task.name}"] `;
             if (!this.stopped) await this.options.hooks.deliver(target, `${label}${task.prompt}`, missed ? "missed" : "scheduled", this.abort.signal);
           });
@@ -277,6 +287,7 @@ export class Scheduler {
     let text: string;
     try { text = await readFile(join(this.options.workspace, "HEARTBEAT.md"), "utf8"); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
     if (!text.trim() || this.stopped) return;
+    if (!this.admit({ source: "heartbeat", title: "Heartbeat check", text })) return;
     const message = await this.options.hooks.runHeartbeat("Read HEARTBEAT.md in the workspace and check each item. Then call heartbeat_report exactly once: notify=false when there is nothing to tell the owner, or notify=true with the message to send them.", this.abort.signal);
     if (!this.stopped && message) await this.options.hooks.deliverHeartbeat(message, this.abort.signal);
   }

@@ -35,6 +35,7 @@ import { createOutreachCheck } from "./persona/outreach.js";
 import { createConfigEditor } from "./config/editor.js";
 import { duration, Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
 import { BACKGROUND_TASK_SOURCE, BackgroundTasks } from "./tasks/index.js";
+import { TriggerLog } from "./triggers/index.js";
 import { createTraceQueryTool } from "./tools/traceQuery.js";
 import { createWatchdog, DEFAULT_WATCHDOG_EVERY } from "./trace/watchdog.js";
 import { createFeelTool } from "./tools/feel.js";
@@ -105,6 +106,16 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const traces = new TraceStore({ dir: paths.traces, secrets, onWarning: (message) => log.warn(message) });
     await traces.open();
     shutdown.add("traces", () => traces.flush());
+    // Work from a source set to record only is written here instead of run; nothing else reads it.
+    const triggers = new TriggerLog({
+      path: join(paths.home, "triggers.jsonl"),
+      recordOnly: config.triggers?.recordOnly ?? [],
+      onChange: () => bus.emit({ type: "triggers_changed" }),
+      onRecord: (record) => log.info({ source: record.source, title: record.title }, "trigger recorded instead of run"),
+      onWarning: (message) => log.warn(message),
+    });
+    await triggers.open();
+    shutdown.add("triggers", () => triggers.close());
     const persona = await Persona.open({ path: join(paths.home, "state", "mood.json"), sleep: config.persona?.sleep,
       outreach: config.persona?.outreach, warn: (message) => log.warn(message) });
     shutdown.add("persona", () => persona.save());
@@ -206,6 +217,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         return message;
       },
       deliver: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "watchdog reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
+      admit: (request) => triggers.admit(request),
     });
     scheduler = new Scheduler({ dataDir: paths.home, workspace: config.workspace,
       heartbeat: { every: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery, activeHours: config.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours },
@@ -240,9 +252,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           return message;
         },
         deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
-        checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound }),
+        checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound, admit: (request) => triggers.admit(request) }),
         wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
-        runWiki: async (work, signal) => { await wiki?.run({ kind: work }, signal); },
+        runWiki: async (work, signal) => {
+          if (!triggers.admit({ source: "wiki", title: work === "bootstrap" ? "Wiki bootstrap" : "Scheduled wiki run", text: "Compile the notes written since the last run into the wiki." })) return;
+          await wiki?.run({ kind: work }, signal);
+        },
+        admitTrigger: (request) => triggers.admit(request),
       },
     });
     shutdown.add("scheduler", () => scheduler.close());
@@ -257,6 +273,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       sessions,
       approvals,
       tasks,
+      triggers,
       bus,
       config: editor.config,
       schedules: {

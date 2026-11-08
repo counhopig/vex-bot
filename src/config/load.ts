@@ -5,6 +5,7 @@ import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { checkCadence } from "../scheduler/index.js";
 import { writeFileAtomic } from "../store/atomic.js";
+import { TRIGGER_SOURCES } from "../triggers/index.js";
 import type { SandboxConfig } from "../tools/sandbox.js";
 import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
 
@@ -37,6 +38,18 @@ function checkVault(vault: RawVault, paths: VexPaths): VaultConfig {
   };
 }
 
+/** Recorded sources must be known, so a misspelt source fails validation instead of doing nothing. */
+function checkTriggers(triggers: { recordOnly?: string[] }): { recordOnly: string[] } | undefined {
+  if (!triggers.recordOnly?.length) return undefined;
+  const known = new Set<string>(TRIGGER_SOURCES);
+  const unknown = triggers.recordOnly.filter((source) => !known.has(source));
+  if (unknown.length) {
+    const names = unknown.map((source) => `"${source}"`).join(", ");
+    throw new ConfigError(`config.yaml failed validation: triggers.recordOnly: unknown source ${names}; use one of ${TRIGGER_SOURCES.map((source) => `"${source}"`).join(", ")}`);
+  }
+  return { recordOnly: [...new Set(triggers.recordOnly)] };
+}
+
 /** Sandbox paths resolve like `workspace`: `~` is the user's home and relative paths start at the data home. */
 function checkSandbox(sandbox: Partial<SandboxConfig>, paths: VexPaths): SandboxConfig {
   const at = (path: string) => resolve(paths.home, expandHome(path));
@@ -62,6 +75,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
       .join("；");
     throw new ConfigError(`config.yaml failed validation: ${details}`);
   }
+  const triggers = raw.triggers ? checkTriggers(raw.triggers) : undefined;
   return {
     model: raw.model,
     backgroundModel: raw.backgroundModel ?? raw.model,
@@ -78,6 +92,7 @@ export function parseConfig(text: string, paths: VexPaths): VexConfig {
     ...(raw.memory ? { memory: raw.memory } : {}),
     ...(raw.heartbeat ? { heartbeat: raw.heartbeat } : {}),
     ...(raw.watchdog ? { watchdog: raw.watchdog } : {}),
+    ...(triggers ? { triggers } : {}),
     ...(raw.persona ? { persona: raw.persona } : {}),
     ...(raw.webSearch ? { webSearch: raw.webSearch } : {}),
     ...(raw.stt ? { stt: raw.stt } : {}),

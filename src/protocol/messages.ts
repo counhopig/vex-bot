@@ -6,6 +6,7 @@ import type { ApprovalRequest } from "../policy/approvals.js";
 import type { ScheduledTask } from "../scheduler/index.js";
 import type { TaskInfo } from "../tasks/index.js";
 import type { TraceEvent, TraceSummary } from "../trace/types.js";
+import type { TriggerRecord } from "../triggers/index.js";
 
 const SessionId = Type.String({ minLength: 1, maxLength: 100 });
 
@@ -90,6 +91,7 @@ export type ServerMessage =
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
   | { type: "tasks"; tasks: TaskInfo[] }
+  | { type: "triggers"; triggers: TriggerRecord[] }
   | { type: "file"; name: WorkspaceFile; text: string }
   | { type: "notes"; names: string[] }
   | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string; warning?: string }

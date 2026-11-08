@@ -64,8 +64,23 @@ describe("watchdog", () => {
     expect(model).toHaveBeenCalledOnce();
   });
 
-  it("keeps the window when the model check fails, so the next check sees the same runs", async () => {
+  it("records the runs it would have looked into when the source is set to record only", async () => {
     let now = 12 * HOUR;
+    const runs = [run("failed", { startedAt: 11.5 * HOUR, endedAt: 11.5 * HOUR + 1, outcome: "error", error: "provider down" })];
+    const model = vi.fn(async () => "通知");
+    const admit = vi.fn(() => false);
+    const check = createWatchdog({ traces: store(runs), everyMs: HOUR, run: model, deliver: vi.fn(), admit, now: () => now });
+    await check(new AbortController().signal);
+    expect(model).not.toHaveBeenCalled();
+    expect(admit).toHaveBeenCalledWith({ source: "watchdog", title: "Watchdog check", text: expect.stringContaining("failed") });
+
+    // The window moves on, so a later check does not offer the same runs again.
+    now = 13 * HOUR;
+    await check(new AbortController().signal);
+    expect(admit).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the window when the model check fails, so the next check sees the same runs", async () => {    let now = 12 * HOUR;
     const traces = store([run("failed", { startedAt: 11.5 * HOUR, endedAt: 11.5 * HOUR + 1, outcome: "error" })]);
     const model = vi.fn().mockRejectedValueOnce(new Error("provider down")).mockResolvedValueOnce(null);
     const check = createWatchdog({ traces, everyMs: HOUR, run: model, deliver: vi.fn(), now: () => now });

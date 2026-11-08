@@ -68,6 +68,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `heartbeat.activeHours` | `["08:00", "22:00"]` | Heartbeat window; the watchdog runs inside it too |
 | `watchdog.enabled` | `true` | Periodic check of recent run traces for failures the owner should hear about |
 | `watchdog.every` | `1h` | Same duration format as `heartbeat.every` |
+| `triggers.recordOnly` | none | Sources whose work is recorded instead of run: `scheduled task`, `missed scheduled task`, `heartbeat`, `proactive chat`, `wiki`, `watchdog`. Recorded work is listed in WebChat and nothing else happens. Unknown names fail validation. Needs a restart |
 | `persona.sleep` | `["23:00", "07:00"]` | Rest hours; may cross midnight |
 | `persona.outreach.enabled` | `true` | Proactive conversations |
 | `persona.outreach.checkEvery` | `30m` | Same duration format as `heartbeat.every` |
@@ -302,3 +303,16 @@ A device service connects to `ws://<web.host>:<web.port>/device/ws` with `Author
 ## Scheduled messages
 
 Ask Vex in conversation: "remind me at 18:00 every weekday to stretch". The `schedule` tool accepts a unique `name`, a `prompt`, a `target` (the current conversation by default) and one rule: `cron` expression, `every` interval such as `30m`, or `once` as an ISO timestamp with a time zone (it must be in the future). Tasks are stored in `schedules.json`; the Schedules tab in WebChat settings lists them and can pause, edit, delete or create them.
+
+## Recorded triggers
+
+Every piece of work Vex starts on its own is a trigger: a scheduled message, a heartbeat, a proactive chat, a wiki run, a watchdog check. Listing a source in `triggers.recordOnly` keeps it on its timetable but stops it from doing anything; what it was about to do — the prompt, the HEARTBEAT.md it read, the runs the watchdog would have looked into — is written to `triggers.jsonl` and listed in WebChat under the approval cards, newest first.
+
+```yaml
+triggers:
+  recordOnly: ["proactive chat"]
+```
+
+This is how to watch a source behave before letting it act, and how to turn one off without losing its schedule or its place in the trace history. Recorded work is kept for seven days like a run trace, and a recorded watchdog check moves its window on: those runs are not offered to a check again.
+
+A finished background task is not a trigger: its result answers what the owner asked for, so it is always delivered.
