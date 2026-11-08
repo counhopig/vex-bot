@@ -97,6 +97,14 @@ describe("memory retrieval index", () => {
     expect(db.search("第一")).toHaveLength(0);
     expect(db.search("全新")).toHaveLength(1);
   });
+  it("carries the run id of the message it found", async () => {
+    await writeFile(join(root, "workspace/MEMORY.md"), "主人喜欢喝茶");
+    await writeFile(join(root, "sessions/wechat.jsonl"), JSON.stringify({ role: "assistant", content: [{ type: "text", text: "后台任务改完了三个文件" }], timestamp: Date.UTC(2026, 9, 2), vexRun: "ab12cd34-9f8e7d" }) + "\n");
+    const db = await open();
+    expect(db.search("后台任务", 5, "sessions")[0]).toMatchObject({ run: "ab12cd34-9f8e7d", session: "wechat", date: "2026-10-02" });
+    expect(db.search("喝茶", 5, "memory")[0]).toMatchObject({ run: null });
+  });
+
   it("excludes temporary run sessions and marked synthetic messages", async () => {
     await mkdir(join(root, "sessions/runs"), { recursive: true });
     await writeFile(join(root, "sessions/runs/job.jsonl"), JSON.stringify({ role: "user", content: "临时会话内容" }) + "\n");

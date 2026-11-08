@@ -96,7 +96,9 @@ owner 不用盯着 Traces 页面，出了需要知道的问题时，Vex 会在�
 
 ## 阶段四：可追溯的召回
 
-`memory_search` 的结果附带运行 id 和任务 id，再提供按 id 读取 trace 和任务摘要的工具，模型可以沿着引用逐跳追溯：从一条消息找到当时的后台任务，再找到它修改过的文件。
+`memory_search` 的结果现在带 `run`：一条会话记录如果是在某次运行里写下的，就会带上那次运行的 trace id（transcript 记录里的 `vexRun`），`trace_query read <run>` 可以读回那次运行的全部步骤——模型调用、工具调用、改动过的文件和最终回复。后台任务的 `run` 对应的是投递结果的这次运行；再 `trace_query list source=task` 就能按标题和会话 `run:<任务 id>` 找到任务本身那次运行。
+
+`trace_query` 已经是那个「按 id 读取」的工具，所以这条链不需要新工具。还没做的是让 vault（笔记和 wiki 页面）的命中也能指回写入它的运行：它们的 chunk 目前只有文件路径，没有运行 id。
 
 ## 暂缓
 

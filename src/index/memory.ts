@@ -5,7 +5,8 @@ import { basename, dirname, join, relative, sep } from "node:path";
 import { markdownChunks, tokenize } from "./tokenize.js";
 
 export type MemoryScope = "memory" | "sessions" | "all";
-export interface MemoryResult { text: string; source: string; date: string; session: string | null; score: number }
+/** A hit; `run` is the trace of the run that produced a message, which `trace_query` can read back. */
+export interface MemoryResult { text: string; source: string; date: string; session: string | null; run: string | null; score: number }
 export interface MemoryIndexOptions { databasePath: string; workspace: string; sessions: string; onWarning?: (message: string) => void }
 interface FileState { source: string; mtime: number; size: number; offset: number; hash: string }
 
@@ -21,7 +22,7 @@ async function files(root: string, recursive = false): Promise<string[]> {
   } catch (err) { if ((err as NodeJS.ErrnoException).code === "ENOENT") return []; throw err; }
 }
 const WINDOW = 4096;
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
 function digest(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 // Reads a bounded byte range.
 async function readRange(source: string, start: number, end: number): Promise<Buffer> {
@@ -56,13 +57,13 @@ export class MemoryIndex {
     this.db = new Database(this.opts.databasePath);
     const check = this.db.pragma("quick_check", { simple: true });
     if (check !== "ok") throw Object.assign(new Error(String(check)), { code: "SQLITE_CORRUPT" });
-    this.db.exec(`CREATE TABLE IF NOT EXISTS files(source TEXT PRIMARY KEY, mtime REAL, size INTEGER, offset INTEGER, hash TEXT);
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(tokens, text UNINDEXED, source UNINDEXED, date UNINDEXED, session UNINDEXED, scope UNINDEXED, tokenize='unicode61');`);
-    // Rows written under another tokenization or hash scheme are dropped so every file re-indexes.
+    // Rows written under another tokenization, shape or hash scheme are dropped so every file re-indexes.
     if (this.db.pragma("user_version", { simple: true }) !== INDEX_VERSION) {
-      this.db.exec("DELETE FROM chunks; DELETE FROM files;");
+      this.db.exec("DROP TABLE IF EXISTS chunks; DROP TABLE IF EXISTS files;");
       this.db.pragma(`user_version = ${INDEX_VERSION}`);
     }
+    this.db.exec(`CREATE TABLE IF NOT EXISTS files(source TEXT PRIMARY KEY, mtime REAL, size INTEGER, offset INTEGER, hash TEXT);
+      CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(tokens, text UNINDEXED, source UNINDEXED, date UNINDEXED, session UNINDEXED, scope UNINDEXED, run UNINDEXED, tokenize='unicode61');`);
   }
   sync(): Promise<void> {
     const run = this.queue.then(() => this.syncFiles());
@@ -85,7 +86,7 @@ export class MemoryIndex {
       const append = isSession && !!old && info.size >= old.offset && digest(await readRange(source, Math.max(0, old.offset - WINDOW), old.offset)) === old.hash;
       const start = append ? old!.offset : 0;
       const date = /\d{4}-\d{2}-\d{2}/.exec(basename(source))?.[0] ?? new Date(info.mtimeMs).toISOString().slice(0, 10);
-      const insert = this.db.prepare("INSERT INTO chunks(tokens,text,source,date,session,scope) VALUES(?,?,?,?,?,?)");
+      const insert = this.db.prepare("INSERT INTO chunks(tokens,text,source,date,session,scope,run) VALUES(?,?,?,?,?,?,?)");
       const save = this.db.prepare("INSERT OR REPLACE INTO files VALUES(?,?,?,?,?)");
       if (!isSession) {
         let bytes = await readRange(source, 0, 1_000_000);
@@ -95,7 +96,7 @@ export class MemoryIndex {
         }
         this.db.transaction(() => {
           this.db.prepare("DELETE FROM chunks WHERE source = ?").run(source);
-          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory");
+          for (const text of markdownChunks(bytes.toString("utf8"))) insert.run(tokenize(text, true).join(" "), text, source, date, null, "memory", null);
           save.run(source, info.mtimeMs, info.size, info.size, "");
         })();
         continue;
@@ -124,7 +125,8 @@ export class MemoryIndex {
             if (!text.trim()) continue;
             const timestamp = message.timestamp ?? record.timestamp;
             const parsedDate = timestamp === undefined ? undefined : new Date(timestamp);
-            insert.run(tokenize(text, true).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions");
+            const run = typeof (message as { vexRun?: unknown }).vexRun === "string" ? (message as { vexRun: string }).vexRun : null;
+            insert.run(tokenize(text, true).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions", run);
           }
           save.run(source, 0, offset, offset, hash);
         })();
@@ -147,7 +149,7 @@ export class MemoryIndex {
     const terms = [...new Set(tokenize(query))];
     if (!terms.length) return [];
     const match = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(" OR ");
-    return this.db.prepare(`SELECT text,source,date,session,bm25(chunks) AS score FROM chunks WHERE chunks MATCH ? ${scope === "all" ? "" : "AND scope = ?"} ORDER BY score LIMIT ?`).all(...(scope === "all" ? [match, limit] : [match, scope, limit])) as MemoryResult[];
+    return this.db.prepare(`SELECT text,source,date,session,run,bm25(chunks) AS score FROM chunks WHERE chunks MATCH ? ${scope === "all" ? "" : "AND scope = ?"} ORDER BY score LIMIT ?`).all(...(scope === "all" ? [match, limit] : [match, scope, limit])) as MemoryResult[];
   }
   async close(): Promise<void> { await this.queue; this.db.close(); }
 }

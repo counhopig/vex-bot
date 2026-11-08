@@ -18,7 +18,7 @@ function snippet(text: string, terms: string[]): string {
 }
 
 export function createMemorySearchTool(index: MemoryIndex): AgentTool<typeof Params> {
-  return { name: "memory_search", label: "Search memory", description: "Searches memory files and past conversations and returns snippets with their source, date and session.", parameters: Params,
+  return { name: "memory_search", label: "Search memory", description: "Searches memory files and past conversations and returns snippets with their source, date, session and, for a past message, the id of the run that produced it; trace_query reads that run back.", parameters: Params,
     async execute(_id, { query, limit, scope }) {
       await index.sync();
       const terms = tokenize(query);

@@ -13,6 +13,7 @@ import { estimateProviderInput } from "../src/context/budget.js";
 import type { Wiki } from "../src/vault/wiki/service.js";
 import { createWikiInteractiveTools } from "../src/vault/wiki/tools.js";
 import { readJsonl } from "../src/store/jsonl.js";
+import { TraceStore } from "../src/trace/store.js";
 import { createFaux, fauxStreamFn, lastUserText } from "./helpers/faux.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
@@ -138,6 +139,23 @@ describe("Session", () => {
     expect(usageRecords[0]?.usage).toEqual(classifierUsage);
     expect(usageRecords[0]?.usage?.totalTokens).toBe(classifierUsage!.totalTokens);
     await session.dispose();
+  });
+
+  it("writes the run id into the transcript records it produces", async () => {
+    faux = createFaux();
+    faux.setResponses([fauxAssistantMessage("记下了")]);
+    const traces = new TraceStore({ dir: join(dir, "traces") });
+    await traces.open();
+    const s = await open({ trace: traces.scope("web:1") });
+    s.send("记住今天的结论");
+    await vi.waitFor(() => expect(events.some((event) => event.kind === "turn_end")).toBe(true));
+    await s.dispose();
+    await traces.flush();
+    const run = (await traces.list()).runs[0]!;
+    const records = await readJsonl<{ role?: string; vexRun?: string }>(join(dir, "t.jsonl"));
+    const messages = records.filter((record) => record.role === "user" || record.role === "assistant");
+    expect(messages.length).toBe(2);
+    expect(messages.map((message) => message.vexRun)).toEqual([run.id, run.id]);
   });
 
   it("queues injected notifications until an active tool turn settles", async () => {
