@@ -18,10 +18,35 @@ export interface TriggerRecord extends TriggerRequest {
   at: number;
 }
 
+/** What a source is allowed to do: run its work, or only have it recorded. */
+export type TriggerMode = "act" | "record";
+
+/** One place Vex starts work on its own, and whether it may act without the owner's word. */
+export interface TriggerSource {
+  /** The name its runs carry in their traces; also the name the configuration and the viewer use. */
+  name: string;
+  /** A source that has not proved itself records its work until the owner lists it as allowed. */
+  defaultMode: TriggerMode;
+}
+
+/** The sources built into the daemon. A new one is registered here with `defaultMode: "record"`. */
+export const BUILTIN_TRIGGER_SOURCES: readonly TriggerSource[] = [
+  { name: "scheduled task", defaultMode: "act" },
+  { name: "missed scheduled task", defaultMode: "act" },
+  { name: "heartbeat", defaultMode: "act" },
+  { name: "proactive chat", defaultMode: "act" },
+  { name: "wiki", defaultMode: "act" },
+  { name: "watchdog", defaultMode: "act" },
+];
+
 export interface TriggerLogOptions {
   path: string;
-  /** Sources whose work is only recorded. Every other source runs, as it did before. */
+  /** The sources that may run; absent, the built-in ones. */
+  sources?: readonly TriggerSource[];
+  /** Sources whose work is only recorded, whatever their default. */
   recordOnly?: readonly string[];
+  /** Sources that may act although they record by default. */
+  allow?: readonly string[];
   retainDays?: number;
   now?: () => number;
   /** Called after a record is added, so an open interface can refresh. */
@@ -29,9 +54,6 @@ export interface TriggerLogOptions {
   onChange?: () => void;
   onWarning?: (message: string) => void;
 }
-
-/** The sources that can be set to record only; each runs under the same name in its trace. */
-export const TRIGGER_SOURCES = ["scheduled task", "missed scheduled task", "heartbeat", "proactive chat", "wiki", "watchdog"] as const;
 
 const DEFAULT_RETAIN_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -58,21 +80,27 @@ function isRecord(value: unknown): value is TriggerRecord {
 }
 
 /**
- * The log of work that was recorded instead of run. A source listed in `recordOnly` keeps its
- * schedule and its trace source but does nothing: what it was about to do is written here, and the
- * owner decides from the viewer whether the source should run again.
+ * The log of work that was recorded instead of run, and the registry that says which sources may
+ * act. A source set to record keeps its schedule and its trace source but does nothing: what it was
+ * about to do is written here, and the owner decides from the viewer whether it should run again.
  */
 export class TriggerLog {
   private records: TriggerRecord[] = [];
   private count = 0;
   // Appends run one at a time, so the file keeps the order the requests arrived in.
   private writes: Promise<void> = Promise.resolve();
-  private readonly recordOnly: ReadonlySet<string>;
+  private readonly modes = new Map<string, TriggerMode>();
   private readonly now: () => number;
 
   constructor(private readonly opts: TriggerLogOptions) {
     this.now = opts.now ?? Date.now;
-    this.recordOnly = new Set(opts.recordOnly ?? []);
+    for (const source of opts.sources ?? BUILTIN_TRIGGER_SOURCES) this.modes.set(source.name, source.defaultMode);
+    for (const name of [...opts.allow ?? [], ...opts.recordOnly ?? []]) {
+      if (!this.modes.has(name)) throw new Error(`Unknown trigger source "${name}"`);
+    }
+    // A source that is both listed as allowed and set to record only stays recorded.
+    for (const name of opts.allow ?? []) this.modes.set(name, "act");
+    for (const name of opts.recordOnly ?? []) this.modes.set(name, "record");
   }
 
   /** Loads the records kept from earlier runs, dropping those past the retention. */
@@ -85,12 +113,19 @@ export class TriggerLog {
     if (kept.length !== stored.length) await this.rewrite(kept);
   }
 
+  /** Whether a source may act, or only be recorded; a source that is not registered is a programming error. */
+  modeOf(source: string): TriggerMode {
+    const mode = this.modes.get(source);
+    if (!mode) throw new Error(`Unknown trigger source "${source}"`);
+    return mode;
+  }
+
   /**
    * True when the work should run. A source set to record only has its request written down
    * instead, and this returns false so the caller leaves the work undone.
    */
   admit(request: TriggerRequest): boolean {
-    if (!this.recordOnly.has(request.source)) return true;
+    if (this.modeOf(request.source) === "act") return true;
     this.add(request);
     return false;
   }

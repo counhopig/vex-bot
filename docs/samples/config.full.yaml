@@ -80,12 +80,14 @@ watchdog:
   enabled: true
   every: 1h
 
-# Work Vex would start on its own. Any source listed here is recorded instead of
-# run: it stays on its timetable, does nothing, and is listed in WebChat so you
-# can see what it would have done. Sources: scheduled task, missed scheduled
-# task, heartbeat, proactive chat, wiki, watchdog.
+# Work Vex would start on its own. Any source listed under recordOnly is recorded
+# instead of run: it stays on its timetable, does nothing, and is listed in WebChat
+# so you can see what it would have done. Sources: scheduled task, missed scheduled
+# task, heartbeat, proactive chat, wiki, watchdog. allow names a source that is
+# built to record first; the built-in sources already act.
 # triggers:
 #   recordOnly: ["proactive chat"]
+#   allow: []
 
 persona:
   sleep: ["23:00", "07:00"]        # rest hours; may cross midnight

@@ -69,6 +69,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `watchdog.enabled` | `true` | Periodic check of recent run traces for failures the owner should hear about |
 | `watchdog.every` | `1h` | Same duration format as `heartbeat.every` |
 | `triggers.recordOnly` | none | Sources whose work is recorded instead of run: `scheduled task`, `missed scheduled task`, `heartbeat`, `proactive chat`, `wiki`, `watchdog`. Recorded work is listed in WebChat and nothing else happens. Unknown names fail validation. Needs a restart |
+| `triggers.allow` | none | Sources that may act although they are built to record first. Every built-in source already acts; this exists for a source added to the registry with `defaultMode: "record"`. A source cannot be both recorded and allowed |
 | `persona.sleep` | `["23:00", "07:00"]` | Rest hours; may cross midnight |
 | `persona.outreach.enabled` | `true` | Proactive conversations |
 | `persona.outreach.checkEvery` | `30m` | Same duration format as `heartbeat.every` |
@@ -314,5 +315,7 @@ triggers:
 ```
 
 This is how to watch a source behave before letting it act, and how to turn one off without losing its schedule or its place in the trace history. Recorded work is kept for seven days like a run trace, and a recorded watchdog check moves its window on: those runs are not offered to a check again.
+
+The sources live in a registry (`BUILTIN_TRIGGER_SOURCES` in `src/triggers/index.ts`), each with the name its runs carry in their traces and the mode it starts in. The built-in ones all start in `act`. A source added for something new — mail, a calendar, a feed — is registered with `defaultMode: "record"`, so it fills the recorded list with what it would do until `triggers.allow` names it; a source that is not registered at all is an error rather than a silent no-op.
 
 A finished background task is not a trigger: its result answers what the owner asked for, so it is always delivered.

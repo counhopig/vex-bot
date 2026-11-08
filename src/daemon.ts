@@ -110,6 +110,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const triggers = new TriggerLog({
       path: join(paths.home, "triggers.jsonl"),
       recordOnly: config.triggers?.recordOnly ?? [],
+      allow: config.triggers?.allow ?? [],
       onChange: () => bus.emit({ type: "triggers_changed" }),
       onRecord: (record) => log.info({ source: record.source, title: record.title }, "trigger recorded instead of run"),
       onWarning: (message) => log.warn(message),

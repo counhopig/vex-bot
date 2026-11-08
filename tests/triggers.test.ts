@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TriggerLog, type TriggerRequest } from "../src/triggers/index.js";
+import { TriggerLog, type TriggerRequest, type TriggerSource } from "../src/triggers/index.js";
 import { makeTmpDir, removeTmpDir } from "./helpers/tmp.js";
 
 const DAY = 86_400_000;
@@ -19,7 +19,7 @@ afterEach(async () => {
   await removeTmpDir(dir);
 });
 
-async function open(options: { recordOnly?: string[]; now?: () => number; onChange?: () => void; onRecord?: (record: TriggerRequest) => void } = {}): Promise<TriggerLog> {
+async function open(options: { sources?: readonly TriggerSource[]; recordOnly?: string[]; allow?: string[]; now?: () => number; onChange?: () => void; onRecord?: (record: TriggerRequest) => void } = {}): Promise<TriggerLog> {
   const log = new TriggerLog({ path, ...options });
   logs.push(log);
   await log.open();
@@ -67,8 +67,29 @@ describe("trigger log", () => {
     expect(await readFile(path, "utf8")).toBe("");
   });
 
-  it("survives a torn last line", async () => {
-    await writeFile(path, `${JSON.stringify({ id: "a", at: 1000, source: "heartbeat", title: "t", text: "kept" })}\n{"id":"b","at":`, "utf8");
+  it("records an untried source until the owner allows it, then lets it act", async () => {
+    const sources: TriggerSource[] = [{ name: "inbox", defaultMode: "record" }, { name: "heartbeat", defaultMode: "act" }];
+    const recorded = await open({ sources, now: () => 1000 });
+    expect(recorded.modeOf("inbox")).toBe("record");
+    expect(recorded.admit({ source: "inbox", title: "New mail", text: "three unread" })).toBe(false);
+    expect(recorded.list()).toHaveLength(1);
+
+    const allowed = await open({ sources, allow: ["inbox"], now: () => 1000 });
+    expect(allowed.modeOf("inbox")).toBe("act");
+    expect(allowed.admit({ source: "inbox", title: "New mail", text: "three unread" })).toBe(true);
+    expect(allowed.list()).toEqual([]);
+
+    const overruled = await open({ sources, allow: ["inbox"], recordOnly: ["inbox"], now: () => 1000 });
+    expect(overruled.modeOf("inbox")).toBe("record");
+  });
+
+  it("refuses a source it does not know", async () => {
+    const log = await open({ recordOnly: ["heartbeat"] });
+    expect(() => log.admit({ source: "proactive chats", title: "t", text: "x" })).toThrow('Unknown trigger source "proactive chats"');
+    await expect(open({ recordOnly: ["proactive chats"] })).rejects.toThrow('Unknown trigger source "proactive chats"');
+  });
+
+  it("survives a torn last line", async () => {    await writeFile(path, `${JSON.stringify({ id: "a", at: 1000, source: "heartbeat", title: "t", text: "kept" })}\n{"id":"b","at":`, "utf8");
     const log = await open({ now: () => 2000 });
     expect(log.list().map((record) => record.text)).toEqual(["kept"]);
   });

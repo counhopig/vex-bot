@@ -5,7 +5,7 @@ import { parse } from "yaml";
 import { expandHome, type VexPaths } from "../paths.js";
 import { checkCadence } from "../scheduler/index.js";
 import { writeFileAtomic } from "../store/atomic.js";
-import { TRIGGER_SOURCES } from "../triggers/index.js";
+import { BUILTIN_TRIGGER_SOURCES } from "../triggers/index.js";
 import type { SandboxConfig } from "../tools/sandbox.js";
 import { ConfigSchema, DEFAULT_WECHAT_BASE_URL, type VaultConfig, type VexConfig } from "./schema.js";
 
@@ -38,16 +38,21 @@ function checkVault(vault: RawVault, paths: VexPaths): VaultConfig {
   };
 }
 
-/** Recorded sources must be known, so a misspelt source fails validation instead of doing nothing. */
-function checkTriggers(triggers: { recordOnly?: string[] }): { recordOnly: string[] } | undefined {
-  if (!triggers.recordOnly?.length) return undefined;
-  const known = new Set<string>(TRIGGER_SOURCES);
-  const unknown = triggers.recordOnly.filter((source) => !known.has(source));
-  if (unknown.length) {
-    const names = unknown.map((source) => `"${source}"`).join(", ");
-    throw new ConfigError(`config.yaml failed validation: triggers.recordOnly: unknown source ${names}; use one of ${TRIGGER_SOURCES.map((source) => `"${source}"`).join(", ")}`);
-  }
-  return { recordOnly: [...new Set(triggers.recordOnly)] };
+/** Recorded and allowed sources must be registered, so a misspelt source fails validation instead of doing nothing. */
+function checkTriggers(triggers: { recordOnly?: string[]; allow?: string[] }): { recordOnly?: string[]; allow?: string[] } | undefined {
+  const known = BUILTIN_TRIGGER_SOURCES.map((source) => source.name);
+  const names = (key: "recordOnly" | "allow", list: string[] | undefined): string[] | undefined => {
+    for (const name of list ?? []) {
+      if (!known.includes(name)) throw new ConfigError(`config.yaml failed validation: triggers.${key}: unknown source "${name}"; use one of ${known.map((source) => `"${source}"`).join(", ")}`);
+    }
+    return list?.length ? [...new Set(list)] : undefined;
+  };
+  const recordOnly = names("recordOnly", triggers.recordOnly);
+  const allow = names("allow", triggers.allow);
+  const both = (recordOnly ?? []).filter((name) => allow?.includes(name));
+  if (both.length) throw new ConfigError(`config.yaml failed validation: triggers: ${both.map((name) => `"${name}"`).join(", ")} cannot be both recorded and allowed`);
+  if (!recordOnly && !allow) return undefined;
+  return { ...(recordOnly ? { recordOnly } : {}), ...(allow ? { allow } : {}) };
 }
 
 /** Sandbox paths resolve like `workspace`: `~` is the user's home and relative paths start at the data home. */
