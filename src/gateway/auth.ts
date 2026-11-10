@@ -42,6 +42,8 @@ export function parseCookies(header: string | undefined): Record<string, string>
 }
 
 export class WebAuth {
+  private cachedCookieValue: string | undefined;
+
   constructor(private readonly token: string | undefined) {}
 
   get required(): boolean {
@@ -63,7 +65,9 @@ export class WebAuth {
   }
 
   private cookieValue(): string {
-    return createHmac("sha256", this.token ?? "").update("vex-web-auth").digest("hex");
+    // The token never changes for the process lifetime, so the HMAC is computed once.
+    this.cachedCookieValue ??= createHmac("sha256", this.token ?? "").update("vex-web-auth").digest("hex");
+    return this.cachedCookieValue;
   }
 }
 

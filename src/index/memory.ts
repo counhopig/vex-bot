@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdir, open, readdir, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
+import { classifyTranscriptRecord } from "../core/transcript.js";
 import { markdownChunks, tokenize } from "./tokenize.js";
 
 export type MemoryScope = "memory" | "sessions" | "all";
@@ -114,19 +115,17 @@ export class MemoryIndex {
         this.db.transaction(() => {
           for (const line of batch.lines) {
             if (!line.trim()) continue;
-            let record;
-            try { record = JSON.parse(line); } catch { continue; }
-            if (!record || typeof record !== "object" || Array.isArray(record)) continue;
-            const message = record.message ?? record;
-            if (!message || typeof message !== "object" || Array.isArray(message)) continue;
+            let entry;
+            try { entry = classifyTranscriptRecord(JSON.parse(line)); } catch { continue; }
+            if (entry.type !== "message") continue;
+            const message = entry.message as { role: string; vexSource?: unknown; content: unknown; timestamp?: number; vexRun?: unknown };
             if (message.role !== "user" && message.role !== "assistant") continue;
             if (message.vexSource) continue;
             const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.flatMap((part: unknown) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n") : "";
             if (!text.trim()) continue;
-            const timestamp = message.timestamp ?? record.timestamp;
-            const parsedDate = timestamp === undefined ? undefined : new Date(timestamp);
-            const run = typeof (message as { vexRun?: unknown }).vexRun === "string" ? (message as { vexRun: string }).vexRun : null;
-            insert.run(tokenize(text, true).join(" "), text, source, parsedDate && Number.isFinite(parsedDate.getTime()) ? parsedDate.toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions", run);
+            const timestamp = message.timestamp;
+            const run = typeof message.vexRun === "string" ? message.vexRun : null;
+            insert.run(tokenize(text, true).join(" "), text, source, timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime()) ? new Date(timestamp).toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions", run);
           }
           save.run(source, 0, offset, offset, hash);
         })();

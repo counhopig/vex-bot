@@ -2,15 +2,9 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { builtinSkillsDirectory } from "../skills/index.js";
 import { assertPublicUrl, fetchPublicPage, htmlToMarkdown, type PageRequest } from "../tools/web.js";
+import type { OriginalSource } from "./types.js";
 
-export interface OriginalSource {
-  requestedUrl: string;
-  canonicalUrl: string;
-  title: string;
-  text: string;
-  textKind: "text" | "article" | "subtitles" | "transcript";
-  truncated: boolean;
-}
+export type { OriginalSource } from "./types.js";
 
 export interface SourceResolverOptions {
   signal: AbortSignal;

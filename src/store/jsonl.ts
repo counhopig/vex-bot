@@ -1,4 +1,4 @@
-import { mkdir, open, readFile } from "node:fs/promises";
+import { mkdir, open, readFile, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export async function appendJsonl(path: string, record: unknown): Promise<void> {
@@ -12,6 +12,51 @@ export async function appendJsonl(path: string, record: unknown): Promise<void> 
     await handle.writeFile(`${boundary}${JSON.stringify(record)}\n`, "utf8");
   } finally {
     await handle.close();
+  }
+}
+
+/**
+ * Serialized appends to one JSONL file through a single lazily opened handle, so a chatty
+ * writer (a session transcript) pays one open/close per lifetime instead of per record.
+ * Appends keep their call order; `close` waits for every queued append.
+ */
+export class JsonlAppender {
+  private handle: FileHandle | undefined;
+  private queue: Promise<void> = Promise.resolve();
+  /** Whether the first queued write still owes the file a leading boundary check. */
+  private first = true;
+
+  constructor(private readonly path: string) {}
+
+  append(record: unknown): Promise<void> {
+    const run = this.queue.then(() => this.write(record));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  private async write(record: unknown): Promise<void> {
+    if (!this.handle) {
+      await mkdir(dirname(this.path), { recursive: true });
+      this.handle = await open(this.path, "a+");
+    }
+    let boundary = "";
+    if (this.first) {
+      this.first = false;
+      const { size } = await this.handle.stat();
+      if (size > 0) {
+        const last = Buffer.alloc(1);
+        await this.handle.read(last, 0, 1, size - 1);
+        if (last[0] !== 10) boundary = "\n";
+      }
+    }
+    await this.handle.writeFile(`${boundary}${JSON.stringify(record)}\n`, "utf8");
+  }
+
+  async close(): Promise<void> {
+    await this.queue.catch(() => {});
+    await this.handle?.close();
+    this.handle = undefined;
+    this.first = true;
   }
 }
 
