@@ -390,7 +390,10 @@ export class Session {
   }
 
   private queueTranscriptWrite(message: AgentMessage): void {
-    this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, message));
+    // The run travels with the message it produced, so a memory hit can be traced back to it later.
+    const run = this.currentTrace()?.id;
+    const record = run ? { ...message, vexRun: run } : message;
+    this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, record));
   }
 
   /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */

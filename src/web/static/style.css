@@ -165,6 +165,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   overflow: auto;
 }
 .approval-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#tasks { display: flex; flex-direction: column; gap: 6px; padding: 0 16px; }
+#tasks:not(:empty) { padding-top: 12px; }.task { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border: 1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding: 8px 12px; }
+.task-title { font-weight: 600; }
+.task-meta { color: var(--muted); }
+.task-actions { display: flex; gap: 12px; margin-left: auto; }
+#triggers { display: flex; flex-direction: column; gap: 6px; padding: 0 16px; max-height: 30vh; overflow-y: auto; }
+#triggers:not(:empty) { padding-top: 12px; }
+#triggers .hint { margin: 0; font-size: 13px; }
+.trigger { border: 1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding: 6px 12px; }
+.trigger summary { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+.trigger-title { font-weight: 600; }
+.trigger-meta { color: var(--muted); }
+.trigger-text { margin: 6px 0 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 #chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 #messages {

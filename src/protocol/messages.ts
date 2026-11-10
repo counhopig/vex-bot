@@ -4,7 +4,9 @@ import type { HistoryItem, SessionEvent } from "../core/events.js";
 import type { WebSessionMeta } from "../core/webSessions.js";
 import type { ApprovalRequest } from "../policy/approvals.js";
 import type { ScheduledTask } from "../scheduler/index.js";
+import type { TaskInfo } from "../tasks/index.js";
 import type { TraceEvent, TraceSummary } from "../trace/types.js";
+import type { TriggerRecord } from "../triggers/index.js";
 
 const SessionId = Type.String({ minLength: 1, maxLength: 100 });
 
@@ -33,6 +35,7 @@ export const ClientMessageSchema = Type.Union([
     id: Type.String({ minLength: 1 }),
     answer: Type.Union([Type.Literal("allow"), Type.Literal("allow_session"), Type.Literal("deny")]),
   }),
+  Type.Object({ type: Type.Literal("stop_task"), id: Type.String({ minLength: 1, maxLength: 100 }) }),
   Type.Object({ type: Type.Literal("get_file"), name: WorkspaceFileName }),
   Type.Object({ type: Type.Literal("list_notes") }),
   // base is the text the editor loaded; a save is refused when the file has changed since.
@@ -87,6 +90,8 @@ export type ServerMessage =
   | { type: "history"; sessionId: string; items: HistoryItem[]; busy: boolean; streaming?: string; before?: number; nextBefore?: number }
   | { type: "event"; sessionId: string; event: SessionEvent }
   | { type: "approvals"; pending: ApprovalRequest[] }
+  | { type: "tasks"; tasks: TaskInfo[] }
+  | { type: "triggers"; triggers: TriggerRecord[] }
   | { type: "file"; name: WorkspaceFile; text: string }
   | { type: "notes"; names: string[] }
   | { type: "file_saved"; name: WorkspaceFile; ok: boolean; error?: string; warning?: string }

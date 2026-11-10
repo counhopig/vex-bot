@@ -12,7 +12,7 @@ async function fixture(extra: Partial<SchedulerOptions> = {}, hookOverrides: Par
   const dataDir = await mkdtemp(join(tmpdir(), "vex-scheduler-")); dirs.push(dataDir);
   const workspace = join(dataDir, "workspace"); await mkdir(workspace);
   let now = new Date(2026, 9, 3, 12).getTime();
-  const hooks: SchedulerHooks = { deliver: vi.fn(async () => {}), targetExists: vi.fn(() => true), runTemporary: vi.fn(async () => "done"), runHeartbeat: vi.fn(async () => null), deliverHeartbeat: vi.fn(async () => {}), checkOutreach: vi.fn(async () => {}), wikiWork: vi.fn(async () => null), runWiki: vi.fn(async () => {}), log: vi.fn(), ...hookOverrides };
+  const hooks: SchedulerHooks = { deliver: vi.fn(async () => {}), targetExists: vi.fn(() => true), runTemporary: vi.fn(async () => "done"), runHeartbeat: vi.fn(async () => null), deliverHeartbeat: vi.fn(async () => {}), checkOutreach: vi.fn(async () => {}), checkWatchdog: vi.fn(async () => {}), wikiWork: vi.fn(async () => null), runWiki: vi.fn(async () => {}), log: vi.fn(), ...hookOverrides };
   const scheduler = new Scheduler({ dataDir, workspace, hooks, now: () => now, heartbeat: { every: "30m", activeHours: ["08:00", "22:00"] }, ...extra }); schedulers.push(scheduler);
   return { scheduler, dataDir, workspace, hooks, time: () => now, advance: (ms: number) => { now += ms; }, flush: async () => { await new Promise(resolve => setImmediate(resolve)); } };
 }
@@ -114,6 +114,19 @@ describe("scheduler", () => {
     f.advance(10 * 3_600_000); await f.scheduler.tick(); await settle(); expect(f.hooks.runHeartbeat).toHaveBeenCalledTimes(2);
   });
 
+  it("records a heartbeat and a due task instead of running them when their source is set to record only", async () => {
+    const admitTrigger = vi.fn(() => false);
+    const f = await fixture({}, { admitTrigger }); await f.scheduler.start();
+    await writeFile(join(f.workspace, "HEARTBEAT.md"), "检查今天日程");
+    await f.scheduler.create({ name: "提醒", prompt: "喝水", target: "wechat", schedule: { every: "1m" } });
+    const settle = () => Promise.allSettled([...(f.scheduler as any).running.values()]);
+    f.advance(30 * 60_000); await f.scheduler.tick(); await settle();
+    expect(admitTrigger).toHaveBeenCalledWith({ source: "heartbeat", title: "Heartbeat check", text: "检查今天日程" });
+    expect(admitTrigger).toHaveBeenCalledWith({ source: "scheduled task", title: "Scheduled task \"提醒\"", text: "喝水" });
+    expect(f.hooks.runHeartbeat).not.toHaveBeenCalled();
+    expect(f.hooks.deliver).not.toHaveBeenCalled();
+  });
+
   it("runs daily consolidation with seven dated notes and checks outreach", async () => {
     const f = await fixture(); await f.scheduler.start(); f.advance(15 * 3_600_000); await f.scheduler.tick();
     await vi.waitFor(() => expect(f.hooks.runTemporary).toHaveBeenCalledWith(expect.stringContaining("memory/2026-10-04.md"), "consolidation", expect.any(AbortSignal)));
@@ -163,6 +176,16 @@ describe("scheduler", () => {
     await f.scheduler.create({ name: "失败", prompt: "测试", target: "wechat", schedule: { every: "1s" } }); f.advance(1000); await f.scheduler.tick(); await f.flush(); expect(f.hooks.log).toHaveBeenCalled();
     vi.mocked(f.hooks.deliver).mockImplementation(async (_target, _prompt, _kind, signal) => { await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); });
     f.advance(1000); await f.scheduler.tick(); await f.flush(); await f.scheduler.close(); f.advance(1000); await f.scheduler.tick(); expect(f.hooks.deliver).toHaveBeenCalledTimes(2);
+  });
+  it("checks the watchdog at its cadence only inside the active hours, and never without one", async () => {
+    const f = await fixture({ watchdog: { every: "1h" } }); await f.scheduler.start();
+    f.advance(3_600_000); await f.scheduler.tick(); await f.flush();
+    expect(f.hooks.checkWatchdog).toHaveBeenCalledTimes(1);
+    f.advance(10 * 3_600_000); await f.scheduler.tick(); await f.flush();
+    expect(f.hooks.checkWatchdog).toHaveBeenCalledTimes(1);
+    const off = await fixture(); await off.scheduler.start();
+    off.advance(3_600_000); await off.scheduler.tick(); await off.flush();
+    expect(off.hooks.checkWatchdog).not.toHaveBeenCalled();
   });
   it("keeps built-in jobs running and waits a minute before retrying when due tasks cannot be saved", async () => {
     const f = await fixture({ outreach: { enabled: true, checkEvery: "1m" } }); await f.scheduler.start();

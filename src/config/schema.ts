@@ -71,6 +71,14 @@ export const ConfigSchema = StrictObject({
     every: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(s|m|h|d)$" })),
     activeHours: Type.Optional(Type.Tuple([Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }), Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })])),
   })),
+  watchdog: Type.Optional(StrictObject({
+    enabled: Type.Optional(Type.Boolean()),
+    every: Type.Optional(Type.String({ pattern: "^[1-9][0-9]*(s|m|h|d)$" })),
+  })),
+  triggers: Type.Optional(StrictObject({
+    recordOnly: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 60 }), { maxItems: 20 })),
+    allow: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 60 }), { maxItems: 20 })),
+  })),
   persona: Type.Optional(StrictObject({
     sleep: Type.Optional(Type.Tuple([Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" }), Type.String({ pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$" })])),
     outreach: Type.Optional(StrictObject({
@@ -156,6 +164,9 @@ export interface VexConfig {
   compaction?: { threshold: number };
   memory?: { consolidateAt?: string };
   heartbeat?: { every?: string; activeHours?: [string, string] };
+  watchdog?: { enabled?: boolean; every?: string };
+  /** Sources whose work is recorded instead of run, and those allowed to act although they record by default. */
+  triggers?: { recordOnly?: string[]; allow?: string[] };
   persona?: { sleep?: [string, string]; outreach?: { enabled?: boolean; checkEvery?: string; socialThreshold?: number; quietHours?: number; dailyLimit?: number } };
   webSearch?: { provider: "brave" | "tavily" | "searxng" | "deepseek"; apiKey?: string; baseUrl?: string };
   stt?: { provider?: "openai" | "mimo"; baseUrl: string; model: string; apiKey?: string; language?: string; chunkMinutes?: number; maxMinutes?: number };

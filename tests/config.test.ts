@@ -25,8 +25,19 @@ describe("parseConfig", () => {
       expect(() => parseConfig(`${minimal}${block}\n`, paths)).toThrow(ConfigError);
     }
   });
-  it("validates the notes vault: a folder or a git url, never both", () => {
-    expect(parseConfig(minimal, paths).vault).toBeUndefined();
+  it("validates which sources may be set to record only", () => {
+    const config = parseConfig(`${minimal}triggers: { recordOnly: ["proactive chat", "proactive chat", "wiki"] }\n`, paths);
+    expect(config.triggers).toEqual({ recordOnly: ["proactive chat", "wiki"] });
+    expect(parseConfig(`${minimal}triggers: { allow: ["wiki"] }\n`, paths).triggers).toEqual({ allow: ["wiki"] });
+    expect(parseConfig(`${minimal}triggers: { recordOnly: ["wiki"], allow: ["heartbeat"] }\n`, paths).triggers).toEqual({ recordOnly: ["wiki"], allow: ["heartbeat"] });
+    expect(parseConfig(`${minimal}triggers: { recordOnly: [] }\n`, paths).triggers).toBeUndefined();
+    expect(parseConfig(minimal, paths).triggers).toBeUndefined();
+    expect(() => parseConfig(`${minimal}triggers: { recordOnly: ["proactive chats"] }\n`, paths)).toThrow(/unknown source "proactive chats"; use one of "scheduled task"/);
+    expect(() => parseConfig(`${minimal}triggers: { allow: ["wiki runs"] }\n`, paths)).toThrow(/triggers.allow: unknown source "wiki runs"/);
+    expect(() => parseConfig(`${minimal}triggers: { recordOnly: ["wiki"], allow: ["wiki"] }\n`, paths)).toThrow(/cannot be both recorded and allowed/);
+    expect(() => parseConfig(`${minimal}triggers: { recordOnly: wiki }\n`, paths)).toThrow(ConfigError);
+  });
+  it("validates the notes vault: a folder or a git url, never both", () => {    expect(parseConfig(minimal, paths).vault).toBeUndefined();
     expect(parseConfig(`${minimal}vault: { path: /vault }\n`, paths).vault).toEqual({ path: "/vault" });
     expect(parseConfig(`${minimal}vault: { path: notes }\n`, paths).vault).toEqual({ path: join(dir, "notes") });
     expect(parseConfig(`${minimal}vault: { path: "~/notes" }\n`, paths).vault).toEqual({ path: join(homedir(), "notes") });

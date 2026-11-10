@@ -65,7 +65,11 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `compaction.threshold` | `0.7` | Share of the context window that triggers compaction (0–1) |
 | `memory.consolidateAt` | `03:00` | Daily consolidation time, `HH:mm` |
 | `heartbeat.every` | `30m` | Interval, a positive integer plus `s`, `m`, `h` or `d` |
-| `heartbeat.activeHours` | `["08:00", "22:00"]` | Heartbeat window |
+| `heartbeat.activeHours` | `["08:00", "22:00"]` | Heartbeat window; the watchdog runs inside it too |
+| `watchdog.enabled` | `true` | Periodic check of recent run traces for failures the owner should hear about |
+| `watchdog.every` | `1h` | Same duration format as `heartbeat.every` |
+| `triggers.recordOnly` | none | Sources whose work is recorded instead of run: `scheduled task`, `missed scheduled task`, `heartbeat`, `proactive chat`, `wiki`, `watchdog`. Recorded work is listed in WebChat and nothing else happens. Unknown names fail validation. Needs a restart |
+| `triggers.allow` | none | Sources that may act although they are built to record first. Every built-in source already acts; this exists for a source added to the registry with `defaultMode: "record"`. A source cannot be both recorded and allowed |
 | `persona.sleep` | `["23:00", "07:00"]` | Rest hours; may cross midnight |
 | `persona.outreach.enabled` | `true` | Proactive conversations |
 | `persona.outreach.checkEvery` | `30m` | Same duration format as `heartbeat.every` |
@@ -98,7 +102,7 @@ Only the keys below are accepted; an unknown or misspelt key at any level fails 
 | `jev.timeoutMs` | `5000` | Timeout per TypeSafe API request in milliseconds (100–30000) |
 | `mcpServers.<name>` | none | Server names: letters, digits, hyphens, at most 32 characters |
 
-Default tool policy: `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild`, `bash` and MCP tools are `ask`, and `wiki_bootstrap`, `wiki_rollback` and `wiki_rebuild` are confirmed on every call; `read`, `grep` and `find` are `allow` inside the workspace and the bundled skills directory and `ask` elsewhere; `write` and `edit` are `allow` inside the workspace and `ask` outside.
+Default tool policy: `web_fetch`, `web_search`, `memory_search`, `vault_search`, `vault_read`, `feel`, `schedule`, `delegate`, `background_task`, `trace_query`, `wiki_write`, `wiki_edit` and `wiki_ingest` are `allow`; `wiki_bootstrap`, `wiki_rollback`, `wiki_rebuild`, `bash` and MCP tools are `ask`, and `wiki_bootstrap`, `wiki_rollback` and `wiki_rebuild` are confirmed on every call; `read`, `grep` and `find` are `allow` inside the workspace and the bundled skills directory and `ask` elsewhere; `write` and `edit` are `allow` inside the workspace and `ask` outside.
 
 **Bash sandbox.** With `tools.sandbox.mode: workspace`, each `bash` command runs through a small Linux helper that applies a Landlock ruleset before starting bash. Commands can list any directory and read and run anything outside the data directory; inside it they can read only `config.yaml` (the bundled skills read their API keys from it) and the workspace. They can change only the workspace, the system temporary directory, `/dev/shm` and `tools.sandbox.writable`. They cannot signal processes outside the sandbox and, unless Vex runs as root, cannot read the daemon's memory or environment through `/proc`. Network access is not restricted, so approvals still matter. The setting needs Linux 5.13 or later with Landlock enabled; the daemon checks the helper at startup and logs the result, and if the kernel or the helper is missing, `bash` refuses every command rather than running it unconfined. The Docker image includes the helper; `npm run build` compiles it when a C compiler is available. Programs that write to caches in your home directory (`~/.cache`, `~/.npm`) need those folders in `tools.sandbox.writable`. A data directory inside the system temporary directory or inside the workspace cannot be hidden. Changing the sandbox needs a restart.
 
@@ -300,3 +304,18 @@ A device service connects to `ws://<web.host>:<web.port>/device/ws` with `Author
 ## Scheduled messages
 
 Ask Vex in conversation: "remind me at 18:00 every weekday to stretch". The `schedule` tool accepts a unique `name`, a `prompt`, a `target` (the current conversation by default) and one rule: `cron` expression, `every` interval such as `30m`, or `once` as an ISO timestamp with a time zone (it must be in the future). Tasks are stored in `schedules.json`; the Schedules tab in WebChat settings lists them and can pause, edit, delete or create them.
+
+## Recorded triggers
+
+Every piece of work Vex starts on its own is a trigger: a scheduled message, a heartbeat, a proactive chat, a wiki run, a watchdog check. Listing a source in `triggers.recordOnly` keeps it on its timetable but stops it from doing anything; what it was about to do — the prompt, the HEARTBEAT.md it read, the runs the watchdog would have looked into — is written to `triggers.jsonl` and listed in WebChat under the approval cards, newest first.
+
+```yaml
+triggers:
+  recordOnly: ["proactive chat"]
+```
+
+This is how to watch a source behave before letting it act, and how to turn one off without losing its schedule or its place in the trace history. Recorded work is kept for seven days like a run trace, and a recorded watchdog check moves its window on: those runs are not offered to a check again.
+
+The sources live in a registry (`BUILTIN_TRIGGER_SOURCES` in `src/triggers/index.ts`), each with the name its runs carry in their traces and the mode it starts in. The built-in ones all start in `act`. A source added for something new — mail, a calendar, a feed — is registered with `defaultMode: "record"`, so it fills the recorded list with what it would do until `triggers.allow` names it; a source that is not registered at all is an error rather than a silent no-op.
+
+A finished background task is not a trigger: its result answers what the owner asked for, so it is always delivered.

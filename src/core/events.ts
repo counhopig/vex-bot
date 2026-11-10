@@ -23,7 +23,9 @@ export type HistoryItem =
 export type VexEvent =
   | { type: "session"; sessionKey: string; event: SessionEvent }
   | { type: "sessions_changed" }
-  | { type: "approvals_changed" };
+  | { type: "approvals_changed" }
+  | { type: "tasks_changed" }
+  | { type: "triggers_changed" };
 
 export class EventBus {
   private readonly listeners = new Set<(event: VexEvent) => void>();

@@ -33,7 +33,11 @@ import { unresolvedWikiWrites } from "./vault/wiki/tools.js";
 import { Persona } from "./persona/index.js";
 import { createOutreachCheck } from "./persona/outreach.js";
 import { createConfigEditor } from "./config/editor.js";
-import { Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
+import { duration, Scheduler, SCHEDULER_DEFAULTS } from "./scheduler/index.js";
+import { BACKGROUND_TASK_SOURCE, BackgroundTasks } from "./tasks/index.js";
+import { TriggerLog } from "./triggers/index.js";
+import { createTraceQueryTool } from "./tools/traceQuery.js";
+import { createWatchdog, DEFAULT_WATCHDOG_EVERY } from "./trace/watchdog.js";
 import { createFeelTool } from "./tools/feel.js";
 import { createWebFetchTool, createWebSearchTool, type PageRequest } from "./tools/web.js";
 import { McpBridge } from "./tools/mcp.js";
@@ -102,10 +106,22 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     const traces = new TraceStore({ dir: paths.traces, secrets, onWarning: (message) => log.warn(message) });
     await traces.open();
     shutdown.add("traces", () => traces.flush());
+    // Work from a source set to record only is written here instead of run; nothing else reads it.
+    const triggers = new TriggerLog({
+      path: join(paths.home, "triggers.jsonl"),
+      recordOnly: config.triggers?.recordOnly ?? [],
+      allow: config.triggers?.allow ?? [],
+      onChange: () => bus.emit({ type: "triggers_changed" }),
+      onRecord: (record) => log.info({ source: record.source, title: record.title }, "trigger recorded instead of run"),
+      onWarning: (message) => log.warn(message),
+    });
+    await triggers.open();
+    shutdown.add("triggers", () => triggers.close());
     const persona = await Persona.open({ path: join(paths.home, "state", "mood.json"), sleep: config.persona?.sleep,
       outreach: config.persona?.outreach, warn: (message) => log.warn(message) });
     shutdown.add("persona", () => persona.save());
     let scheduler: Scheduler;
+    let tasks: BackgroundTasks;
     let wechatRuntime: WeChatRuntime | undefined;
     let wechatInbound = 0;
     const live = new Map<Session, () => AgentTool<any>[]>();
@@ -151,11 +167,11 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       createMemorySearchTool(memoryIndex), createFeelTool(persona), createWebFetchTool({
         ...(opts.webPageRequest ? { request: opts.webPageRequest } : {}),
         sourceResolver: (url, signal, request) => readPlatformOriginalSource(url, linkReading(signal, request)),
-      }), createWebSearchTool(config.webSearch),
+      }), createWebSearchTool(config.webSearch), createTraceQueryTool(traces),
       ...(vault ? createVaultTools(vault) : [])];
-    const { openSession, runTemporary, runHeartbeat, wikiTools, wikiPrompt } = createSessionFactory({
+    const { openSession, runTemporary, runHeartbeat, runWatchdog, runTask, wikiTools, wikiPrompt } = createSessionFactory({
       paths, config, log, models, model, backgroundModel, getApiKey, secrets, bus, approvals, policy, memoryIndex, traces, persona, mcp, commonTools, vault, wiki, wikiSourceResolver,
-      scheduler: () => scheduler, live,
+      scheduler: () => scheduler, tasks: () => tasks, live,
       ...(opts.linkClassifier ? { linkClassifier: opts.linkClassifier } : {}),
       onOwnerMessage: (key) => { if (key === WECHAT_SESSION_KEY) wechatInbound++; },
     });
@@ -172,6 +188,18 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     });
     await sessions.init();
     shutdown.add("sessions", () => sessions.shutdown());
+    tasks = new BackgroundTasks({
+      run: async (task, signal, traced) => {
+        log.info({ task: task.id, origin: task.origin }, "background task started");
+        const reply = await runTask(task, signal, traced);
+        log.info({ task: task.id, ms: Date.now() - task.startedAt, chars: reply.length }, "background task finished");
+        return reply;
+      },
+      deliver: async (origin, text) => { (await sessions.get(origin)).send(text, BACKGROUND_TASK_SOURCE); },
+      onError: (err, task) => log.warn({ err, task: task.id, origin: task.origin }, "background task failed"),
+      onChange: () => bus.emit({ type: "tasks_changed" }),
+    });
+    shutdown.add("tasks", () => tasks.close());
     const device = deviceToken ? new DeviceChannel({ sessions, approvals, bus, log }) : undefined;
     if (device) {
       device.start();
@@ -179,12 +207,27 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     }
 
     if (wiki) shutdown.add("wiki", () => wiki.close());
+    const watchdogEvery = config.watchdog?.every ?? DEFAULT_WATCHDOG_EVERY;
+    const checkWatchdog = createWatchdog({
+      traces,
+      everyMs: duration(watchdogEvery),
+      run: async (prompt, signal) => {
+        log.info({ kind: "watchdog" }, "background run started");
+        const message = await runWatchdog(prompt, signal);
+        log.info({ kind: "watchdog", notify: message !== null }, "background run finished");
+        return message;
+      },
+      deliver: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "watchdog reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
+      admit: (request) => triggers.admit(request),
+    });
     scheduler = new Scheduler({ dataDir: paths.home, workspace: config.workspace,
       heartbeat: { every: config.heartbeat?.every ?? SCHEDULER_DEFAULTS.heartbeatEvery, activeHours: config.heartbeat?.activeHours ?? SCHEDULER_DEFAULTS.activeHours },
       memory: { consolidateAt: config.memory?.consolidateAt ?? SCHEDULER_DEFAULTS.consolidateAt },
       outreach: { enabled: config.persona?.outreach?.enabled ?? true, checkEvery: config.persona?.outreach?.checkEvery ?? SCHEDULER_DEFAULTS.outreachEvery },
+      ...(config.watchdog?.enabled === false ? {} : { watchdog: { every: watchdogEvery } }),
       ...(wikiConfig ? { wiki: { every: wikiConfig.every } } : {}),
       hooks: {
+        checkWatchdog,
         log: (err) => log.warn({ err }, "scheduled task failed"),
         targetExists: (target) => (target === DEVICE_SESSION_KEY && !!device) || sessions.listWeb().some((meta) => webSessionKey(meta.id) === scheduleTargetKey(target)),
         deliver: async (target, text, kind, signal) => {
@@ -210,9 +253,13 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           return message;
         },
         deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
-        checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound }),
+        checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound, admit: (request) => triggers.admit(request) }),
         wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
-        runWiki: async (work, signal) => { await wiki?.run({ kind: work }, signal); },
+        runWiki: async (work, signal) => {
+          if (!triggers.admit({ source: "wiki", title: work === "bootstrap" ? "Wiki bootstrap" : "Scheduled wiki run", text: "Compile the notes written since the last run into the wiki." })) return;
+          await wiki?.run({ kind: work }, signal);
+        },
+        admitTrigger: (request) => triggers.admit(request),
       },
     });
     shutdown.add("scheduler", () => scheduler.close());
@@ -226,6 +273,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       auth: new WebAuth(config.web.token),
       sessions,
       approvals,
+      tasks,
+      triggers,
       bus,
       config: editor.config,
       schedules: {
