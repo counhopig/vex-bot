@@ -127,6 +127,8 @@ export class Gateway {
           wss.handleUpgrade(req, socket, head, (ws) => this.onDeviceConnection(ws, this.opts.device!.channel));
           return;
         }
+        // Without a token the bind address is the only access control (the daemon refuses
+        // non-loopback binds); the Host check below adds DNS-rebinding mitigation, not auth.
         const localHostRequired = !this.opts.auth.required && !isLoopback(req.headers.host ?? "");
         if (localHostRequired || path !== "/ws" || !this.isSameOrigin(req) || !this.opts.auth.isAuthorized(req.headers.cookie)) {
           const status = localHostRequired ? "403 Forbidden" : "401 Unauthorized";

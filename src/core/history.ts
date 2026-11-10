@@ -1,16 +1,10 @@
 import { open } from "node:fs/promises";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import { scanJsonlLines } from "../store/jsonl.js";
+import { scanTranscriptLines } from "./transcript.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem } from "./events.js";
 
 export const HISTORY_PAGE_SIZE = 100;
-
-export function isTranscriptMessage(value: unknown): value is AgentMessage {
-  if (!value || typeof value !== "object") return false;
-  const role = (value as { role?: unknown }).role;
-  return role === "user" || role === "assistant" || role === "toolResult";
-}
 
 /** Rendered history only: image bytes and full tool output never enter the browser history cache. */
 export class HistoryWindow {
@@ -93,8 +87,9 @@ export class TranscriptHistory {
     const first = Math.max(0, before - HISTORY_PAGE_SIZE);
     const from = this.checkpoints.findLast((checkpoint) => checkpoint.item <= first) ?? { item: 0, offset: 0 };
     const window = new HistoryWindow(undefined, before, from.item);
-    for await (const { record } of scanJsonlLines(this.path, from.offset)) {
-      if (!isTranscriptMessage(record)) continue;
+    for await (const { entry } of scanTranscriptLines(this.path, from.offset)) {
+      if (entry.type !== "message") continue;
+      const record = entry.message;
       // Results that follow the boundary still settle tool items inside the page.
       if (window.items >= before && record.role !== "toolResult") break;
       window.add(record);
@@ -107,11 +102,11 @@ export class TranscriptHistory {
       this.checkpoints = [];
       this.indexed = { offset: 0, items: 0 };
     }
-    for await (const { record, start, end, complete } of scanJsonlLines(this.path, this.indexed.offset)) {
+    for await (const { entry, start, end, complete } of scanTranscriptLines(this.path, this.indexed.offset)) {
       if (!complete) break;
-      if (isTranscriptMessage(record)) {
+      if (entry.type === "message") {
         if (this.indexed.items - (this.checkpoints.at(-1)?.item ?? 0) >= this.every) this.checkpoints.push({ item: this.indexed.items, offset: start });
-        this.indexed.items += HistoryWindow.itemCount(record);
+        this.indexed.items += HistoryWindow.itemCount(entry.message);
       }
       this.indexed.offset = end;
     }

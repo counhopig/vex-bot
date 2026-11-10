@@ -35,3 +35,10 @@ export class MessageWindow {
   }
 }
 
+/** Rebase a message list into a fresh bounded window cut at turn boundaries. */
+export function boundedWindow(messages: AgentMessage[]): AgentMessage[] {
+  const window = new MessageWindow();
+  for (const message of messages) window.push(message);
+  return window.messages;
+}
+

@@ -5,7 +5,7 @@ import { isIP } from "node:net";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import TurndownService from "turndown";
 import { Type } from "typebox";
-import type { OriginalSource } from "../links/source.js";
+import type { OriginalSource } from "../links/types.js";
 
 const MAX_BYTES = 2_000_000;
 const MAX_REDIRECTS = 5;

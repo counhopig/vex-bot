@@ -12,18 +12,18 @@ import {
 } from "@earendil-works/pi-agent-core";
 import type { Api, AssistantMessage, ImageContent, Model, TextContent, UserMessage } from "@earendil-works/pi-ai";
 import type { ThinkingSetting } from "../config/schema.js";
-import { ContextCompactor, isCompactionRecord, type CompactionOptions, type CompactionRecord } from "../context/compaction.js";
+import { ContextCompactor, type CompactionOptions, type CompactionRecord } from "../context/compaction.js";
 import { CONTEXT_BUDGET_ERROR, ContextBudgetError, withContextBudget } from "../context/budget.js";
 import { addUsage, zeroUsage } from "../providers/usage.js";
 import { PROVIDER_OVERLOADED, withProviderFailures } from "../providers/errors.js";
-import { appendJsonl, scanJsonl } from "../store/jsonl.js";
+import { JsonlAppender } from "../store/jsonl.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { RunTrace, TraceScope } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
 import type { HistoryItem, SessionEvent, TurnStatus } from "./events.js";
-import { HistoryWindow, isTranscriptMessage, TranscriptHistory } from "./history.js";
-import { TranscriptCursor } from "../context/cursor.js";
-import { MessageWindow } from "../context/window.js";
+import { HistoryWindow, TranscriptHistory } from "./history.js";
+import { scanTranscript } from "./transcript.js";
+import { MessageWindow, boundedWindow } from "../context/window.js";
 
 export interface SessionOptions {
   key: string;
@@ -100,7 +100,7 @@ export class Session {
   private readonly recentHistory: HistoryWindow;
   private readonly transcriptHistory: TranscriptHistory;
   private readonly compactor?: ContextCompactor;
-  private readonly cursor = new TranscriptCursor();
+  private readonly appender: JsonlAppender;
   private writes: Promise<void> = Promise.resolve();
   private closing = false;
   private readonly controller?: TurnController;
@@ -122,14 +122,14 @@ export class Session {
     const history = new HistoryWindow();
     let count = 0;
     let restored: CompactionRecord | undefined;
-    for await (const record of scanJsonl(opts.transcriptPath)) {
-      if (isTranscriptMessage(record)) {
+    for await (const entry of scanTranscript(opts.transcriptPath)) {
+      if (entry.type === "message") {
         count++;
-        window.push(record);
-        history.add(record);
-      } else if (opts.compaction && isCompactionRecord(record) && record.through <= count) {
-        restored = record;
-        window.discardThrough(record.through);
+        window.push(entry.message);
+        history.add(entry.message);
+      } else if (opts.compaction && entry.type === "compaction" && entry.compaction.through <= count) {
+        restored = entry.compaction;
+        window.discardThrough(entry.compaction.through);
       }
     }
     return new Session(opts, window, history, restored);
@@ -142,6 +142,7 @@ export class Session {
     restored?: CompactionRecord,
   ) {
     this.key = opts.key;
+    this.appender = new JsonlAppender(opts.transcriptPath);
     this.controller = opts.controller?.({
       recordUsage: (usage) => { this.pendingProviderUsage = addUsage(this.pendingProviderUsage, usage); },
       enqueueAssistant: (text) => this.enqueueAssistant(text),
@@ -149,16 +150,15 @@ export class Session {
     const messages = window.messages;
     this.recentHistory = history;
     this.transcriptHistory = new TranscriptHistory(opts.transcriptPath);
-    this.cursor.advance(window.offset);
     this.compactor = opts.compaction ? new ContextCompactor({
-      ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey, cursor: this.cursor,
+      ...opts.compaction, model: opts.model, streamFn: opts.streamFn, getApiKey: opts.getApiKey, initialOffset: window.offset,
       loadHistory: async function* () {
-        for await (const record of scanJsonl(opts.transcriptPath)) {
-          if (isTranscriptMessage(record)) yield record;
+        for await (const entry of scanTranscript(opts.transcriptPath)) {
+          if (entry.type === "message") yield entry.message;
         }
       },
       save: async (record) => {
-        this.writes = this.writes.then(() => appendJsonl(opts.transcriptPath, record));
+        this.writes = this.appender.append(record);
         await this.writes;
       },
       onCompact: (info) => {
@@ -183,7 +183,7 @@ export class Session {
       // Rebuilt before every request so time, window and workspace files are always current.
       prepareRequest: async ({ context }) => {
         let prompt = await opts.buildSystemPrompt();
-        if (this.cursor.offset > (this.compactor?.summarizedThrough ?? 0)) {
+        if (this.compactor?.hasUnsummarizedPrefix) {
           prompt += "\n\nOnly the explicit summary and recent messages in this request establish earlier conversation context. Other turns remain on disk; do not assume their contents.";
         }
         return { context: { ...context, messages: withSystemPrompt(context.messages.map(markNotice), prompt) } };
@@ -312,6 +312,7 @@ export class Session {
     this.stop();
     await this.whenIdle();
     await this.writes;
+    await this.appender.close();
     this.opts.onDispose?.();
   }
 
@@ -393,7 +394,7 @@ export class Session {
     // The run travels with the message it produced, so a memory hit can be traced back to it later.
     const run = this.currentTrace()?.id;
     const record = run ? { ...message, vexRun: run } : message;
-    this.writes = this.writes.catch((err: unknown) => this.reportError(err)).then(() => appendJsonl(this.opts.transcriptPath, record));
+    this.writes = this.appender.append(record).catch((err: unknown) => this.reportError(err));
   }
 
   /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */
@@ -411,7 +412,7 @@ export class Session {
     const usage = this.pendingProviderUsage;
     if (usage.totalTokens === 0 && usage.cost.total === 0) return;
     this.pendingProviderUsage = zeroUsage();
-    await appendJsonl(this.opts.transcriptPath, { type: "provider_usage", usage, timestamp: Date.now() });
+    await this.appender.append({ type: "provider_usage", usage, timestamp: Date.now() });
   }
 
   history(): { items: HistoryItem[]; streaming?: string } {
@@ -427,11 +428,7 @@ export class Session {
 
   private releaseHistory(): void {
     const messages = this.agent.state.messages;
-    const retained = this.compactor?.release(messages) ?? messages;
-    const window = new MessageWindow();
-    for (const message of retained) window.push(message);
-    this.cursor.advance(messages.length - retained.length + window.offset);
-    this.agent.state.messages = window.messages;
+    this.agent.state.messages = this.compactor ? this.compactor.release(messages) : boundedWindow(messages);
   }
 
   private async run(first: UserMessage): Promise<void> {
@@ -519,7 +516,6 @@ export class Session {
         if (message.role === "assistant" && message.stopReason === "error") return;
         this.recentHistory.add(message);
         this.queueTranscriptWrite(message);
-        await this.writes;
         if (message.role === "user") {
           this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource, requestId: (message as UserMessage & { vexRequestId?: string }).vexRequestId });
         } else if (message.role === "assistant") {

@@ -44,7 +44,7 @@ import type { TraceScope, TraceStore } from "./trace/store.js";
 import type { Vault } from "./vault/notes.js";
 import type { Wiki, WikiRunContext } from "./vault/wiki/service.js";
 import { createWikiInteractiveTools, createWikiWriteTools } from "./vault/wiki/tools.js";
-import type { OriginalSource } from "./links/source.js";
+import type { OriginalSource } from "./links/types.js";
 import { RESIDENT_LINE_LIMITS } from "./workspace/workspace.js";
 
 export interface SessionFactoryDeps {
