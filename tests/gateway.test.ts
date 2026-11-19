@@ -196,6 +196,10 @@ describe("Gateway HTTP", () => {
     expect((await fetch(`http://${host}/login`)).status).toBe(200);
     expect((await fetch(`http://${host}/style.css`)).status).toBe(200);
     expect((await fetch(`http://${host}/app.js`)).status).toBe(401);
+    // Every browser module is served behind the same session gate as the app itself.
+    for (const module of ["/ui.js", "/state.js", "/net.js", "/markdown.js"]) {
+      expect((await fetch(`http://${host}${module}`)).status).toBe(401);
+    }
 
     const wrong = await fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "nope" }) });
     expect(wrong.status).toBe(401);
