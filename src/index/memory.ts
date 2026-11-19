@@ -120,6 +120,8 @@ export class MemoryIndex {
             try { entry = classifyTranscriptRecord(JSON.parse(line)); } catch { continue; }
             if (entry.type !== "message") continue;
             const message = entry.message as AgentMessage;
+            // Memory holds conversations only: tool outputs are work products, not remembered text.
+            if (message.role !== "user" && message.role !== "assistant") continue;
             const meta = transcriptMeta(message);
             if (meta.source) continue;
             const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.flatMap((part: unknown) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n") : "";

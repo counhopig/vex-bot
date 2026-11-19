@@ -1123,6 +1123,50 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
+  it("recompiles a retry whose source the pending batch inherited but did not touch", async () => {
+    const home = join(dir, "home");
+    const { remote } = makeRemote(join(dir, "seed"));
+    commit(join(dir, "seed", "work"), { "wiki/base.md": "base" }, "2026-10-01T10:00:00+0000");
+    let failPushes = false;
+    const failingRunner: GitRunner = async (args, options) => {
+      if (failPushes && args[0] === "push") return Promise.reject(new Error("simulated push failure"));
+      return fileRun(args, options);
+    };
+    let calls = 0;
+    const options: Partial<WikiOptions> = {
+      run: failingRunner,
+      runAgent: async (_prompt, context) => {
+        calls += 1;
+        const target = join(context.repo.root, `wiki/generated${calls}.md`);
+        await context.marker.recordIntent(`wiki/generated${calls}.md`, await fingerprint(target));
+        writeFileSync(target, `generated ${calls}`);
+        await context.marker.recordAfter(`wiki/generated${calls}.md`, await fingerprint(target));
+        return "ok";
+      },
+    };
+    const wiki = makeWiki(home, remote, options);
+    await wiki.init();
+
+    // Source X publishes in its own batch.
+    const x = { url: "https://example.com/inherited-x", text: "X original body" };
+    expect((await wiki.run({ kind: "on-demand", source: x }, new AbortController().signal)).publication).toBe("published");
+
+    // An unrelated batch for Y then sits unpublished after a push failure.
+    failPushes = true;
+    const y = { url: "https://example.com/inherited-y", text: "Y original body" };
+    const pendingY = await wiki.run({ kind: "on-demand", source: y }, new AbortController().signal);
+    expect(pendingY.publication).toBe("pending");
+
+    // A retry of X must not take the pending Y batch's receipt: X's archive is merely inherited
+    // in that commit, so the retry compiles X again as its own batch.
+    failPushes = false;
+    const retried = await wiki.run({ kind: "on-demand", source: x }, new AbortController().signal);
+    expect(calls).toBe(3);
+    expect(retried.batchId).not.toBe(pendingY.batchId);
+    expect((git(remote, ["log", "main", "--format=%B"]).match(/Vex-Batch:/g) ?? []).length).toBe(3);
+    await wiki.close();
+  });
+
   it("archives link text before compilation and updates the same source path on repeated ingestion", async () => {
     const home = join(dir, "home");
     const url = "https://example.com/article";

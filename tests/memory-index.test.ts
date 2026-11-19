@@ -48,6 +48,15 @@ describe("memory retrieval index", () => {
     expect(db.search('" OR *')).toEqual([]);
     expect(() => db.search("a", 0)).toThrow();
   });
+  it("indexes only owner and assistant messages, never tool outputs", async () => {
+    await writeFile(join(root, "sessions/web/abc.jsonl"),
+      JSON.stringify({ role: "user", content: "UniqueUserMarker 主人提问" }) + "\n"
+      + JSON.stringify({ role: "toolResult", toolCallId: "t1", toolName: "read", content: [{ type: "text", text: "UniqueToolMarker 文件内容" }], isError: false }) + "\n");
+    const db = await open();
+    expect(db.search("UniqueUserMarker", 5, "sessions")).toHaveLength(1);
+    expect(db.search("UniqueToolMarker", 5, "sessions")).toHaveLength(0);
+  });
+
   it("matches single-character and two-character CJK queries", async () => {
     await writeFile(join(root, "workspace/MEMORY.md"), "主人养了一只小猫咪");
     const db = await open();

@@ -306,7 +306,8 @@ export class Wiki {
 
   /**
    * The receipt of the newest batch when it archived this request's source unchanged: only for a
-   * batch that was still unpublished when this run began, which settle has just pushed.
+   * batch that was still unpublished when this run began, which settle has just pushed, and whose
+   * own change set includes the source's raw archive.
    */
   private async archivedReceipt(request: WikiRunRequest, reconciled: ReconcileResult): Promise<WikiRunResult | null> {
     const source = request.source;
@@ -314,10 +315,15 @@ export class Wiki {
     if (!source?.url || !source.text?.trim() || batchId === null) return null;
     const sha = await this.findCommit("Vex-Batch", batchId);
     if (!sha) return null;
+    const changed = await this.repo.changedPaths(sha);
+    const rawPath = this.sourcePath(source.url);
+    // An archive the batch merely inherited from an older one does not count: the batch must
+    // have written this source itself, or the retry compiles it again.
+    if (!changed.includes(rawPath)) return null;
     const expected = createHash("sha256").update(sourceDocument(source, source.url, source.text)).digest("hex");
-    const archived = await this.repo.fingerprintAt(sha, this.sourcePath(source.url));
+    const archived = await this.repo.fingerprintAt(sha, rawPath);
     if (archived.type !== "file" || archived.hash !== expected) return null;
-    const pages = (await this.repo.changedPaths(sha)).filter((path) => path.startsWith("wiki/"));
+    const pages = changed.filter((path) => path.startsWith("wiki/"));
     return { batchId, commit: sha, pages, publication: "published" };
   }
 
