@@ -329,18 +329,26 @@ export class Session {
   }
 
   async injectAssistant(text: string, signal?: AbortSignal): Promise<void> {
-    while (this.busy) {
-      await new Promise<void>((resolve, reject) => {
-        const aborted = () => { signal?.removeEventListener("abort", aborted); reject(signal?.reason ?? new Error("Cancelled")); };
-        signal?.addEventListener("abort", aborted, { once: true });
-        if (signal?.aborted) { aborted(); return; }
-        this.whenIdle().then(() => { signal?.removeEventListener("abort", aborted); resolve(); }, err => { signal?.removeEventListener("abort", aborted); reject(err); });
-      });
-      signal?.throwIfAborted();
-    }
+    while (this.busy) await this.waitIdleOrAbort(signal);
     signal?.throwIfAborted();
     if (this.closing) throw new Error("The conversation is closing");
     await this.deliverAssistant(text);
+  }
+
+  /** One wait for an idle session; aborting `signal` rejects with the signal's reason. */
+  private waitIdleOrAbort(signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const aborted = () => reject(signal?.reason ?? new Error("Cancelled"));
+      signal?.addEventListener("abort", aborted, { once: true });
+      this.whenIdle().then(() => {
+        signal?.removeEventListener("abort", aborted);
+        resolve();
+      }, (err) => {
+        signal?.removeEventListener("abort", aborted);
+        reject(err);
+      });
+      if (signal?.aborted) aborted();
+    });
   }
 
   /** Accept a notification for delivery after the current Agent turn settles. */
