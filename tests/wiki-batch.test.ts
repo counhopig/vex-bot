@@ -34,7 +34,7 @@ async function setup(files: Record<string, string>): Promise<{ repo: WikiRepo; r
 }
 
 function writingMarker(baseHead: string, touched: TouchedPath[]): InFlightMarker {
-  return { batchId: "b1", kind: "scheduled", advancesScan: true, scanBase: null, baseHead, phase: "writing", commit: null, touched };
+  return { batchId: "b1", kind: "scheduled", scanBase: null, baseHead, touched };
 }
 
 describe("ingestMessage", () => {
@@ -226,16 +226,6 @@ describe("abortBatch", () => {
     write(join(root, "wiki", "a.md"), "v2");
     await abortBatch(repo, marker);
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
-  });
-
-  it("refuses a committed marker without restoring or removing it", async () => {
-    const { repo, root, marker } = await setup({ "wiki/a.md": "v1" });
-    const base = await repo.head();
-    write(join(root, "wiki", "a.md"), "v2");
-    await marker.begin({ ...writingMarker(base, [{ path: "wiki/a.md", expectedBefore: fileHash("v1"), after: fileHash("v2") }]), phase: "committed", commit: base });
-    await expect(abortBatch(repo, marker)).rejects.toThrow();
-    expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v2");
-    expect((await marker.read())?.phase).toBe("committed");
   });
 
   it("retains all files and marker when one intent has no after fingerprint", async () => {

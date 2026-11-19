@@ -1,35 +1,17 @@
 import { readFile } from "node:fs/promises";
-import type { WikiRollback } from "./reconcile.js";
 import { writeFileAtomic } from "../../store/atomic.js";
 
-export type { WikiRollback };
-
+/**
+ * The wiki's durable runtime data: backoff between failed runs and the bootstrap deferral the
+ * owner's rejection set. Everything else — batch identity, the scan cursor, bootstrap progress,
+ * pending rollbacks — is derived from git history by `reconcile`.
+ */
 export interface WikiState {
-  lastScanCommit: string | null;
-  lastRunAt: number | null;
-  lastBatchId: string | null;
-  bootstrap: "pending" | "done";
-  rollback: WikiRollback | null;
-  nextAttemptAt: number | null;
   failureStreak: number;
+  nextAttemptAt: number | null;
+  lastRunAt: number | null;
   /** The owner rejected a bootstrap preview; the next bootstrap waits for the cadence. */
   bootstrapDeferred?: true;
-  /** The rebuild epoch this state belongs to; state from an older epoch is ignored. */
-  resetId?: string;
-}
-
-function isRollback(value: unknown): value is WikiRollback {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as { targetBatchId?: unknown; revertId?: unknown };
-  return typeof candidate.targetBatchId === "string" && typeof candidate.revertId === "string";
-}
-
-function nullableString(value: unknown): string | null | undefined {
-  return value === null || typeof value === "string" ? value : undefined;
-}
-
-function nullableNumber(value: unknown): number | null | undefined {
-  return value === null || typeof value === "number" ? value : undefined;
 }
 
 function parseState(text: string): WikiState | null {
@@ -42,24 +24,21 @@ function parseState(text: string): WikiState | null {
   if (typeof parsed !== "object" || parsed === null) return null;
   const candidate = parsed as Record<string, unknown>;
 
-  const lastScanCommit = nullableString(candidate.lastScanCommit);
-  const lastRunAt = nullableNumber(candidate.lastRunAt);
-  const lastBatchId = nullableString(candidate.lastBatchId);
-  const nextAttemptAt = nullableNumber(candidate.nextAttemptAt);
-  const bootstrap = candidate.bootstrap;
+  const nextAttemptAt = candidate.nextAttemptAt;
+  const lastRunAt = candidate.lastRunAt;
   const failureStreak = candidate.failureStreak;
-  const rollback = candidate.rollback;
-
-  if (lastScanCommit === undefined) return null;
-  if (lastRunAt === undefined) return null;
-  if (lastBatchId === undefined) return null;
-  if (nextAttemptAt === undefined) return null;
-  if (bootstrap !== "pending" && bootstrap !== "done") return null;
   if (typeof failureStreak !== "number") return null;
-  if (rollback !== null && !isRollback(rollback)) return null;
+  if (nextAttemptAt !== null && typeof nextAttemptAt !== "number") return null;
+  if (lastRunAt !== null && typeof lastRunAt !== "number") return null;
 
-  return { lastScanCommit, lastRunAt, lastBatchId, bootstrap, rollback, nextAttemptAt, failureStreak, ...(candidate.bootstrapDeferred === true ? { bootstrapDeferred: true as const } : {}),
-    ...(typeof candidate.resetId === "string" && candidate.resetId ? { resetId: candidate.resetId } : {}) };
+  // Unknown extra fields — an older format's derived mirrors — are ignored, so a state file
+  // written before the collapse keeps its backoff.
+  return {
+    failureStreak,
+    nextAttemptAt: nextAttemptAt as number | null,
+    lastRunAt: lastRunAt as number | null,
+    ...(candidate.bootstrapDeferred === true ? { bootstrapDeferred: true as const } : {}),
+  };
 }
 
 /**
@@ -92,12 +71,8 @@ export class StateStore {
 
 export function emptyState(): WikiState {
   return {
-    lastScanCommit: null,
-    lastRunAt: null,
-    lastBatchId: null,
-    bootstrap: "pending",
-    rollback: null,
-    nextAttemptAt: null,
     failureStreak: 0,
+    nextAttemptAt: null,
+    lastRunAt: null,
   };
 }

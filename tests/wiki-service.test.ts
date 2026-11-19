@@ -299,7 +299,8 @@ describe("Wiki service", () => {
     expect(git(root, ["rev-parse", "HEAD"]).trim()).not.toBe(remoteBefore);
     expect(readFileSync(join(root, "wiki", "generated.md"), "utf8")).toBe("generated");
     expect(readFileSync(join(root, "owner.md"), "utf8")).toBe("preserve");
-    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(true);
+    // The marker went at commit; the unpublished batch and the owner's commit are the durable record.
+    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(false);
     expect(git(remote, ["rev-parse", "refs/heads/main"]).trim()).toBe(remoteBefore);
     await wiki.close();
   });
@@ -389,20 +390,17 @@ describe("Wiki service", () => {
 
     expect(result.reverted).toBe(true);
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
-    const settledState = JSON.parse(readFileSync(stateFile, "utf8"));
-    expect(settledState.lastBatchId).toBeNull();
-    expect(settledState.lastScanCommit).toBe(scanProgress);
     const rollbackMessage = git(root, ["log", "-1", "--format=%B"]);
     const rollbackId = /Vex-Rollback: (.+)/.exec(rollbackMessage)?.[1];
     const targetBatchId = /Vex-Revert-Of: (.+)/.exec(rollbackMessage)?.[1];
     expect(rollbackId).toBeTruthy();
     expect(targetBatchId).toBeTruthy();
-    writeFileSync(stateFile, JSON.stringify({ ...settledState, rollback: { targetBatchId, revertId: rollbackId } }));
     const headAfterFirstRollback = git(root, ["rev-parse", "HEAD"]).trim();
+    // The published revert is the whole settle record: a retry finds nothing left to roll back.
     const recovered = await wiki.rollback(new AbortController().signal);
-    expect(recovered.reverted).toBe(true);
+    expect(recovered.reverted).toBe(false);
+    expect(recovered.message).toMatch(/nothing to roll back/i);
     expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(headAfterFirstRollback);
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).rollback).toBeNull();
     await wiki.close();
   });
 
@@ -488,7 +486,6 @@ describe("Wiki service", () => {
     expect(recovered.reverted).toBe(true);
     expect(git(remote, ["show", "refs/heads/main:wiki/a.md"])).toBe("v1");
     expect(git(root, ["log", "--format=%H%x00%B"]).split("Vex-Rollback:").length - 1).toBe(1);
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).rollback).toBeNull();
     await reopened.close();
   });
 
@@ -619,7 +616,7 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
-  it("keeps a committed compile marker when its commit blob does not match", async () => {
+  it("undoes a commit whose content does not match the batch and never publishes it", async () => {
     const home = join(dir, "home");
     const { remote, work } = makeRemote(join(dir, "seed"));
     commit(work, { "wiki/a.md": "v1" }, "2026-10-01T10:00:00+0000");
@@ -646,17 +643,26 @@ describe("Wiki service", () => {
     });
     await wiki.init();
     const remoteBefore = git(remote, ["rev-parse", "refs/heads/main"]).trim();
+    const baseHead = git(root, ["rev-parse", "HEAD"]).trim();
 
     await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow(/commit content does not match/i);
-    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow(/commit content does not match/i);
 
-    expect(readFileSync(join(root, "wiki/a.md"), "utf8")).toBe("owner bytes");
-    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(true);
+    // The mismatching batch never entered history: the commit is undone, the marker is gone and
+    // the tree is back at the base, ready for the next run to recompile from scratch.
+    expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(baseHead);
+    expect(readFileSync(join(root, "wiki/a.md"), "utf8")).toBe("v1");
+    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(false);
     expect(git(remote, ["rev-parse", "refs/heads/main"]).trim()).toBe(remoteBefore);
-    await wiki.close();
+
+    const clean = makeWiki(home, remote, { runAgent: async (_prompt, context) => "ok" });
+    await clean.init();
+    const result = await clean.run({ kind: "on-demand" }, new AbortController().signal);
+    expect(result.publication).toBe("not-needed");
+    expect(git(remote, ["rev-parse", "refs/heads/main"]).trim()).toBe(remoteBefore);
+    await clean.close();
   });
 
-  it("refuses a pending rollback whose commit identity is missing", async () => {
+  it("ignores a state rollback record without any matching commit", async () => {
     const home = join(dir, "home");
     const { wiki, root } = await seed(home);
     await wiki.init();
@@ -667,10 +673,10 @@ describe("Wiki service", () => {
     const head = git(root, ["rev-parse", "HEAD"]).trim();
     const pending = await wiki.rollback(new AbortController().signal);
 
+    // Git history is the only recovery record: no revert commit means there is nothing to settle.
     expect(pending.reverted).toBe(false);
-    expect(pending.message).toMatch(/commit is missing/i);
+    expect(pending.message).toMatch(/nothing to roll back/i);
     expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(head);
-    expect(JSON.parse(readFileSync(stateFile, "utf8")).rollback).toEqual({ targetBatchId: "b", revertId: "r" });
     await wiki.close();
   });
 
@@ -728,7 +734,7 @@ describe("Wiki service", () => {
     const approved = await wiki.approveBootstrap(new AbortController().signal);
 
     expect(approved.pushed).toBe(true);
-    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrap).toBe("done");
+    expect((await wiki.status()).bootstrap).toBe("done");
     const publishedHead = git(root, ["rev-parse", "HEAD"]).trim();
     const rejectedPublished = await wiki.rejectBootstrap(new AbortController().signal);
     expect(rejectedPublished.discarded).toBe(false);
@@ -756,7 +762,6 @@ describe("Wiki service", () => {
 
     expect(rejected.discarded).toBe(true);
     expect(readFileSync(join(root, "wiki", "a.md"), "utf8")).toBe("v1");
-    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).bootstrap).toBe("pending");
     expect(await wiki.dueWork(Date.now(), false)).toBeNull();
     expect(await wiki.dueWork(Date.now(), true)).toBe("bootstrap");
     await wiki.run({ kind: "bootstrap" }, new AbortController().signal);
@@ -940,7 +945,7 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
-  it("scheduled run with no vault changes advances the scan cursor without calling the agent", async () => {
+  it("scheduled run with no vault changes stays a no-change run without calling the agent", async () => {
     const home = join(dir, "home");
     let calls = 0;
     const { wiki } = await seed(home, {
@@ -951,11 +956,64 @@ describe("Wiki service", () => {
     });
     await wiki.init();
 
-    const result = await wiki.run({ kind: "scheduled" }, new AbortController().signal);
-
-    expect(result).toMatchObject({ publication: "not-needed" });
+    // The scan cursor is whatever the last published batch's trailer says; a no-change run
+    // writes no cursor of its own, and the next run still finds nothing to compile.
+    const first = await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+    expect(first).toMatchObject({ publication: "not-needed" });
     expect(calls).toBe(0);
-    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBeTruthy();
+    const second = await wiki.run({ kind: "scheduled" }, new AbortController().signal);
+    expect(second).toMatchObject({ publication: "not-needed" });
+    expect(calls).toBe(0);
+    await wiki.close();
+  });
+
+  it("heals a stale marker over a committed batch on a clean tree", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    const result = await wiki.run({ kind: "on-demand" }, new AbortController().signal);
+    const batchId = result.batchId!;
+    // A crash between commit and marker removal leaves the marker behind its own batch.
+    const markerFile = join(root, ".git", "vex-wiki-inflight.json");
+    writeFileSync(markerFile, JSON.stringify({ batchId, kind: "on-demand", scanBase: null, baseHead: git(root, ["rev-parse", "HEAD"]).trim(), touched: [] }));
+
+    const healed = await wiki.run({ kind: "on-demand" }, new AbortController().signal);
+
+    expect(healed.publication).toBe("not-needed");
+    expect(existsSync(markerFile)).toBe(false);
+    expect((git(root, ["log", "--format=%B"]).match(/Vex-Batch:/g) ?? [])).toHaveLength(1);
+    await wiki.close();
+  });
+
+  it("refuses to heal a stale marker over a dirty tree", async () => {
+    const home = join(dir, "home");
+    const { wiki, root } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        const abs = join(context.repo.root, "wiki/a.md");
+        await context.marker.recordIntent("wiki/a.md", await fingerprint(abs));
+        writeFileSync(abs, "v2");
+        await context.marker.recordAfter("wiki/a.md", await fingerprint(abs));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    const result = await wiki.run({ kind: "on-demand" }, new AbortController().signal);
+    const batchId = result.batchId!;
+    const markerFile = join(root, ".git", "vex-wiki-inflight.json");
+    writeFileSync(markerFile, JSON.stringify({ batchId, kind: "on-demand", scanBase: null, baseHead: git(root, ["rev-parse", "HEAD"]).trim(), touched: [] }));
+    // Foreign dirt next to a committed batch is not the wiki's to clean.
+    writeFileSync(join(root, "wiki/foreign.md"), "not ours");
+
+    await expect(wiki.run({ kind: "on-demand" }, new AbortController().signal)).rejects.toThrow(/dirty tree; preserving its marker/i);
+    expect(existsSync(markerFile)).toBe(true);
     await wiki.close();
   });
 
@@ -1182,7 +1240,7 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
-  it("marks a successfully created commit committed when Git reports a later command failure", async () => {
+  it("keeps a locally committed batch when Git reports a later command failure", async () => {
     const home = join(dir, "home");
     const { remote } = makeRemote(join(dir, "seed"));
     const work = join(dir, "seed", "work");
@@ -1213,12 +1271,12 @@ describe("Wiki service", () => {
     await wiki.init();
 
     const source = { url: "https://example.com/commit-marker", text: "Original" };
-    const result = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    await expect(wiki.run({ kind: "on-demand", source }, new AbortController().signal)).rejects.toThrow(/reply failure after successful commit/i);
 
-    expect(injected).toBe(true);
-    expect(result).toMatchObject({ publication: "pending" });
-    expect(git(root, ["show", "HEAD:wiki/generated.md"])).toBe("generated");
-    expect(JSON.parse(readFileSync(join(root, ".git", "vex-wiki-inflight.json"), "utf8"))).toMatchObject({ phase: "committed" });
+    // The failure reply leaves the batch's existence ambiguous, so it is aborted per the marker:
+    // recorded writes are restored to the base and the marker goes with them.
+    expect(existsSync(join(root, "wiki/generated.md"))).toBe(false);
+    expect(existsSync(join(root, ".git", "vex-wiki-inflight.json"))).toBe(false);
     expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8"))).toMatchObject({ failureStreak: 1, nextAttemptAt: expect.any(Number) });
     await wiki.close();
     const reopened = makeWiki(home, remote, options);
@@ -1229,7 +1287,7 @@ describe("Wiki service", () => {
     await reopened.close();
   });
 
-  it("returns a pending receipt when push succeeds but state settlement fails, then recovers after reopen", async () => {
+  it("reports a published receipt when push succeeds but the state write fails, then recompiles on retry", async () => {
     const home = join(dir, "home");
     const { remote } = makeRemote(join(dir, "seed"));
     commit(join(dir, "seed", "work"), { "wiki/base.md": "base" }, "2026-10-01T10:00:00+0000");
@@ -1257,17 +1315,19 @@ describe("Wiki service", () => {
     const wiki = makeWiki(home, remote, options);
     await wiki.init();
     const source = { url: "https://example.com/state-failure", text: "Original" };
-    const pending = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
-    expect(pending).toMatchObject({ publication: "pending", pages: ["wiki/generated.md"] });
+    const pushed = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    // Batch identity lives in git: a successful push is publication even when the backoff write fails.
+    expect(pushed).toMatchObject({ publication: "published", pages: ["wiki/generated.md"] });
     expect(git(remote, ["show", "main:wiki/generated.md"])).toBe("generated");
-    expect(existsSync(join(home, "wiki", key(remote), ".git", "vex-wiki-inflight.json"))).toBe(true);
+    expect(existsSync(join(home, "wiki", key(remote), ".git", "vex-wiki-inflight.json"))).toBe(false);
     await wiki.close();
 
     rmSync(statePath, { recursive: true, force: true });
-    const reopened = makeWiki(home, remote, { runAgent: async () => { throw new Error("recovered batch must not compile again"); } });
+    const reopened = makeWiki(home, remote, options);
     await reopened.init();
-    const recovered = await reopened.run({ kind: "on-demand", source }, new AbortController().signal);
-    expect(recovered).toMatchObject({ batchId: pending.batchId, publication: "published" });
+    const retried = await reopened.run({ kind: "on-demand", source }, new AbortController().signal);
+    // The source is already published; a retry that produces identical content is a no-change run.
+    expect(retried).toMatchObject({ publication: "not-needed", pages: [] });
     expect((git(remote, ["log", "main", "--format=%B"]).match(/Vex-Batch:/g) ?? [])).toHaveLength(1);
     expect(existsSync(join(home, "wiki", key(remote), ".git", "vex-wiki-inflight.json"))).toBe(false);
     await reopened.close();
@@ -1354,8 +1414,6 @@ describe("Wiki service", () => {
       },
     });
     await wiki.init();
-    mkdirSync(join(home, "state"), { recursive: true });
-    writeFileSync(join(home, "state", "wiki.json"), JSON.stringify({ ...emptyState(), lastScanCommit: "keep-me" }));
 
     const result = await wiki.run(
       { kind: "on-demand", source: { title: "Title", url: "https://example.com/x", text: "Body" } },
@@ -1366,7 +1424,8 @@ describe("Wiki service", () => {
     expect(prompts[0]).toContain("https://example.com/x");
     expect(prompts[0]).toContain("Body");
     expect(result.publication).toBe("published");
-    expect(JSON.parse(readFileSync(join(home, "state", "wiki.json"), "utf8")).lastScanCommit).toBe("keep-me");
+    // On-demand runs never advance the scan cursor: it stays where the last published batch left it.
+    expect((await wiki.status()).lastBatchId).not.toBeNull();
     await wiki.close();
   });
 });

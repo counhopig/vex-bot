@@ -279,10 +279,8 @@ export class Wiki {
 
   /** One run under the lock: settle the previous batch, write a new one, then commit and publish it. */
   private async runLocked(request: WikiRunRequest, signal: AbortSignal): Promise<WikiRunResult> {
-    const { state, reconciled, pendingCompile } = await this.fetchAndReconcile(request);
-    const settled = await this.settlePrevious(request, state, reconciled, pendingCompile, signal);
-    if ("result" in settled) return settled.result;
-    const { baseHead } = settled;
+    const { state, reconciled } = await this.fetchAndReconcile(request);
+    const { baseHead } = await this.settlePrevious(reconciled, signal);
     const advancesScan = request.kind !== "on-demand";
     let batchId: string;
     if (request.kind !== "on-demand") {
@@ -290,7 +288,7 @@ export class Wiki {
       // many agent calls as `maxNotesPerRun` allows. On-demand runs skip detection entirely.
       const changes = await this.changesSince(reconciled.lastScanCommit ?? null);
       if (changes.length === 0) {
-        await this.recordNoChange(request.kind, advancesScan, baseHead);
+        await this.recordNoChange(request.kind);
         return { batchId: null, commit: null, pages: [], publication: "not-needed" };
       }
       batchId = await this.compileChanges(request.kind, changes, baseHead, signal);
@@ -302,8 +300,8 @@ export class Wiki {
     return this.publishBatch(request.kind, batchId, committed, advancesScan, signal);
   }
 
-  /** Fetches, reconciles durable state and checks integrity before any path is restored or removed. */
-  private async fetchAndReconcile(request: WikiRunRequest): Promise<{ state: WikiState | null; reconciled: ReconcileResult; pendingCompile: InFlightMarker | null }> {
+  /** Fetches, reconciles and checks integrity before any path is restored or removed; heals a stale marker. */
+  private async fetchAndReconcile(request: WikiRunRequest): Promise<{ state: WikiState | null; reconciled: ReconcileResult }> {
     await this.repo.fetch();
     const state = await this.stateStore.read();
     if (request.kind === "bootstrap" && state?.bootstrapDeferred) {
@@ -312,77 +310,47 @@ export class Wiki {
     }
     const reconciled = await this.runReconcile();
     this.reconciled = reconciled;
-    const pendingCompile = reconciled.staleMarker ? await this.marker.read() : null;
+    // A marker still present while its batch is committed is stale: on a clean tree the batch is
+    // durable, so the marker goes; a dirty tree next to a committed batch is not ours to clean.
+    if (reconciled.staleMarker) {
+      if (!(await this.cleanTree())) throw new WikiIntegrityError("committed wiki batch has a dirty tree; preserving its marker");
+      await this.marker.remove();
+    }
     // Refuse before recovery cleanup can restore or remove any paths.
     await this.checkIntegrity();
     if (reconciled.preview) throw new Error("bootstrap preview awaiting review");
-    return { state, reconciled, pendingCompile };
+    return { state, reconciled };
   }
 
   /**
-   * Cleans the tree, settles a pending rollback and publishes a committed batch left by an earlier run.
-   * Returns the head the new batch builds on, or the settled batch's receipt when it already archived
-   * this request's source. A committed batch that cannot be settled is kept and reported as pending.
+   * Cleans the tree, settles a pending rollback and publishes local commits an earlier run left
+   * unpublished. Returns the head the new batch builds on.
    */
-  private async settlePrevious(
-    request: WikiRunRequest, state: WikiState | null, reconciled: ReconcileResult, pendingCompile: InFlightMarker | null, signal: AbortSignal,
-  ): Promise<{ result: WikiRunResult } | { baseHead: string }> {
+  private async settlePrevious(reconciled: ReconcileResult, signal: AbortSignal): Promise<{ baseHead: string }> {
     try {
-      if (pendingCompile) {
-        if (!(await this.cleanTree())) throw new WikiIntegrityError("committed wiki batch has a dirty tree; preserving its marker");
-      } else {
-        await inspectAndCleanTree(this.repo, this.marker);
-      }
+      await inspectAndCleanTree(this.repo, this.marker);
       // Settle a committed-but-unpublished rollback only after the tree is clean, so its rebase cannot fail on leftovers.
       if (reconciled.rollback) await this.settleRollback(reconciled, signal);
       await this.checkIntegrity();
       await this.repo.rebase();
-      if (pendingCompile) {
-        const result = await this.settleCommittedBatch(request, pendingCompile, signal);
-        if (result) return { result };
-      }
-      if (!pendingCompile && !(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
+      if (!(await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead()))) await this.repo.push();
       return { baseHead: await this.repo.head() };
     } catch (error) {
-      if (pendingCompile) {
-        try { await this.recordFailure(); } catch { /* keep the committed marker and return its receipt */ }
-        const pendingSha = pendingCompile.commit ?? await this.findCommit("Vex-Batch", pendingCompile.batchId).catch(() => null);
-        const pendingPages = pendingSha ? (await this.repo.changedPaths(pendingSha)).filter((path) => path.startsWith("wiki/")) : [];
-        return { result: { batchId: pendingCompile.batchId, commit: pendingSha, pages: pendingPages, publication: "pending" } };
-      }
       if (error instanceof WikiIntegrityError) throw error;
       await abortBatch(this.repo, this.marker);
       throw error;
     }
   }
 
-  /** Publishes a committed batch and clears its marker; returns its receipt when it archived this request's source unchanged. */
-  private async settleCommittedBatch(request: WikiRunRequest, pendingCompile: InFlightMarker, signal: AbortSignal): Promise<WikiRunResult | undefined> {
-    let settledSha = await this.findCommit("Vex-Batch", pendingCompile.batchId);
-    if (!settledSha) throw new WikiIntegrityError("committed wiki batch is missing during settlement; preserving marker");
-    await this.validateCommittedMarker();
-    if (!(await this.repo.isAncestor(settledSha, await this.repo.originHead()))) await this.pushWithRetry(false, signal);
-    settledSha = await this.findCommit("Vex-Batch", pendingCompile.batchId) ?? settledSha;
-    await this.marker.setCommitted(settledSha);
+  /**
+   * Records a run that found nothing to commit: the backoff resets and a bootstrap notes its
+   * completion evidence in the bootstrap ref. The scan cursor stays where the last published
+   * batch's trailer says it is; an empty change set re-detects as empty next time.
+   */
+  private async recordNoChange(kind: WikiRunRequest["kind"]): Promise<void> {
     const current = (await this.stateStore.read()) ?? emptyState();
-    await this.stateStore.write({
-      ...current,
-      lastBatchId: pendingCompile.batchId,
-      lastScanCommit: pendingCompile.advancesScan ? pendingCompile.scanBase : current.lastScanCommit,
-      rollback: null,
-      failureStreak: 0,
-      nextAttemptAt: null,
-      lastRunAt: this.clock(),
-    });
-    await this.marker.remove();
-    const settledPages = (await this.repo.changedPaths(settledSha)).filter((path) => path.startsWith("wiki/"));
-    const source = request.kind === "on-demand" ? request.source : undefined;
-    const url = source?.url;
-    if (!source || !url) return undefined;
-    const pendingSource = pendingCompile.touched.find((entry) => entry.path === this.sourcePath(url));
-    if (!pendingSource) return undefined;
-    const expectedHash = createHash("sha256").update(sourceDocument(source, url, source.text ?? "")).digest("hex");
-    return pendingSource.after?.hash === expectedHash ? { batchId: pendingCompile.batchId, commit: settledSha, pages: settledPages, publication: "published" } : undefined;
+    await this.stateStore.write({ ...current, failureStreak: 0, nextAttemptAt: null, lastRunAt: this.clock() });
+    if (kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, await this.repo.head());
   }
 
   /** Vault changes since the last scanned commit, or the whole history when that commit is no longer an ancestor. */
@@ -391,18 +359,11 @@ export class Wiki {
     return detectChanges(this.repo, from);
   }
 
-  /** Records a run that found nothing to commit: the scan advances and the backoff resets. */
-  private async recordNoChange(kind: WikiRunRequest["kind"], advancesScan: boolean, baseHead: string): Promise<void> {
-    const current = (await this.stateStore.read()) ?? emptyState();
-    await this.stateStore.write({ ...current, lastScanCommit: advancesScan ? baseHead : current.lastScanCommit, failureStreak: 0, nextAttemptAt: null, ...(kind === "bootstrap" ? { bootstrap: "done" as const } : {}) });
-    if (kind === "bootstrap") await this.repo.updateRef(BOOTSTRAP_REF, baseHead);
-  }
-
   /** Opens a batch and lets the compiler agent apply the changes chunk by chunk; returns the batch id. */
   private async compileChanges(kind: "scheduled" | "bootstrap", changes: Change[], baseHead: string, signal: AbortSignal): Promise<string> {
     const batchId = randomUUID();
     try {
-      await this.marker.begin({ batchId, kind, advancesScan: true, scanBase: baseHead, baseHead, phase: "writing", commit: null, touched: [] });
+      await this.marker.begin({ batchId, kind, scanBase: baseHead, baseHead, touched: [] });
       for (const part of chunk(changes, this.opts.maxNotesPerRun)) {
         await this.opts.runAgent(this.chunkPrompt(part), this.runContext(), signal);
       }
@@ -424,7 +385,7 @@ export class Wiki {
         sourceSegmentLimit = Math.max(1, Math.min(sourceSegmentLimit, await this.opts.sourceSegmentBudget(prefix, this.runContext())));
       }
       const segments = request.source?.url && body ? splitSource(body, sourceSegmentLimit) : [body];
-      await this.marker.begin({ batchId, kind: request.kind, advancesScan: false, scanBase: null, baseHead, phase: "writing", commit: null, touched: [] });
+      await this.marker.begin({ batchId, kind: request.kind, scanBase: null, baseHead, touched: [] });
       if (request.source?.url && request.source.text !== undefined && request.source.text.trim()) {
         if (request.source.truncated) throw new Error("The retrieved source is truncated and cannot be archived as a complete original.");
         signal.throwIfAborted();
@@ -452,8 +413,10 @@ export class Wiki {
   }
 
   /**
-   * Verifies the batch's recorded paths against the tree and commits the ones that changed. Returns the
-   * receipt directly when nothing needed committing, or when the commit could not be fully recorded.
+   * Verifies the batch's recorded paths against the tree and commits the ones that changed, then
+   * removes the marker: the batch is durable in git from here on. Returns the receipt directly
+   * when nothing needed committing. A commit that does not hold what the batch recorded is undone,
+   * so it can never enter published history.
    */
   private async commitBatch(
     kind: WikiRunRequest["kind"], batchId: string, baseHead: string, advancesScan: boolean,
@@ -472,7 +435,7 @@ export class Wiki {
         await abortBatch(this.repo, this.marker);
         throw new Error("wiki run advanced HEAD without recording any paths");
       }
-      await this.recordNoChange(kind, advancesScan, baseHead);
+      await this.recordNoChange(kind);
       await this.marker.remove();
       return { result: { batchId, commit: null, pages: [], publication: "not-needed" } };
     }
@@ -485,7 +448,7 @@ export class Wiki {
         const before = new Map(await Promise.all(touched.map(async (entry) => [entry.path, await this.repo.fingerprintAt(baseHead, entry.path)] as const)));
         const after = new Map(touched.map((entry) => [entry.path, entry.after!]));
         await this.repo.assertIndexFingerprints(before, after);
-        await this.recordNoChange(kind, advancesScan, baseHead);
+        await this.recordNoChange(kind);
         await this.marker.remove();
         return { result: { batchId, commit: null, pages: [], publication: "not-needed" } };
       }
@@ -496,20 +459,26 @@ export class Wiki {
         new Map(await Promise.all(changedTouched.map(async (entry) => [entry.path, await this.repo.fingerprintAt(baseHead, entry.path)] as const))),
       );
       committedPaths = await this.committedPathsMatching(sha, changedTouched);
+      // The batch is durable and verified in git: the marker goes now, publication is next.
+      await this.marker.remove();
     } catch (error) {
-      const recovered = await this.recoverCommittedBatch(batchId, error);
-      if (recovered) return { result: recovered };
+      // Whether the commit was created decides the cleanup. With the head moved, a batch exists
+      // that nobody verified end to end: undo it and drop the marker, so a mismatching batch can
+      // never reach the remote; the next run recompiles from a clean base. Without it, the run
+      // failed before committing: abort per the marker, leaving foreign paths (an owner's staged
+      // note or index bytes) exactly where they are.
+      let committed = false;
+      try { committed = (await this.repo.head()) !== baseHead; } catch { /* git is unavailable; the next run's recovery decides */ }
+      if (committed) {
+        await this.repo.resetHard(baseHead);
+        await this.marker.remove();
+      } else {
+        await abortBatch(this.repo, this.marker);
+      }
       throw error;
     }
     const pages = committedPaths.filter((path) => path.startsWith("wiki/"));
     const rawPaths = committedPaths.filter((path) => path.startsWith("raw/"));
-    try {
-      await this.marker.setCommitted(sha);
-    } catch {
-      try { await this.recordFailure(); } catch { /* the writing marker and commit trailer remain sufficient for recovery */ }
-      await this.notifyOutcome(wikiOutcomeText(rawPaths, pages, "pending"));
-      return { result: { batchId, commit: sha, pages, publication: "pending" } };
-    }
     return { sha, pages, rawPaths, scanBase };
   }
 
@@ -550,72 +519,31 @@ export class Wiki {
     return committedPaths;
   }
 
-  /**
-   * After a failed commit step, keeps a batch that reconciliation shows was committed intact and
-   * returns its pending receipt; otherwise aborts the batch unless the failure was an integrity error.
-   */
-  private async recoverCommittedBatch(batchId: string, error: unknown): Promise<WikiRunResult | undefined> {
-    const integrityFailure = error instanceof WikiIntegrityError;
-    const state = await this.stateStore.read();
-    const recovered = await this.runReconcile();
-    if (!recovered.staleMarker) {
-      if (!integrityFailure) await abortBatch(this.repo, this.marker);
-      return undefined;
-    }
-    const recoveredBatch = await this.marker.read();
-    const recoveredSha = recoveredBatch?.batchId === batchId ? await this.findCommit("Vex-Batch", batchId) : null;
-    if (recoveredBatch?.batchId !== batchId || !recoveredSha) return undefined;
-    await this.validateCommittedMarker();
-    const committedPaths = await this.repo.changedPaths(recoveredSha);
-    const ownedPaths = new Set(recoveredBatch.touched.map((entry) => entry.path));
-    if (committedPaths.some((path) => !ownedPaths.has(path))) throw new WikiIntegrityError("recovered wiki commit contains paths outside its marker");
-    for (const path of committedPaths) {
-      const expected = recoveredBatch.touched.find((entry) => entry.path === path)?.after;
-      const actual = await this.repo.fingerprintAt(recoveredSha, path);
-      if (!expected || actual.type !== expected.type || actual.hash !== expected.hash) {
-        throw new WikiIntegrityError(`recovered wiki commit does not match its marker: ${path}`);
-      }
-    }
-    try { await this.marker.setCommitted(recoveredSha); } catch { /* reconciliation can finish from the durable batch trailer */ }
-    try { await this.recordFailure(); } catch { /* the durable batch marker remains the recovery record */ }
-    const recoveredPages = committedPaths.filter((path) => path.startsWith("wiki/"));
-    const recoveredRaw = committedPaths.filter((path) => path.startsWith("raw/"));
-    await this.notifyOutcome(wikiOutcomeText(recoveredRaw, recoveredPages, "pending"));
-    return { batchId, commit: recoveredSha, pages: recoveredPages, publication: "pending" };
-  }
-
-  /** Pushes a committed batch (a bootstrap preview stays local), records it and notifies the owner. */
+  /** Pushes a committed batch (a bootstrap preview stays local), resets the backoff and notifies the owner. */
   private async publishBatch(
     kind: WikiRunRequest["kind"], batchId: string, committed: CommittedBatch, advancesScan: boolean, signal: AbortSignal,
   ): Promise<WikiRunResult> {
     let { sha } = committed;
-    const { pages, rawPaths, scanBase } = committed;
+    const { pages, rawPaths } = committed;
     let pushed = false;
     try {
       if (kind !== "bootstrap") {
         await this.pushWithRetry(false, signal);
         pushed = true;
         const headAfterPush = await this.repo.head();
-        if (headAfterPush !== sha) {
-          sha = headAfterPush;
-          await this.marker.setCommitted(sha);
-        }
+        if (headAfterPush !== sha) sha = headAfterPush;
       }
-      const current = (await this.stateStore.read()) ?? emptyState();
-      await this.stateStore.write({
-        ...current,
-        lastBatchId: batchId,
-        lastScanCommit: advancesScan && pushed ? scanBase : current.lastScanCommit,
-        rollback: null,
-        failureStreak: 0,
-        nextAttemptAt: null,
-        lastRunAt: this.clock(),
-      });
-      await this.marker.remove();
     } catch {
       await this.notifyOutcome(wikiOutcomeText(rawPaths, pages, "pending"));
-      try { await this.recordFailure(); } catch { /* the committed marker remains the durable recovery record */ }
+      try { await this.recordFailure(); } catch { /* the committed batch trailer remains the durable recovery record */ }
       return { batchId, commit: sha, pages, publication: "pending" };
+    }
+    // A successful push is publication; a backoff-write failure only warns, the receipt says published.
+    try {
+      const current = (await this.stateStore.read()) ?? emptyState();
+      await this.stateStore.write({ ...current, failureStreak: 0, nextAttemptAt: null, lastRunAt: this.clock() });
+    } catch {
+      try { await this.recordFailure(); } catch { /* the backoff record is best-effort here */ }
     }
 
     await this.notifyOutcome(kind === "bootstrap"
@@ -673,10 +601,7 @@ export class Wiki {
       }
 
       const target = await this.findCommit("Vex-Batch", batchId);
-      if (!target) {
-        await this.clearBatchRef();
-        return { reverted: false, commit: null, message: "the last batch no longer exists" };
-      }
+      if (!target) return { reverted: false, commit: null, message: "the last batch no longer exists" };
 
       if (!(await this.repo.isAncestor(target, await this.repo.originHead()))) {
         if ((await this.repo.head()) !== target) return { reverted: false, commit: null, message: "the unpublished batch is not the local tip; kept" };
@@ -684,7 +609,6 @@ export class Wiki {
         if (!(await this.cleanTree())) return { reverted: false, commit: null, message: "working tree or index changed; unpublished batch kept" };
         signal.throwIfAborted();
         await this.repo.resetHard(`${target}^`);
-        await this.clearBatchRef();
         return { reverted: true, commit: await this.repo.head(), message: "discarded the unpublished batch" };
       }
 
@@ -700,8 +624,6 @@ export class Wiki {
         return { reverted: false, commit: null, message: `revert failed: ${(error as Error).message}` };
       }
 
-      const current = (await this.stateStore.read()) ?? emptyState();
-      await this.stateStore.write({ ...current, rollback: { targetBatchId: batchId, revertId } });
       if (!(await this.cleanTree())) return { reverted: false, commit: revertSha, message: "rollback committed locally but the tree changed; publication is pending" };
       try {
         signal.throwIfAborted();
@@ -709,7 +631,6 @@ export class Wiki {
       } catch {
         return { reverted: false, commit: revertSha, message: "revert committed locally but push failed; a later run will complete it" };
       }
-      await this.clearBatchRef();
       return { reverted: true, commit: await this.repo.head(), message: "reverted the last batch" };
     }, signal);
   }
@@ -745,7 +666,7 @@ export class Wiki {
         return { pushed: false, message: `could not publish the preview: ${(error as Error).message}` };
       }
       const current = (await this.stateStore.read()) ?? emptyState();
-      await this.stateStore.write({ ...current, bootstrap: "done", lastRunAt: this.clock() });
+      await this.stateStore.write({ ...current, failureStreak: 0, nextAttemptAt: null, lastRunAt: this.clock() });
       return { pushed: true, message: "bootstrap preview published" };
     }, signal);
   }
@@ -756,7 +677,6 @@ export class Wiki {
     await this.ready();
     return this.lock.run(async () => {
       await this.repo.fetch();
-      const state = await this.stateStore.read();
       const reconciled = await this.runReconcile();
       if (!(await this.cleanTree())) return { discarded: false, message: "working tree or index is not clean; preview kept" };
       await this.checkIntegrity();
@@ -764,10 +684,8 @@ export class Wiki {
       const commit = batchId === null ? null : await this.findCommit("Vex-Batch", batchId);
       if (commit === null || !(await this.isBootstrapPreview(commit, batchId))) return { discarded: false, message: "there is no bootstrap preview to reject" };
 
-      const current = (await this.stateStore.read()) ?? emptyState();
       if (await this.repo.isAncestor(commit, await this.repo.originHead())) {
-        await this.stateStore.write({ ...current, bootstrap: "done" });
-        return { discarded: false, message: "the preview was already published; bootstrap marked done" };
+        return { discarded: false, message: "the preview was already published; bootstrap done" };
       }
       if (!reconciled.preview || (await this.repo.head()) !== commit) return { discarded: false, message: "the unpublished preview is not the local tip; kept" };
 
@@ -776,7 +694,8 @@ export class Wiki {
       signal.throwIfAborted();
       await this.repo.resetHard(`${commit}^`);
       await this.marker.remove();
-      await this.stateStore.write({ ...current, lastBatchId: null, rollback: null, bootstrap: "pending", bootstrapDeferred: true });
+      const current = (await this.stateStore.read()) ?? emptyState();
+      await this.stateStore.write({ ...current, failureStreak: 0, nextAttemptAt: null, bootstrapDeferred: true });
       return { discarded: true, message: "bootstrap preview discarded; a new preview waits for the next scheduled run" };
     }, signal);
   }
@@ -804,7 +723,7 @@ export class Wiki {
       signal.throwIfAborted();
       const resetId = randomUUID();
       const { commit, removed } = await this.repo.commitWikiRemoval(`wiki: rebuild\n\n${RESET_TRAILER}: ${resetId}`);
-      await this.stateStore.write({ ...emptyState(), resetId });
+      await this.stateStore.write(emptyState());
       if (await this.repo.ref(BOOTSTRAP_REF)) await this.repo.deleteRef(BOOTSTRAP_REF);
       this.roots = await validateSubtreeRoots(this.repo.root);
       this.lastStatus = null;
@@ -871,13 +790,9 @@ export class Wiki {
     const pending = reconciled.rollback;
     if (!pending) return;
     const rollbackCommit = await this.findValidatedRollbackCommit(pending.revertId, pending.targetBatchId);
-    if (await this.repo.isAncestor(rollbackCommit, await this.repo.originHead())) {
-      await this.clearBatchRef();
-      return;
-    }
+    if (await this.repo.isAncestor(rollbackCommit, await this.repo.originHead())) return;
     signal.throwIfAborted();
     await this.pushWithRetry(true, signal);
-    await this.clearBatchRef();
   }
 
   /** The rollback commit for `revertId`, after checking it reverts exactly `targetBatchId`. */
@@ -903,10 +818,6 @@ export class Wiki {
     return kinds.length === 1 && kinds[0] === "bootstrap";
   }
 
-  private async clearBatchRef(): Promise<void> {
-    const current = (await this.stateStore.read()) ?? emptyState();
-    await this.stateStore.write({ ...current, lastBatchId: null, rollback: null });
-  }
 
   /**
    * Pushes the committed batch. A first rejected push integrates the remote once (fetch, rebase,
@@ -956,47 +867,12 @@ export class Wiki {
       validateSubtreeRoot(this.roots.wiki);
       validateSubtreeRoot(this.roots.raw);
       await this.repo.assertRollbackExpectations();
-      await this.validateCommittedMarker();
       const observation = await observeWiki(this.repo);
       await assertRecognizedLocalHistory(this.repo, observation);
     } catch (error) {
       this.opts.onWarning?.(`wiki integrity check blocked an automatic action: ${(error as Error).message}`);
       if (error instanceof WikiIntegrityError) throw error;
       throw new WikiIntegrityError((error as Error).message);
-    }
-  }
-
-  private async validateCommittedMarker(): Promise<void> {
-    const marker = await this.marker.read();
-    if (!marker) return;
-    const fields = (await this.repo.log("HEAD")).split("\0");
-    const matches: Array<{ sha: string; body: string }> = [];
-    for (let index = 0; index + 1 < fields.length; index += 2) {
-      const sha = (fields[index] ?? "").trim();
-      const body = fields[index + 1] ?? "";
-      const trailers = parseTrailers(body);
-      const ids = trailerValues(trailers, "vex-batch");
-      if (ids.includes(marker.batchId)) matches.push({ sha, body });
-    }
-    if (matches.length === 0 && marker.phase === "writing") return;
-    if (matches.length !== 1) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} has an ambiguous commit; preserving marker`);
-    const commit = matches[0]!;
-    const trailers = parseTrailers(commit.body);
-    const kind = trailerValues(trailers, "vex-kind");
-    const scanBase = trailerValues(trailers, "vex-scan-base");
-    const expectedScanBase = marker.scanBase ?? "none";
-    if (kind.length !== 1 || kind[0] !== marker.kind || scanBase.length !== 1 || scanBase[0] !== expectedScanBase) {
-      throw new WikiIntegrityError(`in-flight batch ${marker.batchId} metadata does not match its commit`);
-    }
-    const touched = new Map(marker.touched.map((entry) => [entry.path, entry]));
-    if (touched.size !== marker.touched.length || marker.touched.some((entry) => !entry.after)) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} has incomplete or duplicate fingerprints`);
-    const changed = await this.repo.changedPaths(commit.sha);
-    if (changed.some((path) => !touched.has(path))) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} commit changed an unowned path`);
-    for (const entry of marker.touched) {
-      const after = entry.after!;
-      const expected = entry.expectedBefore.type === after.type && entry.expectedBefore.hash === after.hash ? entry.expectedBefore : after;
-      const actual = await this.repo.fingerprintAt(commit.sha, entry.path);
-      if (actual.type !== expected.type || actual.hash !== expected.hash) throw new WikiIntegrityError(`in-flight batch ${marker.batchId} commit content does not match ${entry.path}; preserving marker`);
     }
   }
 }

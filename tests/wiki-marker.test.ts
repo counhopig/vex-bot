@@ -31,11 +31,8 @@ function marker(overrides: Partial<InFlightMarker> = {}): InFlightMarker {
   return {
     batchId: "b1",
     kind: "scheduled",
-    advancesScan: true,
     scanBase: null,
     baseHead: "a".repeat(40),
-    phase: "writing",
-    commit: null,
     touched: [],
     ...overrides,
   };
@@ -84,7 +81,7 @@ describe("MarkerStore", () => {
   it("records the intent before a write and the after fingerprint afterwards", async () => {
     const abs = join(dir, "wiki", "a.md");
     await store.begin(marker());
-    expect((await store.read())?.phase).toBe("writing");
+    expect((await store.read())?.batchId).toBe("b1");
     await store.recordIntent(abs, { type: "absent", hash: null });
     write(abs, "A");
     const after = fileHash("A");
@@ -111,15 +108,23 @@ describe("MarkerStore", () => {
     expect((await store.read())?.touched).toEqual([{ path: abs, expectedBefore: { type: "file", hash: "replacement" } }]);
   });
 
-  it("round-trips begin, setCommitted and remove", async () => {
+  it("round-trips begin and remove", async () => {
     const m = marker();
     await store.begin(m);
     expect(await store.read()).toEqual(m);
-    await store.setCommitted("c".repeat(40));
-    const committed = await store.read();
-    expect(committed?.phase).toBe("committed");
-    expect(committed?.commit).toBe("c".repeat(40));
     await store.remove();
+    expect(await store.read()).toBeNull();
+  });
+
+  it("parses an old-format marker with phase and commit extras as a plain writing marker", async () => {
+    await store.begin(marker());
+    writeFileSync(join(gitDir, "vex-wiki-inflight.json"), JSON.stringify({ ...marker(), advancesScan: true, phase: "committed", commit: "c".repeat(40) }));
+    expect(await store.read()).toEqual(marker());
+  });
+
+  it("rejects a marker whose surviving fields are invalid", async () => {
+    await store.begin(marker());
+    writeFileSync(join(gitDir, "vex-wiki-inflight.json"), JSON.stringify({ ...marker(), batchId: 5, touched: "no" }));
     expect(await store.read()).toBeNull();
   });
 

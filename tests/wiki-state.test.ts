@@ -20,27 +20,19 @@ afterEach(async () => {
 
 function state(overrides: Partial<WikiState> = {}): WikiState {
   return {
-    lastScanCommit: "a".repeat(40),
-    lastRunAt: 1_700_000_000_000,
-    lastBatchId: "b1",
-    bootstrap: "done",
-    rollback: { targetBatchId: "b0", revertId: "r0" },
-    nextAttemptAt: 1_700_000_100_000,
     failureStreak: 2,
+    nextAttemptAt: 1_700_000_100_000,
+    lastRunAt: 1_700_000_000_000,
     ...overrides,
   };
 }
 
 describe("emptyState", () => {
-  it("returns a pending bootstrap with no cursor, rollback or failures", () => {
+  it("carries no backoff and no deferral", () => {
     expect(emptyState()).toEqual({
-      lastScanCommit: null,
-      lastRunAt: null,
-      lastBatchId: null,
-      bootstrap: "pending",
-      rollback: null,
-      nextAttemptAt: null,
       failureStreak: 0,
+      nextAttemptAt: null,
+      lastRunAt: null,
     });
   });
 });
@@ -58,7 +50,7 @@ describe("StateStore", () => {
 
   it("reads a shape-invalid file as null", async () => {
     mkdirSync(join(dir, "state"), { recursive: true });
-    writeFileSync(file, JSON.stringify({ bootstrap: "maybe", failureStreak: "nope" }));
+    writeFileSync(file, JSON.stringify({ failureStreak: "nope", nextAttemptAt: null, lastRunAt: null }));
     expect(await store.read()).toBeNull();
   });
 
@@ -68,9 +60,19 @@ describe("StateStore", () => {
     expect(await store.read()).toEqual(value);
   });
 
-  it("ignores unknown extra keys when reading", async () => {
+  it("round-trips the bootstrap deferral flag", async () => {
+    const value = state({ bootstrapDeferred: true });
+    await store.write(value);
+    expect(await store.read()).toEqual(value);
+  });
+
+  it("keeps the backoff of an old-format wiki.json and drops its derived fields", async () => {
     mkdirSync(join(dir, "state"), { recursive: true });
-    writeFileSync(file, JSON.stringify({ ...state(), surprise: true }));
+    writeFileSync(file, JSON.stringify({
+      lastScanCommit: "a".repeat(40), lastRunAt: 1_700_000_000_000, lastBatchId: "b1",
+      bootstrap: "done", rollback: { targetBatchId: "b0", revertId: "r0" },
+      nextAttemptAt: 1_700_000_100_000, failureStreak: 2,
+    }));
     expect(await store.read()).toEqual(state());
   });
 });

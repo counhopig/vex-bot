@@ -23,7 +23,7 @@ function fileHash(text: string): FileFingerprint {
 }
 
 function writingMarker(baseHead: string): InFlightMarker {
-  return { batchId: "b1", kind: "on-demand", advancesScan: false, scanBase: null, baseHead, phase: "writing", commit: null, touched: [] };
+  return { batchId: "b1", kind: "on-demand", scanBase: null, baseHead, touched: [] };
 }
 
 function toolNamed(tools: AgentTool<any>[], name: string): AgentTool<any> {
