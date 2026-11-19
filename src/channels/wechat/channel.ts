@@ -306,7 +306,8 @@ export class WeChatChannel {
   private deliverTurn(reply: string, status: TurnStatus): void {
     this.clearProcessingNotice();
     const report = this.opts.onReplyDelivery;
-    if (status === "interrupted") this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
+    // A partial reply was still delivered to the owner, so every branch records its outcome.
+    if (status === "interrupted") this.lastReply = this.send(reply ? `${reply}\n(interrupted)` : "Interrupted.", report);
     else if (reply) this.lastReply = this.send(reply, report);
   }
 

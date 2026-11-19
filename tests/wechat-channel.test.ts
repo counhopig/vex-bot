@@ -139,6 +139,25 @@ describe("WeChatChannel inbound", () => {
     expect(ilink.requests.length).toBe(requests);
     expect(onReplyDelivery.mock.calls).toEqual([[true], [false, expect.stringContaining("failed")]]);
   });
+
+  it("reports delivery for an interrupted turn that sent its partial reply", async () => {
+    await store.saveState({ contextToken: "ctx" });
+    const onReplyDelivery = vi.fn();
+    await startChannel({ onReplyDelivery });
+    turn("partial answer", "interrupted");
+    expect(await sentTexts()).toEqual(["partial answer\n(interrupted)"]);
+    expect(await channel!.replyDelivered()).toBe(true);
+    expect(onReplyDelivery).toHaveBeenCalledWith(true);
+  });
+
+  it("reports delivery for an interrupted turn with no reply", async () => {
+    await store.saveState({ contextToken: "ctx" });
+    await startChannel();
+    turn("", "interrupted");
+    expect(await sentTexts()).toEqual(["Interrupted."]);
+    expect(await channel!.replyDelivered()).toBe(true);
+  });
+
   it("passes owner messages to the wechat session and ignores everyone else", async () => {
     ilink.queueUpdates(
       textMessage("owner1", "你好", { message_id: "m1" }),
