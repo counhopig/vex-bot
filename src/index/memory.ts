@@ -2,7 +2,8 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { mkdir, open, readdir, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
-import { classifyTranscriptRecord } from "../core/transcript.js";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { classifyTranscriptRecord, transcriptMeta } from "../core/transcript.js";
 import { markdownChunks, tokenize } from "./tokenize.js";
 
 export type MemoryScope = "memory" | "sessions" | "all";
@@ -118,14 +119,13 @@ export class MemoryIndex {
             let entry;
             try { entry = classifyTranscriptRecord(JSON.parse(line)); } catch { continue; }
             if (entry.type !== "message") continue;
-            const message = entry.message as { role: string; vexSource?: unknown; content: unknown; timestamp?: number; vexRun?: unknown };
-            if (message.role !== "user" && message.role !== "assistant") continue;
-            if (message.vexSource) continue;
+            const message = entry.message as AgentMessage;
+            const meta = transcriptMeta(message);
+            if (meta.source) continue;
             const text = typeof message.content === "string" ? message.content : Array.isArray(message.content) ? message.content.flatMap((part: unknown) => part && typeof part === "object" && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string" ? [(part as { text: string }).text] : []).join("\n") : "";
             if (!text.trim()) continue;
             const timestamp = message.timestamp;
-            const run = typeof message.vexRun === "string" ? message.vexRun : null;
-            insert.run(tokenize(text, true).join(" "), text, source, timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime()) ? new Date(timestamp).toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions", run);
+            insert.run(tokenize(text, true).join(" "), text, source, timestamp !== undefined && Number.isFinite(new Date(timestamp).getTime()) ? new Date(timestamp).toISOString().slice(0, 10) : date, relative(this.opts.sessions, source).replace(/\.jsonl$/, ""), "sessions", meta.run ?? null);
           }
           save.run(source, 0, offset, offset, hash);
         })();

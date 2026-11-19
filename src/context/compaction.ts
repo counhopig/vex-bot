@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { transcriptMeta } from "../core/transcript.js";
 import { Agent, type AgentMessage, type AgentTool, type StreamFn } from "@earendil-works/pi-agent-core";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -62,7 +63,7 @@ function clip(text: string | undefined, limit: number): string {
 // Plain-text rendering keeps usage metadata and image bytes out of token estimates and summarizer input.
 export function renderMessages(messages: AgentMessage[], limit = Infinity): string {
   return messages.map((m) => {
-    if (m.role === "user") return `${(m as { vexSource?: string }).vexSource ?? "Owner"}: ${partsText(m.content)}`;
+    if (m.role === "user") return `${transcriptMeta(m).source ?? "Owner"}: ${partsText(m.content)}`;
     if (m.role === "system") return partsText(m.content);
     if (m.role === "assistant") {
       const parts = m.content.flatMap((c) => c.type === "text" ? [c.text] : c.type === "toolCall" ? [`${c.name}(${clip(JSON.stringify(c.arguments), limit)})`] : []);

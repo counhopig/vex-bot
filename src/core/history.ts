@@ -1,5 +1,6 @@
 import { open } from "node:fs/promises";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { transcriptMeta } from "./transcript.js";
 import { scanTranscriptLines } from "./transcript.js";
 import { summarizeArgs } from "../tools/summary.js";
 import type { HistoryItem } from "./events.js";
@@ -31,7 +32,7 @@ export class HistoryWindow {
   add(message: AgentMessage): void {
     if (message.role === "user") {
       const text = typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : "[image]").join("");
-      this.push({ kind: "user", text, timestamp: message.timestamp, source: (message as { vexSource?: string }).vexSource });
+      this.push({ kind: "user", text, timestamp: message.timestamp, source: transcriptMeta(message).source });
     } else if (message.role === "assistant") {
       const text = message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
       if (text || message.stopReason === "aborted") this.push({ kind: "assistant", text, stopReason: message.stopReason, timestamp: message.timestamp });

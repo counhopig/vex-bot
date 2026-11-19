@@ -22,7 +22,7 @@ import type { RunTrace, TraceScope } from "../trace/store.js";
 import { toolTracer, tracedGate, tracedStream } from "../trace/observe.js";
 import type { HistoryItem, SessionEvent, TurnStatus } from "./events.js";
 import { HistoryWindow, TranscriptHistory } from "./history.js";
-import { scanTranscript } from "./transcript.js";
+import { attachTranscriptMeta, isNotice, noticeAssistantMessage, scanTranscript, transcriptMeta, withRun } from "./transcript.js";
 import { MessageWindow, boundedWindow } from "../context/window.js";
 
 export interface SessionOptions {
@@ -236,7 +236,7 @@ export class Session {
     }
     if (!this.current) this.controller?.runStarting();
     if (!source) this.opts.onOwnerMessage?.();
-    const message: UserMessage & { vexSource?: string; vexRequestId?: string } = { role: "user", content: text, timestamp: Date.now(), ...(source ? { vexSource: source } : {}), ...(requestId ? { vexRequestId: requestId } : {}) };
+    const message = attachTranscriptMeta({ role: "user", content: text, timestamp: Date.now() }, { ...(source ? { source } : {}), ...(requestId ? { requestId } : {}) });
     if (this.current) {
       if (!source) this.runState.ownerMessages++;
       this.currentTrace()?.record({ type: "user", text, ...(source ? { source } : {}) });
@@ -378,10 +378,7 @@ export class Session {
 
   private async deliverAssistant(text: string): Promise<void> {
     if (this.closing) return;
-    const message: AssistantMessage & { vexNotice: true } = { role: "assistant", content: [{ type: "text", text }],
-      api: this.opts.model.api, provider: this.opts.model.provider, model: this.opts.model.id,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      stopReason: "stop", timestamp: Date.now(), vexNotice: true };
+    const message = noticeAssistantMessage(text, { api: this.opts.model.api, provider: this.opts.model.provider, id: this.opts.model.id });
     this.agent.state.messages.push(message);
     this.recentHistory.add(message);
     this.queueTranscriptWrite(message);
@@ -392,9 +389,7 @@ export class Session {
 
   private queueTranscriptWrite(message: AgentMessage): void {
     // The run travels with the message it produced, so a memory hit can be traced back to it later.
-    const run = this.currentTrace()?.id;
-    const record = run ? { ...message, vexRun: run } : message;
-    this.writes = this.appender.append(record).catch((err: unknown) => this.reportError(err));
+    this.writes = this.appender.append(withRun(message, this.currentTrace()?.id)).catch((err: unknown) => this.reportError(err));
   }
 
   /** A run's failure, shown unless the run is quiet, and part of the turn's reply. */
@@ -517,7 +512,8 @@ export class Session {
         this.recentHistory.add(message);
         this.queueTranscriptWrite(message);
         if (message.role === "user") {
-          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source: (message as UserMessage & { vexSource?: string }).vexSource, requestId: (message as UserMessage & { vexRequestId?: string }).vexRequestId });
+          const { source, requestId } = transcriptMeta(message);
+          this.opts.emit({ kind: "user_message", text: contentText(message.content), timestamp: message.timestamp, source, requestId });
         } else if (message.role === "assistant") {
           this.runState.lastResponse = message;
           const text = assistantText(message);
@@ -558,7 +554,7 @@ const NOTICE_LABEL = "[Runtime notification, already delivered to the owner; do 
 
 /** Notifications and heartbeat reports the runtime delivered stay in the transcript, labelled for the model so it does not echo them. */
 function markNotice(message: AgentMessage): AgentMessage {
-  if (message.role !== "assistant" || !(message as AssistantMessage & { vexNotice?: boolean }).vexNotice) return message;
+  if (message.role !== "assistant" || !isNotice(message)) return message;
   return { ...message, content: [{ type: "text", text: `${NOTICE_LABEL}\n${assistantText(message)}` }] };
 }
 
