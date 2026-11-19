@@ -11,6 +11,7 @@ import { SessionManager } from "./core/sessionManager.js";
 import { DEVICE_SESSION_KEY, scheduleTargetKey, WECHAT_SESSION_KEY, webSessionKey } from "./core/sessionKey.js";
 import { DeviceChannel } from "./channels/device/channel.js";
 import { createTitleGenerator } from "./core/title.js";
+import { createOwnerDelivery } from "./core/delivery.js";
 import { isLoopback, WebAuth } from "./gateway/auth.js";
 import { Gateway } from "./gateway/server.js";
 import type { Logger } from "./logger.js";
@@ -141,7 +142,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
       branch: config.vault?.branch,
       maxNotesPerRun: wikiConfig.maxNotesPerRun,
       notifyEnabled: wikiConfig.notify,
-      notify: async (text) => { await (await sessions.get(WECHAT_SESSION_KEY)).enqueueAssistant(text); },
+      notify: (text) => ownerDelivery.notify(text),
       runAgent: (prompt, context, signal) => runTemporary("wiki", prompt, signal, (session) => wikiReply(session, context), { wikiContext: context }),
       sourceSegmentBudget: async (prefix, context) => {
         const tools = wikiTools(context);
@@ -189,6 +190,8 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
     });
     await sessions.init();
     shutdown.add("sessions", () => sessions.shutdown());
+    // The one delivery path to the owner's WeChat conversation: queued notices and idle-time injections.
+    const ownerDelivery = createOwnerDelivery({ wechatSession: () => sessions.get(WECHAT_SESSION_KEY) });
     tasks = new BackgroundTasks({
       run: async (task, signal, traced) => {
         log.info({ task: task.id, origin: task.origin }, "background task started");
@@ -218,7 +221,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
         log.info({ kind: "watchdog", notify: message !== null }, "background run finished");
         return message;
       },
-      deliver: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "watchdog reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
+      deliver: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "watchdog reported to the owner"); await ownerDelivery.inject(text, signal); },
       admit: (request) => triggers.admit(request),
     });
     scheduler = new Scheduler({ dataDir: paths.home, workspace: config.workspace,
@@ -253,7 +256,7 @@ export async function startDaemon(opts: DaemonOptions): Promise<Daemon> {
           log.info({ kind: "heartbeat", notify: message !== null }, "background run finished");
           return message;
         },
-        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await (await sessions.get(WECHAT_SESSION_KEY)).injectAssistant(text, signal); },
+        deliverHeartbeat: async (text, signal) => { signal.throwIfAborted(); log.info({ chars: text.length }, "heartbeat reported to the owner"); await ownerDelivery.inject(text, signal); },
         checkOutreach: createOutreachCheck({ persona, log, wechat: () => wechatRuntime?.channel, session: () => sessions.get(WECHAT_SESSION_KEY), inbound: () => wechatInbound, admit: (request) => triggers.admit(request) }),
         wikiWork: async (now, cadenceDue) => wiki ? wiki.dueWork(now, cadenceDue) : null,
         runWiki: async (work, signal) => {
