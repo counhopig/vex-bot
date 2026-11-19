@@ -63,8 +63,9 @@ const DEVICE_PATH = "/device/ws";
 /**
  * Allows one failed attempt per second from each address, so guessing stays slow while a stranger's
  * failures cannot lock the owner out. Behind a reverse proxy every request shares the proxy's address.
+ * The map is hard-capped: when full, the oldest entry is evicted to keep failure bounded in memory.
  */
-class Lockout {
+export class Lockout {
   private readonly until = new Map<string, number>();
 
   locked(address: string): boolean {
@@ -78,9 +79,12 @@ class Lockout {
   fail(address: string): void {
     const now = Date.now();
     // Entries last a second, so pruning expired ones keeps the map as small as the current attack.
-    if (this.until.size >= 1024) for (const [key, until] of this.until) if (until <= now) this.until.delete(key);
+    if (this.until.size >= Lockout.MAX_ENTRIES) for (const [key, until] of this.until) if (until <= now) this.until.delete(key);
+    if (this.until.size >= Lockout.MAX_ENTRIES) this.until.delete(this.until.keys().next().value as string);
     this.until.set(address, now + 1000);
   }
+
+  private static readonly MAX_ENTRIES = 1024;
 }
 
 const addressOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? "";
