@@ -4,10 +4,12 @@
 /** @typedef {Extract<ClientMessage, { type: "save_schedule" }>} ScheduleMessage */
 /** @typedef {Extract<ClientMessage, { type: "approve" }>["answer"]} ApprovalAnswer */
 
+import { addNotice, applyEvent, createSession, ensureCurrentSession, renderApprovals, renderHistory, renderSessions, renderTasks, renderTriggers, selectSession, sessionLabel, setOpenTrace, setShowChat, setBusy } from "./chat.js";
 import { renderMarkdown } from "./markdown.js";
 import { send, connect } from "./net.js";
+import { renderSchedules } from "./schedules.js";
 import { state } from "./state.js";
-import { $, $field, element, flash, setStatus } from "./ui.js";
+import { $, $field, closeDrawer, element, flash, openDrawer, pad2, savedMessage, setStatus, showSaved } from "./ui.js";
 
 /** @param {ServerMessage} msg */
 function handle(msg) {
@@ -121,322 +123,6 @@ function handle(msg) {
   }
 }
 
-/* ---------- Sessions and messages ---------- */
-
-function ensureCurrentSession() {
-  if (state.currentId && state.sessions.some((s) => s.id === state.currentId)) return;
-  const remembered = readRemembered();
-  const target = state.sessions.find((s) => s.id === remembered) ?? state.sessions[0];
-  if (target) selectSession(target.id);
-  else createSession();
-}
-
-function createSession() {
-  if (state.creating) return;
-  state.creating = true;
-  closeDrawer();
-  send({ type: "create_session" });
-}
-
-function selectSession(id) {
-  state.currentId = id;
-  remember(id);
-  clearMessages();
-  for (const row of /** @type {HTMLCollectionOf<HTMLElement>} */ ($("session-list").children)) row.className = row.dataset.sessionId === id ? "active" : "";
-  updateTopbar();
-  closeDrawer();
-  showChat();
-  send({ type: "open", sessionId: id });
-}
-
-function renameSession(session) {
-  const next = prompt("Conversation name", session.title);
-  if (next && next.trim()) send({ type: "rename_session", sessionId: session.id, title: next.trim() });
-}
-
-function renderSessions() {
-  const list = $("session-list");
-  list.replaceChildren();
-  for (const session of state.sessions) {
-    const li = document.createElement("li");
-    li.dataset.sessionId = session.id;
-    li.className = session.id === state.currentId ? "active" : "";
-    const title = document.createElement("span");
-    title.className = "title";
-    title.textContent = session.title;
-    title.title = "Double-click to rename";
-    title.addEventListener("click", () => selectSession(session.id));
-    title.addEventListener("dblclick", () => renameSession(session));
-    const rename = document.createElement("button");
-    rename.type = "button";
-    rename.className = "icon";
-    rename.textContent = "✎\uFE0E";
-    rename.title = "Rename";
-    rename.setAttribute("aria-label", `Rename "${session.title}"`);
-    rename.addEventListener("click", () => renameSession(session));
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "icon";
-    remove.textContent = "×";
-    remove.title = "Delete";
-    remove.setAttribute("aria-label", `Delete "${session.title}"`);
-    remove.addEventListener("click", () => {
-      if (confirm(`Delete "${session.title}"?`)) send({ type: "delete_session", sessionId: session.id });
-    });
-    li.append(title, rename, remove);
-    list.append(li);
-  }
-  updateTopbar();
-}
-
-function updateTopbar() {
-  const current = state.sessions.find((s) => s.id === state.currentId);
-  $("topbar-title").textContent = current ? current.title : "Vex";
-}
-
-function clearMessages() {
-  $("messages").replaceChildren();
-  state.streamEl = null;
-  state.streamText = "";
-  state.toolEls.clear();
-  state.nextBefore = undefined;
-  state.loadingHistory = false;
-  state.historyButton = null;
-  setBusy(false);
-}
-
-function renderHistory(msg) {
-  const older = msg.before !== undefined;
-  // Ignore a page superseded by a reconnect or another history request.
-  if (older && msg.before !== state.nextBefore) return;
-  const box = $("messages");
-  const previousHeight = box.scrollHeight;
-  const previousTop = box.scrollTop;
-  const existing = older ? [...box.children].filter((node) => node !== state.historyButton) : [];
-  if (older) { state.historyButton?.remove(); }
-  else clearMessages();
-  for (const item of msg.items) {
-    if (item.kind === "user") { if (item.source) addNotice(`${item.source}：${item.text}`); else addBubble("user", item.text); }
-    else if (item.kind === "assistant") addBubble("assistant", item.text, item.stopReason === "aborted");
-    else addTool(item.toolCallId, item.toolName, item.summary, item.isError === undefined ? "running" : item.isError ? "error" : "done");
-  }
-  if (older) {
-    const appended = [...box.children].filter((node) => !existing.includes(node));
-    box.replaceChildren(...appended, ...existing);
-  }
-  state.nextBefore = msg.nextBefore;
-  state.loadingHistory = false;
-  state.historyButton = null;
-  if (msg.nextBefore !== undefined) {
-    const button = element("button", "secondary", "Earlier messages");
-    button.type = "button";
-    button.addEventListener("click", () => {
-      if (state.loadingHistory) return;
-      if (send({ type: "open", sessionId: state.currentId, before: state.nextBefore })) {
-        state.loadingHistory = true;
-        button.disabled = true;
-      }
-    });
-    box.prepend(button);
-    state.historyButton = button;
-  }
-  if (older) {
-    box.scrollTop = previousTop + box.scrollHeight - previousHeight;
-    return;
-  }
-  if (msg.streaming !== undefined) {
-    state.streamText = msg.streaming;
-    state.streamEl = addBubble("assistant streaming", msg.streaming);
-  }
-  setBusy(msg.busy);
-}
-
-function applyEvent(event) {
-  switch (event.kind) {
-    case "user_message":
-      if (event.source) addNotice(`${event.source}：${event.text}`); else addBubble("user", event.text);
-      break;
-    case "text_delta":
-      if (!state.streamEl) { state.streamText = ""; state.streamEl = addBubble("assistant streaming", ""); }
-      state.streamText += event.delta;
-      scheduleStreamRender();
-      break;
-    case "assistant_message":
-      if (state.streamEl) {
-        state.streamEl.remove();
-        state.streamEl = null;
-        state.streamText = "";
-      }
-      addBubble("assistant", event.text, event.stopReason === "aborted");
-      break;
-    case "tool_start":
-      addTool(event.toolCallId, event.toolName, event.summary, "running");
-      break;
-    case "tool_end":
-      updateTool(event.toolCallId, event.isError ? "error" : "done");
-      break;
-    case "tool_update": {
-      const el = state.toolEls.get(event.toolCallId);
-      if (el && event.text) {
-        const progress = el.children[1];
-        progress.textContent = (progress.textContent + event.text).slice(-2000);
-        scrollToBottom();
-      }
-      break;
-    }
-    case "busy":
-      setBusy(event.busy);
-      if (!event.busy && state.streamEl) {
-        state.streamEl.className = state.streamEl.className.replace(" streaming", "");
-        state.streamEl = null;
-      }
-      break;
-    case "error":
-      addNotice(event.message);
-      break;
-  }
-}
-
-function scheduleStreamRender() {
-  if (state.streamFrame) return;
-  state.streamFrame = true;
-  const render = () => {
-    state.streamFrame = false;
-    if (!state.streamEl) return;
-    renderMarkdown(state.streamEl.firstChild, state.streamText);
-    scrollToBottom();
-  };
-  if (typeof requestAnimationFrame === "function") requestAnimationFrame(render);
-  else render();
-}
-
-function addBubble(kind, text, aborted = false) {
-  const el = document.createElement("div");
-  el.className = `bubble ${kind}`;
-  const body = document.createElement("div");
-  body.className = kind.startsWith("assistant") ? "text md" : "text";
-  if (kind.startsWith("assistant")) renderMarkdown(body, text);
-  else body.textContent = text;
-  el.append(body);
-  if (aborted) {
-    const tag = document.createElement("div");
-    tag.className = "tag";
-    tag.textContent = "(interrupted)";
-    el.append(tag);
-  }
-  $("messages").append(el);
-  scrollToBottom();
-  return el;
-}
-
-const TOOL_ICONS = { running: "⋯", done: "✓", error: "✗" };
-
-function addTool(id, name, summary, status) {
-  const el = document.createElement("div");
-  el.className = `tool ${status}`;
-  el.dataset.label = `${name}：${summary}`;
-  const head = document.createElement("div");
-  head.className = "tool-head";
-  head.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
-  const progress = document.createElement("div");
-  progress.className = "tool-progress";
-  el.append(head, progress);
-  $("messages").append(el);
-  state.toolEls.set(id, el);
-  scrollToBottom();
-}
-
-function updateTool(id, status) {
-  const el = state.toolEls.get(id);
-  if (!el) return;
-  el.className = `tool ${status}`;
-  el.firstChild.textContent = `${TOOL_ICONS[status]} ${el.dataset.label}`;
-}
-
-function addNotice(text) {
-  const el = document.createElement("div");
-  el.className = "notice";
-  el.textContent = text;
-  $("messages").append(el);
-  scrollToBottom();
-}
-
-function setBusy(busy) {
-  state.busy = busy;
-  $("stop").hidden = !busy;
-}
-
-function renderApprovals() {
-  const box = $("approvals");
-  box.replaceChildren();
-  for (const request of state.pending) {
-    const card = document.createElement("div");
-    card.className = "approval";
-    const head = document.createElement("div");
-    head.className = "approval-head";
-    const deadline = new Date(request.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    head.textContent = `#${request.code} ${request.windowLabel} wants to run ${request.toolName} (denied automatically if there is no answer by ${deadline})`;
-    const detail = document.createElement("pre");
-    detail.textContent = request.detail;
-    const actions = document.createElement("div");
-    actions.className = "approval-actions";
-    for (const [answer, label, cls] of /** @type {[ApprovalAnswer, string, string][]} */ ([
-      ["allow", "Allow", ""],
-      ...(request.everyCall ? [] : [["allow_session", `Always allow ${request.allowScope ?? request.toolName} in this conversation`, "secondary"]]),
-      ["deny", "Deny", "danger"],
-    ])) {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.textContent = label;
-      button.className = cls;
-      button.addEventListener("click", () => send({ type: "approve", id: request.id, answer }));
-      actions.append(button);
-    }
-    card.append(head, detail, actions);
-    box.append(card);
-  }
-}
-
-function renderTasks() {
-  const box = $("tasks");
-  box.replaceChildren();
-  for (const task of state.tasks) {
-    const row = element("div", "task");
-    const started = new Date(task.startedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    row.append(element("span", "task-title", task.title), element("span", "task-meta", `${sessionLabel(task.origin)} · since ${started}`));
-    const actions = element("span", "task-actions");
-    const action = (label, onClick) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "link";
-      button.textContent = label;
-      button.addEventListener("click", onClick);
-      actions.append(button);
-    };
-    if (task.traceId) action("Trace", () => { showTraces(); selectTrace(task.traceId); });
-    action("Stop", () => { if (confirm(`Stop the background task "${task.title}"?`)) send({ type: "stop_task", id: task.id }); });
-    row.append(actions);
-    box.append(row);
-  }
-}
-
-/** Work a source would have done, recorded because the source is set to record only. */
-function renderTriggers() {
-  const box = $("triggers");
-  box.replaceChildren();
-  if (!state.triggers.length) return;
-  box.append(element("p", "hint", `Recorded instead of run (${state.triggers.length})`));
-  for (const trigger of state.triggers) {
-    const card = document.createElement("details");
-    card.className = "trigger";
-    const summary = document.createElement("summary");
-    const at = new Date(trigger.at).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-    summary.append(element("span", "trigger-title", trigger.title), element("span", "trigger-meta", `${trigger.source} · ${at}`));
-    card.append(summary, element("p", "trigger-text", trigger.text));
-    box.append(card);
-  }
-}
-
 /* ---------- Status line, drawer and theme ---------- */
 const WECHAT_LABELS = { connected: "WeChat connected", connecting: "WeChat connecting", unlinked: "WeChat not linked", expired: "WeChat expired", disabled: "WeChat off" };
 
@@ -454,8 +140,6 @@ function renderStatusLine() {
   if (info.reloadError) line.append(element("span", "warn", `The last saved settings could not start; the previous configuration was restored: ${info.reloadError}`));
 }
 
-function openDrawer() { $("app").className = "drawer-open"; $("scrim").hidden = false; }
-function closeDrawer() { $("app").className = ""; $("scrim").hidden = true; }
 
 const THEMES = [["", "System"], ["light", "Light"], ["dark", "Dark"]];
 
@@ -805,16 +489,6 @@ function buildPatch(settings) {
   return { set, unset: [...new Set(unset)] };
 }
 
-function savedMessage(restarting, restartRequired) {
-  if (restarting) return "Saved; applying the settings, reconnecting automatically in a few seconds…";
-  return restartRequired ? "Saved; takes effect after vexd restarts" : "Saved; takes effect immediately";
-}
-
-function showSaved(ok, message, error) {
-  $("settings-result").textContent = ok ? message : error;
-  $("settings-result").className = ok ? "ok" : "bad";
-}
-
 function renderSettingsTabs() {
   const tabs = $("settings-tabs");
   tabs.replaceChildren();
@@ -933,170 +607,6 @@ function openSettingsTab() {
     state.configBase = undefined;
     $field("settings-text").disabled = true;
     send({ type: "get_config" });
-  }
-}
-
-const RULE_HINTS = {
-  cron: "Five fields: minute hour day month weekday. 0 9 * * * is every day at 09:00; 30 22 * * 1-5 is weekdays at 22:30.",
-  every: "A number followed by s, m, h or d, such as 30m or 2h.",
-  once: "A single date and time, in this browser's time zone.",
-};
-
-function pad2(value) { return String(value).padStart(2, "0"); }
-
-function localInput(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-/** A readable form of a schedule rule. */
-function describeRule(rule) {
-  if (rule.every) return `Every ${rule.every}`;
-  if (rule.once) return `Once, ${new Date(rule.once).toLocaleString()}`;
-  const fields = String(rule.cron).trim().split(/\s+/);
-  if (fields.length === 5 && /^\d+$/.test(fields[0]) && /^\d+$/.test(fields[1]) && fields[2] === "*" && fields[3] === "*") {
-    const time = `${pad2(fields[1])}:${pad2(fields[0])}`;
-    if (fields[4] === "*") return `Every day at ${time}`;
-    if (fields[4] === "1-5") return `Weekdays at ${time}`;
-    if (fields[4] === "0,6" || fields[4] === "6,0") return `Weekends at ${time}`;
-  }
-  return `Cron ${rule.cron}`;
-}
-
-function targetLabel(id) {
-  return state.schedules?.targets.find((target) => target.id === id)?.label ?? id;
-}
-
-/** @returns {ScheduleMessage} */
-function scheduleMessage(task, changes = {}) {
-  return { type: "save_schedule", id: task.id, name: task.name, prompt: task.prompt, target: task.target, enabled: task.enabled, schedule: task.schedule, ...changes };
-}
-
-function renderScheduleForm(box) {
-  const draft = state.editingSchedule;
-  const kind = draft.kind;
-  const form = element("div", "section");
-  form.append(element("h3", "", draft.id ? `Edit "${draft.name}"` : "New scheduled task"));
-  const field = (label, control, help) => {
-    const wrap = element("div", "field");
-    const caption = element("label", "", label);
-    caption.htmlFor = control.id;
-    wrap.append(caption, control);
-    if (help) wrap.append(element("p", "help", help));
-    form.append(wrap);
-  };
-  const name = element("input");
-  name.type = "text"; name.id = "schedule-name"; name.value = draft.name;
-  name.addEventListener("input", () => { draft.name = name.value; });
-  field("Name", name);
-  const type = element("select");
-  type.id = "schedule-kind";
-  for (const [value, label] of [["cron", "Repeating (cron)"], ["every", "Every interval"], ["once", "Once"]]) {
-    const option = element("option", "", label);
-    option.value = value;
-    type.append(option);
-  }
-  type.value = kind;
-  type.addEventListener("change", () => { draft.kind = type.value; draft.value = ""; renderSchedules(); });
-  field("Repeat", type);
-  const value = element("input");
-  value.id = "schedule-value";
-  value.type = kind === "once" ? "datetime-local" : "text";
-  value.value = draft.value;
-  if (kind === "cron") value.placeholder = "0 9 * * *";
-  if (kind === "every") value.placeholder = "30m";
-  value.addEventListener("input", () => { draft.value = value.value; });
-  field(kind === "once" ? "Time" : kind === "every" ? "Interval" : "Cron rule", value, RULE_HINTS[kind]);
-  const target = element("select");
-  target.id = "schedule-target";
-  for (const option of state.schedules?.targets ?? [{ id: "wechat", label: "WeChat" }]) {
-    const item = element("option", "", option.label);
-    item.value = option.id;
-    target.append(item);
-  }
-  if (!state.schedules?.targets.some((option) => option.id === draft.target)) {
-    const item = element("option", "", draft.target);
-    item.value = draft.target;
-    target.append(item);
-  }
-  target.value = draft.target;
-  target.addEventListener("change", () => { draft.target = target.value; });
-  field("Deliver to", target);
-  const prompt = element("textarea", "file-text");
-  prompt.id = "schedule-prompt";
-  prompt.value = draft.prompt;
-  prompt.addEventListener("input", () => { draft.prompt = prompt.value; });
-  field("Instruction", prompt, "Vex receives this at the set time and acts on it with all its tools, for example: search today's AI news and summarise the top five.");
-  const actions = element("div", "settings-actions");
-  const save = element("button", "", "Save task");
-  save.type = "button";
-  save.addEventListener("click", () => {
-    let ruleValue = draft.value.trim();
-    if (draft.kind === "once") {
-      const date = new Date(ruleValue);
-      if (!ruleValue || Number.isNaN(date.getTime())) { showSaved(false, "", "Choose a date and time"); return; }
-      ruleValue = date.toISOString();
-    }
-    if (!draft.name.trim() || !draft.prompt.trim() || !ruleValue) { showSaved(false, "", "Name, repeat rule and instruction are required"); return; }
-    $("settings-result").textContent = "Saving…";
-    $("settings-result").className = "";
-    send({ type: "save_schedule", ...(draft.id ? { id: draft.id } : {}), name: draft.name.trim(), prompt: draft.prompt.trim(), target: draft.target, enabled: draft.enabled, schedule: /** @type {ScheduleMessage["schedule"]} */ ({ [draft.kind]: ruleValue }) });
-  });
-  const cancel = element("button", "secondary", "Cancel");
-  cancel.type = "button";
-  cancel.addEventListener("click", () => { state.editingSchedule = null; renderSchedules(); });
-  actions.append(save, cancel);
-  form.append(actions);
-  box.append(form);
-}
-
-function editSchedule(task) {
-  const kind = task ? Object.keys(task.schedule)[0] : "cron";
-  const raw = task ? task.schedule[kind] : "";
-  state.editingSchedule = task
-    ? { id: task.id, name: task.name, prompt: task.prompt, target: task.target, enabled: task.enabled, kind, value: kind === "once" ? localInput(raw) : raw }
-    : { name: "", prompt: "", target: "wechat", enabled: true, kind: "cron", value: "" };
-  $("settings-result").textContent = "";
-  renderSchedules();
-}
-
-function renderSchedules() {
-  const box = $("schedule-list");
-  box.replaceChildren();
-  if (!state.schedules) { box.append(element("p", "hint", "Loading…")); return; }
-  const head = element("div", "schedule-head");
-  head.append(element("p", "hint", "Tasks deliver an instruction to a conversation at set times; Vex acts on it like a message from you. You can also manage them by asking Vex in chat."));
-  const add = element("button", "", "New task");
-  add.type = "button";
-  add.addEventListener("click", () => editSchedule(null));
-  head.append(add);
-  box.append(head);
-  if (state.editingSchedule) renderScheduleForm(box);
-  if (!state.schedules.tasks.length) box.append(element("p", "hint", "No scheduled tasks yet."));
-  for (const task of state.schedules.tasks) {
-    const card = element("div", `section task${task.enabled ? "" : " off"}`);
-    const title = element("div", "task-title");
-    title.append(element("h3", "", task.name), element("span", `badge${task.enabled ? " on" : ""}`, task.enabled ? "On" : "Off"));
-    card.append(title);
-    const next = task.enabled && task.nextAt ? `Next: ${new Date(task.nextAt).toLocaleString()}` : "Not scheduled";
-    card.append(element("p", "hint", `${describeRule(task.schedule)} · ${next} · To ${targetLabel(task.target)}`));
-    card.append(element("p", "task-prompt", task.prompt));
-    const actions = element("div", "task-actions");
-    const toggle = element("button", "secondary", task.enabled ? "Pause" : "Resume");
-    toggle.type = "button";
-    toggle.addEventListener("click", () => send(scheduleMessage(task, { enabled: !task.enabled })));
-    const edit = element("button", "secondary", "Edit");
-    edit.type = "button";
-    edit.addEventListener("click", () => editSchedule(task));
-    const remove = element("button", "danger", "Delete");
-    remove.type = "button";
-    remove.addEventListener("click", () => {
-      if (confirm(`Delete the scheduled task "${task.name}"?`)) send({ type: "delete_schedule", id: task.id });
-    });
-    actions.append(toggle, edit, remove);
-    card.append(actions);
-    box.append(card);
   }
 }
 
@@ -1238,13 +748,6 @@ function selectTrace(id) {
   requestTrace(id);
   renderTraceList();
   renderTraceDetail();
-}
-
-function sessionLabel(key) {
-  if (key === "wechat") return "WeChat";
-  if (key.startsWith("web:")) return state.sessions.find((session) => session.id === key.slice(4))?.title ?? "WebChat";
-  if (key.startsWith("run:")) return "Background";
-  return key;
 }
 
 function sourceLabel(source) {
@@ -1609,26 +1112,6 @@ function renderTraceDetail() {
 
 /* ---------- Misc ---------- */
 
-function scrollToBottom() {
-  const box = $("messages");
-  box.scrollTop = box.scrollHeight;
-}
-
-function remember(id) {
-  try {
-    localStorage.setItem("vex.session", id);
-  } catch {
-    // Storage can be unavailable in private windows.
-  }
-}
-
-function readRemembered() {
-  try {
-    return localStorage.getItem("vex.session");
-  } catch {
-    return null;
-  }
-}
 
 function autoGrow() {
   const input = $("input");
@@ -1702,5 +1185,10 @@ function onSocketOpen() {
     if (state.traces.selected) requestTrace(state.traces.selected);
   }
 }
+
+// The trace viewer is opened from a background task's Trace action.
+setOpenTrace((id) => { showTraces(); selectTrace(id); });
+// Selecting a session from the drawer returns the UI to the chat page.
+setShowChat(() => showChat());
 
 connect(handle, onSocketOpen);

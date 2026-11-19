@@ -24,3 +24,19 @@ export function flash(text) {
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => setStatus(""), 4000);
 }
+
+/** The save result line under the settings forms. */
+export function savedMessage(restarting, restartRequired) {
+  if (restarting) return "Saved; applying the settings, reconnecting automatically in a few seconds…";
+  return restartRequired ? "Saved; takes effect after vexd restarts" : "Saved; takes effect immediately";
+}
+
+export function showSaved(ok, message, error) {
+  $("settings-result").textContent = ok ? message : error;
+  $("settings-result").className = ok ? "ok" : "bad";
+}
+
+export function openDrawer() { $("app").className = "drawer-open"; $("scrim").hidden = false; }
+export function closeDrawer() { $("app").className = ""; $("scrim").hidden = true; }
+
+export function pad2(value) { return String(value).padStart(2, "0"); }
