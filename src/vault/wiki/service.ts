@@ -869,24 +869,11 @@ export class Wiki {
   /** Publishes a pending rollback, clearing the batch reference; throws when the push cannot complete. */
   private async settleRollback(state: WikiState | null, reconciled: ReconcileResult, signal: AbortSignal): Promise<void> {
     if (!(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; pending rollback preserved");
-    const pending = reconciled.rollback;
-    if (!pending) {
-      if (!state?.rollback) return;
-      const stateCommit = await this.findCommit("Vex-Rollback", state.rollback.revertId);
-      if (!stateCommit) throw new WikiIntegrityError("pending rollback reference has no matching rollback commit; preserving state");
-      const body = (await this.repo.log(stateCommit)).split("\0")[1] ?? "";
-      const trailers = parseTrailers(body);
-      const targetIds = trailerValues(trailers, "vex-revert-of");
-      if (targetIds.length !== 1 || targetIds[0] !== state.rollback.targetBatchId) throw new WikiIntegrityError("pending rollback target does not match its commit; preserving state");
-      if (!(await this.repo.isAncestor(stateCommit, await this.repo.originHead()))) throw new WikiIntegrityError("pending rollback is not the reconciled history tip; preserving state");
-      await this.clearBatchRef();
-      return;
-    }
-    const rollbackCommit = await this.findCommit("Vex-Rollback", pending.revertId);
-    if (!rollbackCommit) throw new WikiIntegrityError("pending rollback commit is missing; preserving state");
-    const trailers = parseTrailers((await this.repo.log(rollbackCommit)).split("\0")[1] ?? "");
-    const targetIds = trailerValues(trailers, "vex-revert-of");
-    if (targetIds.length !== 1 || targetIds[0] !== pending.targetBatchId) throw new WikiIntegrityError("pending rollback target does not match its commit; preserving state");
+    // A revert recorded only in state (its write raced the state save) is recovered by the same
+    // git-derived path: find its commit and validate it against the recorded target.
+    const pending = reconciled.rollback ?? (state?.rollback ? { revertId: state.rollback.revertId, targetBatchId: state.rollback.targetBatchId } : undefined);
+    if (!pending) return;
+    const rollbackCommit = await this.findValidatedRollbackCommit(pending.revertId, pending.targetBatchId);
     if (await this.repo.isAncestor(rollbackCommit, await this.repo.originHead())) {
       await this.clearBatchRef();
       return;
@@ -894,6 +881,16 @@ export class Wiki {
     signal.throwIfAborted();
     await this.pushWithRetry(true, signal);
     await this.clearBatchRef();
+  }
+
+  /** The rollback commit for `revertId`, after checking it reverts exactly `targetBatchId`. */
+  private async findValidatedRollbackCommit(revertId: string, targetBatchId: string): Promise<string> {
+    const rollbackCommit = await this.findCommit("Vex-Rollback", revertId);
+    if (!rollbackCommit) throw new WikiIntegrityError("pending rollback commit is missing; preserving state");
+    const trailers = parseTrailers((await this.repo.log(rollbackCommit)).split("\0")[1] ?? "");
+    const targetIds = trailerValues(trailers, "vex-revert-of");
+    if (targetIds.length !== 1 || targetIds[0] !== targetBatchId) throw new WikiIntegrityError("pending rollback target does not match its commit; preserving state");
+    return rollbackCommit;
   }
 
   private async cleanTree(): Promise<boolean> {
@@ -914,37 +911,30 @@ export class Wiki {
     await this.stateStore.write({ ...current, lastBatchId: null, rollback: null });
   }
 
-  /** Pushes the committed batch; on a rejected push it integrates the remote once and retries, accepting an already-published HEAD. */
+  /**
+   * Pushes the committed batch. A first rejected push integrates the remote once (fetch, rebase,
+   * recheck) and retries; a HEAD the remote already contains counts as published.
+   */
   private async pushWithRetry(requireClean = false, signal?: AbortSignal): Promise<void> {
-    try {
+    for (let attempt = 0; ; attempt++) {
       await this.checkIntegrity();
       if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing publication");
       signal?.throwIfAborted();
-      await this.repo.push();
-      return;
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      if (error instanceof WikiIntegrityError) throw error;
-      // Another writer advanced the remote; fetch, rebase and retry once.
-    }
-    await this.repo.fetch();
-    await this.checkIntegrity();
-    if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing rebase");
-    signal?.throwIfAborted();
-    await this.repo.rebase();
-    try {
-      await this.checkIntegrity();
-      if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing publication");
-      signal?.throwIfAborted();
-      await this.repo.push();
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      if (error instanceof WikiIntegrityError) throw error;
+      try {
+        await this.repo.push();
+        return;
+      } catch (error) {
+        if (signal?.aborted) throw signal.reason;
+        if (error instanceof WikiIntegrityError) throw error;
+        if (attempt > 0) throw error;
+      }
+      // Another writer advanced the remote; fetch, rebase, and try once more.
       await this.repo.fetch();
       await this.checkIntegrity();
-      if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing publication");
-      if (await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead())) return;
-      throw error;
+      if (requireClean && !(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; refusing rebase");
+      signal?.throwIfAborted();
+      await this.repo.rebase();
+      if (attempt > 0 && await this.repo.isAncestor(await this.repo.head(), await this.repo.originHead())) return;
     }
   }
 

@@ -668,7 +668,7 @@ describe("Wiki service", () => {
     const pending = await wiki.rollback(new AbortController().signal);
 
     expect(pending.reverted).toBe(false);
-    expect(pending.message).toMatch(/matching rollback commit/i);
+    expect(pending.message).toMatch(/commit is missing/i);
     expect(git(root, ["rev-parse", "HEAD"]).trim()).toBe(head);
     expect(JSON.parse(readFileSync(stateFile, "utf8")).rollback).toEqual({ targetBatchId: "b", revertId: "r" });
     await wiki.close();
