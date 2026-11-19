@@ -228,7 +228,7 @@ export class Wiki {
     this.marker = new MarkerStore(join(root, ".git"));
     this.stateStore = new StateStore(join(this.opts.home, "state", "wiki.json"));
     const state = await this.stateStore.read();
-    this.reconciled = await this.runReconcile(state);
+    this.reconciled = await this.runReconcile();
     this.lastStatus = statusOf(state, this.reconciled);
   }
 
@@ -248,7 +248,7 @@ export class Wiki {
     // A running operation may be mid-rebase; report the last settled status instead of reading history.
     if (this.lock.busy && this.lastStatus) return this.lastStatus;
     const state = await this.stateStore.read();
-    const reconciled = await this.runReconcile(state);
+    const reconciled = await this.runReconcile();
     this.reconciled = reconciled;
     const value = statusOf(state, reconciled);
     this.lastStatus = value;
@@ -310,9 +310,9 @@ export class Wiki {
       const { bootstrapDeferred: _deferred, ...rest } = state;
       await this.stateStore.write(rest);
     }
-    const reconciled = await this.runReconcile(state);
+    const reconciled = await this.runReconcile();
     this.reconciled = reconciled;
-    const pendingCompile = reconciled.markerResolution === "committed" ? await this.marker.read() : null;
+    const pendingCompile = reconciled.staleMarker ? await this.marker.read() : null;
     // Refuse before recovery cleanup can restore or remove any paths.
     await this.checkIntegrity();
     if (reconciled.preview) throw new Error("bootstrap preview awaiting review");
@@ -334,7 +334,7 @@ export class Wiki {
         await inspectAndCleanTree(this.repo, this.marker);
       }
       // Settle a committed-but-unpublished rollback only after the tree is clean, so its rebase cannot fail on leftovers.
-      if (reconciled.rollback || state?.rollback) await this.settleRollback(state, reconciled, signal);
+      if (reconciled.rollback) await this.settleRollback(reconciled, signal);
       await this.checkIntegrity();
       await this.repo.rebase();
       if (pendingCompile) {
@@ -557,8 +557,8 @@ export class Wiki {
   private async recoverCommittedBatch(batchId: string, error: unknown): Promise<WikiRunResult | undefined> {
     const integrityFailure = error instanceof WikiIntegrityError;
     const state = await this.stateStore.read();
-    const recovered = await this.runReconcile(state);
-    if (recovered.markerResolution !== "committed") {
+    const recovered = await this.runReconcile();
+    if (!recovered.staleMarker) {
       if (!integrityFailure) await abortBatch(this.repo, this.marker);
       return undefined;
     }
@@ -644,14 +644,13 @@ export class Wiki {
     await this.ready();
     return this.lock.run(async () => {
       await this.repo.fetch();
-      const state = await this.stateStore.read();
-      const reconciled = await this.runReconcile(state);
+      const reconciled = await this.runReconcile();
 
-      if (reconciled.rollback || state?.rollback) {
+      if (reconciled.rollback) {
         const clean = await this.cleanTree();
         if (!clean) return { reverted: false, commit: null, message: "working tree or index is not clean; pending rollback kept" };
         try {
-          await this.settleRollback(state, reconciled, signal);
+          await this.settleRollback(reconciled, signal);
         } catch (error) {
           if (error instanceof WikiIntegrityError) return { reverted: false, commit: null, message: error.message };
           throw error;
@@ -731,7 +730,7 @@ export class Wiki {
     return this.lock.run(async () => {
       await this.repo.fetch();
       const state = await this.stateStore.read();
-      const reconciled = await this.runReconcile(state);
+      const reconciled = await this.runReconcile();
       if (!(await this.cleanTree())) return { pushed: false, message: "working tree or index is not clean; preview kept" };
       await this.checkIntegrity();
       const batchId = reconciled.lastBatchId;
@@ -758,7 +757,7 @@ export class Wiki {
     return this.lock.run(async () => {
       await this.repo.fetch();
       const state = await this.stateStore.read();
-      const reconciled = await this.runReconcile(state);
+      const reconciled = await this.runReconcile();
       if (!(await this.cleanTree())) return { discarded: false, message: "working tree or index is not clean; preview kept" };
       await this.checkIntegrity();
       const batchId = reconciled.lastBatchId;
@@ -794,10 +793,10 @@ export class Wiki {
       const refused = (message: string): WikiRebuildResult => ({ reset: false, commit: null, removed: 0, publication: "not-needed", message });
       await this.repo.fetch();
       const state = await this.stateStore.read();
-      const reconciled = await this.runReconcile(state);
+      const reconciled = await this.runReconcile();
       if (await this.marker.read()) return refused("a wiki batch is still being settled; try again after the next run");
       if (reconciled.preview) return refused("a bootstrap preview awaits review; approve or reject it first");
-      if (reconciled.rollback || state?.rollback) return refused("a rollback is still being published; try again after the next run");
+      if (reconciled.rollback) return refused("a rollback is still being published; try again after the next run");
       if (!(await this.cleanTree())) return refused("working tree or index is not clean");
       await this.checkIntegrity();
       await this.repo.fastForward();
@@ -867,11 +866,9 @@ export class Wiki {
   }
 
   /** Publishes a pending rollback, clearing the batch reference; throws when the push cannot complete. */
-  private async settleRollback(state: WikiState | null, reconciled: ReconcileResult, signal: AbortSignal): Promise<void> {
+  private async settleRollback(reconciled: ReconcileResult, signal: AbortSignal): Promise<void> {
     if (!(await this.cleanTree())) throw new WikiIntegrityError("wiki tree or index is dirty; pending rollback preserved");
-    // A revert recorded only in state (its write raced the state save) is recovered by the same
-    // git-derived path: find its commit and validate it against the recorded target.
-    const pending = reconciled.rollback ?? (state?.rollback ? { revertId: state.rollback.revertId, targetBatchId: state.rollback.targetBatchId } : undefined);
+    const pending = reconciled.rollback;
     if (!pending) return;
     const rollbackCommit = await this.findValidatedRollbackCommit(pending.revertId, pending.targetBatchId);
     if (await this.repo.isAncestor(rollbackCommit, await this.repo.originHead())) {
@@ -938,14 +935,14 @@ export class Wiki {
     }
   }
 
-  /** Reconciles history; the result is reused while the refs, state and marker it was built from are unchanged. */
-  private async runReconcile(state: WikiState | null): Promise<ReconcileResult> {
+  /** Reconciles history; the result is reused while the refs and marker it was built from are unchanged. */
+  private async runReconcile(): Promise<ReconcileResult> {
     const marker = await this.marker.read();
     const bootstrapRef = await this.repo.ref(BOOTSTRAP_REF);
-    const key = JSON.stringify([await this.repo.head(), await this.repo.originHead(), bootstrapRef, state, marker]);
+    const key = JSON.stringify([await this.repo.head(), await this.repo.originHead(), bootstrapRef, marker]);
     let result = this.reconcileMemo?.key === key ? this.reconcileMemo.result : undefined;
     if (!result) {
-      result = await reconcile({ repo: this.repo, state, marker, bootstrapRef });
+      result = await reconcile({ repo: this.repo, marker, bootstrapRef });
       this.reconcileMemo = { key, result };
       for (const alert of result.alerts) this.opts.onWarning?.(alert);
     }

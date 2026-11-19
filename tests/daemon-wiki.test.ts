@@ -46,14 +46,18 @@ function git(cwd: string, args: string[]): string {
 async function startScenario(responses: Parameters<FauxProviderHandle["setResponses"]>[0], scenarioOptions: { seed?: string; failPush?: boolean; scheduled?: boolean; ownerMessage?: string; deferOwnerMessage?: boolean; bootstrap?: "done" | "awaiting-review"; toolPolicy?: VexConfig["toolPolicy"]; mcpServers?: VexConfig["mcpServers"]; webPageRequest?: PageRequest; linkClassifier?: LinkClassifier; wikiSourceResolver?: (url: string, signal: AbortSignal) => ReturnType<typeof readOriginalSource> } = {}): Promise<{ remote: string; head: string; identity: string }> {
   const { remote, work } = makeRemote(join(dir, scenarioOptions.seed ?? "seed"));
   commit(work, { "wiki/Existing.md": "# Existing\n" }, "2026-10-01T10:00:00+0000");
-  const head = git(work, ["rev-parse", "HEAD"]);
+  const base = git(work, ["rev-parse", "HEAD"]).trim();
   if (scenarioOptions.scheduled) commit(work, { "notes/Pending.md": "# Pending\n" }, "2026-10-02T10:00:00+0000");
+  // The bootstrap evidence scenarios used to fake through state/wiki.json; the wiki derives its
+  // status from git history, so a published empty bootstrap batch stands in for it: it marks the
+  // bootstrap done and carries the scan cursor, while `awaiting-review` stays evidence-free.
+  let head = base;
+  if ((scenarioOptions.bootstrap ?? "done") === "done") {
+    git(work, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", `wiki: compile\n\nVex-Batch: scenario-boot\nVex-Kind: bootstrap\nVex-Scan-Base: ${base}`]);
+    git(work, ["push", "origin", "HEAD:refs/heads/main", "--force"]);
+    head = git(work, ["rev-parse", "HEAD"]);
+  }
   const identity = createHash("sha256").update(`${remote}\n`).digest("hex").slice(0, 12);
-  await mkdir(join(paths.home, "state"), { recursive: true });
-  await writeFile(join(paths.home, "state", "wiki.json"), JSON.stringify({
-    lastScanCommit: head, lastRunAt: null, lastBatchId: null, bootstrap: scenarioOptions.bootstrap ?? "done", rollback: null,
-    nextAttemptAt: null, failureStreak: 0,
-  }));
   await mkdir(paths.wechat, { recursive: true });
   await writeFile(join(paths.wechat, "credentials.json"), JSON.stringify({ token: "tok", accountId: "bot1", baseUrl: ilink.baseUrl, userId: "owner1" }));
   faux.setResponses(responses);

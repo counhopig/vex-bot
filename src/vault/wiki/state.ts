@@ -1,10 +1,8 @@
 import { readFile } from "node:fs/promises";
+import type { WikiRollback } from "./reconcile.js";
 import { writeFileAtomic } from "../../store/atomic.js";
 
-export interface WikiRollback {
-  targetBatchId: string;
-  revertId: string;
-}
+export type { WikiRollback };
 
 export interface WikiState {
   lastScanCommit: string | null;

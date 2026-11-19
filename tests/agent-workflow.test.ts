@@ -46,11 +46,10 @@ describe("assembled shared-link workflow", () => {
     commit(work, { "wiki/Existing.md": "# Existing\n" }, "2026-10-01T10:00:00+0000");
     const initialHead = git(work, ["rev-parse", "HEAD"]);
     const identity = createHash("sha256").update(`${remote}\n`).digest("hex").slice(0, 12);
-    await mkdir(join(paths.home, "state"), { recursive: true });
-    await writeFile(join(paths.home, "state", "wiki.json"), JSON.stringify({
-      lastScanCommit: initialHead, lastRunAt: null, lastBatchId: null, bootstrap: "done", rollback: null,
-      nextAttemptAt: null, failureStreak: 0,
-    }));
+    // The wiki derives bootstrap state from git history: a published empty bootstrap batch is
+    // the honest stand-in for the previously forged state file.
+    git(work, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", `wiki: compile\n\nVex-Batch: scenario-boot\nVex-Kind: bootstrap\nVex-Scan-Base: ${initialHead}`]);
+    git(work, ["push", "origin", "HEAD:refs/heads/main", "--force"]);
 
     const xhsUrl = "https://www.xiaohongshu.com/explore/64a1b2c3d4e5f60718293a4b";
     const articleUrl = "https://mp.weixin.qq.com/s?__biz=TEST&mid=123&idx=1&sn=TOKEN";
