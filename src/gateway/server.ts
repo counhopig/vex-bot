@@ -60,6 +60,8 @@ const STATIC_FILES: Record<string, StaticEntry> = {
   "/markdown.js": { file: "markdown.js", type: "text/javascript; charset=utf-8", public: false },
   "/chat.js": { file: "chat.js", type: "text/javascript; charset=utf-8", public: false },
   "/schedules.js": { file: "schedules.js", type: "text/javascript; charset=utf-8", public: false },
+  "/settings.js": { file: "settings.js", type: "text/javascript; charset=utf-8", public: false },
+  "/traces.js": { file: "traces.js", type: "text/javascript; charset=utf-8", public: false },
   "/login": { file: "login.html", type: "text/html; charset=utf-8", public: true },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8", public: true },
 };

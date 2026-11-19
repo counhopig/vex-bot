@@ -56,7 +56,7 @@ function textOf(el: Element): string {
  * syntax cannot run under `runInContext`, so the loader strips the single-line imports and the
  * top-level `export` prefixes — the browser itself runs them as genuine ES modules.
  */
-const MODULE_ORDER = ["ui.js", "state.js", "net.js", "markdown.js", "chat.js", "schedules.js", "app.js"];
+const MODULE_ORDER = ["ui.js", "state.js", "net.js", "markdown.js", "chat.js", "schedules.js", "settings.js", "traces.js", "app.js"];
 
 function loadBrowserSource(name: string): string {
   const text = readFileSync(new URL(`../src/web/static/${name}`, import.meta.url), "utf8");
