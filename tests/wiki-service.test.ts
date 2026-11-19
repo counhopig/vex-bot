@@ -1017,6 +1017,112 @@ describe("Wiki service", () => {
     await wiki.close();
   });
 
+  it("returns the pending batch's published receipt when a retry matches its archived source", async () => {
+    const home = join(dir, "home");
+    const { remote } = makeRemote(join(dir, "seed"));
+    commit(join(dir, "seed", "work"), { "wiki/base.md": "base" }, "2026-10-01T10:00:00+0000");
+    let failPushes = false;
+    const failingRunner: GitRunner = async (args, options) => {
+      if (failPushes && args[0] === "push") return Promise.reject(new Error("simulated push failure"));
+      return fileRun(args, options);
+    };
+    let calls = 0;
+    const source = { url: "https://example.com/retry-receipt", text: "Original body" };
+    const options: Partial<WikiOptions> = {
+      run: failingRunner,
+      runAgent: async (_prompt, context) => {
+        calls += 1;
+        const target = join(context.repo.root, "wiki/generated.md");
+        await context.marker.recordIntent("wiki/generated.md", await fingerprint(target));
+        writeFileSync(target, "generated");
+        await context.marker.recordAfter("wiki/generated.md", await fingerprint(target));
+        return "ok";
+      },
+    };
+    const wiki = makeWiki(home, remote, options);
+    await wiki.init();
+
+    // The publication of the first batch fails: its receipt stays pending, the batch unpublished.
+    failPushes = true;
+    const pending = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    expect(pending).toMatchObject({ publication: "pending", pages: ["wiki/generated.md"] });
+
+    // The owner retries the same source: the retry publishes the pending batch and hands back
+    // its receipt without compiling again.
+    failPushes = false;
+    const receipt = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    expect(receipt).toMatchObject({ batchId: pending.batchId, publication: "published", pages: ["wiki/generated.md"] });
+    expect(calls).toBe(1);
+    expect((git(remote, ["log", "main", "--format=%B"]).match(/Vex-Batch:/g) ?? [])).toHaveLength(1);
+    await wiki.close();
+  });
+
+  it("recompiles a retry whose archived source differs from the request", async () => {
+    const home = join(dir, "home");
+    const { remote } = makeRemote(join(dir, "seed"));
+    commit(join(dir, "seed", "work"), { "wiki/base.md": "base" }, "2026-10-01T10:00:00+0000");
+    let failPushes = false;
+    const failingRunner: GitRunner = async (args, options) => {
+      if (failPushes && args[0] === "push") return Promise.reject(new Error("simulated push failure"));
+      return fileRun(args, options);
+    };
+    let calls = 0;
+    const options: Partial<WikiOptions> = {
+      run: failingRunner,
+      runAgent: async (_prompt, context) => {
+        calls += 1;
+        const target = join(context.repo.root, "wiki/generated.md");
+        await context.marker.recordIntent("wiki/generated.md", await fingerprint(target));
+        writeFileSync(target, `generated ${calls}`);
+        await context.marker.recordAfter("wiki/generated.md", await fingerprint(target));
+        return "ok";
+      },
+    };
+    const wiki = makeWiki(home, remote, options);
+    await wiki.init();
+
+    failPushes = true;
+    const pending = await wiki.run({ kind: "on-demand", source: { url: "https://example.com/retry-differ", text: "First body" } }, new AbortController().signal);
+    expect(pending.publication).toBe("pending");
+
+    // A different source text under the same URL is a new request: the pending batch publishes,
+    // then this source compiles as its own batch.
+    failPushes = false;
+    const receipt = await wiki.run({ kind: "on-demand", source: { url: "https://example.com/retry-differ", text: "Second body" } }, new AbortController().signal);
+    expect(receipt.batchId).not.toBe(pending.batchId);
+    expect(receipt.publication).toBe("published");
+    expect(calls).toBe(2);
+    expect((git(remote, ["log", "main", "--format=%B"]).match(/Vex-Batch:/g) ?? [])).toHaveLength(2);
+    await wiki.close();
+  });
+
+  it("recompiles a retry against a batch that was already published", async () => {
+    const home = join(dir, "home");
+    let calls = 0;
+    const { wiki } = await seed(home, {
+      runAgent: async (_prompt, context) => {
+        calls += 1;
+        const target = join(context.repo.root, "wiki/generated.md");
+        await context.marker.recordIntent("wiki/generated.md", await fingerprint(target));
+        writeFileSync(target, `generated ${calls}`);
+        await context.marker.recordAfter("wiki/generated.md", await fingerprint(target));
+        return "ok";
+      },
+    });
+    await wiki.init();
+    const source = { url: "https://example.com/published-retry", text: "Original" };
+    const first = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    expect(first.publication).toBe("published");
+
+    // The archived source is already published: the dedup receipt is for pending batches only,
+    // so the model compiles this request again as its own batch.
+    const second = await wiki.run({ kind: "on-demand", source }, new AbortController().signal);
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(second.publication).toBe("published");
+    expect(calls).toBe(2);
+    await wiki.close();
+  });
+
   it("archives link text before compilation and updates the same source path on repeated ingestion", async () => {
     const home = join(dir, "home");
     const url = "https://example.com/article";

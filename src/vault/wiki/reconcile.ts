@@ -7,6 +7,8 @@ export interface WikiRollback { targetBatchId: string; revertId: string }
 export interface ReconcileInput { repo: WikiRepo; marker: InFlightMarker | null; bootstrapRef: string | null }
 export interface ReconcileResult {
   lastBatchId: string | null;
+  /** True when `lastBatchId` names a batch the remote already has; false only for a local-only one. */
+  lastBatchPublished: boolean;
   bootstrap: "pending" | "done";
   rollback: WikiRollback | null;
   lastScanCommit: string | null;
@@ -159,6 +161,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   };
 
   let lastBatchId: string | null = null;
+  let lastBatchPublished = true;
   let rollback: WikiRollback | null = null;
   let previewPending = false;
 
@@ -171,8 +174,10 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     } else if (newest.preview && !newest.published) {
       previewPending = true;
       lastBatchId = newest.id;
+      lastBatchPublished = newest.published;
     } else {
       lastBatchId = newest.id;
+      lastBatchPublished = newest.published;
     }
   }
 
@@ -212,5 +217,5 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     if (lastScanCommit === null && candidates.length > 1) alerts.push(`wiki scan cursor candidates are incomparable: ${candidates.join(", ")}`);
   }
 
-  return { lastBatchId, bootstrap, rollback, lastScanCommit, staleMarker, alerts, preview: previewPending, reset };
+  return { lastBatchId, lastBatchPublished, bootstrap, rollback, lastScanCommit, staleMarker, alerts, preview: previewPending, reset };
 }

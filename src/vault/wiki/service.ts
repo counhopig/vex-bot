@@ -279,7 +279,7 @@ export class Wiki {
 
   /** One run under the lock: settle the previous batch, write a new one, then commit and publish it. */
   private async runLocked(request: WikiRunRequest, signal: AbortSignal): Promise<WikiRunResult> {
-    const { state, reconciled } = await this.fetchAndReconcile(request);
+    const { reconciled } = await this.fetchAndReconcile(request);
     const { baseHead } = await this.settlePrevious(reconciled, signal);
     const advancesScan = request.kind !== "on-demand";
     let batchId: string;
@@ -293,11 +293,32 @@ export class Wiki {
       }
       batchId = await this.compileChanges(request.kind, changes, baseHead, signal);
     } else {
+      // A retry of a source the just-settled batch archived unchanged hands back that batch's
+      // receipt instead of compiling the same thing twice.
+      const archived = reconciled.lastBatchId !== null && !reconciled.lastBatchPublished ? await this.archivedReceipt(request, reconciled) : null;
+      if (archived) return archived;
       batchId = await this.ingestSource(request, baseHead, signal);
     }
     const committed = await this.commitBatch(request.kind, batchId, baseHead, advancesScan);
     if ("result" in committed) return committed.result;
     return this.publishBatch(request.kind, batchId, committed, advancesScan, signal);
+  }
+
+  /**
+   * The receipt of the newest batch when it archived this request's source unchanged: only for a
+   * batch that was still unpublished when this run began, which settle has just pushed.
+   */
+  private async archivedReceipt(request: WikiRunRequest, reconciled: ReconcileResult): Promise<WikiRunResult | null> {
+    const source = request.source;
+    const batchId = reconciled.lastBatchId;
+    if (!source?.url || !source.text?.trim() || batchId === null) return null;
+    const sha = await this.findCommit("Vex-Batch", batchId);
+    if (!sha) return null;
+    const expected = createHash("sha256").update(sourceDocument(source, source.url, source.text)).digest("hex");
+    const archived = await this.repo.fingerprintAt(sha, this.sourcePath(source.url));
+    if (archived.type !== "file" || archived.hash !== expected) return null;
+    const pages = (await this.repo.changedPaths(sha)).filter((path) => path.startsWith("wiki/"));
+    return { batchId, commit: sha, pages, publication: "published" };
   }
 
   /** Fetches, reconciles and checks integrity before any path is restored or removed; heals a stale marker. */
