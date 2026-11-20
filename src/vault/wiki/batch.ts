@@ -72,8 +72,8 @@ async function restoreTouched(repo: WikiRepo, touched: TouchedPath[], baseHead: 
 
 /**
  * Recovers the working tree after an interrupted batch. Changes outside `wiki/` and `raw/` are
- * never attributable to the wiki and abort the run; only a `writing` marker whose recorded
- * `after` fingerprints still match is restored to `baseHead`.
+ * never attributable to the wiki and abort the run; only a marker whose recorded `after`
+ * fingerprints still match is restored to `baseHead`.
  */
 export async function inspectAndCleanTree(repo: WikiRepo, marker: MarkerStore): Promise<void> {
   await validateSubtreeRoot(join(repo.root, "wiki"));
@@ -84,10 +84,9 @@ export async function inspectAndCleanTree(repo: WikiRepo, marker: MarkerStore): 
   if (outside.length > 0) throw new Error("changes outside wiki/ and raw/: " + outside.join(", "));
   const inFlight = await marker.read();
   if (!inFlight) {
-    if (entries.length > 0) throw new Error("wiki batch marker is missing or not in the writing phase");
+    if (entries.length > 0) throw new Error("wiki batch marker is missing");
     return;
   }
-  if (inFlight.phase !== "writing") throw new Error("wiki batch marker is missing or not in the writing phase");
   const touched = new Map(inFlight.touched.map((entry) => [entry.path, entry]));
   const unknown = [...dirtyPaths].filter((path) => !touched.has(path));
   if (unknown.length) throw new Error("dirty paths are not owned by the wiki batch: " + unknown.join(", "));
@@ -103,7 +102,6 @@ export async function inspectAndCleanTree(repo: WikiRepo, marker: MarkerStore): 
 export async function abortBatch(repo: WikiRepo, marker: MarkerStore): Promise<void> {
   const inFlight = await marker.read();
   if (!inFlight) return;
-  if (inFlight.phase !== "writing") throw new Error("cannot abort a committed wiki batch");
   const entries = await repo.statusEntries();
   const dirtyPaths = new Set(entries.flatMap((entry) => entry.originalPath ? [entry.path, entry.originalPath] : [entry.path]));
   const unknown = [...dirtyPaths].filter((path) => !inFlight.touched.some((entry) => entry.path === path));

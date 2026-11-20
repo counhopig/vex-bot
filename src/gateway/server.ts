@@ -54,6 +54,14 @@ interface StaticEntry {
 const STATIC_FILES: Record<string, StaticEntry> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8", public: false },
   "/app.js": { file: "app.js", type: "text/javascript; charset=utf-8", public: false },
+  "/ui.js": { file: "ui.js", type: "text/javascript; charset=utf-8", public: false },
+  "/state.js": { file: "state.js", type: "text/javascript; charset=utf-8", public: false },
+  "/net.js": { file: "net.js", type: "text/javascript; charset=utf-8", public: false },
+  "/markdown.js": { file: "markdown.js", type: "text/javascript; charset=utf-8", public: false },
+  "/chat.js": { file: "chat.js", type: "text/javascript; charset=utf-8", public: false },
+  "/schedules.js": { file: "schedules.js", type: "text/javascript; charset=utf-8", public: false },
+  "/settings.js": { file: "settings.js", type: "text/javascript; charset=utf-8", public: false },
+  "/traces.js": { file: "traces.js", type: "text/javascript; charset=utf-8", public: false },
   "/login": { file: "login.html", type: "text/html; charset=utf-8", public: true },
   "/style.css": { file: "style.css", type: "text/css; charset=utf-8", public: true },
 };
@@ -63,8 +71,9 @@ const DEVICE_PATH = "/device/ws";
 /**
  * Allows one failed attempt per second from each address, so guessing stays slow while a stranger's
  * failures cannot lock the owner out. Behind a reverse proxy every request shares the proxy's address.
+ * The map is hard-capped: when full, the oldest entry is evicted to keep failure bounded in memory.
  */
-class Lockout {
+export class Lockout {
   private readonly until = new Map<string, number>();
 
   locked(address: string): boolean {
@@ -78,9 +87,12 @@ class Lockout {
   fail(address: string): void {
     const now = Date.now();
     // Entries last a second, so pruning expired ones keeps the map as small as the current attack.
-    if (this.until.size >= 1024) for (const [key, until] of this.until) if (until <= now) this.until.delete(key);
+    if (this.until.size >= Lockout.MAX_ENTRIES) for (const [key, until] of this.until) if (until <= now) this.until.delete(key);
+    if (this.until.size >= Lockout.MAX_ENTRIES) this.until.delete(this.until.keys().next().value as string);
     this.until.set(address, now + 1000);
   }
+
+  private static readonly MAX_ENTRIES = 1024;
 }
 
 const addressOf = (req: IncomingMessage): string => req.socket.remoteAddress ?? "";

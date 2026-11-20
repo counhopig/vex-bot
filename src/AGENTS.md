@@ -31,7 +31,9 @@ src/
 ├── trace/                 # Run traces: recording, store, retention
 ├── triggers/              # Recorded instead of run: the log of work a source was stopped from doing
 ├── providers/             # Model registration and streaming
-└── web/static/            # Browser handlers and presentation
+└── web/static/            # Browser handlers and presentation: `app.js` dispatch and navigation over
+                           # surface modules (`chat`, `settings`, `schedules`, `traces`) and leaves
+                           # (`ui`, `state`, `net`, `markdown`), plain ES modules with no build step
 ```
 
 ## WHERE TO LOOK
@@ -61,7 +63,7 @@ src/
 - Tools are `create*Tool` factories returning pi `AgentTool` objects with TypeBox parameters; pass workspace, dependencies and cancellation through factory options and execution signals.
 - `createCoreTools` contains filesystem, shell and search tools; `daemon.ts` builds the shared memory, persona, web and vault tools; `sessionFactory.ts` adds schedules, MCP, wiki and delegation per session.
 - Validate incoming browser messages with `parseClientMessage`; keep outgoing responses in `ServerMessage`.
-- Browser Markdown uses text nodes and validated links; dynamic content uses `textContent` or constructed DOM nodes.
+- Browser Markdown uses text nodes and validated links; dynamic content uses `textContent` or constructed DOM nodes. The browser is split into real ES modules: `app.js` owns `handle`, navigation and wiring; `chat`/`settings`/`schedules`/`traces` own their surfaces; `ui`/`state`/`net`/`markdown` are leaves. Upward references are forbidden — inject behavior through exported setters (`setOpenTrace`, `setShowChat`) and serve every module from `STATIC_FILES` with `public: false`. `tests/web-app.test.ts` loads the modules into one vm context in dependency order, stripping single-line imports and top-level `export` prefixes.
 - Settings forms accept only `ALLOWED` paths, return secret presence separately, preserve unknown YAML keys/comments and validate the complete resulting configuration.
 - Workspace file names in `WorkspaceFileName` (fixed names plus the `memory/YYYY-MM-DD.md` pattern) are the only paths WebChat can read or write; `listDailyNotes` uses the same pattern. Keep both and the browser pages in step.
 - Rebuild the system prompt before each model request so workspace content, time and window labels remain current.

@@ -12,7 +12,7 @@ import { EventBus } from "../src/core/events.js";
 import { Session } from "../src/core/session.js";
 import { SessionManager } from "../src/core/sessionManager.js";
 import { WebAuth } from "../src/gateway/auth.js";
-import { Gateway } from "../src/gateway/server.js";
+import { Gateway, Lockout } from "../src/gateway/server.js";
 import { resolvePaths, type VexPaths } from "../src/paths.js";
 import { ApprovalManager } from "../src/policy/approvals.js";
 import { createToolGate } from "../src/policy/gate.js";
@@ -142,6 +142,31 @@ function requestWithHost(host: string, path: string, options: { method?: string;
   });
 }
 
+describe("Gateway Lockout", () => {
+  it("evicts the oldest entry when the lockout map is full", () => {
+    const lockout = new Lockout();
+    for (let index = 0; index < 1024; index++) lockout.fail(`10.0.${index >> 8}.${index & 255}`);
+    expect(lockout.locked("10.0.0.0")).toBe(true);
+    lockout.fail("11.0.0.1"); // over capacity: the oldest entry must go
+    expect(lockout.locked("11.0.0.1")).toBe(true);
+    expect(lockout.locked("10.0.0.0")).toBe(false);
+  });
+
+  it("still prunes expired entries on failure", () => {
+    vi.useFakeTimers();
+    try {
+      const lockout = new Lockout();
+      lockout.fail("10.1.1.1");
+      vi.advanceTimersByTime(1100);
+      lockout.fail("10.1.1.2"); // prunes the expired entry, stays small
+      expect(lockout.locked("10.1.1.1")).toBe(false);
+      expect(lockout.locked("10.1.1.2")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("Gateway HTTP", () => {
   it("serves the app without a token", async () => {
     const host = await start();
@@ -171,6 +196,10 @@ describe("Gateway HTTP", () => {
     expect((await fetch(`http://${host}/login`)).status).toBe(200);
     expect((await fetch(`http://${host}/style.css`)).status).toBe(200);
     expect((await fetch(`http://${host}/app.js`)).status).toBe(401);
+    // Every browser module is served behind the same session gate as the app itself.
+    for (const module of ["/ui.js", "/state.js", "/net.js", "/markdown.js", "/chat.js", "/schedules.js", "/settings.js", "/traces.js"]) {
+      expect((await fetch(`http://${host}${module}`)).status).toBe(401);
+    }
 
     const wrong = await fetch(`http://${host}/api/login`, { method: "POST", body: JSON.stringify({ token: "nope" }) });
     expect(wrong.status).toBe(401);

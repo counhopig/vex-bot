@@ -15,11 +15,8 @@ export interface TouchedPath {
 export interface InFlightMarker {
   batchId: string;
   kind: "scheduled" | "bootstrap" | "on-demand";
-  advancesScan: boolean;
   scanBase: string | null;
   baseHead: string;
-  phase: "writing" | "committed";
-  commit: string | null;
   touched: TouchedPath[];
 }
 
@@ -38,6 +35,7 @@ function sameFingerprint(a: FileFingerprint, b: FileFingerprint): boolean {
   return a.type === b.type && a.hash === b.hash;
 }
 
+/** Unknown extra fields (an older binary's `phase`/`commit`/`advancesScan`) are ignored, not rejected. */
 function parseMarker(text: string): InFlightMarker | null {
   let parsed: unknown;
   try {
@@ -48,15 +46,19 @@ function parseMarker(text: string): InFlightMarker | null {
   if (typeof parsed !== "object" || parsed === null) return null;
   const marker = parsed as InFlightMarker;
   if (typeof marker.batchId !== "string") return null;
-  if (marker.phase !== "writing" && marker.phase !== "committed") return null;
+  if (marker.kind !== "scheduled" && marker.kind !== "bootstrap" && marker.kind !== "on-demand") return null;
+  if (typeof marker.scanBase !== "string" && marker.scanBase !== null) return null;
+  if (typeof marker.baseHead !== "string") return null;
   if (!Array.isArray(marker.touched) || !marker.touched.every((entry) => typeof entry?.path === "string" && isFingerprint(entry.expectedBefore) && (entry.after === undefined || isFingerprint(entry.after)) && (entry.intendedAfter === undefined || isFingerprint(entry.intendedAfter)))) return null;
-  return marker;
+  // Rebuilt from the surviving fields so unknown extras (an older binary's phase/commit) drop away.
+  return { batchId: marker.batchId, kind: marker.kind, scanBase: marker.scanBase, baseHead: marker.baseHead, touched: marker.touched };
 }
 
 /**
- * The crash-safety record for one wiki batch, stored inside the repository's `.git`
- * directory so it is never part of a commit. The wiki lock serializes access, so this
- * store does no locking of its own.
+ * The crash-safety record for one wiki batch's uncommitted writes, stored inside the repository's
+ * `.git` directory so it is never part of a commit. It is removed the moment the batch commits: a
+ * marker still present after its batch appears in history is stale and removed on the next run.
+ * The wiki lock serializes access, so this store does no locking of its own.
  */
 export class MarkerStore {
   private readonly file: string;
@@ -78,11 +80,6 @@ export class MarkerStore {
 
   async begin(marker: InFlightMarker): Promise<void> {
     await this.write(marker);
-  }
-
-  async setCommitted(commit: string): Promise<void> {
-    const marker = await this.load();
-    await this.write({ ...marker, phase: "committed", commit });
   }
 
   async remove(): Promise<void> {

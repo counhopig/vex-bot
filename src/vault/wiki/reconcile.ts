@@ -1,16 +1,19 @@
 import { parseTrailers, trailerValues, type WikiRepo } from "./git.js";
 import type { InFlightMarker } from "./marker.js";
-import type { WikiRollback, WikiState } from "./state.js";
 
 export interface CompileBatch { sha: string; id: string; kind: "scheduled" | "bootstrap" | "on-demand"; scanBase: string | null; published: boolean; preview: boolean }
 export interface RollbackCommit { sha: string; id: string; revertOf: string; published: boolean }
-export interface ReconcileInput { repo: WikiRepo; state: WikiState | null; marker: InFlightMarker | null; bootstrapRef: string | null }
+export interface WikiRollback { targetBatchId: string; revertId: string }
+export interface ReconcileInput { repo: WikiRepo; marker: InFlightMarker | null; bootstrapRef: string | null }
 export interface ReconcileResult {
   lastBatchId: string | null;
+  /** True when `lastBatchId` names a batch the remote already has; false only for a local-only one. */
+  lastBatchPublished: boolean;
   bootstrap: "pending" | "done";
   rollback: WikiRollback | null;
   lastScanCommit: string | null;
-  markerResolution: "none" | "committed" | "writing";
+  /** True when history carries the in-flight marker's batch: the batch is committed and the marker is stale. */
+  staleMarker: boolean;
   alerts: string[];
   /** True only when the newest compile batch is an unpublished bootstrap preview awaiting review. */
   preview: boolean;
@@ -44,14 +47,8 @@ function parseKind(value: string | undefined): CompileBatch["kind"] {
   return value === "bootstrap" || value === "on-demand" ? value : "scheduled";
 }
 
-/** The candidate that is a descendant of every other; `null` when the candidates are incomparable. */
-async function newestCandidate(repo: WikiRepo, candidates: string[]): Promise<string | null> {
-  const tips = await repo.independent(candidates);
-  return tips.length === 1 && candidates.includes(tips[0]!) ? tips[0]! : null;
-}
-
 /**
- * A state cursor is only usable when git can resolve it as a commit. `isAncestor`
+ * A scan base is only usable when git can resolve it as a commit. `isAncestor`
  * rethrows unknown-object failures (exit 128), so probing the value against itself
  * separates a real commit from a stale or corrupt SHA without leaking the error.
  */
@@ -65,19 +62,19 @@ async function resolvesCommit(repo: WikiRepo, sha: string): Promise<boolean> {
 }
 
 /**
- * Rebuilds durable wiki state from committed history. Read-only by contract: it
- * parses `git log` and ancestry only, never writes, pushes, or mutates the tree.
- * The service's settle step performs any push the result calls for.
+ * Rebuilds the wiki's durable facts from committed history alone. Read-only by contract: it parses
+ * `git log` and ancestry only, never writes, pushes, or mutates the tree. Whoever calls it performs
+ * any push the result calls for.
  */
 export async function reconcile(input: ReconcileInput): Promise<ReconcileResult> {
   const { repo, marker } = input;
-  let { state, bootstrapRef } = input;
+  let bootstrapRef = input.bootstrapRef;
   const origin = await repo.originHead();
 
   const batches: CompileBatch[] = [];
   const rollbacks: RollbackCommit[] = [];
   const alerts: string[] = [];
-  let markerResolution: ReconcileResult["markerResolution"] = marker === null ? "none" : "writing";
+  let staleMarker = false;
 
   const localHead = await repo.head();
   const historyRef = await repo.isAncestor(localHead, origin) ? origin : "HEAD";
@@ -96,7 +93,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
     const batchId = trailer(trailers, "Vex-Batch");
     const rollbackId = trailer(trailers, "Vex-Rollback");
     const revertOf = trailer(trailers, "Vex-Revert-Of");
-    if (marker !== null && batchId === marker.batchId) markerResolution = "committed";
+    if (marker !== null && batchId === marker.batchId) staleMarker = true;
     if (batchId !== undefined) {
       const kind = parseKind(trailer(trailers, "Vex-Kind"));
       const scanBase = trailer(trailers, "Vex-Scan-Base");
@@ -122,8 +119,7 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   }
 
   if (reset) {
-    // State and the bootstrap ref count only when they were written in this epoch.
-    if ((state?.resetId ?? null) !== reset.id) state = null;
+    // The bootstrap ref counts only when it was written in this epoch.
     if (bootstrapRef !== null && !(await repo.isAncestor(reset.sha, bootstrapRef).catch(() => false))) bootstrapRef = null;
   }
 
@@ -165,81 +161,61 @@ export async function reconcile(input: ReconcileInput): Promise<ReconcileResult>
   };
 
   let lastBatchId: string | null = null;
-  let bootstrap: ReconcileResult["bootstrap"] = "pending";
+  let lastBatchPublished = true;
   let rollback: WikiRollback | null = null;
   let previewPending = false;
-  let rule3Rollback = false;
 
   if (newest) {
     const reference = await rollbackFor(newest.id);
     if (reference) {
       // A revert that is already published means the rollback completed; only an unpublished one needs settling.
-      rule3Rollback = true;
       lastBatchId = null;
       rollback = reference.published ? null : { targetBatchId: newest.id, revertId: reference.id };
     } else if (newest.preview && !newest.published) {
       previewPending = true;
       lastBatchId = newest.id;
+      lastBatchPublished = newest.published;
     } else {
       lastBatchId = newest.id;
-      if (newest.kind === "bootstrap" && newest.published) bootstrap = "done";
+      lastBatchPublished = newest.published;
     }
   }
 
-  // Rule 4: any durable completion evidence keeps bootstrap done; an unpublished preview overrides it.
+  // Bootstrap evidence is git-only: a published bootstrap batch or the bootstrap ref, both after the newest reset.
+  let bootstrap: ReconcileResult["bootstrap"] = "pending";
   if (!previewPending) {
     const publishedBootstrap = batches.some((batch) => batch.kind === "bootstrap" && batch.published);
-    bootstrap = publishedBootstrap || bootstrapRef !== null || state?.bootstrap === "done" ? "done" : "pending";
+    bootstrap = publishedBootstrap || bootstrapRef !== null ? "done" : "pending";
   }
 
-  // Rule 5: a revert committed just before the state write is still recoverable from its trailers.
-  if (!rule3Rollback) {
-    for (const target of [lastBatchId, state?.rollback?.targetBatchId ?? null]) {
-      if (target === null) continue;
-      const reference = await rollbackFor(target);
-      if (reference) {
-        rollback = reference.published ? null : { targetBatchId: target, revertId: reference.id };
-        break;
-      }
-    }
-  }
-
-  // Rule 6: newest scan base by ancestor ordering, among the valid state value and published advancing batches.
-  // An unresolvable state value or batch scan base is dropped so it can neither be returned nor make ancestry checks fail.
-  const stateCursor = state?.lastScanCommit ?? null;
-  const validStateCursor = stateCursor !== null && (await resolvesCommit(repo, stateCursor)) ? stateCursor : null;
-  const candidates = new Set<string>();
-  if (validStateCursor !== null) candidates.add(validStateCursor);
-  for (const batch of batches) {
-    if (!batch.published || batch.scanBase === null) continue;
-    if (batch.kind === "scheduled" || batch.kind === "bootstrap") candidates.add(batch.scanBase);
-  }
-
-  let ordered = [...candidates];
-  // Batch scan bases are checked only when they matter: alone, or when comparing them fails.
-  if (ordered.length === 1 && ordered[0] !== validStateCursor && !(await resolvesCommit(repo, ordered[0]!))) ordered = [];
-  let winner: string | null = null;
-  if (ordered.length > 1) {
+  // The scan cursor is the newest published advancing batch's scan base, by ancestor ordering.
+  const candidates = [...new Set(batches.filter((batch) => batch.published && batch.scanBase !== null
+    && (batch.kind === "scheduled" || batch.kind === "bootstrap")).map((batch) => batch.scanBase!))];
+  let lastScanCommit: string | null = null;
+  if (candidates.length === 1) {
+    // Alone, the candidate is the cursor only when git can resolve it as a commit.
+    if (await resolvesCommit(repo, candidates[0]!)) lastScanCommit = candidates[0]!;
+  } else if (candidates.length > 1) {
+    // `independent` resolves the newest in one git call; unresolvable candidates are dropped so
+    // they can neither win nor make the ancestry check fail.
+    let ordered = candidates;
     try {
-      winner = await newestCandidate(repo, ordered);
+      const tips = await repo.independent(ordered);
+      const winner = tips.length === 1 && ordered.includes(tips[0]!) ? tips[0]! : null;
+      lastScanCommit = winner;
     } catch {
       const resolvable: string[] = [];
       for (const sha of ordered) if (await resolvesCommit(repo, sha)) resolvable.push(sha);
       ordered = resolvable;
-      winner = ordered.length > 1 ? await newestCandidate(repo, ordered) : null;
+      if (ordered.length === 1) {
+        lastScanCommit = ordered[0]!;
+      } else if (ordered.length > 1) {
+        const tips = await repo.independent(ordered);
+        lastScanCommit = tips.length === 1 && ordered.includes(tips[0]!) ? tips[0]! : null;
+      }
     }
-  }
-  let lastScanCommit: string | null = null;
-  if (ordered.length === 1) {
-    lastScanCommit = ordered[0] ?? null;
-  } else if (ordered.length > 1) {
-    if (winner !== null) {
-      lastScanCommit = winner;
-    } else {
-      lastScanCommit = validStateCursor;
-      alerts.push(`wiki scan cursor candidates are incomparable: ${ordered.join(", ")}`);
-    }
+    if (lastScanCommit === null && candidates.length > 1) alerts.push(`wiki scan cursor candidates are incomparable: ${candidates.join(", ")}`);
   }
 
-  return { lastBatchId, bootstrap, rollback, lastScanCommit, markerResolution, alerts, preview: previewPending, reset };
+  return { lastBatchId, lastBatchPublished, bootstrap, rollback, lastScanCommit, staleMarker, alerts, preview: previewPending, reset };
 }

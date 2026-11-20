@@ -585,7 +585,7 @@ describe("Session", () => {
 
   it("cancels heartbeat injection immediately while a permanent session is busy", async () => {
     faux = createFaux(1);
-    faux.setResponses([fauxAssistantMessage("a very slow permanent reply")]);
+    faux.setResponses([fauxAssistantMessage("a very slow permanent reply"), fauxAssistantMessage("after the abort")]);
     const session = await open();
     session.send("owner");
     const abort = new AbortController();
@@ -593,8 +593,13 @@ describe("Session", () => {
     abort.abort();
     await expect(injection).rejects.toMatchObject({ name: "AbortError" });
     expect(session.busy).toBe(true);
-    await session.dispose();
+    // The rejection leaves the session usable: the active turn completes and a later send runs.
+    await session.whenIdle();
     expect(session.history().items.some(item => item.kind === "assistant" && item.text === "heartbeat")).toBe(false);
+    session.send("after");
+    await session.whenIdle();
+    expect(events).toContainEqual({ kind: "assistant_message", text: "after the abort", stopReason: "stop", timestamp: expect.any(Number) });
+    await session.dispose();
   });
 
   it("forwards delegated subtool progress through session events", async () => {

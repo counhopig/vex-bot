@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it, vi } from "vitest";
 import { applySettings } from "../src/config/settings.js";
@@ -50,6 +51,18 @@ function textOf(el: Element): string {
   return el.textContent + el.children.map(textOf).join("");
 }
 
+/**
+ * Loads the browser modules into one vm context, in dependency order. Real `import`/`export`
+ * syntax cannot run under `runInContext`, so the loader strips the single-line imports and the
+ * top-level `export` prefixes — the browser itself runs them as genuine ES modules.
+ */
+const MODULE_ORDER = ["ui.js", "state.js", "net.js", "markdown.js", "chat.js", "schedules.js", "settings.js", "traces.js", "app.js"];
+
+function loadBrowserSource(name: string): string {
+  const text = readFileSync(new URL(`../src/web/static/${name}`, import.meta.url), "utf8");
+  return text.split("\n").filter((line: string) => !/^import .+;$/.test(line.trim())).map((line: string) => line.replace(/^(\s*)export /, "$1")).join("\n");
+}
+
 async function loadApp() {
   const elements = new Map<string, Element>();
   const get = (id: string) => {
@@ -72,7 +85,7 @@ async function loadApp() {
     localStorage: { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => { stored.set(key, value); }, removeItem: (key: string) => { stored.delete(key); } },
     setTimeout: vi.fn(), clearTimeout: vi.fn(), setInterval: vi.fn(), prompt, confirm: () => true,
   });
-  runInContext(await readFile(new URL("../src/web/static/app.js", import.meta.url), "utf8"), context);
+  for (const name of MODULE_ORDER) runInContext(loadBrowserSource(name), context);
   runInContext('handle({ type: "sessions", sessions: [{ id: "one", title: "一" }, { id: "two", title: "二" }] })', context);
   const socket = runInContext("state.ws", context) as Socket;
   const call = (code: string) => JSON.parse(JSON.stringify(runInContext(code, context)));
